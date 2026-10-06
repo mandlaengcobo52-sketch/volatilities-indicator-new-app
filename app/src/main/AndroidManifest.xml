@@ -8,8 +8,6 @@
         android:icon="@drawable/volatilities_indicator_logo"
         android:roundIcon="@drawable/volatilities_indicator_logo"
         android:theme="@style/Theme.VolatilitiesIndicator">
-        android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher"
 
         <activity
             android:name=".MainActivity"
