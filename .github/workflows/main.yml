@@ -41,7 +41,7 @@ jobs:
           echo "Gradle:"
           gradle --version
           echo "Project files:"
-          find . -maxdepth 2 -type f | sort
+          find . -maxdepth 4 -type f | sort
 
       - name: Build APK
         run: |
