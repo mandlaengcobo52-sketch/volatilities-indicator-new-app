@@ -3,12 +3,14 @@ name: Build Volatilities Indicator APK
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches:
+      - main
 
 jobs:
   build:
     name: Build APK
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,8 +34,18 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Check project
+        run: |
+          echo "Java:"
+          java -version
+          echo "Gradle:"
+          gradle --version
+          echo "Project files:"
+          find . -maxdepth 2 -type f | sort
+
       - name: Build APK
-        run: gradle --no-daemon assembleDebug
+        run: |
+          gradle --no-daemon assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
