@@ -7,7 +7,7 @@
         android:allowBackup="true"
         android:label="Volatilities Indicator"
         android:supportsRtl="true"
-        android:theme="@style/Theme.VolatilitesIndicator">
+        android:theme="@android:style/Theme.Material.Light.NoActionBar"
 
         <activity
             android:name=".MainActivity"
