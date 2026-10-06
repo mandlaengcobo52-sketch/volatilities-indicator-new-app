@@ -264,14 +264,104 @@ class MainActivity : Activity() {
     }
 
     private fun rowButtons(
-        a: String,
-        b: String,
-        accent: Int
-    ): View {
+    a: String,
+    b: String,
+    accent: Int,
+    c: String? = null
+): View {
 
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
+    val row = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+    }
+
+    row.addView(
+        button(a, accent),
+        LinearLayout.LayoutParams(
+            0,
+            dp(58),
+            1f
+        ).apply {
+            marginEnd = dp(6)
         }
+    )
+
+    row.addView(
+        button(b, accent),
+        LinearLayout.LayoutParams(
+            0,
+            dp(58),
+            1f
+        ).apply {
+            if (c != null) {
+                marginEnd = dp(6)
+            }
+        }
+    )
+
+    if (c != null) {
+        val preferences = getSharedPreferences(
+            "volatilities_settings",
+            MODE_PRIVATE
+        )
+
+        var autoTradeOn = preferences.getBoolean(
+            "auto_trade",
+            false
+        )
+
+        val autoButton = button(
+            if (autoTradeOn) {
+                "⚡  AUTO TRADE: ON"
+            } else {
+                "⚡  AUTO TRADE: OFF"
+            },
+            if (autoTradeOn) green else accent
+        )
+
+        autoButton.setOnClickListener {
+
+            autoTradeOn = !autoTradeOn
+
+            preferences.edit()
+                .putBoolean("auto_trade", autoTradeOn)
+                .apply()
+
+            autoButton.text =
+                if (autoTradeOn) {
+                    "⚡  AUTO TRADE: ON"
+                } else {
+                    "⚡  AUTO TRADE: OFF"
+                }
+
+            autoButton.setTextColor(
+                if (autoTradeOn) {
+                    Color.BLACK
+                } else {
+                    Color.WHITE
+                }
+            )
+
+            autoButton.setBackgroundColor(
+                if (autoTradeOn) {
+                    green
+                } else {
+                    Color.rgb(8, 31, 40)
+                }
+            )
+        }
+
+        row.addView(
+            autoButton,
+            LinearLayout.LayoutParams(
+                0,
+                dp(58),
+                1f
+            )
+        )
+    }
+
+    return row
+    }
 
         row.addView(
             button(a, accent),
