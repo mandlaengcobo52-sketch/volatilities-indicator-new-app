@@ -5,61 +5,84 @@
     android:viewportWidth="180"
     android:viewportHeight="180">
 
-    <!-- Outer green glow/ring -->
+    <!-- Black background -->
     <path
-        android:fillColor="#001008"
-        android:strokeColor="#00F05A"
-        android:strokeWidth="3"
-        android:pathData="M90,3 A87,87 0,1 0,90,177 A87,87 0,1 0,90,3" />
+        android:fillColor="#020608"
+        android:pathData="M90,0 A90,90 0,1 0,90,180 A90,90 0,1 0,90,0" />
 
-    <!-- Globe -->
+    <!-- Outer neon green ring -->
     <path
-        android:fillColor="#061A12"
+        android:fillColor="#00000000"
+        android:strokeColor="#00FF5A"
+        android:strokeWidth="4"
+        android:pathData="M90,5 A85,85 0,1 0,90,175 A85,85 0,1 0,90,5" />
+
+    <!-- Inner ring -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#00C94F"
+        android:strokeWidth="2"
+        android:pathData="M90,14 A76,76 0,1 0,90,166 A76,76 0,1 0,90,14" />
+
+    <!-- Dark globe -->
+    <path
+        android:fillColor="#06130D"
         android:strokeColor="#00E94F"
         android:strokeWidth="1.5"
-        android:pathData="M90,18 A72,72 0,1 0,90,162 A72,72 0,1 0,90,18" />
+        android:pathData="M90,20 A70,70 0,1 0,90,160 A70,70 0,1 0,90,20" />
 
-    <!-- Globe latitude -->
+    <!-- Globe grid -->
     <path
         android:fillColor="#00000000"
-        android:strokeColor="#00B83D"
+        android:strokeColor="#008F3B"
         android:strokeWidth="1"
-        android:pathData="M25,75 Q90,45 155,75 M25,105 Q90,135 155,105 M35,90 Q90,70 145,90" />
+        android:pathData="M20,90 L160,90
+                         M32,60 Q90,85 148,60
+                         M32,120 Q90,95 148,120
+                         M90,20 Q55,90 90,160
+                         M90,20 Q125,90 90,160" />
 
-    <!-- Globe longitude -->
+    <!-- Trading chart -->
     <path
-        android:fillColor="#00000000"
-        android:strokeColor="#00B83D"
-        android:strokeWidth="1"
-        android:pathData="M90,18 Q55,90 90,162 M90,18 Q125,90 90,162" />
+        android:fillColor="#00E94F"
+        android:pathData="M30,130 L30,111 L38,111 L38,130 Z
+                         M43,130 L43,98 L51,98 L51,130 Z
+                         M56,130 L56,108 L64,108 L64,130 Z
+                         M69,130 L69,86 L77,86 L77,130 Z" />
 
-    <!-- Main V -->
+    <!-- Main silver V -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M30,48 L48,48 L82,112 L108,58 L126,58 L91,139 L75,139 Z" />
+        android:fillColor="#F2F4F5"
+        android:pathData="M30,48
+                         L49,48
+                         L82,111
+                         L108,55
+                         L128,55
+                         L92,137
+                         L74,137 Z" />
 
-    <!-- Green rising arrow -->
+    <!-- Green V -->
     <path
         android:fillColor="#00F05A"
-        android:pathData="M72,128 L82,128 L132,72 L132,91 L145,91 L145,52 L106,52 L106,65 L124,65 Z" />
+        android:pathData="M47,48
+                         L61,48
+                         L83,91
+                         L106,48
+                         L121,48
+                         L91,111
+                         L77,111 Z" />
 
-    <!-- Green V overlay -->
+    <!-- Rising arrow -->
     <path
-        android:fillColor="#00F05A"
-        android:pathData="M43,48 L57,48 L83,99 L109,48 L123,48 L91,119 L76,119 Z" />
-
-    <!-- Chart bars -->
-    <path
-        android:fillColor="#00E94F"
-        android:pathData="M31,124 L38,124 L38,106 L31,106 Z" />
-    <path
-        android:fillColor="#00E94F"
-        android:pathData="M43,124 L50,124 L50,96 L43,96 Z" />
-    <path
-        android:fillColor="#00E94F"
-        android:pathData="M55,124 L62,124 L62,101 L55,101 Z" />
-    <path
-        android:fillColor="#00E94F"
-        android:pathData="M67,124 L74,124 L74,88 L67,88 Z" />
+        android:fillColor="#00FF5A"
+        android:pathData="M82,126
+                         L92,126
+                         L132,78
+                         L132,94
+                         L146,94
+                         L146,52
+                         L106,52
+                         L106,65
+                         L123,65 Z" />
 
 </vector>
