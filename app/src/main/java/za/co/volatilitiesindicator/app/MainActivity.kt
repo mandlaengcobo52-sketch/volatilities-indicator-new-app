@@ -15,19 +15,15 @@ import android.widget.Toast
 
 class MainActivity : Activity() {
 
-    private val bg = Color.rgb(2, 9, 12)
-    private val panel = Color.rgb(5, 20, 26)
-    private val panel2 = Color.rgb(9, 30, 38)
-
-    private val green = Color.rgb(0, 235, 105)
-    private val red = Color.rgb(255, 45, 55)
+    private val bg = Color.rgb(2, 11, 15)
+    private val panel = Color.rgb(5, 22, 29)
+    private val panel2 = Color.rgb(8, 31, 39)
+    private val green = Color.rgb(0, 230, 118)
+    private val red = Color.rgb(255, 55, 70)
     private val yellow = Color.rgb(255, 215, 0)
     private val cyan = Color.rgb(0, 210, 255)
-    private val white = Color.rgb(240, 245, 247)
-    private val muted = Color.rgb(150, 170, 178)
-
-    private var platform = "USER"
-    private var executionMode = "DEMO"
+    private val white = Color.rgb(240, 247, 249)
+    private val muted = Color.rgb(150, 170, 177)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,15 +39,12 @@ class MainActivity : Activity() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(16), dp(14), dp(24))
+            setPadding(dp(14), dp(16), dp(14), dp(28))
         }
 
         scroll.addView(root)
 
-        // ---------------------------------------------------------
-        // HEADER
-        // ---------------------------------------------------------
-
+        // LOGO + TITLE
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -64,7 +57,7 @@ class MainActivity : Activity() {
 
         header.addView(
             logo,
-            LinearLayout.LayoutParams(dp(86), dp(86)).apply {
+            LinearLayout.LayoutParams(dp(82), dp(82)).apply {
                 marginEnd = dp(12)
             }
         )
@@ -73,9 +66,9 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
         }
 
-        titleBox.addView(text("VOLATILITIES", 24, white, true))
-        titleBox.addView(text("INDICATOR", 24, green, true))
-        titleBox.addView(text("TRADING PLATFORM", 11, muted, true))
+        titleBox.addView(text("VOLATILITIES", 27, white, true))
+        titleBox.addView(text("INDICATOR", 27, green, true))
+        titleBox.addView(text("TRADING PLATFORM", 13, muted, true, 0, 3))
 
         header.addView(
             titleBox,
@@ -83,119 +76,36 @@ class MainActivity : Activity() {
         )
 
         root.addView(header)
-        root.addView(spacer(16))
+        root.addView(spacer(18))
 
-        // ---------------------------------------------------------
         // PLATFORM
-        // ---------------------------------------------------------
-
         root.addView(sectionTitle("PLATFORM"))
-
-        val platformRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-
-        val userButton = button("👤  USER", platform == "USER", green)
-        val adminButton = button("👥  ADMIN", platform == "ADMIN", green)
-
-        userButton.setOnClickListener {
-            platform = "USER"
-            userButton.background = buttonBackground(true)
-            adminButton.background = buttonBackground(false)
-
-            Toast.makeText(
-                this,
-                "USER platform selected",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-
-        adminButton.setOnClickListener {
-            platform = "ADMIN"
-            userButton.background = buttonBackground(false)
-            adminButton.background = buttonBackground(true)
-
-            Toast.makeText(
-                this,
-                "ADMIN platform selected",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-
-        platformRow.addView(
-            userButton,
-            LinearLayout.LayoutParams(0, dp(54), 1f).apply {
-                marginEnd = dp(6)
-            }
+        root.addView(
+            rowButtons(
+                "👤  USER",
+                "👥  ADMIN",
+                green
+            )
         )
 
-        platformRow.addView(
-            adminButton,
-            LinearLayout.LayoutParams(0, dp(54), 1f)
+        root.addView(spacer(10))
+
+        // EXECUTION MODE
+        root.addView(sectionTitle("EXECUTION MODE"))
+        root.addView(
+            rowButtons(
+                "📈  DEMO",
+                "▥  REAL",
+                green
+            )
         )
 
-        root.addView(platformRow)
         root.addView(spacer(12))
 
-        // ---------------------------------------------------------
-        // EXECUTION MODE
-        // ---------------------------------------------------------
-
-        root.addView(sectionTitle("EXECUTION MODE"))
-
-        val modeRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-
-        val demoButton = button("📈  DEMO", executionMode == "DEMO", green)
-        val realButton = button("▥  REAL", executionMode == "REAL", green)
-
-        demoButton.setOnClickListener {
-            executionMode = "DEMO"
-            demoButton.background = buttonBackground(true)
-            realButton.background = buttonBackground(false)
-
-            Toast.makeText(
-                this,
-                "DEMO execution selected",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-
-        realButton.setOnClickListener {
-            executionMode = "REAL"
-            demoButton.background = buttonBackground(false)
-            realButton.background = buttonBackground(true)
-
-            Toast.makeText(
-                this,
-                "REAL execution selected",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-
-        modeRow.addView(
-            demoButton,
-            LinearLayout.LayoutParams(0, dp(54), 1f).apply {
-                marginEnd = dp(6)
-            }
-        )
-
-        modeRow.addView(
-            realButton,
-            LinearLayout.LayoutParams(0, dp(54), 1f)
-        )
-
-        root.addView(modeRow)
-        root.addView(spacer(14))
-
-        // ---------------------------------------------------------
         // DERIV ACCOUNT
-        // ---------------------------------------------------------
+        val account = card()
 
-        val accountCard = card()
-
-        accountCard.addView(
+        account.addView(
             text(
                 "⚡  DERIV EXECUTION ACCOUNT",
                 15,
@@ -204,153 +114,85 @@ class MainActivity : Activity() {
             )
         )
 
-        val connection = text(
-            "🔴  NOT CONNECTED",
-            13,
-            red,
-            true,
-            0,
-            5
+        account.addView(
+            text(
+                "🟢  CONNECTION READY",
+                13,
+                green,
+                true,
+                0,
+                5
+            )
         )
 
-        accountCard.addView(connection)
-        accountCard.addView(text("Account: —", 14, white))
-        accountCard.addView(text("Balance: —", 14, white))
-        accountCard.addView(text("Open P/L: —", 14, white))
-        accountCard.addView(spacer(7))
+        account.addView(text("Account: —", 14, white))
+        account.addView(text("Balance: —", 14, white))
+        account.addView(text("Open P/L: —", 14, white))
+        account.addView(spacer(6))
 
-        val accountButtons = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-
-        val connect = button("🔗  CONNECT", true, green)
-        val refresh = button("⟳  REFRESH", false, green)
-
-        connect.setOnClickListener {
-            connection.text = "🟢  CONNECTION READY"
-            connection.setTextColor(green)
-
-            Toast.makeText(
-                this,
-                "Deriv connection selected",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-
-        refresh.setOnClickListener {
-            Toast.makeText(
-                this,
-                "Account data refreshed",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-
-        accountButtons.addView(
-            connect,
-            LinearLayout.LayoutParams(0, dp(50), 1f).apply {
-                marginEnd = dp(6)
-            }
+        account.addView(
+            rowButtons(
+                "🔗  CONNECT",
+                "⟳  REFRESH",
+                green
+            )
         )
 
-        accountButtons.addView(
-            refresh,
-            LinearLayout.LayoutParams(0, dp(50), 1f)
-        )
-
-        accountCard.addView(accountButtons)
-
-        root.addView(accountCard)
+        root.addView(account)
         root.addView(spacer(14))
 
-        // ---------------------------------------------------------
         // INDEX MONITOR
-        // ---------------------------------------------------------
-
         root.addView(sectionTitle("INDEX MONITOR"))
 
-        val indexes = listOf(
-            "R_10" to cyan,
-            "R_25" to green,
-            "R_50" to yellow,
-            "R_75" to red,
-            "R_100" to Color.rgb(175, 70, 255)
-        )
-
-        indexes.forEach { (index, colour) ->
-            root.addView(indexCard(index, colour))
+        listOf(
+            "R_10",
+            "R_25",
+            "R_50",
+            "R_75",
+            "R_100"
+        ).forEach {
+            root.addView(indexCard(it))
         }
 
-        root.addView(spacer(14))
+        root.addView(spacer(12))
 
-        // ---------------------------------------------------------
-        // ACCOUNT SUMMARY
-        // ---------------------------------------------------------
-
+        // SUMMARY
         root.addView(sectionTitle("ACCOUNT SUMMARY"))
+        root.addView(summaryRow())
 
-        val summary = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-
-        val summaryItems = listOf(
-            "OPEN\n0" to cyan,
-            "TOTAL P/L\n0.00" to green,
-            "WINS\n0" to green,
-            "LOSSES\n0" to red
-        )
-
-        summaryItems.forEach { (value, colour) ->
-
-            val item = text(
-                value,
-                11,
-                colour,
-                true,
-                Gravity.CENTER
-            )
-
-            item.setBackgroundColor(panel)
-
-            summary.addView(
-                item,
-                LinearLayout.LayoutParams(0, dp(58), 1f).apply {
-                    marginEnd = dp(4)
-                }
-            )
-        }
-
-        root.addView(summary)
         root.addView(spacer(14))
-
-        // ---------------------------------------------------------
-        // BOTTOM NAVIGATION
-        // ---------------------------------------------------------
 
         root.addView(
-            bottomNavigation()
+            text(
+                "VOLATILITIES INDICATOR • VERSION 1.0.0",
+                11,
+                muted,
+                false,
+                Gravity.CENTER
+            )
         )
 
         setContentView(scroll)
     }
 
-    private fun indexCard(
-        index: String,
-        colour: Int
-    ): View {
+    private fun indexCard(index: String): View {
 
-        val card = card()
+        val c = card()
 
         val top = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
 
-        val name = text(
-            index,
-            18,
-            colour,
-            true
-        )
+        val indexColor = when (index) {
+            "R_10" -> cyan
+            "R_25" -> green
+            "R_50" -> yellow
+            "R_75" -> red
+            else -> Color.rgb(175, 70, 255)
+        }
+
+        val name = text(index, 20, indexColor, true)
 
         top.addView(
             name,
@@ -358,134 +200,146 @@ class MainActivity : Activity() {
         )
 
         top.addView(
-            text(
-                "WAITING",
-                10,
-                yellow,
-                true,
-                Gravity.CENTER
-            )
+            badge("WAITING", yellow)
         )
 
-        card.addView(top)
+        c.addView(top)
 
-        card.addView(
+        c.addView(
             text(
-                "────────────  WAITING     ›",
-                11,
+                "━━━━━━━━━━  WAITING   ›",
+                12,
                 muted,
                 false,
-                Gravity.CENTER_VERTICAL,
+                0,
                 5
             )
         )
 
-        card.setOnClickListener {
-
-            Toast.makeText(
-                this,
-                "$index selected",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-
-        return card
+        return c
     }
 
-    private fun bottomNavigation(): View {
+    private fun summaryRow(): View {
 
-        val nav = LinearLayout(this).apply {
+        val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(panel)
-            gravity = Gravity.CENTER
         }
 
-        val items = listOf(
-            "⌂\nHome",
-            "▥\nTrade",
-            "⌁\nAnalysis",
-            "▤\nNews",
-            "⚙\nSettings"
-        )
+        listOf(
+            "OPEN\n0",
+            "TOTAL P/L\n0.00",
+            "WINS\n0",
+            "LOSSES\n0"
+        ).forEachIndexed { i, s ->
 
-        items.forEachIndexed { index, label ->
+            val color = when (i) {
+                1, 2 -> green
+                3 -> red
+                else -> cyan
+            }
 
-            val item = text(
-                label,
-                10,
-                if (index == 0) green else white,
+            val t = text(
+                s,
+                12,
+                color,
                 true,
                 Gravity.CENTER
             )
 
-            item.setOnClickListener {
+            t.setBackgroundColor(panel)
 
-                Toast.makeText(
-                    this,
-                    label.substringAfter("\n") + " selected",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
-
-            nav.addView(
-                item,
+            row.addView(
+                t,
                 LinearLayout.LayoutParams(
                     0,
-                    dp(64),
+                    dp(60),
                     1f
-                )
+                ).apply {
+                    marginEnd = dp(5)
+                }
             )
         }
 
-        return nav
+        return row
+    }
+
+    private fun rowButtons(
+        a: String,
+        b: String,
+        accent: Int
+    ): View {
+
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+
+        row.addView(
+            button(a, accent),
+            LinearLayout.LayoutParams(
+                0,
+                dp(58),
+                1f
+            ).apply {
+                marginEnd = dp(6)
+            }
+        )
+
+        row.addView(
+            button(b, accent),
+            LinearLayout.LayoutParams(
+                0,
+                dp(58),
+                1f
+            )
+        )
+
+        return row
     }
 
     private fun button(
         label: String,
-        selected: Boolean,
         accent: Int
     ): Button {
 
         return Button(this).apply {
 
             text = label
-            textSize = 13f
-
-            setTextColor(
-                if (selected) Color.BLACK else white
-            )
+            textSize = 14f
 
             setTypeface(
                 null,
                 Typeface.BOLD
             )
 
-            background = buttonBackground(selected)
+            setTextColor(white)
+            setBackgroundColor(panel2)
 
             isAllCaps = false
 
-            stateListAnimator = null
+            setOnClickListener {
+
+                Toast.makeText(
+                    this@MainActivity,
+                    "$label selected",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
         }
     }
 
-    private fun buttonBackground(
-        selected: Boolean
-    ): android.graphics.drawable.GradientDrawable {
+    private fun badge(
+        label: String,
+        color: Int
+    ): TextView {
 
-        return android.graphics.drawable.GradientDrawable().apply {
-
-            cornerRadius = dp(7).toFloat()
-
-            setColor(
-                if (selected) green else panel2
-            )
-
-            if (!selected) {
-                setStroke(
-                    dp(1),
-                    Color.rgb(18, 55, 65)
-                )
-            }
+        return text(
+            "  $label  ",
+            10,
+            color,
+            true,
+            Gravity.CENTER
+        ).apply {
+            setBackgroundColor(panel2)
         }
     }
 
@@ -509,29 +363,29 @@ class MainActivity : Activity() {
                     -1,
                     -2
                 ).apply {
-                    bottomMargin = dp(7)
+                    bottomMargin = dp(8)
                 }
         }
     }
 
     private fun sectionTitle(
-        value: String
+        s: String
     ): TextView {
 
         return text(
-            value,
-            14,
+            s,
+            15,
             white,
             true,
-            Gravity.START,
-            0
+            0,
+            4
         )
     }
 
     private fun text(
-        value: String,
+        s: String,
         size: Int,
-        colour: Int,
+        color: Int,
         bold: Boolean = false,
         gravity: Int = Gravity.START,
         top: Int = 0
@@ -539,10 +393,10 @@ class MainActivity : Activity() {
 
         return TextView(this).apply {
 
-            text = value
+            text = s
             textSize = size.toFloat()
 
-            setTextColor(colour)
+            setTextColor(color)
 
             this.gravity = gravity
 
@@ -563,25 +417,24 @@ class MainActivity : Activity() {
     }
 
     private fun spacer(
-        height: Int
+        h: Int
     ): View {
 
         return View(this).apply {
-
             layoutParams =
                 LinearLayout.LayoutParams(
                     1,
-                    dp(height)
+                    dp(h)
                 )
         }
     }
 
     private fun dp(
-        value: Int
+        v: Int
     ): Int {
 
         return (
-            value *
+            v *
                 resources.displayMetrics.density
             ).toInt()
     }
