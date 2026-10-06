@@ -18,10 +18,12 @@ class MainActivity : Activity() {
     private val bg = Color.rgb(2, 11, 15)
     private val panel = Color.rgb(5, 22, 29)
     private val panel2 = Color.rgb(8, 31, 39)
+
     private val green = Color.rgb(0, 230, 118)
     private val red = Color.rgb(255, 55, 70)
     private val yellow = Color.rgb(255, 215, 0)
     private val cyan = Color.rgb(0, 210, 255)
+
     private val white = Color.rgb(240, 247, 249)
     private val muted = Color.rgb(150, 170, 177)
 
@@ -39,25 +41,38 @@ class MainActivity : Activity() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(16), dp(14), dp(28))
+            setPadding(
+                dp(14),
+                dp(16),
+                dp(14),
+                dp(28)
+            )
         }
 
         scroll.addView(root)
 
+        // =========================================================
         // LOGO + TITLE
+        // =========================================================
+
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
 
         val logo = ImageView(this).apply {
-            setImageResource(R.drawable.volatilities_indicator_logo)
+            setImageResource(
+                R.drawable.volatilities_indicator_logo
+            )
             scaleType = ImageView.ScaleType.CENTER_INSIDE
         }
 
         header.addView(
             logo,
-            LinearLayout.LayoutParams(dp(82), dp(82)).apply {
+            LinearLayout.LayoutParams(
+                dp(82),
+                dp(82)
+            ).apply {
                 marginEnd = dp(12)
             }
         )
@@ -66,20 +81,55 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
         }
 
-        titleBox.addView(text("VOLATILITIES", 27, white, true))
-        titleBox.addView(text("INDICATOR", 27, green, true))
-        titleBox.addView(text("TRADING PLATFORM", 13, muted, true, 0, 3))
+        titleBox.addView(
+            text(
+                "VOLATILITIES",
+                27,
+                white,
+                true
+            )
+        )
+
+        titleBox.addView(
+            text(
+                "INDICATOR",
+                27,
+                green,
+                true
+            )
+        )
+
+        titleBox.addView(
+            text(
+                "TRADING PLATFORM",
+                13,
+                muted,
+                true,
+                0,
+                3
+            )
+        )
 
         header.addView(
             titleBox,
-            LinearLayout.LayoutParams(0, -2, 1f)
+            LinearLayout.LayoutParams(
+                0,
+                -2,
+                1f
+            )
         )
 
         root.addView(header)
         root.addView(spacer(18))
 
+        // =========================================================
         // PLATFORM
-        root.addView(sectionTitle("PLATFORM"))
+        // =========================================================
+
+        root.addView(
+            sectionTitle("PLATFORM")
+        )
+
         root.addView(
             rowButtons(
                 "👤  USER",
@@ -90,8 +140,14 @@ class MainActivity : Activity() {
 
         root.addView(spacer(10))
 
+        // =========================================================
         // EXECUTION MODE
-        root.addView(sectionTitle("EXECUTION MODE"))
+        // =========================================================
+
+        root.addView(
+            sectionTitle("EXECUTION MODE")
+        )
+
         root.addView(
             rowButtons(
                 "📈  DEMO",
@@ -100,9 +156,22 @@ class MainActivity : Activity() {
             )
         )
 
+        root.addView(spacer(8))
+
+        // =========================================================
+        // AUTO TRADE
+        // =========================================================
+
+        root.addView(
+            autoTradeButton()
+        )
+
         root.addView(spacer(12))
 
+        // =========================================================
         // DERIV ACCOUNT
+        // =========================================================
+
         val account = card()
 
         account.addView(
@@ -125,9 +194,30 @@ class MainActivity : Activity() {
             )
         )
 
-        account.addView(text("Account: —", 14, white))
-        account.addView(text("Balance: —", 14, white))
-        account.addView(text("Open P/L: —", 14, white))
+        account.addView(
+            text(
+                "Account: —",
+                14,
+                white
+            )
+        )
+
+        account.addView(
+            text(
+                "Balance: —",
+                14,
+                white
+            )
+        )
+
+        account.addView(
+            text(
+                "Open P/L: —",
+                14,
+                white
+            )
+        )
+
         account.addView(spacer(6))
 
         account.addView(
@@ -141,8 +231,13 @@ class MainActivity : Activity() {
         root.addView(account)
         root.addView(spacer(14))
 
+        // =========================================================
         // INDEX MONITOR
-        root.addView(sectionTitle("INDEX MONITOR"))
+        // =========================================================
+
+        root.addView(
+            sectionTitle("INDEX MONITOR")
+        )
 
         listOf(
             "R_10",
@@ -150,15 +245,25 @@ class MainActivity : Activity() {
             "R_50",
             "R_75",
             "R_100"
-        ).forEach {
-            root.addView(indexCard(it))
+        ).forEach { index ->
+            root.addView(
+                indexCard(index)
+            )
         }
 
         root.addView(spacer(12))
 
-        // SUMMARY
-        root.addView(sectionTitle("ACCOUNT SUMMARY"))
-        root.addView(summaryRow())
+        // =========================================================
+        // ACCOUNT SUMMARY
+        // =========================================================
+
+        root.addView(
+            sectionTitle("ACCOUNT SUMMARY")
+        )
+
+        root.addView(
+            summaryRow()
+        )
 
         root.addView(spacer(14))
 
@@ -175,32 +280,163 @@ class MainActivity : Activity() {
         setContentView(scroll)
     }
 
+    // =============================================================
+    // AUTO TRADE BUTTON
+    // =============================================================
+
+    private fun autoTradeButton(): View {
+
+        val preferences = getSharedPreferences(
+            "volatilities_settings",
+            MODE_PRIVATE
+        )
+
+        var autoTradeOn = preferences.getBoolean(
+            "auto_trade",
+            false
+        )
+
+        val button = Button(this)
+
+        fun updateButton() {
+
+            if (autoTradeOn) {
+
+                button.text =
+                    "⚡  AUTO TRADE: ON"
+
+                button.setTextColor(
+                    Color.BLACK
+                )
+
+                button.setBackgroundColor(
+                    green
+                )
+
+            } else {
+
+                button.text =
+                    "⚡  AUTO TRADE: OFF"
+
+                button.setTextColor(
+                    white
+                )
+
+                button.setBackgroundColor(
+                    panel2
+                )
+            }
+        }
+
+        button.apply {
+
+            textSize = 14f
+
+            setTypeface(
+                null,
+                Typeface.BOLD
+            )
+
+            isAllCaps = false
+
+            setOnClickListener {
+
+                autoTradeOn = !autoTradeOn
+
+                preferences.edit()
+                    .putBoolean(
+                        "auto_trade",
+                        autoTradeOn
+                    )
+                    .apply()
+
+                updateButton()
+
+                Toast.makeText(
+                    this@MainActivity,
+                    if (autoTradeOn) {
+                        "Auto Trade ON"
+                    } else {
+                        "Auto Trade OFF"
+                    },
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+
+        updateButton()
+
+        return button.apply {
+
+            layoutParams =
+                LinearLayout.LayoutParams(
+                    -1,
+                    dp(58)
+                ).apply {
+                    topMargin = dp(2)
+                }
+        }
+    }
+
+    // =============================================================
+    // INDEX CARD
+    // =============================================================
+
     private fun indexCard(index: String): View {
 
         val c = card()
 
         val top = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+            orientation =
+                LinearLayout.HORIZONTAL
+
+            gravity =
+                Gravity.CENTER_VERTICAL
         }
 
         val indexColor = when (index) {
-            "R_10" -> cyan
-            "R_25" -> green
-            "R_50" -> yellow
-            "R_75" -> red
-            else -> Color.rgb(175, 70, 255)
+
+            "R_10" ->
+                cyan
+
+            "R_25" ->
+                green
+
+            "R_50" ->
+                yellow
+
+            "R_75" ->
+                red
+
+            else ->
+                Color.rgb(
+                    175,
+                    70,
+                    255
+                )
         }
 
-        val name = text(index, 20, indexColor, true)
-
-        top.addView(
-            name,
-            LinearLayout.LayoutParams(0, -2, 1f)
+        val name = text(
+            index,
+            20,
+            indexColor,
+            true
         )
 
         top.addView(
-            badge("WAITING", yellow)
+            name,
+            LinearLayout.LayoutParams(
+                0,
+                -2,
+                1f
+            )
+        )
+
+        top.addView(
+            badge(
+                "WAITING",
+                yellow
+            )
         )
 
         c.addView(top)
@@ -219,10 +455,15 @@ class MainActivity : Activity() {
         return c
     }
 
+    // =============================================================
+    // ACCOUNT SUMMARY
+    // =============================================================
+
     private fun summaryRow(): View {
 
         val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
+            orientation =
+                LinearLayout.HORIZONTAL
         }
 
         listOf(
@@ -233,9 +474,15 @@ class MainActivity : Activity() {
         ).forEachIndexed { i, s ->
 
             val color = when (i) {
-                1, 2 -> green
-                3 -> red
-                else -> cyan
+
+                1, 2 ->
+                    green
+
+                3 ->
+                    red
+
+                else ->
+                    cyan
             }
 
             val t = text(
@@ -246,7 +493,9 @@ class MainActivity : Activity() {
                 Gravity.CENTER
             )
 
-            t.setBackgroundColor(panel)
+            t.setBackgroundColor(
+                panel
+            )
 
             row.addView(
                 t,
@@ -263,108 +512,26 @@ class MainActivity : Activity() {
         return row
     }
 
+    // =============================================================
+    // TWO BUTTON ROW
+    // =============================================================
+
     private fun rowButtons(
-    a: String,
-    b: String,
-    accent: Int,
-    c: String? = null
-): View {
+        a: String,
+        b: String,
+        accent: Int
+    ): View {
 
-    val row = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-    }
-
-    row.addView(
-        button(a, accent),
-        LinearLayout.LayoutParams(
-            0,
-            dp(58),
-            1f
-        ).apply {
-            marginEnd = dp(6)
-        }
-    )
-
-    row.addView(
-        button(b, accent),
-        LinearLayout.LayoutParams(
-            0,
-            dp(58),
-            1f
-        ).apply {
-            if (c != null) {
-                marginEnd = dp(6)
-            }
-        }
-    )
-
-    if (c != null) {
-        val preferences = getSharedPreferences(
-            "volatilities_settings",
-            MODE_PRIVATE
-        )
-
-        var autoTradeOn = preferences.getBoolean(
-            "auto_trade",
-            false
-        )
-
-        val autoButton = button(
-            if (autoTradeOn) {
-                "⚡  AUTO TRADE: ON"
-            } else {
-                "⚡  AUTO TRADE: OFF"
-            },
-            if (autoTradeOn) green else accent
-        )
-
-        autoButton.setOnClickListener {
-
-            autoTradeOn = !autoTradeOn
-
-            preferences.edit()
-                .putBoolean("auto_trade", autoTradeOn)
-                .apply()
-
-            autoButton.text =
-                if (autoTradeOn) {
-                    "⚡  AUTO TRADE: ON"
-                } else {
-                    "⚡  AUTO TRADE: OFF"
-                }
-
-            autoButton.setTextColor(
-                if (autoTradeOn) {
-                    Color.BLACK
-                } else {
-                    Color.WHITE
-                }
-            )
-
-            autoButton.setBackgroundColor(
-                if (autoTradeOn) {
-                    green
-                } else {
-                    Color.rgb(8, 31, 40)
-                }
-            )
+        val row = LinearLayout(this).apply {
+            orientation =
+                LinearLayout.HORIZONTAL
         }
 
         row.addView(
-            autoButton,
-            LinearLayout.LayoutParams(
-                0,
-                dp(58),
-                1f
-            )
-        )
-    }
-
-    return row
-    }
-
-        row.addView(
-            button(a, accent),
+            button(
+                a,
+                accent
+            ),
             LinearLayout.LayoutParams(
                 0,
                 dp(58),
@@ -375,7 +542,10 @@ class MainActivity : Activity() {
         )
 
         row.addView(
-            button(b, accent),
+            button(
+                b,
+                accent
+            ),
             LinearLayout.LayoutParams(
                 0,
                 dp(58),
@@ -386,6 +556,10 @@ class MainActivity : Activity() {
         return row
     }
 
+    // =============================================================
+    // BUTTON
+    // =============================================================
+
     private fun button(
         label: String,
         accent: Int
@@ -394,6 +568,7 @@ class MainActivity : Activity() {
         return Button(this).apply {
 
             text = label
+
             textSize = 14f
 
             setTypeface(
@@ -401,8 +576,13 @@ class MainActivity : Activity() {
                 Typeface.BOLD
             )
 
-            setTextColor(white)
-            setBackgroundColor(panel2)
+            setTextColor(
+                white
+            )
+
+            setBackgroundColor(
+                panel2
+            )
 
             isAllCaps = false
 
@@ -417,6 +597,10 @@ class MainActivity : Activity() {
         }
     }
 
+    // =============================================================
+    // BADGE
+    // =============================================================
+
     private fun badge(
         label: String,
         color: Int
@@ -429,15 +613,23 @@ class MainActivity : Activity() {
             true,
             Gravity.CENTER
         ).apply {
-            setBackgroundColor(panel2)
+
+            setBackgroundColor(
+                panel2
+            )
         }
     }
+
+    // =============================================================
+    // CARD
+    // =============================================================
 
     private fun card(): LinearLayout {
 
         return LinearLayout(this).apply {
 
-            orientation = LinearLayout.VERTICAL
+            orientation =
+                LinearLayout.VERTICAL
 
             setPadding(
                 dp(12),
@@ -446,7 +638,9 @@ class MainActivity : Activity() {
                 dp(12)
             )
 
-            setBackgroundColor(panel)
+            setBackgroundColor(
+                panel
+            )
 
             layoutParams =
                 LinearLayout.LayoutParams(
@@ -457,6 +651,10 @@ class MainActivity : Activity() {
                 }
         }
     }
+
+    // =============================================================
+    // SECTION TITLE
+    // =============================================================
 
     private fun sectionTitle(
         s: String
@@ -472,6 +670,10 @@ class MainActivity : Activity() {
         )
     }
 
+    // =============================================================
+    // TEXT
+    // =============================================================
+
     private fun text(
         s: String,
         size: Int,
@@ -484,13 +686,19 @@ class MainActivity : Activity() {
         return TextView(this).apply {
 
             text = s
-            textSize = size.toFloat()
 
-            setTextColor(color)
+            textSize =
+                size.toFloat()
 
-            this.gravity = gravity
+            setTextColor(
+                color
+            )
+
+            this.gravity =
+                gravity
 
             if (bold) {
+
                 setTypeface(
                     null,
                     Typeface.BOLD
@@ -506,11 +714,16 @@ class MainActivity : Activity() {
         }
     }
 
+    // =============================================================
+    // SPACER
+    // =============================================================
+
     private fun spacer(
         h: Int
     ): View {
 
         return View(this).apply {
+
             layoutParams =
                 LinearLayout.LayoutParams(
                     1,
@@ -518,6 +731,10 @@ class MainActivity : Activity() {
                 )
         }
     }
+
+    // =============================================================
+    // DP
+    // =============================================================
 
     private fun dp(
         v: Int
