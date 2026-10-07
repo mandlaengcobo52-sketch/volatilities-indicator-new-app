@@ -1,36 +1,43 @@
 <?xml version="1.0" encoding="utf-8"?>
+
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Internet access for Deriv API, OAuth and WebSocket connection -->
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
         android:label="Volatilities Indicator"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:icon="@drawable/volatilities_indicator_logo"
-        android:roundIcon="@drawable/volatilities_indicator_logo"
-        android:theme="@style/Theme.VolatilitiesIndicator">
+        android:theme="@style/Theme.VolatilitiesIndicator"
+        android:usesCleartextTraffic="false">
 
         <activity
-    android:name=".MainActivity"
-    android:exported="true">
+            android:name=".MainActivity"
+            android:exported="true">
 
-    <intent-filter>
-        <action android:name="android.intent.action.MAIN" />
-        <category android:name="android.intent.category.LAUNCHER" />
-    </intent-filter>
+            <!-- Normal application launch -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
 
-    <intent-filter>
-        <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
 
-        <category android:name="android.intent.category.DEFAULT" />
-        <category android:name="android.intent.category.BROWSABLE" />
+            <!-- Deriv OAuth return to the Android application -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
 
-        <data
-            android:scheme="volatilitiesindicator"
-            android:host="oauth-callback" />
-    </intent-filter>
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
 
-</activity>
+                <data
+                    android:scheme="volatilitiesindicator"
+                    android:host="oauth-callback" />
+            </intent-filter>
+
+        </activity>
 
     </application>
 
