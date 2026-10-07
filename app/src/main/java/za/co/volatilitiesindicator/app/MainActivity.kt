@@ -134,30 +134,21 @@ val title1 = text(
     19,
     white,
     true
-).apply {
-    singleLine = true
-    maxLines = 1
-}
+)
 
 val title2 = text(
     "INDICATOR",
     19,
     green,
     true
-).apply {
-    singleLine = true
-    maxLines = 1
-}
+)
 
 val tagline = text(
     "TRADE SMARTER TODAY",
     7,
     muted,
     true
-).apply {
-    singleLine = true
-    maxLines = 1
-}
+)
 
 titleBox.addView(title1)
 titleBox.addView(title2)
