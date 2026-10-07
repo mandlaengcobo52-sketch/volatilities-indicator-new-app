@@ -75,116 +75,124 @@ class MainActivity : Activity() {
 
         scroll.addView(root)
 
-        // =========================================================
-        // TOP HEADER
-        // =========================================================
+        // ============================================================
+// TOP HEADER
+// ============================================================
 
-        val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
+val header = LinearLayout(this).apply {
+    orientation = LinearLayout.HORIZONTAL
+    gravity = Gravity.CENTER_VERTICAL
+}
 
-        val menuButton = smallIconButton("☰")
+val menuButton = smallIconButton("☰")
 
-        menuButton.setOnClickListener {
-            Toast.makeText(
-                this@MainActivity,
-                if (selectedPlatform == "ADMIN") {
-                    "Admin menu"
-                } else {
-                    "User menu"
-                },
-                Toast.LENGTH_SHORT
-            ).show()
-        }
+menuButton.setOnClickListener {
+    Toast.makeText(
+        this@MainActivity,
+        if (selectedPlatform == "ADMIN") {
+            "Admin menu"
+        } else {
+            "User menu"
+        },
+        Toast.LENGTH_SHORT
+    ).show()
+}
 
-        header.addView(
-            menuButton,
-            LinearLayout.LayoutParams(
-                dp(46),
-                dp(52)
-            )
-        )
+header.addView(
+    menuButton,
+    LinearLayout.LayoutParams(
+        dp(46),
+        dp(52)
+    )
+)
 
-        val logo = ImageView(this).apply {
-            setImageResource(
-                R.drawable.volatilities_indicator_logo
-            )
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
-        }
+val logo = ImageView(this).apply {
+    setImageResource(
+        R.drawable.volatilities_indicator_logo
+    )
+    scaleType = ImageView.ScaleType.CENTER_INSIDE
+}
 
-        header.addView(
-            logo,
-            LinearLayout.LayoutParams(
-                dp(76),
-                dp(58)
-            ).apply {
-                marginStart = dp(4)
-                marginEnd = dp(8)
-            }
-        )
+header.addView(
+    logo,
+    LinearLayout.LayoutParams(
+        dp(68),
+        dp(58)
+    ).apply {
+        marginStart = dp(2)
+        marginEnd = dp(4)
+    }
+)
 
-        val titleBox = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
+val titleBox = LinearLayout(this).apply {
+    orientation = LinearLayout.VERTICAL
+    gravity = Gravity.CENTER_VERTICAL
+}
 
-        titleBox.addView(
-            text(
-                "VOLATILITIES",
-                21,
-                white,
-                true
-            )
-        )
+val title1 = text(
+    "VOLATILITIES",
+    19,
+    white,
+    true
+).apply {
+    singleLine = true
+    maxLines = 1
+}
 
-        titleBox.addView(
-            text(
-                "INDICATOR",
-                20,
-                green,
-                true
-            )
-        )
+val title2 = text(
+    "INDICATOR",
+    19,
+    green,
+    true
+).apply {
+    singleLine = true
+    maxLines = 1
+}
 
-        titleBox.addView(
-            text(
-                "TRADE SMARTER TODAY",
-                8,
-                muted,
-                true
-            )
-        )
+val tagline = text(
+    "TRADE SMARTER TODAY",
+    7,
+    muted,
+    true
+).apply {
+    singleLine = true
+    maxLines = 1
+}
 
-        header.addView(
-            titleBox,
-            LinearLayout.LayoutParams(
-                0,
-                -2,
-                1f
-            )
-        )
+titleBox.addView(title1)
+titleBox.addView(title2)
+titleBox.addView(tagline)
 
-        val notification = smallIconButton("♧")
+header.addView(
+    titleBox,
+    LinearLayout.LayoutParams(
+        0,
+        -2,
+        1f
+    )
+)
 
-        notification.setOnClickListener {
-            Toast.makeText(
-                this@MainActivity,
-                "No new notifications",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
+val notification = smallIconButton("🔔")
 
-        header.addView(
-            notification,
-            LinearLayout.LayoutParams(
-                dp(46),
-                dp(52)
-            )
-        )
+notification.setOnClickListener {
+    Toast.makeText(
+        this@MainActivity,
+        "No new notifications",
+        Toast.LENGTH_SHORT
+    ).show()
+}
 
-        root.addView(header)
+header.addView(
+    notification,
+    LinearLayout.LayoutParams(
+        dp(46),
+        dp(52)
+    )
+)
 
-        root.addView(spacer(8))
+root.addView(header)
+
+root.addView(spacer(8))
 
         // =========================================================
         // PLATFORM
