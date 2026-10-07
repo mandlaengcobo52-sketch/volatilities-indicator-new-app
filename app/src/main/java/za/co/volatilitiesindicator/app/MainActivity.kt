@@ -1198,4 +1198,3 @@ class MainActivity : Activity() {
          * The DerivApiClient remains managed by the Activity instance.
          */
     }
-}
