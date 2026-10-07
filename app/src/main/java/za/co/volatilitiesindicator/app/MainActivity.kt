@@ -484,11 +484,132 @@ root.addView(spacer(8))
 
         connect.setOnClickListener {
 
-            Toast.makeText(
-                this@MainActivity,
-                "Deriv connection will be added next",
-                Toast.LENGTH_SHORT
-            ).show()
+    val input = EditText(this@MainActivity).apply {
+        hint = "Enter Deriv PAT"
+        inputType =
+            android.text.InputType.TYPE_CLASS_TEXT or
+            android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        setPadding(
+            dp(20),
+            dp(12),
+            dp(20),
+            dp(12)
+        )
+    }
+
+    val dialog = AlertDialog.Builder(this@MainActivity)
+        .setTitle("Connect Deriv Account")
+        .setMessage(
+            "Enter your Deriv Personal Access Token (PAT). " +
+            "Your PAT is used only to authenticate this connection."
+        )
+        .setView(input)
+        .setNegativeButton("CANCEL", null)
+        .setPositiveButton("CONNECT", null)
+        .create()
+
+    dialog.setOnShowListener {
+
+        dialog.getButton(
+            AlertDialog.BUTTON_POSITIVE
+        ).setOnClickListener {
+
+            val pat = input.text
+                .toString()
+                .trim()
+
+            if (pat.isEmpty()) {
+
+                input.error =
+                    "Personal Access Token is required."
+
+                return@setOnClickListener
+            }
+
+            val accountType =
+                if (executionMode == "REAL") {
+                    "real"
+                } else {
+                    "demo"
+                }
+
+            val derivClient =
+                DerivApiClient(
+                    object : DerivApiClient.Callback {
+
+                        override fun onConnecting(
+                            message: String
+                        ) {
+                            runOnUiThread {
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    message,
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+
+                        override fun onConnected(
+                            accountId: String,
+                            accountType: String
+                        ) {
+                            runOnUiThread {
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "Deriv connected: $accountId",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+
+                        override fun onBalance(
+                            balance: Double,
+                            currency: String
+                        ) {
+                            runOnUiThread {
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "Balance: $currency %.2f"
+                                        .format(balance),
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+
+                        override fun onError(
+                            message: String
+                        ) {
+                            runOnUiThread {
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    message,
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
+
+                        override fun onDisconnected() {
+                            runOnUiThread {
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "Deriv disconnected",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                    }
+                )
+
+            derivClient.connect(
+                pat,
+                accountType
+            )
+
+            dialog.dismiss()
+        }
+    }
+
+    dialog.show()
         }
 
         refresh.setOnClickListener {
