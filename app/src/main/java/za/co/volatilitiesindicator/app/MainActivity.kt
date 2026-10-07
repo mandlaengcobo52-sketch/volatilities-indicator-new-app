@@ -870,4 +870,355 @@ class MainActivity : Activity() {
                 colour,
                 true,
                 Gravity.CENTER
-           
+            )
+
+            t.setBackgroundColor(
+                panel
+            )
+
+            row.addView(
+                t,
+                LinearLayout.LayoutParams(
+                    0,
+                    dp(58),
+                    1f
+                ).apply {
+                    marginEnd = dp(4)
+                }
+            )
+        }
+
+        return row
+    }
+
+    // =============================================================
+    // BOTTOM NAVIGATION
+    // =============================================================
+
+    private fun bottomNavigation(): View {
+
+        val row = LinearLayout(this).apply {
+
+            orientation =
+                LinearLayout.HORIZONTAL
+
+            setBackgroundColor(
+                panel
+            )
+
+            setPadding(
+                dp(4),
+                dp(4),
+                dp(4),
+                dp(4)
+            )
+        }
+
+        val items = listOf(
+            "⌂\nHome",
+            "▥\nTrade",
+            "⌁\nAnalysis",
+            "▤\nNews",
+            "⚙\nSettings"
+        )
+
+        items.forEachIndexed { index, item ->
+
+            val view = text(
+                item,
+                10,
+                if (index == 0) {
+                    green
+                } else {
+                    white
+                },
+                true,
+                Gravity.CENTER
+            )
+
+            if (index == 0) {
+                view.setBackgroundColor(
+                    Color.rgb(4, 55, 35)
+                )
+            }
+
+            row.addView(
+                view,
+                LinearLayout.LayoutParams(
+                    0,
+                    dp(58),
+                    1f
+                ).apply {
+                    marginEnd = dp(2)
+                }
+            )
+
+            view.setOnClickListener {
+
+                Toast.makeText(
+                    this@MainActivity,
+                    item.substringAfter("\n"),
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+
+        return row
+    }
+
+    // =============================================================
+    // SELECTABLE BUTTON
+    // =============================================================
+
+    private fun selectableButton(
+        label: String,
+        selected: Boolean
+    ): Button {
+
+        return Button(this).apply {
+
+            text = label
+
+            textSize = 14f
+
+            setTypeface(
+                null,
+                Typeface.BOLD
+            )
+
+            isAllCaps = false
+
+            setTextColor(
+                if (selected) {
+                    Color.BLACK
+                } else {
+                    white
+                }
+            )
+
+            setBackgroundColor(
+                if (selected) {
+                    green
+                } else {
+                    panel2
+                }
+            )
+        }
+    }
+
+    // =============================================================
+    // SMALL ICON BUTTON
+    // =============================================================
+
+    private fun smallIconButton(
+        label: String
+    ): Button {
+
+        return Button(this).apply {
+
+            text = label
+
+            textSize = 22f
+
+            setTextColor(
+                white
+            )
+
+            setBackgroundColor(
+                Color.TRANSPARENT
+            )
+
+            isAllCaps = false
+
+            setPadding(
+                0,
+                0,
+                0,
+                0
+            )
+        }
+    }
+
+    // =============================================================
+    // BADGE
+    // =============================================================
+
+    private fun badge(
+        label: String,
+        colour: Int
+    ): TextView {
+
+        return text(
+            label,
+            9,
+            colour,
+            true,
+            Gravity.CENTER
+        ).apply {
+
+            setBackgroundColor(
+                panel2
+            )
+        }
+    }
+
+    // =============================================================
+    // CARD
+    // =============================================================
+
+    private fun card(): LinearLayout {
+
+        return LinearLayout(this).apply {
+
+            orientation =
+                LinearLayout.VERTICAL
+
+            setPadding(
+                dp(12),
+                dp(12),
+                dp(12),
+                dp(12)
+            )
+
+            setBackgroundColor(
+                panel
+            )
+
+            layoutParams =
+                LinearLayout.LayoutParams(
+                    -1,
+                    -2
+                ).apply {
+                    bottomMargin = dp(4)
+                }
+        }
+    }
+
+    // =============================================================
+    // SECTION TITLE
+    // =============================================================
+
+    private fun sectionTitle(
+        value: String
+    ): TextView {
+
+        return text(
+            value,
+            15,
+            white,
+            true,
+            Gravity.START,
+            2
+        )
+    }
+
+    // =============================================================
+    // TEXT
+    // =============================================================
+
+    private fun text(
+        value: String,
+        size: Int,
+        colour: Int,
+        bold: Boolean = false,
+        gravity: Int = Gravity.START,
+        top: Int = 0
+    ): TextView {
+
+        return TextView(this).apply {
+
+            text = value
+
+            textSize =
+                size.toFloat()
+
+            setTextColor(
+                colour
+            )
+
+            this.gravity =
+                gravity
+
+            if (bold) {
+
+                setTypeface(
+                    null,
+                    Typeface.BOLD
+                )
+            }
+
+            setPadding(
+                0,
+                dp(top),
+                0,
+                dp(2)
+            )
+        }
+    }
+
+    // =============================================================
+    // SPACER
+    // =============================================================
+
+    private fun spacer(
+        height: Int
+    ): View {
+
+        return View(this).apply {
+
+            layoutParams =
+                LinearLayout.LayoutParams(
+                    1,
+                    dp(height)
+                )
+        }
+    }
+
+    // =============================================================
+    // SAVE PLATFORM
+    // =============================================================
+
+    private fun savePlatform() {
+
+        getSharedPreferences(
+            "volatilities_settings",
+            MODE_PRIVATE
+        ).edit()
+            .putString(
+                "platform",
+                selectedPlatform
+            )
+            .apply()
+    }
+
+    // =============================================================
+    // SAVE EXECUTION MODE
+    // =============================================================
+
+    private fun saveMode() {
+
+        getSharedPreferences(
+            "volatilities_settings",
+            MODE_PRIVATE
+        ).edit()
+            .putString(
+                "execution_mode",
+                selectedMode
+            )
+            .apply()
+    }
+
+    // =============================================================
+    // DP
+    // =============================================================
+
+    private fun dp(
+        value: Int
+    ): Int {
+
+        return (
+            value *
+                resources.displayMetrics.density
+            ).toInt()
+    }
+}
