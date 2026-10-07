@@ -1,5 +1,6 @@
 package za.co.volatilitiesindicator.app
-
+import android.app.AlertDialog
+import android.widget.EditText
 import android.app.Activity
 import android.graphics.Color
 import android.graphics.Typeface
