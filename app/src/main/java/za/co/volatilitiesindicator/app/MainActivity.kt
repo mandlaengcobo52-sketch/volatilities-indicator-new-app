@@ -408,245 +408,134 @@ root.addView(spacer(8))
         setContentView(scroll)
     }
 
-    // =============================================================
-    // DERIV ACCOUNT CARD
-    // =============================================================
+   // =============================================================
+// DERIV ACCOUNT CARD — OAUTH
+// =============================================================
 
-    private fun derivAccountCard(): View {
+private fun derivAccountCard(): View {
 
-        val card = card()
+    val card = card()
 
-        card.setPadding(
-            dp(12),
-            dp(12),
-            dp(12),
-            dp(12)
-        )
+    card.setPadding(
+        dp(12),
+        dp(12),
+        dp(12),
+        dp(12)
+    )
 
-        card.addView(
-            text(
-                "⚡  DERIV EXECUTION ACCOUNT",
-                15,
-                yellow,
-                true
-            )
-        )
-
-        card.addView(
-            text(
-                "🔴  NOT CONNECTED",
-                13,
-                red,
-                true,
-                0,
-                5
-            )
-        )
-
-        card.addView(
-            text(
-                "Account: —",
-                14,
-                white
-            )
-        )
-
-        card.addView(
-            text(
-                "Balance: —",
-                14,
-                white
-            )
-        )
-
-        card.addView(
-            text(
-                "Open P/L: —",
-                14,
-                white
-            )
-        )
-
-        card.addView(spacer(7))
-
-        val buttons = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-
-        val connect = selectableButton(
-            "🔗  CONNECT",
+    card.addView(
+        text(
+            "⚡  DERIV EXECUTION ACCOUNT",
+            15,
+            yellow,
             true
         )
+    )
 
-        val refresh = selectableButton(
-            "⟳  REFRESH",
-            false
+    card.addView(
+        text(
+            "🔴  NOT CONNECTED",
+            13,
+            red,
+            true,
+            0,
+            5
         )
+    )
 
-        connect.setOnClickListener {
-
-    val input = EditText(this@MainActivity).apply {
-        hint = "Enter Deriv PAT"
-        inputType =
-            android.text.InputType.TYPE_CLASS_TEXT or
-            android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
-        setPadding(
-            dp(20),
-            dp(12),
-            dp(20),
-            dp(12)
+    card.addView(
+        text(
+            "Account: —",
+            14,
+            white
         )
+    )
+
+    card.addView(
+        text(
+            "Balance: —",
+            14,
+            white
+        )
+    )
+
+    card.addView(
+        text(
+            "Open P/L: —",
+            14,
+            white
+        )
+    )
+
+    card.addView(spacer(7))
+
+    val buttons = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
     }
 
-    val dialog = AlertDialog.Builder(this@MainActivity)
-        .setTitle("Connect Deriv Account")
-        .setMessage(
-            "Enter your Deriv Personal Access Token (PAT). " +
-            "Your PAT is used only to authenticate this connection."
-        )
-        .setView(input)
-        .setNegativeButton("CANCEL", null)
-        .setPositiveButton("CONNECT", null)
-        .create()
+    val connect = selectableButton(
+        "🔗  CONNECT",
+        true
+    )
 
-    dialog.setOnShowListener {
+    val refresh = selectableButton(
+        "⟳  REFRESH",
+        false
+    )
 
-        dialog.getButton(
-            AlertDialog.BUTTON_POSITIVE
-        ).setOnClickListener {
+    // =========================================================
+    // OAUTH CONNECT
+    // =========================================================
 
-            val pat = input.text
-                .toString()
-                .trim()
+    connect.setOnClickListener {
 
-            if (pat.isEmpty()) {
-
-                input.error =
-                    "Personal Access Token is required."
-
-                return@setOnClickListener
+        val accountType =
+            if (selectedMode == "REAL") {
+                "real"
+            } else {
+                "demo"
             }
 
-            val accountType =
-                if (selectedMode == "REAL") {
-                    "real"
-                } else {
-                    "demo"
-                }
-
-            val derivClient =
-                DerivApiClient(
-                    object : DerivApiClient.Callback {
-
-                        override fun onConnecting(
-                            message: String
-                        ) {
-                            runOnUiThread {
-                                Toast.makeText(
-                                    this@MainActivity,
-                                    message,
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
-                        }
-
-                        override fun onConnected(
-                            accountId: String,
-                            accountType: String
-                        ) {
-                            runOnUiThread {
-                                Toast.makeText(
-                                    this@MainActivity,
-                                    "Deriv connected: $accountId",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
-                        }
-
-                        override fun onBalance(
-                            balance: Double,
-                            currency: String
-                        ) {
-                            runOnUiThread {
-                                Toast.makeText(
-                                    this@MainActivity,
-                                    "Balance: $currency %.2f"
-                                        .format(balance),
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
-                        }
-
-                        override fun onError(
-                            message: String
-                        ) {
-                            runOnUiThread {
-                                Toast.makeText(
-                                    this@MainActivity,
-                                    message,
-                                    Toast.LENGTH_LONG
-                                ).show()
-                            }
-                        }
-
-                        override fun onDisconnected() {
-                            runOnUiThread {
-                                Toast.makeText(
-                                    this@MainActivity,
-                                    "Deriv disconnected",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
-                        }
-                    }
-                )
-
-            derivClient.connect(
-                pat,
-                accountType
-            )
-
-            dialog.dismiss()
-        }
+        startDerivOAuth(accountType)
     }
 
-    dialog.show()
-        }
+    // =========================================================
+    // REFRESH
+    // =========================================================
 
-        refresh.setOnClickListener {
+    refresh.setOnClickListener {
 
-            Toast.makeText(
-                this@MainActivity,
-                "Refresh requested",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-
-        buttons.addView(
-            connect,
-            LinearLayout.LayoutParams(
-                0,
-                dp(54),
-                1f
-            ).apply {
-                marginEnd = dp(6)
-            }
-        )
-
-        buttons.addView(
-            refresh,
-            LinearLayout.LayoutParams(
-                0,
-                dp(54),
-                1f
-            )
-        )
-
-        card.addView(buttons)
-
-        return card
+        Toast.makeText(
+            this@MainActivity,
+            "Refresh requested",
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
+    buttons.addView(
+        connect,
+        LinearLayout.LayoutParams(
+            0,
+            dp(54),
+            1f
+        ).apply {
+            marginEnd = dp(6)
+        }
+    )
+
+    buttons.addView(
+        refresh,
+        LinearLayout.LayoutParams(
+            0,
+            dp(54),
+            1f
+        )
+    )
+
+    card.addView(buttons)
+
+    return card
+} 
     // =============================================================
     // AUTO TRADE
     // =============================================================
