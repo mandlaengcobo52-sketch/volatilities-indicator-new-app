@@ -15,12 +15,16 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
-import org.json.JSONObject
-import java.security.MessageDigest
-import java.security.SecureRandom
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Callback
+import okhttp3.Call
+import okhttp3.Response
+import org.json.JSONObject
+import java.io.IOException
+import java.security.MessageDigest
+import java.security.SecureRandom
 
 class MainActivity : Activity() {
 
@@ -49,8 +53,6 @@ class MainActivity : Activity() {
     private var selectedPlatform = "USER"
     private var selectedMode = "DEMO"
 
-    private var derivClient: DerivApiClient? = null
-
     private var connected = false
     private var connectedAccountId = ""
     private var connectedAccountType = ""
@@ -72,28 +74,24 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        selectedPlatform = getSharedPreferences(
+        val settings = getSharedPreferences(
             "volatilities_settings",
             MODE_PRIVATE
-        ).getString(
+        )
+
+        selectedPlatform = settings.getString(
             "platform",
             "USER"
         ) ?: "USER"
 
-        selectedMode = getSharedPreferences(
-            "volatilities_settings",
-            MODE_PRIVATE
-        ).getString(
+        selectedMode = settings.getString(
             "execution_mode",
             "DEMO"
         ) ?: "DEMO"
 
         buildScreen()
 
-        // Handle OAuth callback if Android launched
-        // this Activity directly from the callback.
         intent?.data?.let { uri ->
-
             if (
                 uri.scheme == "volatilitiesindicator" &&
                 uri.host == "oauth-callback"
@@ -104,7 +102,7 @@ class MainActivity : Activity() {
     }
 
     // =============================================================
-    // OAUTH CALLBACK
+    // NEW INTENT
     // =============================================================
 
     override fun onNewIntent(intent: Intent) {
@@ -113,7 +111,6 @@ class MainActivity : Activity() {
         setIntent(intent)
 
         intent.data?.let { uri ->
-
             if (
                 uri.scheme == "volatilitiesindicator" &&
                 uri.host == "oauth-callback"
@@ -147,7 +144,7 @@ class MainActivity : Activity() {
         scroll.addView(root)
 
         // =========================================================
-        // TOP HEADER
+        // HEADER
         // =========================================================
 
         val header = LinearLayout(this).apply {
@@ -158,7 +155,6 @@ class MainActivity : Activity() {
         val menuButton = smallIconButton("☰")
 
         menuButton.setOnClickListener {
-
             Toast.makeText(
                 this@MainActivity,
                 if (selectedPlatform == "ADMIN") {
@@ -242,7 +238,6 @@ class MainActivity : Activity() {
             smallIconButton("🔔")
 
         notification.setOnClickListener {
-
             Toast.makeText(
                 this@MainActivity,
                 "No new notifications",
@@ -260,13 +255,12 @@ class MainActivity : Activity() {
 
         root.addView(header)
         root.addView(spacer(8))
+
         // =========================================================
         // PLATFORM
         // =========================================================
 
-        root.addView(
-            sectionTitle("PLATFORM")
-        )
+        root.addView(sectionTitle("PLATFORM"))
 
         val platformRow =
             LinearLayout(this).apply {
@@ -287,20 +281,14 @@ class MainActivity : Activity() {
             )
 
         userButton.setOnClickListener {
-
             selectedPlatform = "USER"
-
             savePlatform()
-
             buildScreen()
         }
 
         adminButton.setOnClickListener {
-
             selectedPlatform = "ADMIN"
-
             savePlatform()
-
             buildScreen()
         }
 
@@ -326,6 +314,7 @@ class MainActivity : Activity() {
 
         root.addView(platformRow)
         root.addView(spacer(12))
+
         // =========================================================
         // EXECUTION MODE
         // =========================================================
@@ -353,20 +342,14 @@ class MainActivity : Activity() {
             )
 
         demoButton.setOnClickListener {
-
             selectedMode = "DEMO"
-
             saveMode()
-
             buildScreen()
         }
 
         realButton.setOnClickListener {
-
             selectedMode = "REAL"
-
             saveMode()
-
             buildScreen()
         }
 
@@ -430,7 +413,6 @@ class MainActivity : Activity() {
         )
 
         indexes.forEach { index ->
-
             root.addView(
                 indexRow(index)
             )
@@ -439,15 +421,13 @@ class MainActivity : Activity() {
         root.addView(spacer(14))
 
         // =========================================================
-        // ADMIN MENU
+        // ADMINISTRATION
         // =========================================================
 
         if (selectedPlatform == "ADMIN") {
 
             root.addView(
-                sectionTitle(
-                    "ADMINISTRATION"
-                )
+                sectionTitle("ADMINISTRATION")
             )
 
             root.addView(
@@ -456,14 +436,13 @@ class MainActivity : Activity() {
 
             root.addView(spacer(14))
         }
+
         // =========================================================
         // ACCOUNT SUMMARY
         // =========================================================
 
         root.addView(
-            sectionTitle(
-                "ACCOUNT SUMMARY"
-            )
+            sectionTitle("ACCOUNT SUMMARY")
         )
 
         root.addView(
@@ -496,7 +475,7 @@ class MainActivity : Activity() {
     }
 
     // =============================================================
-    // DERIV ACCOUNT CARD — OAUTH
+    // DERIV ACCOUNT CARD
     // =============================================================
 
     private fun derivAccountCard(): View {
@@ -597,31 +576,24 @@ class MainActivity : Activity() {
         connect.setOnClickListener {
 
             val accountType =
-                if (
-                    selectedMode == "REAL"
-                ) {
+                if (selectedMode == "REAL") {
                     "real"
                 } else {
                     "demo"
                 }
 
-            startDerivOAuth(
-                accountType
-            )
+            startDerivOAuth(accountType)
         }
 
         refresh.setOnClickListener {
 
             if (connected) {
-
                 Toast.makeText(
                     this@MainActivity,
                     "Deriv connection is active",
                     Toast.LENGTH_SHORT
                 ).show()
-
             } else {
-
                 Toast.makeText(
                     this@MainActivity,
                     "No Deriv account connected",
@@ -654,7 +626,8 @@ class MainActivity : Activity() {
 
         return card
     }
-   // =============================================================
+
+    // =============================================================
     // START DERIV OAUTH
     // =============================================================
 
@@ -752,6 +725,7 @@ class MainActivity : Activity() {
             ).show()
         }
     }
+
     // =============================================================
     // OAUTH CALLBACK
     // =============================================================
@@ -761,9 +735,7 @@ class MainActivity : Activity() {
     ) {
 
         val error =
-            uri.getQueryParameter(
-                "error"
-            )
+            uri.getQueryParameter("error")
 
         if (!error.isNullOrEmpty()) {
 
@@ -772,35 +744,41 @@ class MainActivity : Activity() {
                     "error_description"
                 ) ?: error
 
+            connectionMessage =
+                "AUTHORIZATION FAILED"
+
             Toast.makeText(
                 this,
                 "Deriv authorization failed: $description",
                 Toast.LENGTH_LONG
             ).show()
 
+            buildScreen()
+
             return
         }
 
         val code =
-            uri.getQueryParameter(
-                "code"
-            )
+            uri.getQueryParameter("code")
 
         val state =
-            uri.getQueryParameter(
-                "state"
-            )
+            uri.getQueryParameter("state")
 
         if (
             code.isNullOrEmpty() ||
             state.isNullOrEmpty()
         ) {
 
+            connectionMessage =
+                "INVALID OAUTH RESPONSE"
+
             Toast.makeText(
                 this,
                 "Invalid Deriv OAuth response.",
                 Toast.LENGTH_LONG
             ).show()
+
+            buildScreen()
 
             return
         }
@@ -834,9 +812,370 @@ class MainActivity : Activity() {
             verifier.isEmpty()
         ) {
 
+            connectionMessage =
+                "OAUTH SESSION EXPIRED"
+
             Toast.makeText(
+                this,
+                "OAuth session is missing. Please connect again.",
+                Toast.LENGTH_LONG
+            ).show()
+
+            buildScreen()
+                                }
+
+                                return
+                            }
+
+                            getSharedPreferences(
+                                "volatilities_oauth",
+                                MODE_PRIVATE
+                            )
+                                .edit()
+                                .putString(
+                                    "access_token",
+                                    accessToken
+                                )
+                                .putString(
+                                    "account_type",
+                                    accountType
+                                )
+                                .apply()
+
+                            runOnUiThread {
+
+                                connected = true
+
+                                connectedAccountType =
+                                    accountType
+
+                                connectedAccountId =
+                                    "OAuth Connected"
+
+                                connectionMessage =
+                                    "CONNECTED"
+
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "Deriv account connected successfully.",
+                                    Toast.LENGTH_LONG
+                                ).show()
+
+                                buildScreen()
+                            }
+
+                        } catch (
+                            e: Exception
+                        ) {
+
+                            runOnUiThread {
+
+                                connected = false
+
+                                connectionMessage =
+                                    "INVALID TOKEN RESPONSE"
+
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "Invalid response from Deriv.",
+                                    Toast.LENGTH_LONG
+                                ).show()
+
+                                buildScreen()
+                            }
+                        }
+                    }
+                }
+            )
+    }
+
+    // =============================================================
+    // AUTO TRADE
+    // =============================================================
+
+    private fun autoTradeButton(): View {
+
+        return selectableButton(
+            "⚡  AUTO TRADE",
+            false
+        ).apply {
+
+            setOnClickListener {
+
+                Toast.makeText(
                     this@MainActivity,
+                    "Auto Trade is ready for configuration.",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+
+            layoutParams =
+                LinearLayout.LayoutParams(
+                    -1,
+                    dp(54)
+                )
+        }
+    }
+
+    // =============================================================
+    // INDEX ROW
+    // =============================================================
+
+    private fun indexRow(
+        index: String
+    ): View {
+
+        val card = card()
+
+        card.setPadding(
+            dp(10),
+            dp(10),
+            dp(10),
+            dp(10)
+        )
+
+        val titleRow =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.HORIZONTAL
+                gravity =
+                    Gravity.CENTER_VERTICAL
+            }
+
+        titleRow.addView(
+            text(
+                index,
+                16,
+                white,
+                true
+            ),
+            LinearLayout.LayoutParams(
+                0,
+                -2,
+                1f
+            )
+        )
+
+        titleRow.addView(
+            badge(
+                "WAITING",
+                yellow
+            ),
+            LinearLayout.LayoutParams(
+                dp(72),
+                dp(25)
+            )
+        )
+
+        card.addView(titleRow)
+
+        card.addView(
+            text(
+                "Phase: BUILDING UP",
+                12,
+                cyan,
+                true,
+                0,
+                5
+            )
+        )
+
+        card.addView(
+            text(
+                "Current Price: —",
+                12,
+                white
+            )
+        )
+
+        card.addView(
+            text(
+                "Support: —",
+                12,
+                green
+            )
+        )
+
+        card.addView(
+            text(
+                "Resistance: —",
+                12,
+                red
+            )
+        )
+
+        card.addView(
+            text(
+                "Direction: WAITING",
+                12,
+                yellow,
+                true
+            )
+        )
+
+        card.addView(
+            text(
+                "Probability: —",
+                12,
+                cyan
+            )
+        )
+
+        card.addView(
+            text(
+                "Target Price: —",
+                12,
+                white
+            )
+        )
+
+        return card
+    }
+
+    // =============================================================
+    // ADMIN MENU
+    // =============================================================
+
+    private fun adminMenu(): View {
+
+        val container = card()
+
+        val items = listOf(
+            "USER ACCOUNTS",
+            "TRADE SETTINGS",
+            "RISK CATEGORIES",
+            "INDEX SETTINGS",
+            "SYSTEM STATUS"
+        )
+
+        items.forEach { item ->
+
+            val button =
+                selectableButton(
                     item,
+                    false
+                )
+
+            button.setOnClickListener {
+
+                Toast.makeText(
+                    this@MainActivity,
+                    "$item selected",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+
+            container.addView(
+                button,
+                LinearLayout.LayoutParams(
+                    -1,
+                    dp(48)
+                ).apply {
+                    bottomMargin = dp(5)
+                }
+            )
+        }
+
+        return container
+    }
+    // =============================================================
+    // ACCOUNT SUMMARY
+    // =============================================================
+
+    private fun summaryRow(): View {
+
+        val card = card()
+
+        card.addView(
+            text(
+                "CONNECTION",
+                11,
+                muted,
+                true
+            )
+        )
+
+        card.addView(
+            text(
+                if (connected) {
+                    "CONNECTED"
+                } else {
+                    "NOT CONNECTED"
+                },
+                15,
+                if (connected) green else red,
+                true
+            )
+        )
+
+        card.addView(
+            text(
+                "Platform: $selectedPlatform",
+                12,
+                white
+            )
+        )
+
+        card.addView(
+            text(
+                "Mode: $selectedMode",
+                12,
+                white
+            )
+        )
+
+        card.addView(
+            text(
+                if (connected) {
+                    "Account Type: $connectedAccountType"
+                } else {
+                    "Account Type: —"
+                },
+                12,
+                white
+            )
+        )
+
+        return card
+    }
+
+    // =============================================================
+    // BOTTOM NAVIGATION
+    // =============================================================
+
+    private fun bottomNavigation(): View {
+
+        val row =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.HORIZONTAL
+                setBackgroundColor(panel)
+            }
+
+        val items = listOf(
+            "⌂\nHOME",
+            "↗\nTRADE",
+            "◷\nHISTORY",
+            "🔔\nALERTS",
+            "▣\nPLANS",
+            "👤\nACCOUNT"
+        )
+
+        items.forEachIndexed { index, item ->
+
+            val button =
+                selectableButton(
+                    item,
+                    index == 0
+                )
+
+            button.textSize = 9f
+
+            button.setOnClickListener {
+
+                Toast.makeText(
+                    this@MainActivity,
+                    item.substringAfter("\n"),
                     Toast.LENGTH_SHORT
                 ).show()
             }
@@ -845,10 +1184,15 @@ class MainActivity : Activity() {
                 button,
                 LinearLayout.LayoutParams(
                     0,
-                    dp(52),
+                    dp(58),
                     1f
                 ).apply {
-                    marginEnd = dp(3)
+                    marginEnd =
+                        if (index < items.lastIndex) {
+                            dp(2)
+                        } else {
+                            0
+                        }
                 }
             )
         }
@@ -959,7 +1303,6 @@ class MainActivity : Activity() {
             )
         }
     }
-
     // =============================================================
     // SMALL ICON BUTTON
     // =============================================================
@@ -1072,6 +1415,7 @@ class MainActivity : Activity() {
             )
         }
     }
+
     // =============================================================
     // SPACER
     // =============================================================
@@ -1169,7 +1513,6 @@ class MainActivity : Activity() {
                 Base64.NO_PADDING
         )
     }
-
     // =============================================================
     // DP
     // =============================================================
@@ -1192,9 +1535,9 @@ class MainActivity : Activity() {
         super.onDestroy()
 
         /*
-         * Do not disconnect here when Android is simply recreating
-         * the Activity because of a configuration change.
-         *
-         * The DerivApiClient remains managed by the Activity instance.
+         * Do not disconnect the Deriv account here.
+         * Android may recreate the Activity during configuration
+         * changes.
          */
     }
+}
