@@ -29,7 +29,7 @@ class DerivApiClient(
             "/trading/v1/options/accounts"
 
         private const val APP_ID =
-            "YOUR_DERIV_APP_ID"
+    "34BJFqqY1XNvSPy4PqzNT"
     }
 
     private val httpClient = OkHttpClient()
