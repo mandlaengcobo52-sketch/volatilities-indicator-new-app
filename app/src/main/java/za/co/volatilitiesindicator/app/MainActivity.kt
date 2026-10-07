@@ -528,7 +528,7 @@ root.addView(spacer(8))
             }
 
             val accountType =
-                if (executionMode == "REAL") {
+                if (selectedMode == "REAL") {
                     "real"
                 } else {
                     "demo"
