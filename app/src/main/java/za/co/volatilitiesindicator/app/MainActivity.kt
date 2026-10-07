@@ -119,34 +119,27 @@ class MainActivity : Activity() {
     private fun buildMainScreen() {
 
         rootScroll = ScrollView(this).apply {
-            setBackgroundColor(bg)
-            isFillViewport = true
-        }
+    setBackgroundColor(bg)
+    isFillViewport = true
+}
 
-        rootLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(12), dp(12), dp(24))
-            setBackgroundColor(bg)
-        }
+rootLayout = LinearLayout(this).apply {
+    orientation = LinearLayout.VERTICAL
+    setPadding(dp(12), dp(12), dp(12), dp(24))
+    setBackgroundColor(bg)
+}
 
-        rootScroll.addView(
-            rootLayout,
-            ScrollView.LayoutParams(
-                ScrollView.LayoutParams.MATCH_PARENT,
-                ScrollView.LayoutParams.WRAP_CONTENT
-            )
-        )
+rootScroll.addView(rootLayout)
 
-        setContentView(rootScroll)
+setContentView(rootScroll)
 
-        addHeader()
-        addPlatformSelector()
-        addExecutionSelector()
-        addAccountCard()
-        addIndexMonitor()
-        addAdminSection()
-        addBottomNavigation()
-    }
+addHeader()
+addPlatformSelector()
+addExecutionSelector()
+addAccountCard()
+addIndexMonitor()
+addAdminSection()
+addBottomNavigation()
 
     // =============================================================
     // HEADER
