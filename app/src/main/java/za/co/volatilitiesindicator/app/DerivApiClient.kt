@@ -11,6 +11,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.net.URLEncoder
+import java.security.MessageDigest
+import java.util.Base64
 
 class DerivApiClient(
     private val callback: Callback
@@ -30,18 +32,12 @@ class DerivApiClient(
             currency: String
         )
 
-        fun onError(
-            message: String
-        )
+        fun onError(message: String)
 
         fun onDisconnected()
     }
 
     companion object {
-
-        // =========================================================
-        // DERIV API
-        // =========================================================
 
         private const val API_BASE =
             "https://api.derivws.com"
@@ -49,19 +45,11 @@ class DerivApiClient(
         private const val ACCOUNTS_PATH =
             "/trading/v1/options/accounts"
 
-        // =========================================================
-        // DERIV OAUTH CLIENT IDS
-        // =========================================================
-
         private const val DEMO_CLIENT_ID =
             "34fz6VSRiNSQnELXjApVH"
 
         private const val REAL_CLIENT_ID =
             "34fz9hcgpdwSzNCVeUgMR"
-
-        // =========================================================
-        // OAUTH
-        // =========================================================
 
         const val OAUTH_REDIRECT_URI =
             "https://volatilitiesindicator.org.za/accounts/account-callback.php"
@@ -75,10 +63,6 @@ class DerivApiClient(
         const val OAUTH_SCOPE =
             "trade"
 
-        // =========================================================
-        // CLIENT ID
-        // =========================================================
-
         fun clientId(
             accountType: String
         ): String {
@@ -89,18 +73,11 @@ class DerivApiClient(
                     ignoreCase = true
                 )
             ) {
-
                 REAL_CLIENT_ID
-
             } else {
-
                 DEMO_CLIENT_ID
             }
         }
-
-        // =========================================================
-        // BUILD OAUTH URL
-        // =========================================================
 
         fun buildOAuthUrl(
             accountType: String,
@@ -114,46 +91,71 @@ class DerivApiClient(
             return OAUTH_AUTH_URL +
                 "?response_type=code" +
                 "&client_id=" +
-                encode(clientId) +
+                URLEncoder.encode(
+                    clientId,
+                    "UTF-8"
+                ) +
                 "&redirect_uri=" +
-                encode(OAUTH_REDIRECT_URI) +
+                URLEncoder.encode(
+                    OAUTH_REDIRECT_URI,
+                    "UTF-8"
+                ) +
                 "&scope=" +
-                encode(OAUTH_SCOPE) +
+                URLEncoder.encode(
+                    OAUTH_SCOPE,
+                    "UTF-8"
+                ) +
                 "&state=" +
-                encode(state) +
+                URLEncoder.encode(
+                    state,
+                    "UTF-8"
+                ) +
                 "&code_challenge=" +
-                encode(codeChallenge) +
+                URLEncoder.encode(
+                    codeChallenge,
+                    "UTF-8"
+                ) +
                 "&code_challenge_method=S256"
         }
 
-        private fun encode(
-            value: String
+        fun createCodeVerifier(): String {
+
+            val bytes =
+                ByteArray(32)
+
+            java.security.SecureRandom()
+                .nextBytes(bytes)
+
+            return Base64
+                .getUrlEncoder()
+                .withoutPadding()
+                .encodeToString(bytes)
+        }
+
+        fun createCodeChallenge(
+            verifier: String
         ): String {
 
-            return URLEncoder
-                .encode(
-                    value,
-                    "UTF-8"
-                )
+            val digest =
+                MessageDigest
+                    .getInstance("SHA-256")
+                    .digest(
+                        verifier.toByteArray(
+                            Charsets.US_ASCII
+                        )
+                    )
+
+            return Base64
+                .getUrlEncoder()
+                .withoutPadding()
+                .encodeToString(digest)
         }
     }
-
-    // =============================================================
-    // HTTP CLIENT
-    // =============================================================
 
     private val httpClient =
         OkHttpClient()
 
-    // =============================================================
-    // WEBSOCKET
-    // =============================================================
-
     private var webSocket: WebSocket? = null
-
-    // =============================================================
-    // AUTHENTICATION
-    // =============================================================
 
     private var accessToken: String = ""
 
@@ -161,19 +163,18 @@ class DerivApiClient(
 
     private var selectedAccountType: String = ""
 
-    // =============================================================
-    // CONNECT USING OAUTH ACCESS TOKEN
-    // =============================================================
-
     fun connectWithAccessToken(
         token: String,
         accountType: String
     ) {
 
-        val cleanToken =
+        accessToken =
             token.trim()
 
-        if (cleanToken.isEmpty()) {
+        selectedAccountType =
+            accountType
+
+        if (accessToken.isEmpty()) {
 
             callback.onError(
                 "OAuth access token is empty."
@@ -182,37 +183,16 @@ class DerivApiClient(
             return
         }
 
-        accessToken =
-            cleanToken
-
-        selectedAccountType =
-            accountType.trim()
-
         callback.onConnecting(
             "Connecting to Deriv..."
         )
 
-        getAccounts(
-            selectedAccountType
-        )
+        getAccounts(accountType)
     }
-
-    // =============================================================
-    // GET ACCOUNTS
-    // =============================================================
 
     private fun getAccounts(
         accountType: String
     ) {
-
-        if (accessToken.isEmpty()) {
-
-            callback.onError(
-                "No Deriv access token is available."
-            )
-
-            return
-        }
 
         val request =
             Request.Builder()
@@ -223,10 +203,6 @@ class DerivApiClient(
                 .addHeader(
                     "Authorization",
                     "Bearer $accessToken"
-                )
-                .addHeader(
-                    "Accept",
-                    "application/json"
                 )
                 .get()
                 .build()
@@ -274,15 +250,6 @@ class DerivApiClient(
                                 return
                             }
 
-                            if (body.isBlank()) {
-
-                                callback.onError(
-                                    "Deriv returned an empty account response."
-                                )
-
-                                return
-                            }
-
                             try {
 
                                 val json =
@@ -294,35 +261,26 @@ class DerivApiClient(
                                 var foundAccountId =
                                     ""
 
-                                // =================================================
-                                // DATA = ARRAY
-                                // =================================================
-
                                 if (
                                     data is JSONArray
                                 ) {
 
                                     for (
-                                        i in 0 until
-                                            data.length()
+                                        i in 0 until data.length()
                                     ) {
 
                                         val account =
-                                            data.optJSONObject(
-                                                i
-                                            )
+                                            data.optJSONObject(i)
                                                 ?: continue
 
                                         val type =
                                             account.optString(
-                                                "account_type",
-                                                ""
+                                                "account_type"
                                             )
 
                                         val id =
                                             account.optString(
-                                                "account_id",
-                                                ""
+                                                "account_id"
                                             )
 
                                         if (
@@ -339,68 +297,32 @@ class DerivApiClient(
                                             break
                                         }
                                     }
-                                }
 
-                                // =================================================
-                                // DATA = OBJECT
-                                // =================================================
-
-                                else if (
+                                } else if (
                                     data is JSONObject
                                 ) {
 
                                     val type =
                                         data.optString(
-                                            "account_type",
-                                            ""
+                                            "account_type"
                                         )
 
                                     val id =
                                         data.optString(
-                                            "account_id",
-                                            ""
+                                            "account_id"
                                         )
 
                                     if (
                                         type.equals(
                                             accountType,
                                             ignoreCase = true
-                                        ) &&
-                                        id.isNotEmpty()
+                                        )
                                     ) {
 
                                         foundAccountId =
                                             id
                                     }
                                 }
-
-                                // =================================================
-                                // FALLBACK: SOME RESPONSES MAY RETURN
-                                // ACCOUNT ID DIRECTLY
-                                // =================================================
-
-                                if (
-                                    foundAccountId.isEmpty()
-                                ) {
-
-                                    val directAccountId =
-                                        json.optString(
-                                            "account_id",
-                                            ""
-                                        )
-
-                                    if (
-                                        directAccountId.isNotEmpty()
-                                    ) {
-
-                                        foundAccountId =
-                                            directAccountId
-                                    }
-                                }
-
-                                // =================================================
-                                // ACCOUNT NOT FOUND
-                                // =================================================
 
                                 if (
                                     foundAccountId.isEmpty()
@@ -415,10 +337,6 @@ class DerivApiClient(
 
                                 selectedAccountId =
                                     foundAccountId
-
-                                callback.onConnecting(
-                                    "Deriv account found. Establishing live connection..."
-                                )
 
                                 requestWebSocketUrl(
                                     accountType
@@ -442,24 +360,9 @@ class DerivApiClient(
             )
     }
 
-    // =============================================================
-    // REQUEST AUTHENTICATED WEBSOCKET URL
-    // =============================================================
-
     private fun requestWebSocketUrl(
         accountType: String
     ) {
-
-        if (
-            selectedAccountId.isEmpty()
-        ) {
-
-            callback.onError(
-                "Deriv account ID is missing."
-            )
-
-            return
-        }
 
         val url =
             "$API_BASE$ACCOUNTS_PATH/" +
@@ -471,10 +374,6 @@ class DerivApiClient(
                 .addHeader(
                     "Authorization",
                     "Bearer $accessToken"
-                )
-                .addHeader(
-                    "Accept",
-                    "application/json"
                 )
                 .post(
                     RequestBody.create(
@@ -527,15 +426,6 @@ class DerivApiClient(
                                 return
                             }
 
-                            if (body.isBlank()) {
-
-                                callback.onError(
-                                    "Deriv returned an empty OTP response."
-                                )
-
-                                return
-                            }
-
                             try {
 
                                 val json =
@@ -549,8 +439,7 @@ class DerivApiClient(
                                 val wsUrl =
                                     data
                                         ?.optString(
-                                            "url",
-                                            ""
+                                            "url"
                                         )
                                         .orEmpty()
 
@@ -564,10 +453,6 @@ class DerivApiClient(
 
                                     return
                                 }
-
-                                callback.onConnecting(
-                                    "Opening live Deriv connection..."
-                                )
 
                                 openWebSocket(
                                     wsUrl,
@@ -592,16 +477,10 @@ class DerivApiClient(
             )
     }
 
-    // =============================================================
-    // OPEN AUTHENTICATED WEBSOCKET
-    // =============================================================
-
     private fun openWebSocket(
         wsUrl: String,
         accountType: String
     ) {
-
-        webSocket?.cancel()
 
         val request =
             Request.Builder()
@@ -622,10 +501,6 @@ class DerivApiClient(
                             selectedAccountId,
                             accountType
                         )
-
-                        // =============================================
-                        // REQUEST LIVE BALANCE
-                        // =============================================
 
                         val balanceRequest =
                             JSONObject()
@@ -656,10 +531,6 @@ class DerivApiClient(
 
                             val json =
                                 JSONObject(text)
-
-                            // =========================================
-                            // BALANCE
-                            // =========================================
 
                             val balanceObject =
                                 json.optJSONObject(
@@ -693,10 +564,6 @@ class DerivApiClient(
                                 }
                             }
 
-                            // =========================================
-                            // DERIV ERROR
-                            // =========================================
-
                             val errorObject =
                                 json.optJSONObject(
                                     "error"
@@ -706,14 +573,11 @@ class DerivApiClient(
                                 errorObject != null
                             ) {
 
-                                val message =
+                                callback.onError(
                                     errorObject.optString(
                                         "message",
                                         "Deriv returned an error."
                                     )
-
-                                callback.onError(
-                                    message
                                 )
                             }
 
@@ -755,9 +619,6 @@ class DerivApiClient(
                 }
             )
     }
-     =============================================================
-    // DISCONNECT
-    // =============================================================
 
     fun disconnect() {
 
@@ -766,17 +627,13 @@ class DerivApiClient(
             "User disconnected"
         )
 
-        webSocket =
-            null
+        webSocket = null
 
-        accessToken =
-            ""
+        accessToken = ""
 
-        selectedAccountId =
-            ""
+        selectedAccountId = ""
 
-        selectedAccountType =
-            ""
+        selectedAccountType = ""
 
         callback.onDisconnected()
     }
