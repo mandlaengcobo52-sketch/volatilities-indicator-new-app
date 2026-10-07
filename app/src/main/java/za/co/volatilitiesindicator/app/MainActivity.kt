@@ -140,7 +140,7 @@ addAccountCard()
 addIndexMonitor()
 addAdminSection()
 addBottomNavigation()
-
+    }
     // =============================================================
     // HEADER
     // =============================================================
