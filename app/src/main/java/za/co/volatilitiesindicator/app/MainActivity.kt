@@ -6,6 +6,9 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Bundle
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.util.Base64
 import android.view.Gravity
 import android.view.View
@@ -66,6 +69,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     // AUTO TRADE
     // =============================================================
 
+    /*
+     * Auto Trade is persistent.
+     *
+     * Rebuilding the screen must NOT switch it OFF.
+     * It remains ON until the user deliberately changes it.
+     */
     private var autoTradeEnabled = false
 
     // =============================================================
@@ -151,6 +160,24 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             savedInstanceState
         )
 
+        /*
+         * Restore Auto Trade state.
+         *
+         * This prevents rebuild(), screen rotation, or account
+         * changes from silently switching Auto Trade OFF.
+         */
+        autoTradeEnabled =
+            prefs.getBoolean(
+                "auto_trade_enabled",
+                false
+            )
+
+        executionMode =
+            prefs.getString(
+                "execution_mode",
+                "DEMO"
+            ) ?: "DEMO"
+
         window.statusBarColor = BG
 
         window.navigationBarColor = BG
@@ -228,7 +255,17 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         addHeader()
 
-        addPlatformSelector()
+        /*
+         * PLATFORM must NOT appear on the USER dashboard.
+         *
+         * It remains available on ADMIN.
+         */
+        if (
+            currentPlatform == "ADMIN"
+        ) {
+
+            addPlatformSelector()
+        }
 
         addExecutionSelector()
 
@@ -449,15 +486,19 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         )
 
         // ---------------------------------------------------------
-        // TOP RIGHT SYMBOL
+        // TOP RIGHT BELL
         // ---------------------------------------------------------
 
         val bell =
             TextView(this).apply {
 
-                text = "♧"
+                /*
+                 * Replaced the old flower/clover symbol (♧)
+                 * with a notification bell.
+                 */
+                text = "🔔"
 
-                textSize = 28f
+                textSize = 25f
 
                 setTextColor(
                     WHITE
@@ -471,6 +512,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                         dp(44),
                         dp(52)
                     )
+
+                contentDescription =
+                    "Notifications"
             }
 
         bell.setOnClickListener {
@@ -566,7 +610,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             row
         )
     }
-        // =============================================================
+
+    // =============================================================
     // EXECUTION MODE
     // =============================================================
 
@@ -600,6 +645,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             executionMode =
                 "DEMO"
 
+            prefs.edit()
+                .putString(
+                    "execution_mode",
+                    "DEMO"
+                )
+                .apply()
+
             connected =
                 false
 
@@ -615,6 +667,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             accountCurrency =
                 ""
 
+            /*
+             * Auto Trade is intentionally NOT changed here.
+             * It remains ON/OFF exactly as the user selected it.
+             */
             rebuild()
         }
 
@@ -623,6 +679,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             executionMode =
                 "REAL"
 
+            prefs.edit()
+                .putString(
+                    "execution_mode",
+                    "REAL"
+                )
+                .apply()
+
             connected =
                 false
 
@@ -638,6 +701,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             accountCurrency =
                 ""
 
+            /*
+             * Auto Trade is intentionally NOT changed here.
+             */
             rebuild()
         }
 
@@ -671,8 +737,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             row
         )
     }
-
-    // =============================================================
+        // =============================================================
     // DERIV EXECUTION ACCOUNT
     // =============================================================
 
@@ -1334,10 +1399,29 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 }
             )
 
+        auto.setTextColor(
+            if (autoTradeEnabled) {
+                GREEN
+            } else {
+                WHITE
+            }
+        )
+
         auto.setOnClickListener {
 
+            /*
+             * The button remains in its selected state until
+             * the user deliberately presses it again.
+             */
             autoTradeEnabled =
                 !autoTradeEnabled
+
+            prefs.edit()
+                .putBoolean(
+                    "auto_trade_enabled",
+                    autoTradeEnabled
+                )
+                .apply()
 
             auto.text =
                 if (
@@ -1347,6 +1431,24 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 } else {
                     "AUTO TRADE: OFF"
                 }
+
+            auto.setTextColor(
+                if (autoTradeEnabled) {
+                    GREEN
+                } else {
+                    WHITE
+                }
+            )
+
+            Toast.makeText(
+                this,
+                if (autoTradeEnabled) {
+                    "Auto Trade enabled"
+                } else {
+                    "Auto Trade disabled"
+                },
+                Toast.LENGTH_SHORT
+            ).show()
         }
 
         card.addView(
@@ -1369,7 +1471,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             }
         )
     }
-        // =============================================================
+
+    // =============================================================
     // BOTTOM NAVIGATION
     // =============================================================
 
@@ -1560,8 +1663,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             item
         )
     }
-
-    // =============================================================
+        // =============================================================
     // SECTION TITLE
     // =============================================================
 
@@ -1734,6 +1836,17 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     private fun rebuild() {
 
+        /*
+         * IMPORTANT:
+         * Auto Trade state is stored in SharedPreferences.
+         * Rebuilding the interface must never switch it OFF.
+         */
+        autoTradeEnabled =
+            prefs.getBoolean(
+                "auto_trade_enabled",
+                autoTradeEnabled
+            )
+
         buildMainScreen()
     }
 
@@ -1765,6 +1878,87 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             message,
             Toast.LENGTH_SHORT
         ).show()
+    }
+
+    // =============================================================
+    // NOTIFICATION VIBRATION
+    // =============================================================
+
+    /*
+     * One notification event produces exactly three vibrations.
+     * No sound is generated here.
+     */
+    private fun vibrateNotification() {
+
+        try {
+
+            val vibrator =
+                if (
+                    android.os.Build.VERSION.SDK_INT >=
+                    android.os.Build.VERSION_CODES.S
+                ) {
+
+                    val manager =
+                        getSystemService(
+                            VibratorManager::class.java
+                        )
+
+                    manager.defaultVibrator
+
+                } else {
+
+                    @Suppress("DEPRECATION")
+                    getSystemService(
+                        VIBRATOR_SERVICE
+                    ) as Vibrator
+                }
+
+            if (
+                android.os.Build.VERSION.SDK_INT >=
+                android.os.Build.VERSION_CODES.O
+            ) {
+
+                val pattern =
+                    longArrayOf(
+                        0L,
+                        180L,
+                        120L,
+                        180L,
+                        120L,
+                        180L
+                    )
+
+                vibrator.vibrate(
+                    VibrationEffect.createWaveform(
+                        pattern,
+                        -1
+                    )
+                )
+
+            } else {
+
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(
+                    longArrayOf(
+                        0L,
+                        180L,
+                        120L,
+                        180L,
+                        120L,
+                        180L
+                    ),
+                    -1
+                )
+            }
+
+        } catch (
+            _: Exception
+        ) {
+            /*
+             * Notification vibration must never crash
+             * the trading application.
+             */
+        }
     }
 
     // =============================================================
@@ -1857,6 +2051,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 "code_verifier",
                 codeVerifier
             )
+            .putString(
+                "oauth_mode",
+                executionMode
+            )
             .apply()
 
         val challenge =
@@ -1864,9 +2062,17 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 codeVerifier
             )
 
+        /*
+         * Current Deriv OAuth endpoint.
+         *
+         * IMPORTANT:
+         * The trade scope must be explicitly requested.
+         * Without it the subsequent Options account request
+         * can be rejected with HTTP 403.
+         */
         val authorizationUrl =
             Uri.parse(
-                "https://auth.deriv.com/oauth2/auth"
+                DerivApiClient.OAUTH_AUTH_URL
             )
                 .buildUpon()
                 .appendQueryParameter(
@@ -1880,6 +2086,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 .appendQueryParameter(
                     "redirect_uri",
                     getOAuthRedirectUri()
+                )
+                .appendQueryParameter(
+                    "scope",
+                    DerivApiClient.OAUTH_SCOPE
                 )
                 .appendQueryParameter(
                     "state",
@@ -1915,7 +2125,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             ).show()
         }
     }
-        // =============================================================
+
+    // =============================================================
     // HANDLE OAUTH CALLBACK
     // =============================================================
 
@@ -1928,18 +2139,15 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 ?: return
 
         /*
-         * The Android callback is handled through the custom
+         * The Android callback is handled through the
          * Volatilities Indicator URI.
-         *
-         * Example:
-         *
-         * volatilitiesindicator://oauth-callback?code=...
          */
 
         if (
             data.scheme !=
             "volatilitiesindicator"
         ) {
+
             return
         }
 
@@ -1947,6 +2155,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             data.host !=
             "oauth-callback"
         ) {
+
             return
         }
 
@@ -2018,8 +2227,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             prefs.getString(
                 "oauth_state",
                 ""
-            )
-                ?: ""
+            ) ?: ""
 
         if (
             savedState.isEmpty()
@@ -2055,8 +2263,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             prefs.getString(
                 "code_verifier",
                 ""
-            )
-                ?: ""
+            ) ?: ""
 
         if (
             verifier.isEmpty()
@@ -2072,7 +2279,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
 
         // ---------------------------------------------------------
-        // EXCHANGE CODE
+        // EXCHANGE AUTHORIZATION CODE
         // ---------------------------------------------------------
 
         exchangeOAuthCode(
@@ -2080,8 +2287,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             verifier
         )
     }
-
-    // =============================================================
+        // =============================================================
     // OAUTH TOKEN EXCHANGE
     // =============================================================
 
@@ -2089,6 +2295,33 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         code: String,
         verifier: String
     ) {
+
+        /*
+         * Preserve the execution mode that was selected when
+         * the OAuth login started.
+         */
+        val selectedMode =
+            prefs.getString(
+                "oauth_mode",
+                executionMode
+            ) ?: executionMode
+
+        executionMode =
+            if (
+                selectedMode.equals(
+                    "REAL",
+                    ignoreCase = true
+                )
+            ) {
+                "REAL"
+            } else {
+                "DEMO"
+            }
+
+        val clientId =
+            DerivApiClient.clientId(
+                executionMode
+            )
 
         val body =
             FormBody.Builder()
@@ -2098,7 +2331,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 )
                 .add(
                     "client_id",
-                    getDerivClientId()
+                    clientId
                 )
                 .add(
                     "code",
@@ -2117,7 +2350,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val request =
             Request.Builder()
                 .url(
-                    "https://auth.deriv.com/oauth2/token"
+                    DerivApiClient.OAUTH_TOKEN_URL
+                )
+                .addHeader(
+                    "Accept",
+                    "application/json"
                 )
                 .post(
                     body
@@ -2204,21 +2441,23 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                             return
                         }
 
-                        // -------------------------------------------------
-                        // SAVE TOKEN
-                        // -------------------------------------------------
-
+                        /*
+                         * Store the token and execution mode.
+                         */
                         prefs.edit()
                             .putString(
                                 "access_token",
                                 accessToken
                             )
+                            .putString(
+                                "execution_mode",
+                                executionMode
+                            )
                             .apply()
 
-                        // -------------------------------------------------
-                        // CLEAR ONE-TIME PKCE VALUES
-                        // -------------------------------------------------
-
+                        /*
+                         * Clear only the one-time PKCE values.
+                         */
                         prefs.edit()
                             .remove(
                                 "oauth_state"
@@ -2226,16 +2465,23 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                             .remove(
                                 "code_verifier"
                             )
+                            .remove(
+                                "oauth_mode"
+                            )
                             .apply()
 
-                        // -------------------------------------------------
-                        // CONNECT TO DERIV
-                        // -------------------------------------------------
-
+                        /*
+                         * Connect using the authenticated OAuth token.
+                         *
+                         * IMPORTANT:
+                         * Pass the selected execution mode instead
+                         * of relying on a hard-coded DEMO connection.
+                         */
                         runOnUiThread {
 
                             connectWithToken(
-                                accessToken
+                                accessToken,
+                                executionMode
                             )
                         }
 
@@ -2262,7 +2508,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     // =============================================================
 
     private fun connectWithToken(
-        token: String
+        token: String,
+        selectedMode: String = executionMode
     ) {
 
         if (
@@ -2278,14 +2525,44 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             return
         }
 
+        executionMode =
+            if (
+                selectedMode.equals(
+                    "REAL",
+                    ignoreCase = true
+                )
+            ) {
+                "REAL"
+            } else {
+                "DEMO"
+            }
+
+        /*
+         * Keep the selected mode.
+         */
+        prefs.edit()
+            .putString(
+                "execution_mode",
+                executionMode
+            )
+            .apply()
+
         connected =
             false
 
+        /*
+         * Do not alter Auto Trade here.
+         */
         buildMainScreen()
 
-        derivApiClient.connect(
-    token
-)
+        /*
+         * The DerivApiClient receives both the OAuth token
+         * and the selected execution account type.
+         */
+        derivApiClient.connectWithAccessToken(
+            token,
+            executionMode
+        )
     }
 
     // =============================================================
@@ -2298,8 +2575,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         runOnUiThread {
 
-            connected = false
+            connected =
+                false
 
+            /*
+             * Do not change Auto Trade.
+             */
             rebuild()
         }
     }
@@ -2315,11 +2596,14 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         runOnUiThread {
 
-            this.accountId = accountId
+            this.accountId =
+                accountId
 
-            this.accountType = accountType
+            this.accountType =
+                accountType
 
-            connected = true
+            connected =
+                true
 
             rebuild()
 
@@ -2342,16 +2626,18 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         runOnUiThread {
 
-            accountBalance = balance
+            accountBalance =
+                balance
 
-            accountCurrency = currency
+            accountCurrency =
+                currency
 
-            connected = true
+            connected =
+                true
 
             rebuild()
         }
     }
-
 
     // =============================================================
     // DERIV DISCONNECTED
@@ -2361,16 +2647,24 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         runOnUiThread {
 
-            connected = false
+            connected =
+                false
 
-            accountId = ""
+            accountId =
+                ""
 
-            accountType = ""
+            accountType =
+                ""
 
-            accountBalance = 0.0
+            accountBalance =
+                0.0
 
-            accountCurrency = ""
+            accountCurrency =
+                ""
 
+            /*
+             * Deliberate disconnect must NOT turn Auto Trade OFF.
+             */
             rebuild()
         }
     }
@@ -2392,6 +2686,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             ).show()
         }
     }
+
     // =============================================================
     // MANUAL DISCONNECT
     // =============================================================
@@ -2415,7 +2710,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         accountCurrency =
             ""
 
-        buildMainScreen()
+        /*
+         * Auto Trade state is deliberately preserved.
+         */
+        rebuild()
     }
 
     // =============================================================
@@ -2425,9 +2723,18 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private fun clearOAuthData() {
 
         prefs.edit()
-            .remove("oauth_state")
-            .remove("code_verifier")
-            .remove("access_token")
+            .remove(
+                "oauth_state"
+            )
+            .remove(
+                "code_verifier"
+            )
+            .remove(
+                "access_token"
+            )
+            .remove(
+                "oauth_mode"
+            )
             .apply()
     }
 
@@ -2454,12 +2761,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         super.onResume()
 
         /*
-         * IMPORTANT:
+         * Do NOT disconnect here.
          *
-         * We deliberately do NOT disconnect here.
-         *
-         * Returning to the application after opening the
-         * Deriv browser must not terminate the WebSocket.
+         * Returning from the Deriv browser must not terminate
+         * the authenticated connection.
          */
     }
 
@@ -2472,10 +2777,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         super.onPause()
 
         /*
-         * Do NOT disconnect.
+         * Do NOT disconnect here.
          *
-         * Android may temporarily pause the Activity when the
-         * browser is opened during OAuth authentication.
+         * OAuth temporarily moves the Activity into the
+         * background while the browser is open.
          */
     }
 
@@ -2486,10 +2791,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     override fun onDestroy() {
 
         /*
-         * Only close the Deriv connection when the Activity is
-         * actually being destroyed.
+         * Only close the Deriv connection when the Activity
+         * is actually being destroyed.
          *
-         * There is NO one-minute automatic disconnect here.
+         * There is no one-minute automatic disconnect here.
          */
 
         try {
@@ -2529,3 +2834,4 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         super.onBackPressed()
     }
 }
+                
