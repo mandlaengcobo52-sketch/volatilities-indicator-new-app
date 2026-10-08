@@ -119,28 +119,29 @@ class MainActivity : Activity() {
     private fun buildMainScreen() {
 
         rootScroll = ScrollView(this).apply {
-    setBackgroundColor(bg)
-    isFillViewport = true
-}
+            setBackgroundColor(bg)
+            isFillViewport = true
+        }
 
-rootLayout = LinearLayout(this).apply {
-    orientation = LinearLayout.VERTICAL
-    setPadding(dp(12), dp(12), dp(12), dp(24))
-    setBackgroundColor(bg)
-}
+        rootLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(12), dp(12), dp(24))
+            setBackgroundColor(bg)
+        }
 
-rootScroll.addView(rootLayout)
+        rootScroll.addView(rootLayout)
 
-setContentView(rootScroll)
+        setContentView(rootScroll)
 
-addHeader()
-addPlatformSelector()
-addExecutionSelector()
-addAccountCard()
-addIndexMonitor()
-addAdminSection()
-addBottomNavigation()
+        addHeader()
+        addPlatformSelector()
+        addExecutionSelector()
+        addAccountCard()
+        addIndexMonitor()
+        addAdminSection()
+        addBottomNavigation()
     }
+
     // =============================================================
     // HEADER
     // =============================================================
@@ -259,8 +260,7 @@ addBottomNavigation()
                 leftMargin = dp(6)
             }
         )
-
-        section.addView(row)
+                section.addView(row)
 
         rootLayout.addView(section)
     }
@@ -324,7 +324,8 @@ addBottomNavigation()
 
         rootLayout.addView(section)
     }
-        // =============================================================
+
+    // =============================================================
     // ACCOUNT CARD
     // =============================================================
 
@@ -518,7 +519,7 @@ addBottomNavigation()
             textSize = 13f
             setTypeface(null, Typeface.BOLD)
             setTextColor(white)
-            setPadding(0, dp(4), 0, dp(4))
+                        setPadding(0, dp(4), 0, dp(4))
         }
 
         row.addView(touchTitle)
@@ -804,7 +805,7 @@ addBottomNavigation()
 
         scrollTop.setOnClickListener {
             rootScroll.smoothScrollTo(0, 0)
-        }
+                    }
 
         autoTrade.setOnClickListener {
             autoTradeEnabled = !autoTradeEnabled
@@ -847,7 +848,8 @@ addBottomNavigation()
 
         rootLayout.addView(section)
     }
-        // =============================================================
+
+    // =============================================================
     // SECTION BUILDER
     // =============================================================
 
@@ -932,7 +934,7 @@ addBottomNavigation()
 
         try {
 
-            val state = UUID.randomUUID().toString()
+            val state = "android-" + UUID.randomUUID().toString()
 
             val verifierBytes = ByteArray(32)
 
@@ -1083,8 +1085,7 @@ addBottomNavigation()
 
         val returnedState =
             uri.getQueryParameter("state")
-
-        val code =
+                    val code =
             uri.getQueryParameter("code")
 
         val savedState =
