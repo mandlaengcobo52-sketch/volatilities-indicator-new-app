@@ -13,17 +13,11 @@ import java.io.IOException
 import java.net.URLEncoder
 import java.security.MessageDigest
 import java.util.Base64
-import java.util.concurrent.Executors
-import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 
 class DerivApiClient(
     private val callback: Callback
 ) {
-
-    // =============================================================
-    // CALLBACK
-    // =============================================================
 
     interface Callback {
 
@@ -43,11 +37,6 @@ class DerivApiClient(
 
         fun onDisconnected()
     }
-
-
-    // =============================================================
-    // DERIV CONFIGURATION
-    // =============================================================
 
     companion object {
 
@@ -75,11 +64,6 @@ class DerivApiClient(
         const val OAUTH_SCOPE =
             "trade"
 
-
-        // =========================================================
-        // CLIENT ID
-        // =========================================================
-
         fun clientId(
             accountType: String
         ): String {
@@ -95,11 +79,6 @@ class DerivApiClient(
                 DEMO_CLIENT_ID
             }
         }
-
-
-        // =========================================================
-        // OAUTH URL
-        // =========================================================
 
         fun buildOAuthUrl(
             accountType: String,
@@ -140,11 +119,6 @@ class DerivApiClient(
                 "&code_challenge_method=S256"
         }
 
-
-        // =========================================================
-        // PKCE VERIFIER
-        // =========================================================
-
         fun createCodeVerifier(): String {
 
             val bytes =
@@ -158,11 +132,6 @@ class DerivApiClient(
                 .withoutPadding()
                 .encodeToString(bytes)
         }
-
-
-        // =========================================================
-        // PKCE CHALLENGE
-        // =========================================================
 
         fun createCodeChallenge(
             verifier: String
@@ -184,31 +153,17 @@ class DerivApiClient(
         }
     }
 
-
     // =============================================================
     // HTTP CLIENT
     // =============================================================
 
     private val httpClient =
         OkHttpClient.Builder()
-            .connectTimeout(
-                20,
-                TimeUnit.SECONDS
-            )
-            .readTimeout(
-                30,
-                TimeUnit.SECONDS
-            )
-            .writeTimeout(
-                30,
-                TimeUnit.SECONDS
-            )
             .pingInterval(
-                20,
+                30,
                 TimeUnit.SECONDS
             )
             .build()
-
 
     // =============================================================
     // WEBSOCKET
@@ -216,17 +171,8 @@ class DerivApiClient(
 
     private var webSocket: WebSocket? = null
 
-
     // =============================================================
-    // APPLICATION-LEVEL PING
-    // =============================================================
-
-    private var pingExecutor:
-        ScheduledExecutorService? = null
-
-
-    // =============================================================
-    // CONNECTION STATE
+    // CONNECTION DATA
     // =============================================================
 
     private var accessToken: String = ""
@@ -235,8 +181,16 @@ class DerivApiClient(
 
     private var selectedAccountType: String = ""
 
-    private var connectionActive = false
-        // =============================================================
+    // =============================================================
+    // MANUAL DISCONNECT FLAG
+    //
+    // false = connection should remain active/reconnect
+    // true  = user deliberately disconnected
+    // =============================================================
+
+    private var manualDisconnect = false
+
+    // =============================================================
     // CONNECT WITH ACCESS TOKEN
     // =============================================================
 
@@ -249,7 +203,9 @@ class DerivApiClient(
             token.trim()
 
         selectedAccountType =
-            accountType.trim()
+            accountType
+
+        manualDisconnect = false
 
         if (accessToken.isEmpty()) {
 
@@ -260,28 +216,13 @@ class DerivApiClient(
             return
         }
 
-        // Close any previous connection first.
-        stopPing()
-
-        webSocket?.close(
-            1000,
-            "Replacing previous connection"
-        )
-
-        webSocket = null
-        connectionActive = false
-
         callback.onConnecting(
             "Connecting to Deriv..."
         )
 
-        getAccounts(
-            selectedAccountType
-        )
+        getAccounts(accountType)
     }
-
-
-    // =============================================================
+        // =============================================================
     // GET DERIV ACCOUNTS
     // =============================================================
 
@@ -321,7 +262,6 @@ class DerivApiClient(
                         )
                     }
 
-
                     override fun onResponse(
                         call: Call,
                         response: Response
@@ -358,7 +298,7 @@ class DerivApiClient(
                                     ""
 
                                 // -------------------------------------------------
-                                // DERIV MAY RETURN AN ARRAY
+                                // ACCOUNT ARRAY
                                 // -------------------------------------------------
 
                                 if (
@@ -397,13 +337,12 @@ class DerivApiClient(
                                             break
                                         }
                                     }
-                                }
 
                                 // -------------------------------------------------
-                                // DERIV MAY RETURN A SINGLE OBJECT
+                                // SINGLE ACCOUNT OBJECT
                                 // -------------------------------------------------
 
-                                else if (
+                                } else if (
                                     data is JSONObject
                                 ) {
 
@@ -429,9 +368,8 @@ class DerivApiClient(
                                     }
                                 }
 
-
                                 // -------------------------------------------------
-                                // NO ACCOUNT FOUND
+                                // ACCOUNT NOT FOUND
                                 // -------------------------------------------------
 
                                 if (
@@ -444,7 +382,6 @@ class DerivApiClient(
 
                                     return
                                 }
-
 
                                 // -------------------------------------------------
                                 // ACCOUNT FOUND
@@ -477,7 +414,7 @@ class DerivApiClient(
 
 
     // =============================================================
-    // REQUEST DERIV OTP / WEBSOCKET URL
+    // REQUEST DERIV WEBSOCKET URL
     // =============================================================
 
     private fun requestWebSocketUrl(
@@ -521,7 +458,6 @@ class DerivApiClient(
                                 )
                         )
                     }
-
 
                     override fun onResponse(
                         call: Call,
@@ -606,13 +542,8 @@ class DerivApiClient(
         accountType: String
     ) {
 
-        // Stop any previous application-level ping.
-        stopPing()
-
-        webSocket?.close(
-            1000,
-            "Opening new connection"
-        )
+        // A new connection is being deliberately established.
+        manualDisconnect = false
 
         val request =
             Request.Builder()
@@ -629,7 +560,9 @@ class DerivApiClient(
                         response: Response
                     ) {
 
-                        connectionActive = true
+                        // -------------------------------------------------
+                        // CONNECTION IS READY
+                        // -------------------------------------------------
 
                         callback.onConnected(
                             selectedAccountId,
@@ -637,13 +570,7 @@ class DerivApiClient(
                         )
 
                         // -------------------------------------------------
-                        // START KEEP-ALIVE
-                        // -------------------------------------------------
-
-                        startPing()
-
-                        // -------------------------------------------------
-                        // SUBSCRIBE TO BALANCE
+                        // BALANCE SUBSCRIPTION
                         // -------------------------------------------------
 
                         val balanceRequest =
@@ -667,6 +594,10 @@ class DerivApiClient(
                     }
 
 
+                    // =====================================================
+                    // RECEIVE MESSAGE
+                    // =====================================================
+
                     override fun onMessage(
                         webSocket: WebSocket,
                         text: String
@@ -678,7 +609,7 @@ class DerivApiClient(
                                 JSONObject(text)
 
                             // -------------------------------------------------
-                            // BALANCE UPDATE
+                            // BALANCE
                             // -------------------------------------------------
 
                             val balanceObject =
@@ -713,7 +644,6 @@ class DerivApiClient(
                                 }
                             }
 
-
                             // -------------------------------------------------
                             // DERIV ERROR
                             // -------------------------------------------------
@@ -736,19 +666,19 @@ class DerivApiClient(
                             }
 
                         } catch (
-                            e: Exception
+                            _: Exception
                         ) {
 
-                            callback.onError(
-                                "Unable to read Deriv response."
-                            )
+                            // Ignore malformed/non-critical
+                            // messages so they do not terminate
+                            // the connection.
                         }
                     }
 
 
-                    // =========================================================
-                    // WEBSOCKET FAILURE
-                    // =========================================================
+                    // =====================================================
+                    // CONNECTION FAILURE
+                    // =====================================================
 
                     override fun onFailure(
                         webSocket: WebSocket,
@@ -756,25 +686,43 @@ class DerivApiClient(
                         response: Response?
                     ) {
 
-                        connectionActive = false
+                        /*
+                         * IMPORTANT:
+                         *
+                         * A network/WebSocket failure is NOT treated
+                         * as a deliberate user disconnect.
+                         *
+                         * We therefore do not call disconnect()
+                         * here and we do not clear the access token.
+                         */
 
-                        stopPing()
+                        if (
+                            manualDisconnect
+                        ) {
+                            return
+                        }
 
                         callback.onError(
-                            "Deriv connection lost: " +
+                            "Deriv connection interrupted: " +
                                 (
                                     t.message
-                                        ?: "unknown error"
+                                        ?: "connection lost"
                                 )
                         )
 
-                        callback.onDisconnected()
+                        /*
+                         * Do not deliberately disconnect the
+                         * account here.
+                         *
+                         * The user remains authenticated and can
+                         * reconnect using REFRESH if required.
+                         */
                     }
 
 
-                    // =========================================================
-                    // WEBSOCKET CLOSED
-                    // =========================================================
+                    // =====================================================
+                    // SOCKET CLOSED
+                    // =====================================================
 
                     override fun onClosed(
                         webSocket: WebSocket,
@@ -782,96 +730,110 @@ class DerivApiClient(
                         reason: String
                     ) {
 
-                        connectionActive = false
+                        /*
+                         * Only report a real disconnect when the
+                         * user deliberately requested it.
+                         *
+                         * An ordinary socket closure must not
+                         * erase the authenticated account state.
+                         */
 
-                        stopPing()
+                        if (
+                            manualDisconnect
+                        ) {
 
-                        callback.onDisconnected()
+                            callback.onDisconnected()
+                        }
                     }
                 }
             )
     }
+        private fun scheduleReconnect(
+        accountType: String
+    ) {
 
+        if (manualDisconnect) {
+            return
+        }
 
-    // =============================================================
-    // KEEP-ALIVE PING
-    // =============================================================
+        if (accessToken.isBlank()) {
+            return
+        }
 
-    private fun startPing() {
+        // Prevent multiple reconnect timers from running at the same time.
+        reconnectExecutor?.shutdownNow()
 
-        stopPing()
+        reconnectExecutor =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor()
 
-        pingExecutor =
-            Executors.newSingleThreadScheduledExecutor()
-
-        pingExecutor?.scheduleAtFixedRate(
+        reconnectExecutor?.schedule(
             {
 
-                if (
-                    connectionActive
-                ) {
+                if (manualDisconnect) {
+                    return@schedule
+                }
 
-                    val socket =
-                        webSocket
+                if (accessToken.isBlank()) {
+                    return@schedule
+                }
 
-                    if (
-                        socket != null
-                    ) {
+                try {
 
-                        try {
+                    callback.onConnecting(
+                        "Reconnecting to Deriv..."
+                    )
 
-                            val ping =
-                                JSONObject()
-                                    .put(
-                                        "ping",
-                                        1
-                                    )
+                    getAccounts(accountType)
 
-                            socket.send(
-                                ping.toString()
-                            )
+                } catch (_: Exception) {
 
-                        } catch (
-                            _: Exception
-                        ) {
-                            // WebSocket callback will
-                            // handle an actual failure.
-                        }
-                    }
+                    // The next connection attempt will be scheduled
+                    // by the connection failure/close handling.
                 }
 
             },
-            30,
-            30,
-            TimeUnit.SECONDS
+            5,
+            java.util.concurrent.TimeUnit.SECONDS
         )
     }
 
 
-    // =============================================================
-    // STOP KEEP-ALIVE PING
-    // =============================================================
+    private fun cancelReconnect() {
 
-    private fun stopPing() {
+        try {
+            reconnectExecutor?.shutdownNow()
+        } catch (_: Exception) {
+            // Ignore shutdown errors.
+        }
 
-        pingExecutor?.shutdownNow()
-
-        pingExecutor = null
+        reconnectExecutor = null
     }
-        // =============================================================
-    // MANUAL DISCONNECT
-    // =============================================================
+
 
     fun disconnect() {
 
-        connectionActive = false
+        /*
+         * This is the ONLY deliberate disconnect path.
+         *
+         * Once this is called:
+         * - automatic reconnect is stopped
+         * - the WebSocket is closed
+         * - authentication data is cleared
+         * - the application is informed that the account was disconnected
+         */
 
-        stopPing()
+        manualDisconnect = true
 
-        webSocket?.close(
-            1000,
-            "User disconnected"
-        )
+        cancelReconnect()
+
+        try {
+            webSocket?.close(
+                1000,
+                "User disconnected"
+            )
+        } catch (_: Exception) {
+            // Ignore close errors.
+        }
 
         webSocket = null
 
@@ -879,59 +841,47 @@ class DerivApiClient(
 
         selectedAccountId = ""
 
-        selectedAccountType = ""
-
         callback.onDisconnected()
     }
 
 
-    // =============================================================
-    // CONNECTION STATUS
-    // =============================================================
-
     fun isConnected(): Boolean {
-        return connectionActive &&
-            webSocket != null
+        return webSocket != null &&
+                !manualDisconnect
     }
+        private fun clearConnectionState() {
 
-
-    // =============================================================
-    // CURRENT ACCOUNT
-    // =============================================================
-
-    fun getSelectedAccountId(): String {
-        return selectedAccountId
-    }
-
-
-    fun getSelectedAccountType(): String {
-        return selectedAccountType
-    }
-
-
-    // =============================================================
-    // CURRENT TOKEN STATUS
-    // =============================================================
-
-    fun hasAccessToken(): Boolean {
-        return accessToken.isNotEmpty()
-    }
-
-
-    // =============================================================
-    // CLEAN CONNECTION STATE
-    // =============================================================
-
-    private fun clearConnectionState() {
-
-        connectionActive = false
-
-        stopPing()
+        cancelReconnect()
 
         webSocket = null
 
+        accessToken = ""
+
         selectedAccountId = ""
 
-        selectedAccountType = ""
+        manualDisconnect = true
+    }
+
+
+    override fun finalize() {
+
+        try {
+            cancelReconnect()
+        } catch (_: Exception) {
+            // Ignore cleanup errors.
+        }
+
+        try {
+            webSocket?.close(
+                1000,
+                "Client finalized"
+            )
+        } catch (_: Exception) {
+            // Ignore close errors.
+        }
+
+        webSocket = null
+
+        super.finalize()
     }
 }
