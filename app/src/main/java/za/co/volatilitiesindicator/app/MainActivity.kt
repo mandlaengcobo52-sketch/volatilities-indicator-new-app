@@ -2329,11 +2329,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         runOnUiThread {
 
-            this.accountId =
-                accountId
+            this.accountId = accountId
 
-            this.accountType =
-                accountType
+            this.accountType = accountType
 
             connected = true
 
@@ -2358,11 +2356,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         runOnUiThread {
 
-            accountBalance =
-                balance
+            accountBalance = balance
 
-            accountCurrency =
-                currency
+            accountCurrency = currency
 
             connected = true
 
