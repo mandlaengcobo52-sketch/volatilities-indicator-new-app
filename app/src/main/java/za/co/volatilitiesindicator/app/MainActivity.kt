@@ -33,17 +33,18 @@ class MainActivity : Activity() {
     // COLOURS
     // =============================================================
 
-    private val bg = Color.rgb(15, 18, 22)
-    private val panel = Color.rgb(25, 29, 35)
-    private val panel2 = Color.rgb(32, 37, 44)
+    private val bg = Color.rgb(2, 10, 14)
+    private val panel = Color.rgb(5, 25, 32)
+    private val panel2 = Color.rgb(7, 32, 40)
 
-    private val green = Color.rgb(0, 220, 120)
-    private val red = Color.rgb(255, 70, 70)
-    private val yellow = Color.rgb(255, 205, 0)
+    private val green = Color.rgb(0, 255, 90)
     private val cyan = Color.rgb(0, 210, 255)
-    private val blue = Color.rgb(70, 150, 255)
+    private val yellow = Color.rgb(255, 215, 0)
+    private val red = Color.rgb(255, 55, 70)
+    private val purple = Color.rgb(170, 60, 255)
+
     private val white = Color.WHITE
-    private val muted = Color.rgb(150, 160, 170)
+    private val muted = Color.rgb(165, 180, 185)
 
     // =============================================================
     // ROOT
@@ -52,16 +53,28 @@ class MainActivity : Activity() {
     private lateinit var rootScroll: ScrollView
     private lateinit var rootLayout: LinearLayout
 
+    // =============================================================
+    // PLATFORM STATE
+    // =============================================================
+
     private var currentPlatform = "USER"
     private var executionMode = "DEMO"
 
     private var autoTradeEnabled = false
     private var connected = false
 
+    // =============================================================
+    // ACCOUNT STATE
+    // =============================================================
+
     private var accountId = ""
     private var accountType = ""
     private var accountBalance = 0.0
     private var accountCurrency = ""
+
+    // =============================================================
+    // DERIV CLIENT
+    // =============================================================
 
     private val client = OkHttpClient()
 
@@ -70,7 +83,10 @@ class MainActivity : Activity() {
     // =============================================================
 
     private val prefs by lazy {
-        getSharedPreferences("deriv_oauth", MODE_PRIVATE)
+        getSharedPreferences(
+            "deriv_oauth",
+            MODE_PRIVATE
+        )
     }
 
     private var oauthState = ""
@@ -87,6 +103,21 @@ class MainActivity : Activity() {
         "R_75",
         "R_100"
     )
+
+    // =============================================================
+    // INDEX COLOURS
+    // =============================================================
+
+    private fun indexColor(index: String): Int {
+        return when (index) {
+            "R_10" -> cyan
+            "R_25" -> green
+            "R_50" -> yellow
+            "R_75" -> red
+            "R_100" -> purple
+            else -> white
+        }
+    }
 
     // =============================================================
     // ACTIVITY
@@ -125,7 +156,12 @@ class MainActivity : Activity() {
 
         rootLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(12), dp(12), dp(24))
+            setPadding(
+                dp(12),
+                dp(10),
+                dp(12),
+                dp(18)
+            )
             setBackgroundColor(bg)
         }
 
@@ -136,9 +172,10 @@ class MainActivity : Activity() {
         addHeader()
         addPlatformSelector()
         addExecutionSelector()
+        addAutoTrade()
         addAccountCard()
         addIndexMonitor()
-        addAdminSection()
+        addAccountSummary()
         addBottomNavigation()
     }
 
@@ -151,14 +188,39 @@ class MainActivity : Activity() {
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(4), dp(4), dp(4), dp(12))
+            setPadding(
+                dp(4),
+                dp(4),
+                dp(4),
+                dp(12)
+            )
         }
 
+        // ---------------------------------------------------------
+        // LOGO
+        // ---------------------------------------------------------
+
         val logo = ImageView(this).apply {
-            setImageResource(android.R.drawable.ic_dialog_info)
+
+            val resourceId = resources.getIdentifier(
+                "volatilities_logo",
+                "drawable",
+                packageName
+            )
+
+            if (resourceId != 0) {
+                setImageResource(resourceId)
+            } else {
+                setImageResource(
+                    android.R.drawable.ic_dialog_info
+                )
+            }
+
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+
             layoutParams = LinearLayout.LayoutParams(
-                dp(42),
-                dp(42)
+                dp(82),
+                dp(82)
             ).apply {
                 rightMargin = dp(10)
             }
@@ -166,8 +228,13 @@ class MainActivity : Activity() {
 
         header.addView(logo)
 
+        // ---------------------------------------------------------
+        // TITLE
+        // ---------------------------------------------------------
+
         val titleBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+
             layoutParams = LinearLayout.LayoutParams(
                 0,
                 LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -175,39 +242,80 @@ class MainActivity : Activity() {
             )
         }
 
-        val title = TextView(this).apply {
-            text = "VOLATILITIES INDICATOR"
-            textSize = 19f
+        val title1 = TextView(this).apply {
+            text = "VOLATILITIES"
+            textSize = 25f
             setTextColor(white)
-            setTypeface(null, Typeface.BOLD)
+            setTypeface(
+                null,
+                Typeface.BOLD
+            )
+        }
+
+        val title2 = TextView(this).apply {
+            text = "INDICATOR"
+            textSize = 25f
+            setTextColor(green)
+            setTypeface(
+                null,
+                Typeface.BOLD
+            )
         }
 
         val subtitle = TextView(this).apply {
-            text = "Trading Control Platform"
+            text = "TRADING PLATFORM"
             textSize = 12f
             setTextColor(muted)
+            setTypeface(
+                null,
+                Typeface.BOLD
+            )
+            setPadding(
+                0,
+                dp(3),
+                0,
+                0
+            )
         }
 
-        titleBox.addView(title)
+        titleBox.addView(title1)
+        titleBox.addView(title2)
         titleBox.addView(subtitle)
 
         header.addView(titleBox)
 
-        val status = TextView(this).apply {
-            text = if (connected) "CONNECTED" else "OFFLINE"
-            textSize = 11f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(if (connected) green else red)
+        // ---------------------------------------------------------
+        // BELL
+        // ---------------------------------------------------------
+
+        val bell = TextView(this).apply {
+            text = "♧"
+            textSize = 30f
+            setTextColor(white)
             gravity = Gravity.CENTER
+            setPadding(
+                dp(6),
+                0,
+                dp(2),
+                0
+            )
+
+            setOnClickListener {
+                Toast.makeText(
+                    this@MainActivity,
+                    "Notifications",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
         }
 
-        header.addView(status)
+        header.addView(bell)
 
         rootLayout.addView(header)
     }
 
     // =============================================================
-    // PLATFORM SELECTOR
+    // PLATFORM
     // =============================================================
 
     private fun addPlatformSelector() {
@@ -220,13 +328,21 @@ class MainActivity : Activity() {
         }
 
         val userButton = createActionButton(
-            "USER",
-            if (currentPlatform == "USER") green else panel2
+            "👤  USER",
+            if (currentPlatform == "USER") {
+                green
+            } else {
+                panel2
+            }
         )
 
         val adminButton = createActionButton(
-            "ADMIN",
-            if (currentPlatform == "ADMIN") cyan else panel2
+            "👥  ADMIN",
+            if (currentPlatform == "ADMIN") {
+                green
+            } else {
+                panel2
+            }
         )
 
         userButton.setOnClickListener {
@@ -243,10 +359,10 @@ class MainActivity : Activity() {
             userButton,
             LinearLayout.LayoutParams(
                 0,
-                dp(46),
+                dp(52),
                 1f
             ).apply {
-                rightMargin = dp(6)
+                rightMargin = dp(5)
             }
         )
 
@@ -254,13 +370,14 @@ class MainActivity : Activity() {
             adminButton,
             LinearLayout.LayoutParams(
                 0,
-                dp(46),
+                dp(52),
                 1f
             ).apply {
-                leftMargin = dp(6)
+                leftMargin = dp(5)
             }
         )
-                section.addView(row)
+
+        section.addView(row)
 
         rootLayout.addView(section)
     }
@@ -271,7 +388,9 @@ class MainActivity : Activity() {
 
     private fun addExecutionSelector() {
 
-        val section = createSection("EXECUTION MODE")
+        val section = createSection(
+            "EXECUTION MODE"
+        )
 
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -279,13 +398,21 @@ class MainActivity : Activity() {
         }
 
         val demoButton = createActionButton(
-            "DEMO",
-            if (executionMode == "DEMO") green else panel2
+            "📈  DEMO",
+            if (executionMode == "DEMO") {
+                green
+            } else {
+                panel2
+            }
         )
 
         val realButton = createActionButton(
-            "REAL",
-            if (executionMode == "REAL") red else panel2
+            "▥  REAL",
+            if (executionMode == "REAL") {
+                green
+            } else {
+                panel2
+            }
         )
 
         demoButton.setOnClickListener {
@@ -302,10 +429,10 @@ class MainActivity : Activity() {
             demoButton,
             LinearLayout.LayoutParams(
                 0,
-                dp(46),
+                dp(52),
                 1f
             ).apply {
-                rightMargin = dp(6)
+                rightMargin = dp(5)
             }
         )
 
@@ -313,10 +440,439 @@ class MainActivity : Activity() {
             realButton,
             LinearLayout.LayoutParams(
                 0,
-                dp(46),
+                dp(52),
                 1f
             ).apply {
-                leftMargin = dp(6)
+                leftMargin = dp(5)
+            }
+        )
+
+        section.addView(row)
+
+        rootLayout.addView(section)
+    }
+        // =============================================================
+    // AUTO TRADE
+    // =============================================================
+
+    private fun addAutoTrade() {
+
+        val button = createActionButton(
+            "⚡  AUTO TRADE: " +
+                    if (autoTradeEnabled) "ON" else "OFF",
+            if (autoTradeEnabled) green else panel2
+        )
+
+        button.setOnClickListener {
+            autoTradeEnabled = !autoTradeEnabled
+            rebuild()
+        }
+
+        rootLayout.addView(
+            button,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(52)
+            ).apply {
+                topMargin = dp(10)
+                bottomMargin = dp(10)
+            }
+        )
+    }
+
+    // =============================================================
+    // DERIV EXECUTION ACCOUNT
+    // =============================================================
+
+    private fun addAccountCard() {
+
+        val section = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(
+                dp(14),
+                dp(14),
+                dp(14),
+                dp(14)
+            )
+            setBackgroundColor(panel)
+        }
+
+        val title = TextView(this).apply {
+            text = "⚡  DERIV EXECUTION ACCOUNT"
+            textSize = 18f
+            setTextColor(yellow)
+            setTypeface(
+                null,
+                Typeface.BOLD
+            )
+        }
+
+        section.addView(title)
+
+        val connection = TextView(this).apply {
+            text = if (connected) {
+                "🟢  CONNECTION READY"
+            } else {
+                "🔴  NOT CONNECTED"
+            }
+
+            textSize = 16f
+            setTypeface(
+                null,
+                Typeface.BOLD
+            )
+
+            setTextColor(
+                if (connected) green else red
+            )
+
+            setPadding(
+                0,
+                dp(7),
+                0,
+                dp(4)
+            )
+        }
+
+        section.addView(connection)
+
+        val account = TextView(this).apply {
+            text = "Account: " +
+                    if (accountId.isEmpty()) {
+                        "—"
+                    } else {
+                        accountId
+                    }
+
+            textSize = 16f
+            setTextColor(white)
+            setPadding(
+                0,
+                dp(2),
+                0,
+                dp(2)
+            )
+        }
+
+        section.addView(account)
+
+        val balance = TextView(this).apply {
+            text = "Balance: " +
+                    if (accountCurrency.isEmpty()) {
+                        "—"
+                    } else {
+                        String.format(
+                            "%s %.2f",
+                            accountCurrency,
+                            accountBalance
+                        )
+                    }
+
+            textSize = 16f
+            setTextColor(white)
+            setPadding(
+                0,
+                dp(2),
+                0,
+                dp(2)
+            )
+        }
+
+        section.addView(balance)
+
+        val openPL = TextView(this).apply {
+            text = "Open P/L: —"
+            textSize = 16f
+            setTextColor(white)
+            setPadding(
+                0,
+                dp(2),
+                0,
+                dp(10)
+            )
+        }
+
+        section.addView(openPL)
+
+        // ---------------------------------------------------------
+        // CONNECT / REFRESH
+        // ---------------------------------------------------------
+
+        val actionRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+
+        val connectButton = createActionButton(
+            "🔗  CONNECT",
+            if (connected) panel2 else green
+        )
+
+        connectButton.setOnClickListener {
+            startDerivOAuth()
+        }
+
+        val refreshButton = createActionButton(
+            "⟳  REFRESH",
+            panel2
+        )
+
+        refreshButton.setOnClickListener {
+            rebuild()
+        }
+
+        actionRow.addView(
+            connectButton,
+            LinearLayout.LayoutParams(
+                0,
+                dp(52),
+                1f
+            ).apply {
+                rightMargin = dp(5)
+            }
+        )
+
+        actionRow.addView(
+            refreshButton,
+            LinearLayout.LayoutParams(
+                0,
+                dp(52),
+                1f
+            ).apply {
+                leftMargin = dp(5)
+            }
+        )
+
+        section.addView(actionRow)
+
+        rootLayout.addView(
+            section,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = dp(10)
+                bottomMargin = dp(12)
+            }
+        )
+    }
+
+    // =============================================================
+    // INDEX MONITOR
+    // =============================================================
+
+    private fun addIndexMonitor() {
+
+        val section = createSection(
+            "INDEX MONITOR"
+        )
+
+        indexes.forEach { index ->
+
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(
+                    dp(12),
+                    dp(7),
+                    dp(8),
+                    dp(7)
+                )
+                setBackgroundColor(panel)
+
+                layoutParams =
+                    LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        dp(72)
+                    ).apply {
+                        bottomMargin = dp(6)
+                    }
+            }
+
+            // -----------------------------------------------------
+            // INDEX NAME
+            // -----------------------------------------------------
+
+            val indexName = TextView(this).apply {
+                text = index
+                textSize = 22f
+                setTextColor(
+                    indexColor(index)
+                )
+                setTypeface(
+                    null,
+                    Typeface.BOLD
+                )
+
+                gravity = Gravity.CENTER_VERTICAL
+
+                layoutParams =
+                    LinearLayout.LayoutParams(
+                        dp(88),
+                        LinearLayout.LayoutParams.MATCH_PARENT
+                    )
+            }
+
+            row.addView(indexName)
+
+            // -----------------------------------------------------
+            // SIMPLE MARKET LINE
+            // -----------------------------------------------------
+
+            val chart = TextView(this).apply {
+                text = "⌁⌁⌁⌁⌁"
+                textSize = 28f
+                setTextColor(
+                    indexColor(index)
+                )
+                gravity = Gravity.CENTER
+
+                layoutParams =
+                    LinearLayout.LayoutParams(
+                        0,
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        1f
+                    )
+            }
+
+            row.addView(chart)
+
+            // -----------------------------------------------------
+            // WAITING
+            // -----------------------------------------------------
+
+            val waiting = TextView(this).apply {
+                text = "WAITING"
+                textSize = 13f
+                setTextColor(yellow)
+                setTypeface(
+                    null,
+                    Typeface.BOLD
+                )
+                gravity = Gravity.CENTER
+
+                setBackgroundColor(
+                    panel2
+                )
+
+                layoutParams =
+                    LinearLayout.LayoutParams(
+                        dp(100),
+                        dp(48)
+                    ).apply {
+                        rightMargin = dp(5)
+                    }
+            }
+
+            row.addView(waiting)
+
+            // -----------------------------------------------------
+            // ARROW
+            // -----------------------------------------------------
+
+            val arrow = TextView(this).apply {
+                text = "›"
+                textSize = 34f
+                setTextColor(white)
+                gravity = Gravity.CENTER
+
+                layoutParams =
+                    LinearLayout.LayoutParams(
+                        dp(28),
+                        LinearLayout.LayoutParams.MATCH_PARENT
+                    )
+            }
+
+            row.addView(arrow)
+
+            row.setOnClickListener {
+                Toast.makeText(
+                    this,
+                    "$index selected",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+
+            section.addView(row)
+        }
+
+        rootLayout.addView(section)
+    }
+
+    // =============================================================
+    // ACCOUNT SUMMARY
+    // =============================================================
+
+    private fun addAccountSummary() {
+
+        val section = createSection(
+            "ACCOUNT SUMMARY"
+        )
+
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+
+        row.addView(
+            summaryCard(
+                "OPEN",
+                "0",
+                cyan
+            ),
+            LinearLayout.LayoutParams(
+                0,
+                dp(82),
+                1f
+            ).apply {
+                rightMargin = dp(3)
+            }
+        )
+
+        row.addView(
+            summaryCard(
+                "TOTAL P/L",
+                "0.00",
+                cyan
+            ),
+            LinearLayout.LayoutParams(
+                0,
+                dp(82),
+                1f
+            ).apply {
+                leftMargin = dp(3)
+                rightMargin = dp(3)
+            }
+        )
+
+        row.addView(
+            summaryCard(
+                "WINS",
+                "0",
+                green
+            ),
+            LinearLayout.LayoutParams(
+                0,
+                dp(82),
+                1f
+            ).apply {
+                leftMargin = dp(3)
+                rightMargin = dp(3)
+            }
+        )
+
+        row.addView(
+            summaryCard(
+                "LOSSES",
+                "0",
+                red
+            ),
+            LinearLayout.LayoutParams(
+                0,
+                dp(82),
+                1f
+            ).apply {
+                leftMargin = dp(3)
             }
         )
 
@@ -326,554 +882,240 @@ class MainActivity : Activity() {
     }
 
     // =============================================================
-    // ACCOUNT CARD
+    // SUMMARY CARD
     // =============================================================
 
-    private fun addAccountCard() {
+    private fun summaryCard(
+        title: String,
+        value: String,
+        color: Int
+    ): LinearLayout {
 
-        val section = createSection("ACCOUNT")
+        return LinearLayout(this).apply {
 
-        val accountBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(12), dp(12), dp(12))
-            setBackgroundColor(panel2)
-        }
-
-        val accountTitle = TextView(this).apply {
-            text = "DERIV ACCOUNT"
-            textSize = 14f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(white)
-        }
-
-        accountBox.addView(accountTitle)
-
-        val accountText = TextView(this).apply {
-            text = if (connected) {
-                if (accountId.isNotEmpty()) {
-                    "$accountId\n${accountType.uppercase()}"
-                } else {
-                    "OAUTH CONNECTED"
-                }
-            } else {
-                "NOT CONNECTED"
-            }
-
-            textSize = 13f
-            setTextColor(if (connected) green else muted)
-            setPadding(0, dp(6), 0, dp(6))
-        }
-
-        accountBox.addView(accountText)
-
-        val balanceText = TextView(this).apply {
-            text = if (accountCurrency.isNotEmpty()) {
-                "BALANCE: %.2f %s".format(
-                    accountBalance,
-                    accountCurrency
-                )
-            } else {
-                "BALANCE: --"
-            }
-
-            textSize = 15f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(white)
-        }
-
-        accountBox.addView(balanceText)
-
-        val connectButton = createActionButton(
-            if (connected) "OAUTH CONNECTED" else "CONNECT DERIV",
-            if (connected) green else cyan
-        )
-
-        connectButton.setOnClickListener {
-
-            if (connected) {
-                Toast.makeText(
-                    this,
-                    "Deriv account already connected",
-                    Toast.LENGTH_SHORT
-                ).show()
-            } else {
-                startDerivOAuth()
-            }
-        }
-
-        accountBox.addView(
-            connectButton,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(46)
-            ).apply {
-                topMargin = dp(10)
-            }
-        )
-
-        section.addView(accountBox)
-
-        rootLayout.addView(section)
-    }
-
-    // =============================================================
-    // INDEX MONITOR
-    // =============================================================
-
-    private fun addIndexMonitor() {
-
-        val section = createSection("INDEX MONITOR")
-
-        for (index in indexes) {
-            section.addView(indexRow(index))
-        }
-
-        rootLayout.addView(section)
-    }
-
-    // =============================================================
-    // INDEX ROW
-    // =============================================================
-
-    private fun indexRow(index: String): LinearLayout {
-
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(10), dp(10), dp(10), dp(10))
-            setBackgroundColor(panel2)
-
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = dp(8)
-            }
-        }
-
-        val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-
-        val name = TextView(this).apply {
-            text = index
-            textSize = 17f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(white)
-
-            layoutParams = LinearLayout.LayoutParams(
-                0,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                1f
-            )
-        }
-
-        val phase = TextView(this).apply {
-            text = "WAITING"
-            textSize = 12f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(yellow)
             gravity = Gravity.CENTER
-        }
+            setBackgroundColor(panel)
 
-        header.addView(name)
-        header.addView(phase)
-
-        row.addView(header)
-
-        val priceRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(8), 0, dp(8))
-        }
-
-        val currentPrice = TextView(this).apply {
-            text = "CURRENT PRICE: --"
-            textSize = 13f
-            setTextColor(cyan)
-
-            layoutParams = LinearLayout.LayoutParams(
-                0,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                1f
-            )
-        }
-
-        val probability = TextView(this).apply {
-            text = "0%"
-            textSize = 14f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(yellow)
-        }
-
-        priceRow.addView(currentPrice)
-        priceRow.addView(probability)
-
-        row.addView(priceRow)
-
-        // ---------------------------------------------------------
-        // TOUCH
-        // ---------------------------------------------------------
-
-        val touchTitle = TextView(this).apply {
-            text = "TOUCH"
-            textSize = 13f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(white)
-                        setPadding(0, dp(4), 0, dp(4))
-        }
-
-        row.addView(touchTitle)
-
-        val touchRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-
-        val buyTouch = createActionButton(
-            "BUY TOUCH",
-            panel
-        )
-
-        val sellTouch = createActionButton(
-            "SELL TOUCH",
-            panel
-        )
-
-        buyTouch.setOnClickListener {
-            Toast.makeText(
-                this,
-                "$index BUY TOUCH selected",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-
-        sellTouch.setOnClickListener {
-            Toast.makeText(
-                this,
-                "$index SELL TOUCH selected",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-
-        touchRow.addView(
-            buyTouch,
-            LinearLayout.LayoutParams(
-                0,
-                dp(44),
-                1f
+            val titleView = TextView(
+                this@MainActivity
             ).apply {
-                rightMargin = dp(4)
+                text = title
+                textSize = 12f
+                setTextColor(color)
+                setTypeface(
+                    null,
+                    Typeface.BOLD
+                )
+                gravity = Gravity.CENTER
             }
-        )
 
-        touchRow.addView(
-            sellTouch,
-            LinearLayout.LayoutParams(
-                0,
-                dp(44),
-                1f
+            val valueView = TextView(
+                this@MainActivity
             ).apply {
-                leftMargin = dp(4)
+                text = value
+                textSize = 17f
+                setTextColor(color)
+                setTypeface(
+                    null,
+                    Typeface.BOLD
+                )
+                gravity = Gravity.CENTER
             }
-        )
 
-        row.addView(touchRow)
-
-        // ---------------------------------------------------------
-        // RISE / FALL
-        // ---------------------------------------------------------
-
-        val directionTitle = TextView(this).apply {
-            text = "DIRECTION"
-            textSize = 13f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(white)
-            setPadding(0, dp(10), 0, dp(4))
+            addView(titleView)
+            addView(valueView)
         }
-
-        row.addView(directionTitle)
-
-        val directionRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-
-        val riseButton = createActionButton(
-            "RISE",
-            panel
-        )
-
-        val fallButton = createActionButton(
-            "FALL",
-            panel
-        )
-
-        riseButton.setOnClickListener {
-            Toast.makeText(
-                this,
-                "$index RISE",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-
-        fallButton.setOnClickListener {
-            Toast.makeText(
-                this,
-                "$index FALL",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-
-        directionRow.addView(
-            riseButton,
-            LinearLayout.LayoutParams(
-                0,
-                dp(44),
-                1f
-            ).apply {
-                rightMargin = dp(4)
-            }
-        )
-
-        directionRow.addView(
-            fallButton,
-            LinearLayout.LayoutParams(
-                0,
-                dp(44),
-                1f
-            ).apply {
-                leftMargin = dp(4)
-            }
-        )
-
-        row.addView(directionRow)
-
-        // ---------------------------------------------------------
-        // TARGET
-        // ---------------------------------------------------------
-
-        val target = TextView(this).apply {
-            text = "TARGET PRICE: --"
-            textSize = 13f
-            setTextColor(white)
-            setPadding(0, dp(10), 0, dp(4))
-        }
-
-        row.addView(target)
-
-        // ---------------------------------------------------------
-        // SUPPORT / RESISTANCE
-        // ---------------------------------------------------------
-
-        val support = TextView(this).apply {
-            text = "SUPPORT: --"
-            textSize = 12f
-            setTextColor(green)
-        }
-
-        val resistance = TextView(this).apply {
-            text = "RESISTANCE: --"
-            textSize = 12f
-            setTextColor(red)
-        }
-
-        row.addView(support)
-        row.addView(resistance)
-
-        // ---------------------------------------------------------
-        // PROFIT / LOSS
-        // ---------------------------------------------------------
-
-        val pnl = TextView(this).apply {
-            text = "P/L: 0.00"
-            textSize = 14f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(white)
-            setPadding(0, dp(8), 0, 0)
-        }
-
-        row.addView(pnl)
-
-        return row
     }
-
-    // =============================================================
-    // ADMIN SECTION
-    // =============================================================
-
-    private fun addAdminSection() {
-
-        if (currentPlatform != "ADMIN") {
-            return
-        }
-
-        val section = createSection("ADMIN")
-
-        val menuButton = createActionButton(
-            "ADMIN MENU",
-            cyan
-        )
-
-        menuButton.setOnClickListener {
-            adminMenu()
-        }
-
-        section.addView(
-            menuButton,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(46)
-            )
-        )
-
-        val summaryButton = createActionButton(
-            "ACCOUNT SUMMARY",
-            panel2
-        )
-
-        summaryButton.setOnClickListener {
-            summaryRow()
-        }
-
-        section.addView(
-            summaryButton,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(46)
-            ).apply {
-                topMargin = dp(8)
-            }
-        )
-
-        rootLayout.addView(section)
-    }
-
-    // =============================================================
-    // ADMIN MENU
-    // =============================================================
-
-    private fun adminMenu() {
-
-        Toast.makeText(
-            this,
-            "Admin menu opened",
-            Toast.LENGTH_SHORT
-        ).show()
-    }
-
-    // =============================================================
-    // SUMMARY
-    // =============================================================
-
-    private fun summaryRow() {
-
-        Toast.makeText(
-            this,
-            "Account summary",
-            Toast.LENGTH_SHORT
-        ).show()
-    }
-
-    // =============================================================
+        // =============================================================
     // BOTTOM NAVIGATION
     // =============================================================
 
     private fun addBottomNavigation() {
 
-        val section = LinearLayout(this).apply {
+        val nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(0, dp(16), 0, 0)
+            setPadding(
+                dp(6),
+                dp(6),
+                dp(6),
+                dp(6)
+            )
+            setBackgroundColor(panel)
         }
 
-        val refresh = createActionButton(
-            "REFRESH",
-            panel2
+        val home = createNavigationItem(
+            "⌂",
+            "Home",
+            true
         )
 
-        val scrollTop = createActionButton(
-            "TOP",
-            panel2
+        val trade = createNavigationItem(
+            "▥",
+            "Trade",
+            false
         )
 
-        val autoTrade = createActionButton(
-            if (autoTradeEnabled) "AUTO ON" else "AUTO OFF",
-            if (autoTradeEnabled) green else panel2
+        val analysis = createNavigationItem(
+            "⌁",
+            "Analysis",
+            false
         )
 
-        refresh.setOnClickListener {
-            rebuild()
-        }
+        val news = createNavigationItem(
+            "▤",
+            "News",
+            false
+        )
 
-        scrollTop.setOnClickListener {
-            rootScroll.smoothScrollTo(0, 0)
-                    }
+        val settings = createNavigationItem(
+            "⚙",
+            "Settings",
+            false
+        )
 
-        autoTrade.setOnClickListener {
-            autoTradeEnabled = !autoTradeEnabled
-            rebuild()
-        }
-
-        section.addView(
-            refresh,
+        nav.addView(
+            home,
             LinearLayout.LayoutParams(
                 0,
-                dp(44),
+                dp(78),
                 1f
-            ).apply {
-                rightMargin = dp(4)
-            }
+            )
         )
 
-        section.addView(
-            scrollTop,
+        nav.addView(
+            trade,
             LinearLayout.LayoutParams(
                 0,
-                dp(44),
+                dp(78),
                 1f
-            ).apply {
-                leftMargin = dp(4)
-                rightMargin = dp(4)
-            }
+            )
         )
 
-        section.addView(
-            autoTrade,
+        nav.addView(
+            analysis,
             LinearLayout.LayoutParams(
                 0,
-                dp(44),
+                dp(78),
                 1f
-            ).apply {
-                leftMargin = dp(4)
-            }
+            )
         )
 
-        rootLayout.addView(section)
+        nav.addView(
+            news,
+            LinearLayout.LayoutParams(
+                0,
+                dp(78),
+                1f
+            )
+        )
+
+        nav.addView(
+            settings,
+            LinearLayout.LayoutParams(
+                0,
+                dp(78),
+                1f
+            )
+        )
+
+        rootLayout.addView(
+            nav,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(90)
+            ).apply {
+                topMargin = dp(12)
+            }
+        )
     }
 
     // =============================================================
-    // SECTION BUILDER
+    // NAVIGATION ITEM
     // =============================================================
 
-    private fun createSection(title: String): LinearLayout {
+    private fun createNavigationItem(
+        icon: String,
+        label: String,
+        selected: Boolean
+    ): LinearLayout {
+
+        return LinearLayout(this).apply {
+
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+
+            if (selected) {
+                setBackgroundColor(
+                    Color.rgb(0, 70, 45)
+                )
+            }
+
+            val iconView = TextView(
+                this@MainActivity
+            ).apply {
+                text = icon
+                textSize = 22f
+                setTextColor(
+                    if (selected) green else white
+                )
+                gravity = Gravity.CENTER
+            }
+
+            val labelView = TextView(
+                this@MainActivity
+            ).apply {
+                text = label
+                textSize = 12f
+                setTextColor(
+                    if (selected) green else white
+                )
+                setTypeface(
+                    null,
+                    Typeface.BOLD
+                )
+                gravity = Gravity.CENTER
+            }
+
+            addView(iconView)
+            addView(labelView)
+
+            setOnClickListener {
+
+                Toast.makeText(
+                    this@MainActivity,
+                    label,
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
+    // =============================================================
+    // SECTION
+    // =============================================================
+
+    private fun createSection(
+        title: String
+    ): LinearLayout {
 
         val section = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(
-                dp(4),
-                dp(4),
-                dp(4),
-                dp(12)
-            )
         }
 
         val titleView = TextView(this).apply {
             text = title
-            textSize = 14f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(cyan)
+            textSize = 18f
+            setTextColor(white)
+            setTypeface(
+                null,
+                Typeface.BOLD
+            )
             setPadding(
-                dp(2),
-                dp(4),
-                dp(2),
+                0,
+                dp(8),
+                0,
                 dp(8)
             )
         }
@@ -889,76 +1131,79 @@ class MainActivity : Activity() {
 
     private fun createActionButton(
         textValue: String,
-        backgroundColor: Int
+        background: Int
     ): Button {
 
         return Button(this).apply {
 
             text = textValue
-            textSize = 12f
+            textSize = 15f
 
             setTextColor(
-                if (
-                    backgroundColor == green ||
-                    backgroundColor == yellow
-                ) {
+                if (background == green) {
                     Color.BLACK
                 } else {
                     white
                 }
             )
 
-            setBackgroundColor(backgroundColor)
+            setTypeface(
+                null,
+                Typeface.BOLD
+            )
 
-            setTypeface(null, Typeface.BOLD)
+            setBackgroundColor(background)
 
             isAllCaps = false
+
+            gravity = Gravity.CENTER
 
             minHeight = 0
             minimumHeight = 0
 
-            setPadding(
-                dp(8),
-                dp(4),
-                dp(8),
-                dp(4)
-            )
+            stateListAnimator = null
         }
     }
 
     // =============================================================
-    // OAUTH
+    // START DERIV OAUTH
     // =============================================================
 
     private fun startDerivOAuth() {
 
         try {
 
-            val state = "android-" + UUID.randomUUID().toString()
+            val state =
+                "android-" +
+                        UUID.randomUUID()
+                            .toString()
 
-            val verifierBytes = ByteArray(32)
+            val verifier =
+                generateCodeVerifier()
 
-            SecureRandom().nextBytes(verifierBytes)
-
-            val verifier = Base64.encodeToString(
-                verifierBytes,
-                Base64.URL_SAFE or
-                    Base64.NO_WRAP or
-                    Base64.NO_PADDING
-            )
-
-            val challenge = createCodeChallenge(verifier)
+            val challenge =
+                generateCodeChallenge(
+                    verifier
+                )
 
             oauthState = state
             codeVerifier = verifier
 
             prefs.edit()
-                .putString("oauth_state", state)
-                .putString("code_verifier", verifier)
+                .putString(
+                    "oauth_state",
+                    state
+                )
+                .putString(
+                    "code_verifier",
+                    verifier
+                )
                 .apply()
 
             val clientId =
-                DerivApiClient.clientId(executionMode)
+                DerivApiClient.clientId(
+                    executionMode
+                )
 
             val redirectUri =
                 DerivApiClient.OAUTH_REDIRECT_URI
@@ -966,12 +1211,18 @@ class MainActivity : Activity() {
             val scope =
                 DerivApiClient.OAUTH_SCOPE
 
+            // IMPORTANT:
+            // This is the corrected Deriv OAuth
+            // authorization endpoint.
+            //
+            // /oauth2/authorize  = WRONG
+            // /oauth2/auth       = CORRECT
+
             val authorizationUrl =
-                Uri.Builder()
-                    .scheme("https")
-                    .authority("auth.deriv.com")
-                    .appendPath("oauth2")
-                    .appendPath("authorize")
+                Uri.parse(
+                    "https://auth.deriv.com/oauth2/auth"
+                )
+                    .buildUpon()
                     .appendQueryParameter(
                         "app_id",
                         clientId
@@ -1006,44 +1257,68 @@ class MainActivity : Activity() {
                     )
                     .build()
 
-            val intent = Intent(
-                Intent.ACTION_VIEW,
-                authorizationUrl
-            )
+            val browserIntent =
+                Intent(
+                    Intent.ACTION_VIEW,
+                    authorizationUrl
+                )
 
-            startActivity(intent)
+            startActivity(browserIntent)
 
         } catch (e: Exception) {
 
             Toast.makeText(
                 this,
-                "OAuth error: ${e.message}",
+                "Unable to start Deriv connection: " +
+                        e.message,
                 Toast.LENGTH_LONG
             ).show()
         }
     }
 
     // =============================================================
-    // PKCE CODE CHALLENGE
+    // PKCE - CODE VERIFIER
     // =============================================================
 
-    private fun createCodeChallenge(
+    private fun generateCodeVerifier(): String {
+
+        val bytes = ByteArray(32)
+
+        SecureRandom().nextBytes(bytes)
+
+        return Base64.encodeToString(
+            bytes,
+            Base64.URL_SAFE or
+                    Base64.NO_WRAP or
+                    Base64.NO_PADDING
+        )
+    }
+
+    // =============================================================
+    // PKCE - CODE CHALLENGE
+    // =============================================================
+
+    private fun generateCodeChallenge(
         verifier: String
     ): String {
 
         val digest =
-            MessageDigest.getInstance("SHA-256")
+            MessageDigest.getInstance(
+                "SHA-256"
+            )
 
-        val hash =
+        val hashed =
             digest.digest(
-                verifier.toByteArray(Charsets.US_ASCII)
+                verifier.toByteArray(
+                    Charsets.US_ASCII
+                )
             )
 
         return Base64.encodeToString(
-            hash,
+            hashed,
             Base64.URL_SAFE or
-                Base64.NO_WRAP or
-                Base64.NO_PADDING
+                    Base64.NO_WRAP or
+                    Base64.NO_PADDING
         )
     }
 
@@ -1052,99 +1327,116 @@ class MainActivity : Activity() {
     // =============================================================
 
     private fun handleOAuthCallback(
-        callbackIntent: Intent?
+        intent: Intent?
     ) {
 
-        if (callbackIntent == null) {
-            return
-        }
-
         val uri =
-            callbackIntent.data ?: return
+            intent?.data
+                ?: return
 
         if (
-            uri.scheme != "volatilitiesindicator" ||
-            uri.host != "oauth-callback"
+            uri.scheme !=
+                "volatilitiesindicator"
         ) {
             return
         }
 
-        val error =
-            uri.getQueryParameter("error")
-
-        if (!error.isNullOrEmpty()) {
-
-            Toast.makeText(
-                this,
-                "OAuth error: $error",
-                Toast.LENGTH_LONG
-            ).show()
-
+        if (
+            uri.host !=
+                "oauth-callback"
+        ) {
             return
         }
 
         val returnedState =
-            uri.getQueryParameter("state")
-                    val code =
-            uri.getQueryParameter("code")
+            uri.getQueryParameter(
+                "state"
+            )
 
         val savedState =
             prefs.getString(
                 "oauth_state",
-                ""
-            ) ?: ""
-
-        val verifier =
-            prefs.getString(
-                "code_verifier",
-                ""
-            ) ?: ""
+                null
+            )
 
         if (
             returnedState.isNullOrEmpty() ||
+            savedState.isNullOrEmpty() ||
             returnedState != savedState
         ) {
 
             Toast.makeText(
                 this,
-                "OAuth security check failed",
+                "OAuth state verification failed",
                 Toast.LENGTH_LONG
             ).show()
 
             return
         }
+                val code =
+            uri.getQueryParameter(
+                "code"
+            )
 
-        if (
-            code.isNullOrEmpty() ||
-            verifier.isEmpty()
-        ) {
+        val error =
+            uri.getQueryParameter(
+                "error"
+            )
+
+        if (!error.isNullOrEmpty()) {
 
             Toast.makeText(
                 this,
-                "OAuth authorization code missing",
+                "Deriv connection cancelled: $error",
                 Toast.LENGTH_LONG
             ).show()
 
             return
         }
 
-        exchangeOAuthCode(
-            code,
-            verifier
-        )
+        if (code.isNullOrEmpty()) {
+
+            Toast.makeText(
+                this,
+                "No OAuth authorization code received",
+                Toast.LENGTH_LONG
+            ).show()
+
+            return
+        }
+
+        exchangeCodeForToken(code)
     }
 
     // =============================================================
-    // TOKEN EXCHANGE
+    // EXCHANGE AUTHORIZATION CODE FOR TOKEN
     // =============================================================
 
-    private fun exchangeOAuthCode(
-        code: String,
-        verifier: String
+    private fun exchangeCodeForToken(
+        code: String
     ) {
 
+        val verifier =
+            prefs.getString(
+                "code_verifier",
+                null
+            )
+
+        if (verifier.isNullOrEmpty()) {
+
+            Toast.makeText(
+                this,
+                "OAuth verifier is missing",
+                Toast.LENGTH_LONG
+            ).show()
+
+            return
+        }
+
         val clientId =
-            DerivApiClient.clientId(executionMode)
+            DerivApiClient.clientId(
+                executionMode
+            )
 
         val redirectUri =
             DerivApiClient.OAUTH_REDIRECT_URI
@@ -1181,50 +1473,74 @@ class MainActivity : Activity() {
                 .post(requestBody)
                 .build()
 
-        runOnUiThread {
+        client.newCall(
+            request
+        ).enqueue(
+            object : Callback {
 
-            Toast.makeText(
-                this,
-                "Connecting to Deriv...",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
+                override fun onFailure(
+                    call: Call,
+                    e: IOException
+                ) {
 
-        client.newCall(request)
-            .enqueue(
-                object : Callback {
+                    runOnUiThread {
 
-                    override fun onFailure(
-                        call: Call,
-                        e: IOException
-                    ) {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Deriv connection failed: " +
+                                    e.message,
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+
+                override fun onResponse(
+                    call: Call,
+                    response: Response
+                ) {
+
+                    val responseText =
+                        response.body
+                            ?.string()
+                            ?: ""
+
+                    if (!response.isSuccessful) {
 
                         runOnUiThread {
 
                             Toast.makeText(
                                 this@MainActivity,
-                                "Connection failed: ${e.message}",
+                                "Deriv OAuth error: " +
+                                        responseText,
                                 Toast.LENGTH_LONG
                             ).show()
                         }
+
+                        return
                     }
 
-                    override fun onResponse(
-                        call: Call,
-                        response: Response
-                    ) {
+                    try {
 
-                        val responseBody =
-                            response.body?.string()
-                                ?: ""
+                        val json =
+                            JSONObject(
+                                responseText
+                            )
 
-                        if (!response.isSuccessful) {
+                        val accessToken =
+                            json.optString(
+                                "access_token",
+                                ""
+                            )
+
+                        if (
+                            accessToken.isEmpty()
+                        ) {
 
                             runOnUiThread {
 
                                 Toast.makeText(
                                     this@MainActivity,
-                                    "OAuth token error: ${response.code}",
+                                    "No access token received",
                                     Toast.LENGTH_LONG
                                 ).show()
                             }
@@ -1232,76 +1548,53 @@ class MainActivity : Activity() {
                             return
                         }
 
-                        try {
+                        prefs.edit()
+                            .putString(
+                                "access_token",
+                                accessToken
+                            )
+                            .remove(
+                                "oauth_state"
+                            )
+                            .remove(
+                                "code_verifier"
+                            )
+                            .apply()
 
-                            val json =
-                                JSONObject(responseBody)
+                        connected = true
 
-                            val accessToken =
-                                json.optString(
-                                    "access_token",
-                                    ""
-                                )
+                        runOnUiThread {
 
-                            if (
-                                accessToken.isEmpty()
-                            ) {
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Deriv connected",
+                                Toast.LENGTH_SHORT
+                            ).show()
 
-                                runOnUiThread {
+                            rebuild()
+                        }
 
-                                    Toast.makeText(
-                                        this@MainActivity,
-                                        "No access token returned",
-                                        Toast.LENGTH_LONG
-                                    ).show()
-                                }
+                    } catch (
+                        e: Exception
+                    ) {
 
-                                return
-                            }
+                        runOnUiThread {
 
-                            prefs.edit()
-                                .putString(
-                                    "access_token",
-                                    accessToken
-                                )
-                                .apply()
-
-                            connected = true
-
-                            accountType =
-                                executionMode
-
-                            runOnUiThread {
-
-                                Toast.makeText(
-                                    this@MainActivity,
-                                    "Deriv OAuth connected",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-
-                                rebuild()
-                            }
-
-                        } catch (
-                            e: Exception
-                        ) {
-
-                            runOnUiThread {
-
-                                Toast.makeText(
-                                    this@MainActivity,
-                                    "Invalid OAuth response",
-                                    Toast.LENGTH_LONG
-                                ).show()
-                            }
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Invalid Deriv response: " +
+                                        e.message,
+                                Toast.LENGTH_LONG
+                            ).show()
                         }
                     }
                 }
-            )
+            }
+        )
     }
 
     // =============================================================
-    // REBUILD
+    // REBUILD SCREEN
     // =============================================================
 
     private fun rebuild() {
@@ -1311,21 +1604,31 @@ class MainActivity : Activity() {
         addHeader()
         addPlatformSelector()
         addExecutionSelector()
+        addAutoTrade()
         addAccountCard()
         addIndexMonitor()
-        addAdminSection()
+        addAccountSummary()
         addBottomNavigation()
+
+        rootScroll.post {
+            rootScroll.scrollTo(
+                0,
+                0
+            )
+        }
     }
 
     // =============================================================
-    // DIMENSION HELPER
+    // DP HELPER
     // =============================================================
 
-    private fun dp(value: Int): Int {
+    private fun dp(
+        value: Int
+    ): Int {
 
         return (
             value *
-                resources.displayMetrics.density
+                    resources.displayMetrics.density
             ).toInt()
     }
 
@@ -1334,10 +1637,10 @@ class MainActivity : Activity() {
     // =============================================================
 
     override fun onDestroy() {
-
         super.onDestroy()
-
-        // OkHttp requests are allowed to finish
-        // without keeping an Activity reference.
     }
+        // =============================================================
+    // END OF MAIN ACTIVITY
+    // =============================================================
+
 }
