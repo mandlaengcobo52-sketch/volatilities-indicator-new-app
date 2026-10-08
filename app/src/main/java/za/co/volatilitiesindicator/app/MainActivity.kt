@@ -2266,96 +2266,169 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             }
         )
     }
-        // =============================================================
+    // =============================================================
     // CONNECT USING ACCESS TOKEN
     // =============================================================
 
     private fun connectWithToken(
-        token: String,
-        mode: String
+        token: String
     ) {
 
-        if (
-            token.isBlank()
-        ) {
+        if (token.isBlank()) {
 
             Toast.makeText(
                 this,
-                "No Deriv access token available.",
+                "Deriv access token is empty",
                 Toast.LENGTH_LONG
             ).show()
 
             return
         }
 
-        executionMode =
-            mode
+        connected = false
 
-        connected =
-            false
+        buildMainScreen()
 
-        accountId =
-            ""
-
-        accountType =
-            ""
-
-        accountBalance =
-            0.0
-
-        accountCurrency =
-            ""
-
-        rebuild()
-
-        try {
-
-            derivApiClient.disconnect()
-
-        } catch (_: Exception) {
-        }
-
+        /*
+         * IMPORTANT:
+         * Use the selected executionMode.
+         *
+         * This fixes the previous problem where
+         * connect(token) always forced DEMO.
+         */
         derivApiClient.connectWithAccessToken(
             token,
-            mode
+            executionMode
         )
     }
 
     // =============================================================
-    // DISCONNECT
+    // DERIV CONNECTING
     // =============================================================
 
-    private fun disconnectFromDeriv() {
+    override fun onConnecting(
+        message: String
+    ) {
 
-        try {
+        runOnUiThread {
 
-            derivApiClient.disconnect()
+            connected = false
 
-        } catch (_: Exception) {
+            rebuild()
         }
+    }
 
-        connected =
-            false
+    // =============================================================
+    // DERIV CONNECTED
+    // =============================================================
 
-        accountId =
-            ""
+    override fun onConnected(
+        accountId: String,
+        accountType: String
+    ) {
 
-        accountType =
-            ""
+        runOnUiThread {
 
-        accountBalance =
-            0.0
+            this.accountId =
+                accountId
 
-        accountCurrency =
-            ""
+            this.accountType =
+                accountType
 
-        rebuild()
+            connected = true
 
-        Toast.makeText(
-            this,
-            "Deriv disconnected.",
-            Toast.LENGTH_SHORT
-        ).show()
+            rebuild()
+
+            Toast.makeText(
+                this@MainActivity,
+                "Deriv account connected",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    // =============================================================
+    // DERIV BALANCE
+    // =============================================================
+
+    override fun onBalance(
+        balance: Double,
+        currency: String
+    ) {
+
+        runOnUiThread {
+
+            accountBalance =
+                balance
+
+            accountCurrency =
+                currency
+
+            connected = true
+
+            rebuild()
+        }
+    }
+
+    // =============================================================
+    // DERIV DISCONNECTED
+    // =============================================================
+
+    override fun onDisconnected() {
+
+        runOnUiThread {
+
+            connected = false
+
+            accountId = ""
+
+            accountType = ""
+
+            accountBalance = 0.0
+
+            accountCurrency = ""
+
+            rebuild()
+        }
+    }
+
+    // =============================================================
+    // DERIV ERROR
+    // =============================================================
+
+    override fun onError(
+        message: String
+    ) {
+
+        runOnUiThread {
+
+            Toast.makeText(
+                this@MainActivity,
+                message,
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    // =============================================================
+    // MANUAL DISCONNECT
+    // =============================================================
+
+    private fun disconnectDeriv() {
+
+        derivApiClient.disconnect()
+
+        connected = false
+
+        accountId = ""
+
+        accountType = ""
+
+        accountBalance = 0.0
+
+        accountCurrency = ""
+
+        buildMainScreen()
     }
 
     // =============================================================
