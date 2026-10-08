@@ -139,7 +139,7 @@ class DerivApiClient(
 
             val digest =
                 MessageDigest
-                    .getInstance("SHA-256")
+                                .getInstance("SHA-256")
                     .digest(
                         verifier.toByteArray(
                             Charsets.US_ASCII
@@ -153,27 +153,17 @@ class DerivApiClient(
         }
     }
 
-    // =============================================================
-    // HTTP CLIENT
-    // =============================================================
-
     private val httpClient =
         OkHttpClient.Builder()
-            .pingInterval(
-                30,
-                TimeUnit.SECONDS
-            )
+            .pingInterval(30, TimeUnit.SECONDS)
             .build()
-
-    // =============================================================
-    // WEBSOCKET
-    // =============================================================
 
     private var webSocket: WebSocket? = null
 
-    // =============================================================
-    // CONNECTION DATA
-    // =============================================================
+    private var manualDisconnect = false
+
+    private var reconnectExecutor:
+        java.util.concurrent.ScheduledExecutorService? = null
 
     private var accessToken: String = ""
 
@@ -181,31 +171,19 @@ class DerivApiClient(
 
     private var selectedAccountType: String = ""
 
-    // =============================================================
-    // MANUAL DISCONNECT FLAG
-    //
-    // false = connection should remain active/reconnect
-    // true  = user deliberately disconnected
-    // =============================================================
-
-    private var manualDisconnect = false
-
-    // =============================================================
-    // CONNECT WITH ACCESS TOKEN
-    // =============================================================
-
     fun connectWithAccessToken(
         token: String,
         accountType: String
     ) {
+
+        manualDisconnect = false
+        cancelReconnect()
 
         accessToken =
             token.trim()
 
         selectedAccountType =
             accountType
-
-        manualDisconnect = false
 
         if (accessToken.isEmpty()) {
 
@@ -222,9 +200,6 @@ class DerivApiClient(
 
         getAccounts(accountType)
     }
-        // =============================================================
-    // GET DERIV ACCOUNTS
-    // =============================================================
 
     private fun getAccounts(
         accountType: String
@@ -297,10 +272,6 @@ class DerivApiClient(
                                 var foundAccountId =
                                     ""
 
-                                // -------------------------------------------------
-                                // ACCOUNT ARRAY
-                                // -------------------------------------------------
-
                                 if (
                                     data is JSONArray
                                 ) {
@@ -308,8 +279,7 @@ class DerivApiClient(
                                     for (
                                         i in 0 until data.length()
                                     ) {
-
-                                        val account =
+                                                                              val account =
                                             data.optJSONObject(i)
                                                 ?: continue
 
@@ -338,10 +308,6 @@ class DerivApiClient(
                                         }
                                     }
 
-                                // -------------------------------------------------
-                                // SINGLE ACCOUNT OBJECT
-                                // -------------------------------------------------
-
                                 } else if (
                                     data is JSONObject
                                 ) {
@@ -368,10 +334,6 @@ class DerivApiClient(
                                     }
                                 }
 
-                                // -------------------------------------------------
-                                // ACCOUNT NOT FOUND
-                                // -------------------------------------------------
-
                                 if (
                                     foundAccountId.isEmpty()
                                 ) {
@@ -382,10 +344,6 @@ class DerivApiClient(
 
                                     return
                                 }
-
-                                // -------------------------------------------------
-                                // ACCOUNT FOUND
-                                // -------------------------------------------------
 
                                 selectedAccountId =
                                     foundAccountId
@@ -411,11 +369,6 @@ class DerivApiClient(
                 }
             )
     }
-
-
-    // =============================================================
-    // REQUEST DERIV WEBSOCKET URL
-    // =============================================================
 
     private fun requestWebSocketUrl(
         accountType: String
@@ -467,7 +420,7 @@ class DerivApiClient(
                         response.use {
 
                             val body =
-                                it.body
+                                                            it.body
                                     ?.string()
                                     .orEmpty()
 
@@ -533,16 +486,12 @@ class DerivApiClient(
                 }
             )
     }
-        // =============================================================
-    // OPEN WEBSOCKET
-    // =============================================================
 
     private fun openWebSocket(
         wsUrl: String,
         accountType: String
     ) {
 
-        // A new connection is being deliberately established.
         manualDisconnect = false
 
         val request =
@@ -560,18 +509,10 @@ class DerivApiClient(
                         response: Response
                     ) {
 
-                        // -------------------------------------------------
-                        // CONNECTION IS READY
-                        // -------------------------------------------------
-
                         callback.onConnected(
                             selectedAccountId,
                             accountType
                         )
-
-                        // -------------------------------------------------
-                        // BALANCE SUBSCRIPTION
-                        // -------------------------------------------------
 
                         val balanceRequest =
                             JSONObject()
@@ -593,11 +534,6 @@ class DerivApiClient(
                         )
                     }
 
-
-                    // =====================================================
-                    // RECEIVE MESSAGE
-                    // =====================================================
-
                     override fun onMessage(
                         webSocket: WebSocket,
                         text: String
@@ -607,10 +543,6 @@ class DerivApiClient(
 
                             val json =
                                 JSONObject(text)
-
-                            // -------------------------------------------------
-                            // BALANCE
-                            // -------------------------------------------------
 
                             val balanceObject =
                                 json.optJSONObject(
@@ -629,7 +561,7 @@ class DerivApiClient(
 
                                 val currency =
                                     balanceObject.optString(
-                                        "currency",
+                                                                                "currency",
                                         ""
                                     )
 
@@ -643,10 +575,6 @@ class DerivApiClient(
                                     )
                                 }
                             }
-
-                            // -------------------------------------------------
-                            // DERIV ERROR
-                            // -------------------------------------------------
 
                             val errorObject =
                                 json.optJSONObject(
@@ -665,20 +593,11 @@ class DerivApiClient(
                                 )
                             }
 
-                        } catch (
-                            _: Exception
-                        ) {
+                        } catch (_: Exception) {
 
-                            // Ignore malformed/non-critical
-                            // messages so they do not terminate
-                            // the connection.
+                            // Ignore malformed/non-critical messages.
                         }
                     }
-
-
-                    // =====================================================
-                    // CONNECTION FAILURE
-                    // =====================================================
 
                     override fun onFailure(
                         webSocket: WebSocket,
@@ -686,43 +605,16 @@ class DerivApiClient(
                         response: Response?
                     ) {
 
-                        /*
-                         * IMPORTANT:
-                         *
-                         * A network/WebSocket failure is NOT treated
-                         * as a deliberate user disconnect.
-                         *
-                         * We therefore do not call disconnect()
-                         * here and we do not clear the access token.
-                         */
-
-                        if (
-                            manualDisconnect
-                        ) {
+                        if (manualDisconnect) {
                             return
                         }
 
-                        callback.onError(
-                            "Deriv connection interrupted: " +
-                                (
-                                    t.message
-                                        ?: "connection lost"
-                                )
+                        callback.onConnecting(
+                            "Connection interrupted. Reconnecting..."
                         )
 
-                        /*
-                         * Do not deliberately disconnect the
-                         * account here.
-                         *
-                         * The user remains authenticated and can
-                         * reconnect using REFRESH if required.
-                         */
+                        scheduleReconnect(accountType)
                     }
-
-
-                    // =====================================================
-                    // SOCKET CLOSED
-                    // =====================================================
 
                     override fun onClosed(
                         webSocket: WebSocket,
@@ -730,73 +622,53 @@ class DerivApiClient(
                         reason: String
                     ) {
 
-                        /*
-                         * Only report a real disconnect when the
-                         * user deliberately requested it.
-                         *
-                         * An ordinary socket closure must not
-                         * erase the authenticated account state.
-                         */
-
-                        if (
-                            manualDisconnect
-                        ) {
-
+                        if (manualDisconnect) {
                             callback.onDisconnected()
+                            return
                         }
+
+                        callback.onConnecting(
+                            "Connection closed. Reconnecting..."
+                        )
+
+                        scheduleReconnect(accountType)
                     }
                 }
             )
     }
-        private fun scheduleReconnect(
+
+    private fun scheduleReconnect(
         accountType: String
     ) {
 
-        if (manualDisconnect) {
+        if (manualDisconnect || accessToken.isBlank()) {
             return
         }
 
-        if (accessToken.isBlank()) {
-            return
-        }
-
-        // Prevent multiple reconnect timers from running at the same time.
-        reconnectExecutor?.shutdownNow()
+        cancelReconnect()
 
         reconnectExecutor =
-            java.util.concurrent.Executors.newSingleThreadScheduledExecutor()
+            java.util.concurrent.Executors
+                .newSingleThreadScheduledExecutor()
 
         reconnectExecutor?.schedule(
             {
 
-                if (manualDisconnect) {
+                if (manualDisconnect || accessToken.isBlank()) {
                     return@schedule
                 }
 
-                if (accessToken.isBlank()) {
-                    return@schedule
-                }
+                callback.onConnecting(
+                    "Reconnecting to Deriv..."
+                )
 
-                try {
-
-                    callback.onConnecting(
-                        "Reconnecting to Deriv..."
-                    )
-
-                    getAccounts(accountType)
-
-                } catch (_: Exception) {
-
-                    // The next connection attempt will be scheduled
-                    // by the connection failure/close handling.
-                }
+                getAccounts(accountType)
 
             },
             5,
-            java.util.concurrent.TimeUnit.SECONDS
+            TimeUnit.SECONDS
         )
     }
-
 
     private fun cancelReconnect() {
 
@@ -809,79 +681,25 @@ class DerivApiClient(
         reconnectExecutor = null
     }
 
-
     fun disconnect() {
 
-        /*
-         * This is the ONLY deliberate disconnect path.
-         *
-         * Once this is called:
-         * - automatic reconnect is stopped
-         * - the WebSocket is closed
-         * - authentication data is cleared
-         * - the application is informed that the account was disconnected
-         */
-
         manualDisconnect = true
 
         cancelReconnect()
 
-        try {
-            webSocket?.close(
-                1000,
-                "User disconnected"
-            )
-        } catch (_: Exception) {
-            // Ignore close errors.
-        }
+        webSocket?.close(
+            1000,
+            "User disconnected"
+        )
 
         webSocket = null
 
         accessToken = ""
 
         selectedAccountId = ""
+
+        selectedAccountType = ""
 
         callback.onDisconnected()
-    }
-
-
-    fun isConnected(): Boolean {
-        return webSocket != null &&
-                !manualDisconnect
-    }
-        private fun clearConnectionState() {
-
-        cancelReconnect()
-
-        webSocket = null
-
-        accessToken = ""
-
-        selectedAccountId = ""
-
-        manualDisconnect = true
-    }
-
-
-    override fun finalize() {
-
-        try {
-            cancelReconnect()
-        } catch (_: Exception) {
-            // Ignore cleanup errors.
-        }
-
-        try {
-            webSocket?.close(
-                1000,
-                "Client finalized"
-            )
-        } catch (_: Exception) {
-            // Ignore close errors.
-        }
-
-        webSocket = null
-
-        super.finalize()
     }
 }
