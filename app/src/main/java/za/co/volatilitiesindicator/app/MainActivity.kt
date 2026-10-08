@@ -2286,7 +2286,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         derivApiClient.connect(
     token
 )
-        )
     }
 
     // =============================================================
