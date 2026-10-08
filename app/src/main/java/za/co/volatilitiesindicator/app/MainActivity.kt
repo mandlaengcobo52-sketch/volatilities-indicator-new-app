@@ -2289,58 +2289,56 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         )
     }
 
+        // =============================================================
+    // DERIV CONNECTING
+    // =============================================================
+
+    override fun onConnecting(
+        message: String
+    ) {
+
+        runOnUiThread {
+
+            connected = false
+
+            rebuild()
+        }
+    }
+
     // =============================================================
     // DERIV CONNECTED
     // =============================================================
 
-    override fun onConnected() {
-
-        runOnUiThread {
-
-            connected =
-                true
-
-            buildMainScreen()
-        }
-    }
-
-    // =============================================================
-    // ACCOUNT RECEIVED
-    // =============================================================
-
-    override fun onAccountReceived(
-        id: String,
-        type: String,
-        balance: Double,
-        currency: String
+    override fun onConnected(
+        accountId: String,
+        accountType: String
     ) {
 
         runOnUiThread {
 
-            accountId =
-                id
+            this.accountId =
+                accountId
 
-            accountType =
-                type
+            this.accountType =
+                accountType
 
-            accountBalance =
-                balance
+            connected = true
 
-            accountCurrency =
-                currency
+            rebuild()
 
-            connected =
-                true
-
-            buildMainScreen()
+            Toast.makeText(
+                this@MainActivity,
+                "Deriv account connected",
+                Toast.LENGTH_SHORT
+            ).show()
         }
     }
 
     // =============================================================
-    // BALANCE RECEIVED
+    // DERIV BALANCE
     // =============================================================
 
-    override fun onBalanceReceived(
+    override fun onBalance(
         balance: Double,
         currency: String
     ) {
@@ -2353,10 +2351,31 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             accountCurrency =
                 currency
 
-            connected =
-                true
+            connected = true
 
-            buildMainScreen()
+            rebuild()
+        }
+    }
+
+    // =============================================================
+    // DERIV ERROR
+    // =============================================================
+
+    override fun onError(
+        message: String
+    ) {
+
+        runOnUiThread {
+
+            connected = false
+
+            rebuild()
+
+            Toast.makeText(
+                this@MainActivity,
+                message,
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
 
@@ -2368,10 +2387,17 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         runOnUiThread {
 
-            connected =
-                false
+            connected = false
 
-            buildMainScreen()
+            accountId = ""
+
+            accountType = ""
+
+            accountBalance = 0.0
+
+            accountCurrency = ""
+
+            rebuild()
         }
     }
 
