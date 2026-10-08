@@ -2353,23 +2353,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
     }
 
-    // =============================================================
-    // DERIV ERROR
-    // =============================================================
-
-    override fun onError(
-        message: String
-    ) {
-
-        runOnUiThread {
-
-            Toast.makeText(
-                this@MainActivity,
-                message,
-                Toast.LENGTH_LONG
-            ).show()
-        }
-    }
 
     // =============================================================
     // DERIV DISCONNECTED
@@ -2410,7 +2393,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             ).show()
         }
     }
-        // =============================================================
+    // =============================================================
     // MANUAL DISCONNECT
     // =============================================================
 
