@@ -2539,16 +2539,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     // ACTIVITY LIFECYCLE
     // =============================================================
 
-    override fun onNewIntent(intent: Intent?) {
-        super.onNewIntent(intent)
-
-        if (intent != null) {
-            setIntent(intent)
-            handleOAuthCallback(intent)
-        }
-    }
-
-
     override fun onDestroy() {
         super.onDestroy()
 
