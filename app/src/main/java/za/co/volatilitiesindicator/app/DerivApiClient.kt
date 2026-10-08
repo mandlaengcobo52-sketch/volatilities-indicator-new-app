@@ -1250,9 +1250,9 @@ class DerivApiClient(
     /*
      * Request the current balance from Deriv.
      */
-    private fun requestBalance(
-        socket: WebSocket
-    ) {
+    fun requestBalance(
+    socket: WebSocket
+) {
 
         if (
             !connected
