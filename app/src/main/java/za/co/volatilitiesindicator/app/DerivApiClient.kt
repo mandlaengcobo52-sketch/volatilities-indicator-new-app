@@ -7,6 +7,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
 import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -23,14 +24,59 @@ class DerivApiClient(
     }
 
     companion object {
+
         private const val DERIV_URL =
             "wss://ws.derivws.com/websockets/v3?app_id=1089"
 
-        private const val HEARTBEAT_SECONDS = 25L
+        private const val HEARTBEAT_SECONDS = 20L
+
         private const val RECONNECT_DELAY_SECONDS = 3L
+
+        /*
+         * Existing OAuth client IDs used by the application.
+         */
+        private const val DEMO_CLIENT_ID =
+            "34fz6VSRiNSQnELXjApVH"
+
+        private const val REAL_CLIENT_ID =
+            "34fz9hcgpdWwSzNCVeUgMR"
+
+        const val OAUTH_REDIRECT_URI =
+            "https://volatilitiesindicator.org.za/accounts/account-callback.php"
+
+        const val OAUTH_SCOPE =
+            "trade"
+
+        const val OAUTH_TOKEN_URL =
+            "https://auth.deriv.com/oauth2/token"
+
+        /**
+         * Existing MainActivity compatibility method.
+         */
+        fun clientId(
+            mode: String
+        ): String {
+
+            return if (
+                mode.equals(
+                    "REAL",
+                    ignoreCase = true
+                )
+            ) {
+                REAL_CLIENT_ID
+            } else {
+                DEMO_CLIENT_ID
+            }
+        }
     }
 
-    private val client: OkHttpClient =
+    /*
+     * WebSocket client.
+     *
+     * pingInterval prevents an idle WebSocket from being
+     * silently dropped by the HTTP/WebSocket layer.
+     */
+    private val client =
         OkHttpClient.Builder()
             .pingInterval(
                 HEARTBEAT_SECONDS,
@@ -50,40 +96,94 @@ class DerivApiClient(
             )
             .build()
 
-    private var webSocket: WebSocket? = null
-
-    private var accessToken: String? = null
-
-    private var manuallyDisconnected = false
-
-    private var reconnectScheduled = false
-
-    private var connected = false
-
-    private val scheduler: ScheduledExecutorService =
+    /*
+     * Scheduler used only for:
+     *
+     * 1. Deriv application heartbeat
+     * 2. Unexpected connection recovery
+     */
+    private val scheduler:
+        ScheduledExecutorService =
         Executors.newSingleThreadScheduledExecutor()
 
-    /**
-     * Connect to Deriv using the supplied OAuth token.
-     */
-    fun connect(token: String) {
+    private var heartbeatFuture:
+        ScheduledFuture<*>? = null
 
-        if (token.isBlank()) {
+    private var reconnectFuture:
+        ScheduledFuture<*>? = null
+
+    private var webSocket:
+        WebSocket? = null
+
+    private var accessToken:
+        String? = null
+
+    private var accountType:
+        String = "DEMO"
+
+    private var connected =
+        false
+
+    private var connecting =
+        false
+
+    /*
+     * TRUE only when the user/application deliberately
+     * requested a disconnect.
+     */
+    private var manuallyDisconnected =
+        false
+
+    private var reconnectScheduled =
+        false
+
+    /**
+     * Existing MainActivity entry point.
+     *
+     * This method is deliberately preserved because
+     * MainActivity already calls it after OAuth succeeds.
+     */
+    fun connectWithAccessToken(
+        token: String,
+        accountType: String
+    ) {
+
+        val cleanToken =
+            token.trim()
+
+        if (
+            cleanToken.isEmpty()
+        ) {
+
             callback.onError(
                 "Deriv access token is empty."
             )
+
             return
         }
 
-        accessToken = token
+        accessToken =
+            cleanToken
+
+        this.accountType =
+            accountType
 
         /*
-         * This is an intentional user connection.
-         * A later socket failure may therefore reconnect.
+         * A new explicit connection request means that
+         * automatic reconnect is allowed.
          */
-        manuallyDisconnected = false
+        manuallyDisconnected =
+            false
 
-        reconnectScheduled = false
+        cancelReconnect()
+
+        stopHeartbeat()
+
+        /*
+         * Replace an old socket without sending a
+         * false "disconnected" event to the UI.
+         */
+        closeSocketOnly()
 
         callback.onConnecting(
             "Connecting to Deriv..."
@@ -93,128 +193,204 @@ class DerivApiClient(
     }
 
     /**
-     * Open the WebSocket.
+     * Compatibility method.
      */
-    private fun openSocket() {
+    fun connect(
+        token: String
+    ) {
 
-        if (manuallyDisconnected) {
-            return
-        }
-
-        val token = accessToken
-
-        if (token.isNullOrBlank()) {
-            callback.onError(
-                "No Deriv access token available."
-            )
-            return
-        }
-
-        /*
-         * Do not create multiple sockets at the same time.
-         */
-        if (
-            webSocket != null &&
-            connected
-        ) {
-            return
-        }
-
-        val request = Request.Builder()
-            .url(DERIV_URL)
-            .build()
-
-        webSocket = client.newWebSocket(
-            request,
-            object : WebSocketListener() {
-
-                override fun onOpen(
-                    socket: WebSocket,
-                    response: Response
-                ) {
-                    if (manuallyDisconnected) {
-                        socket.close(
-                            1000,
-                            "Manual disconnect"
-                        )
-                        return
-                    }
-
-                    webSocket = socket
-
-                    connected = true
-
-                    reconnectScheduled = false
-
-                    callback.onConnecting(
-                        "Authorizing Deriv account..."
-                    )
-
-                    authorize(
-                        socket,
-                        token
-                    )
-                }
-
-                override fun onMessage(
-                    socket: WebSocket,
-                    text: String
-                ) {
-                    handleMessage(
-                        socket,
-                        text
-                    )
-                }
-
-                override fun onFailure(
-                    socket: WebSocket,
-                    t: Throwable,
-                    response: Response?
-                ) {
-                    connected = false
-
-                    webSocket = null
-
-                    val message =
-                        t.message
-                            ?.takeIf {
-                                it.isNotBlank()
-                            }
-                            ?: "Unknown error"
-
-                    if (!manuallyDisconnected) {
-
-                        callback.onError(
-                            "Deriv connection interrupted: $message"
-                        )
-
-                        scheduleReconnect()
-                    }
-                }
-
-                override fun onClosed(
-                    socket: WebSocket,
-                    code: Int,
-                    reason: String
-                ) {
-                    connected = false
-
-                    if (webSocket == socket) {
-                        webSocket = null
-                    }
-
-                    if (manuallyDisconnected) {
-                        callback.onDisconnected()
-                    } else {
-                        scheduleReconnect()
-                    }
-                }
-            }
+        connectWithAccessToken(
+            token,
+            "DEMO"
         )
     }
 
     /**
-     * Authorize the Deriv account.
+     * Open the Deriv WebSocket.
+     */
+    private fun openSocket() {
+
+        if (
+            manuallyDisconnected
+        ) {
+            return
+        }
+
+        val token =
+            accessToken
+
+        if (
+            token.isNullOrBlank()
+        ) {
+
+            callback.onError(
+                "No Deriv access token available."
+            )
+
+            return
+        }
+
+        /*
+         * Prevent duplicate sockets.
+         */
+        if (
+            connecting ||
+            webSocket != null
+        ) {
+            return
+        }
+
+        connecting =
+            true
+
+        val request =
+            Request.Builder()
+                .url(
+                    DERIV_URL
+                )
+                .build()
+
+        webSocket =
+            client.newWebSocket(
+                request,
+                createWebSocketListener(
+                    token
+                )
+            )
+    }
+        /**
+     * Create the WebSocket listener.
+     */
+    private fun createWebSocketListener(
+        token: String
+    ): WebSocketListener {
+
+        return object : WebSocketListener() {
+
+            override fun onOpen(
+                socket: WebSocket,
+                response: Response
+            ) {
+
+                connecting =
+                    false
+
+                if (
+                    manuallyDisconnected
+                ) {
+
+                    socket.close(
+                        1000,
+                        "Manual disconnect"
+                    )
+
+                    return
+                }
+
+                webSocket =
+                    socket
+
+                callback.onConnecting(
+                    "Authorizing Deriv account..."
+                )
+
+                authorize(
+                    socket,
+                    token
+                )
+            }
+
+            override fun onMessage(
+                socket: WebSocket,
+                text: String
+            ) {
+
+                handleMessage(
+                    socket,
+                    text
+                )
+            }
+
+            override fun onFailure(
+                socket: WebSocket,
+                t: Throwable,
+                response: Response?
+            ) {
+
+                connecting =
+                    false
+
+                connected =
+                    false
+
+                if (
+                    webSocket == socket
+                ) {
+
+                    webSocket =
+                        null
+                }
+
+                stopHeartbeat()
+
+                /*
+                 * IMPORTANT:
+                 *
+                 * This is an unexpected socket failure.
+                 * It is NOT treated as a manual disconnect.
+                 *
+                 * Therefore the client attempts to reconnect.
+                 */
+                if (
+                    !manuallyDisconnected
+                ) {
+
+                    scheduleReconnect()
+                }
+            }
+
+            override fun onClosed(
+                socket: WebSocket,
+                code: Int,
+                reason: String
+            ) {
+
+                connecting =
+                    false
+
+                connected =
+                    false
+
+                if (
+                    webSocket == socket
+                ) {
+
+                    webSocket =
+                        null
+                }
+
+                stopHeartbeat()
+
+                /*
+                 * A socket can close for network reasons.
+                 * Only the explicit manual disconnect should
+                 * prevent reconnection.
+                 */
+                if (
+                    !manuallyDisconnected
+                ) {
+
+                    scheduleReconnect()
+                } else {
+
+                    callback.onDisconnected()
+                }
+            }
+        }
+    }
+
+    /**
+     * Authorize the Deriv WebSocket using the OAuth token.
      */
     private fun authorize(
         socket: WebSocket,
@@ -223,17 +399,20 @@ class DerivApiClient(
 
         try {
 
-            val request = JSONObject()
-                .put(
-                    "authorize",
-                    token
-                )
+            val request =
+                JSONObject()
+                    .put(
+                        "authorize",
+                        token
+                    )
 
             socket.send(
                 request.toString()
             )
 
-        } catch (e: Exception) {
+        } catch (
+            e: Exception
+        ) {
 
             callback.onError(
                 "Unable to authorize Deriv account: ${
@@ -243,8 +422,9 @@ class DerivApiClient(
             )
         }
     }
-        /**
-     * Process messages received from Deriv.
+
+    /**
+     * Handle all incoming Deriv messages.
      */
     private fun handleMessage(
         socket: WebSocket,
@@ -253,19 +433,26 @@ class DerivApiClient(
 
         try {
 
-            val json = JSONObject(text)
+            val json =
+                JSONObject(text)
 
             /*
-             * API error.
+             * Deriv API error.
              */
-            if (json.has("error")) {
+            if (
+                json.has("error")
+            ) {
 
                 val error =
-                    json.optJSONObject("error")
+                    json.optJSONObject(
+                        "error"
+                    )
 
                 val message =
                     error
-                        ?.optString("message")
+                        ?.optString(
+                            "message"
+                        )
                         ?.takeIf {
                             it.isNotBlank()
                         }
@@ -275,20 +462,30 @@ class DerivApiClient(
                     message
                 )
 
+                /*
+                 * Do not deliberately disconnect here.
+                 *
+                 * The socket itself determines whether the
+                 * connection remains usable.
+                 */
                 return
             }
 
             /*
-             * Authorization response.
+             * Successful authorization.
              */
-            if (json.has("authorize")) {
+            if (
+                json.has("authorize")
+            ) {
 
                 val authorize =
                     json.optJSONObject(
                         "authorize"
                     )
 
-                if (authorize != null) {
+                if (
+                    authorize != null
+                ) {
 
                     val accountId =
                         authorize.optString(
@@ -296,10 +493,10 @@ class DerivApiClient(
                             ""
                         )
 
-                    val accountType =
+                    val returnedAccountType =
                         authorize.optString(
                             "account_type",
-                            ""
+                            accountType
                         )
 
                     val balance =
@@ -314,18 +511,24 @@ class DerivApiClient(
                             ""
                         )
 
-                    connected = true
+                    connected =
+                        true
+
+                    connecting =
+                        false
 
                     callback.onConnected(
                         accountId,
-                        accountType
+                        returnedAccountType
                     )
 
                     /*
-                     * Send the current balance immediately
-                     * when Deriv supplies it during authorization.
+                     * Immediately display the balance returned
+                     * by the authorization response.
                      */
-                    if (!balance.isNaN()) {
+                    if (
+                        !balance.isNaN()
+                    ) {
 
                         callback.onBalance(
                             balance,
@@ -341,9 +544,10 @@ class DerivApiClient(
                     )
 
                     /*
-                     * Start the application-level heartbeat.
+                     * Start the application heartbeat only
+                     * after successful authorization.
                      */
-                    startHeartbeatIfNeeded(
+                    startHeartbeat(
                         socket
                     )
                 }
@@ -352,16 +556,20 @@ class DerivApiClient(
             }
 
             /*
-             * Balance subscription response.
+             * Live balance subscription/update.
              */
-            if (json.has("balance")) {
+            if (
+                json.has("balance")
+            ) {
 
                 val balanceObject =
                     json.optJSONObject(
                         "balance"
                     )
 
-                if (balanceObject != null) {
+                if (
+                    balanceObject != null
+                ) {
 
                     val balance =
                         balanceObject.optDouble(
@@ -375,7 +583,9 @@ class DerivApiClient(
                             ""
                         )
 
-                    if (!balance.isNaN()) {
+                    if (
+                        !balance.isNaN()
+                    ) {
 
                         callback.onBalance(
                             balance,
@@ -390,11 +600,16 @@ class DerivApiClient(
             /*
              * Application-level ping response.
              */
-            if (json.has("ping")) {
+            if (
+                json.has("ping")
+            ) {
+
                 return
             }
 
-        } catch (e: Exception) {
+        } catch (
+            e: Exception
+        ) {
 
             callback.onError(
                 "Invalid Deriv response: ${
@@ -404,31 +619,39 @@ class DerivApiClient(
             )
         }
     }
-
-    /**
-     * Subscribe to live account balance.
+        /**
+     * Subscribe to the live account balance.
      */
     private fun subscribeToBalance(
         socket: WebSocket
     ) {
 
+        if (
+            manuallyDisconnected
+        ) {
+            return
+        }
+
         try {
 
-            val request = JSONObject()
-                .put(
-                    "balance",
-                    1
-                )
-                .put(
-                    "subscribe",
-                    1
-                )
+            val request =
+                JSONObject()
+                    .put(
+                        "balance",
+                        1
+                    )
+                    .put(
+                        "subscribe",
+                        1
+                    )
 
             socket.send(
                 request.toString()
             )
 
-        } catch (e: Exception) {
+        } catch (
+            e: Exception
+        ) {
 
             callback.onError(
                 "Unable to subscribe to balance: ${
@@ -440,24 +663,30 @@ class DerivApiClient(
     }
 
     /**
-     * Keep the application-level Deriv connection alive.
+     * Start the application-level heartbeat.
      *
-     * OkHttp also sends WebSocket ping frames through
-     * pingInterval(). This additional Deriv ping helps prevent
-     * the application session from being treated as idle.
+     * OkHttp already sends WebSocket ping frames through
+     * pingInterval(). This second heartbeat sends a Deriv
+     * API ping so the Deriv session remains active as well.
      */
-    private fun startApplicationHeartbeat(
+    private fun startHeartbeat(
         socket: WebSocket
     ) {
 
-        scheduler.scheduleAtFixedRate(
-            {
+        stopHeartbeat()
 
-                if (
-                    !manuallyDisconnected &&
-                    connected &&
-                    webSocket == socket
-                ) {
+        heartbeatFuture =
+            scheduler.scheduleAtFixedRate(
+                {
+
+                    if (
+                        manuallyDisconnected ||
+                        !connected ||
+                        webSocket != socket
+                    ) {
+
+                        return@scheduleAtFixedRate
+                    }
 
                     try {
 
@@ -472,96 +701,188 @@ class DerivApiClient(
                             ping.toString()
                         )
 
-                    } catch (_: Exception) {
+                    } catch (
+                        _: Exception
+                    ) {
 
                         /*
-                         * The WebSocket failure will be handled
-                         * by OkHttp's WebSocketListener.
+                         * Do not manually disconnect here.
+                         *
+                         * If the socket is actually broken,
+                         * OkHttp will trigger onFailure().
                          */
                     }
-                }
 
-            },
-            HEARTBEAT_SECONDS,
-            HEARTBEAT_SECONDS,
-            TimeUnit.SECONDS
-        )
+                },
+                HEARTBEAT_SECONDS,
+                HEARTBEAT_SECONDS,
+                TimeUnit.SECONDS
+            )
     }
 
     /**
-     * Start heartbeat once the account is connected.
+     * Stop the heartbeat without disconnecting the
+     * WebSocket for any other reason.
      */
-    private fun startHeartbeatIfNeeded(
-        socket: WebSocket
-    ) {
+    private fun stopHeartbeat() {
 
-        /*
-         * The scheduler remains available for the lifetime
-         * of this client.
-         */
-        startApplicationHeartbeat(
-            socket
-        )
+        try {
+
+            heartbeatFuture?.cancel(
+                false
+            )
+
+        } catch (
+            _: Exception
+        ) {
+        }
+
+        heartbeatFuture =
+            null
     }
-        /**
-     * Reconnect automatically after an unexpected network
-     * or WebSocket failure.
-     *
-     * This is NOT a deliberate disconnect.
+
+    /**
+     * Schedule recovery after an unexpected WebSocket
+     * failure.
      */
     private fun scheduleReconnect() {
 
-        if (manuallyDisconnected) {
+        if (
+            manuallyDisconnected
+        ) {
             return
         }
 
-        if (reconnectScheduled) {
+        if (
+            reconnectScheduled
+        ) {
             return
         }
 
-        reconnectScheduled = true
+        if (
+            accessToken.isNullOrBlank()
+        ) {
+            return
+        }
 
-        scheduler.schedule(
-            {
+        reconnectScheduled =
+            true
 
-                reconnectScheduled = false
+        reconnectFuture =
+            scheduler.schedule(
+                {
 
-                if (!manuallyDisconnected) {
+                    reconnectScheduled =
+                        false
+
+                    reconnectFuture =
+                        null
+
+                    if (
+                        manuallyDisconnected
+                    ) {
+                        return@schedule
+                    }
 
                     callback.onConnecting(
                         "Reconnecting to Deriv..."
                     )
 
                     openSocket()
-                }
 
-            },
-            RECONNECT_DELAY_SECONDS,
-            TimeUnit.SECONDS
-        )
+                },
+                RECONNECT_DELAY_SECONDS,
+                TimeUnit.SECONDS
+            )
     }
 
     /**
-     * MANUAL DISCONNECT ONLY.
+     * Cancel a pending automatic reconnect.
+     */
+    private fun cancelReconnect() {
+
+        try {
+
+            reconnectFuture?.cancel(
+                false
+            )
+
+        } catch (
+            _: Exception
+        ) {
+        }
+
+        reconnectFuture =
+            null
+
+        reconnectScheduled =
+            false
+    }
+
+    /**
+     * Close the current WebSocket without telling the
+     * application that the user disconnected.
      *
-     * This method intentionally terminates the Deriv connection.
+     * Used only when replacing an existing socket.
+     */
+    private fun closeSocketOnly() {
+
+        val socket =
+            webSocket
+
+        webSocket =
+            null
+
+        connected =
+            false
+
+        connecting =
+            false
+
+        stopHeartbeat()
+
+        try {
+
+            socket?.close(
+                1000,
+                "Replacing connection"
+            )
+
+        } catch (
+            _: Exception
+        ) {
+        }
+    }
+        /**
+     * Manually disconnect the Deriv account.
      *
-     * It must only be called when the user deliberately
-     * disconnects the account.
+     * This is the deliberate disconnect operation.
+     *
+     * Automatic socket failures DO NOT call this method.
      */
     fun disconnect() {
 
-        manuallyDisconnected = true
+        manuallyDisconnected =
+            true
 
-        connected = false
+        connected =
+            false
 
-        reconnectScheduled = false
+        connecting =
+            false
 
-        accessToken = null
+        cancelReconnect()
 
-        val socket = webSocket
+        stopHeartbeat()
 
-        webSocket = null
+        accessToken =
+            null
+
+        val socket =
+            webSocket
+
+        webSocket =
+            null
 
         try {
 
@@ -570,15 +891,17 @@ class DerivApiClient(
                 "Manual disconnect"
             )
 
-        } catch (_: Exception) {
+        } catch (
+            _: Exception
+        ) {
         }
 
         callback.onDisconnected()
     }
 
     /**
-     * Returns true when the Deriv WebSocket is currently
-     * connected and has not been manually disconnected.
+     * Check whether the Deriv connection is currently
+     * active.
      */
     fun isConnected(): Boolean {
 
@@ -588,90 +911,40 @@ class DerivApiClient(
     }
 
     /**
-     * Release resources when this client is permanently
-     * destroyed.
-     *
-     * This must NOT be called merely because the Activity
-     * goes into the background.
-     */
-    fun shutdown() {
-
-        manuallyDisconnected = true
-
-        connected = false
-
-        reconnectScheduled = false
-
-        accessToken = null
-
-        try {
-
-            webSocket?.cancel()
-
-        } catch (_: Exception) {
-        }
-
-        webSocket = null
-
-        try {
-
-            scheduler.shutdownNow()
-
-        } catch (_: Exception) {
-        }
-
-        try {
-
-            client.dispatcher
-                .executorService
-                .shutdown()
-
-        } catch (_: Exception) {
-        }
-
-        try {
-
-            client.connectionPool
-                .evictAll()
-
-        } catch (_: Exception) {
-        }
-    }
-        /*
-     * The DerivApiClient intentionally does not disconnect
-     * when the Activity is paused, stopped, refreshed, or
-     * temporarily moved to the background.
-     *
-     * The connection remains under the control of the client
-     * until disconnect() or shutdown() is explicitly called.
-     */
-
-    /**
-     * Check whether the client currently has an active
-     * WebSocket connection.
+     * Compatibility helper.
      */
     fun hasActiveConnection(): Boolean {
 
-        return webSocket != null &&
-                connected &&
-                !manuallyDisconnected
+        return isConnected()
     }
 
     /**
-     * Send a request through the existing Deriv connection.
-     *
-     * This method does not create another connection and does
-     * not disconnect the existing connection.
+     * Check whether an OAuth token is currently stored.
      */
-    fun send(request: JSONObject): Boolean {
+    fun hasAccessToken(): Boolean {
 
-        val socket = webSocket
+        return !accessToken.isNullOrBlank()
+    }
+
+    /**
+     * Send a raw Deriv WebSocket request through the
+     * existing connection.
+     *
+     * This never creates another WebSocket.
+     */
+    fun send(
+        request: JSONObject
+    ): Boolean {
+
+        val socket =
+            webSocket
 
         if (
             socket == null ||
             !connected ||
             manuallyDisconnected
         ) {
+
             return false
         }
 
@@ -681,7 +954,9 @@ class DerivApiClient(
                 request.toString()
             )
 
-        } catch (e: Exception) {
+        } catch (
+            e: Exception
+        ) {
 
             callback.onError(
                 "Unable to send Deriv request: ${
@@ -696,44 +971,178 @@ class DerivApiClient(
 
     /**
      * Request the current balance.
-     *
-     * This uses the existing WebSocket connection.
      */
     fun requestBalance(): Boolean {
 
-        val request = JSONObject()
-            .put(
-                "balance",
-                1
-            )
-            .put(
-                "subscribe",
-                1
-            )
+        val request =
+            JSONObject()
+                .put(
+                    "balance",
+                    1
+                )
+                .put(
+                    "subscribe",
+                    1
+                )
 
-        return send(request)
+        return send(
+            request
+        )
     }
 
     /**
-     * Send a Deriv ping manually when required.
-     *
-     * This does NOT create a new connection.
+     * Send a Deriv API ping using the existing connection.
      */
     fun ping(): Boolean {
 
-        val request = JSONObject()
-            .put(
-                "ping",
-                1
-            )
+        val request =
+            JSONObject()
+                .put(
+                    "ping",
+                    1
+                )
 
-        return send(request)
+        return send(
+            request
+        )
+    }
+
+    /**
+     * Called when the application is placed in the
+     * background.
+     *
+     * IMPORTANT:
+     * This deliberately does NOTHING that disconnects
+     * the Deriv WebSocket.
+     */
+    fun onAppBackgrounded() {
+
+        /*
+         * Do not disconnect.
+         *
+         * The connection must remain alive.
+         */
+        if (
+            isConnected()
+        ) {
+
+            ping()
+        }
+    }
+
+    /**
+     * Called when the application returns to the foreground.
+     *
+     * If the existing connection is still alive, it is reused.
+     * If it was unexpectedly lost, reconnect using the existing
+     * OAuth token.
+     */
+    fun onAppForegrounded() {
+
+        if (
+            manuallyDisconnected
+        ) {
+            return
+        }
+
+        if (
+            isConnected()
+        ) {
+
+            ping()
+
+            return
+        }
+
+        if (
+            !hasAccessToken()
+        ) {
+            return
+        }
+
+        callback.onConnecting(
+            "Reconnecting to Deriv..."
+        )
+
+        cancelReconnect()
+
+        openSocket()
     }
         /**
-     * Close the Deriv connection permanently from the
-     * application's point of view.
+     * Permanently release the Deriv client resources.
      *
-     * This is reserved for permanent cleanup only.
+     * This should only be used when the application itself
+     * is being permanently shut down.
+     *
+     * It must NOT be called simply because MainActivity
+     * enters the background.
+     */
+    fun shutdown() {
+
+        manuallyDisconnected =
+            true
+
+        connected =
+            false
+
+        connecting =
+            false
+
+        cancelReconnect()
+
+        stopHeartbeat()
+
+        accessToken =
+            null
+
+        val socket =
+            webSocket
+
+        webSocket =
+            null
+
+        try {
+
+            socket?.cancel()
+
+        } catch (
+            _: Exception
+        ) {
+        }
+
+        try {
+
+            scheduler.shutdownNow()
+
+        } catch (
+            _: Exception
+        ) {
+        }
+
+        try {
+
+            client.dispatcher
+                .executorService
+                .shutdown()
+
+        } catch (
+            _: Exception
+        ) {
+        }
+
+        try {
+
+            client.connectionPool
+                .evictAll()
+
+        } catch (
+            _: Exception
+        ) {
+        }
+    }
+
+    /**
+     * Compatibility alias for existing application code.
      */
     fun close() {
 
