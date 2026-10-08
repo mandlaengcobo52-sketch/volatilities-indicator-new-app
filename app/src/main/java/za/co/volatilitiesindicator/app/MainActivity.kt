@@ -56,8 +56,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     // =============================================================
     // PLATFORM
-    // USER = MINOR FEATURES
-    // ADMIN = ALL ADMIN FEATURES
     // =============================================================
 
     private var currentPlatform = "USER"
@@ -121,7 +119,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     // INDEX COLOURS
     // =============================================================
 
-    private fun indexColor(index: String): Int {
+    private fun indexColor(
+        index: String
+    ): Int {
 
         return when (index) {
 
@@ -147,12 +147,17 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         savedInstanceState: Bundle?
     ) {
 
-        super.onCreate(savedInstanceState)
+        super.onCreate(
+            savedInstanceState
+        )
 
         window.statusBarColor = BG
+
         window.navigationBarColor = BG
 
-        handleOAuthCallback(intent)
+        handleOAuthCallback(
+            intent
+        )
 
         buildMainScreen()
     }
@@ -161,13 +166,17 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         intent: Intent?
     ) {
 
-        super.onNewIntent(intent)
+        super.onNewIntent(
+            intent
+        )
 
         if (intent != null) {
 
             setIntent(intent)
 
-            handleOAuthCallback(intent)
+            handleOAuthCallback(
+                intent
+            )
         }
     }
 
@@ -177,34 +186,45 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     private fun buildMainScreen() {
 
-        rootScroll = ScrollView(this).apply {
+        rootScroll =
+            ScrollView(this).apply {
 
-            setBackgroundColor(BG)
+                setBackgroundColor(
+                    BG
+                )
 
-            isFillViewport = true
+                isFillViewport =
+                    true
 
-            overScrollMode =
-                View.OVER_SCROLL_NEVER
-        }
+                overScrollMode =
+                    View.OVER_SCROLL_NEVER
+            }
 
-        rootLayout = LinearLayout(this).apply {
+        rootLayout =
+            LinearLayout(this).apply {
 
-            orientation =
-                LinearLayout.VERTICAL
+                orientation =
+                    LinearLayout.VERTICAL
 
-            setPadding(
-                dp(14),
-                dp(8),
-                dp(14),
-                dp(24)
-            )
+                setPadding(
+                    dp(14),
+                    dp(8),
+                    dp(14),
+                    dp(24)
+                )
 
-            setBackgroundColor(BG)
-        }
+                setBackgroundColor(
+                    BG
+                )
+            }
 
-        rootScroll.addView(rootLayout)
+        rootScroll.addView(
+            rootLayout
+        )
 
-        setContentView(rootScroll)
+        setContentView(
+            rootScroll
+        )
 
         addHeader()
 
@@ -216,15 +236,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         addIndexMonitor()
 
-        /*
-         * USER:
-         *   Only user/minor dashboard features.
-         *
-         * ADMIN:
-         *   Additional administration features are
-         *   displayed below the normal dashboard.
-         */
-        if (currentPlatform == "ADMIN") {
+        if (
+            currentPlatform == "ADMIN"
+        ) {
 
             addAdminFeatures()
         }
@@ -266,9 +280,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
                 textSize = 28f
 
-                setTextColor(WHITE)
+                setTextColor(
+                    WHITE
+                )
 
-                gravity = Gravity.CENTER
+                gravity =
+                    Gravity.CENTER
 
                 layoutParams =
                     LinearLayout.LayoutParams(
@@ -279,7 +296,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         menu.setOnClickListener {
 
-            if (currentPlatform == "ADMIN") {
+            if (
+                currentPlatform == "ADMIN"
+            ) {
 
                 showAdminMenu()
 
@@ -289,7 +308,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             }
         }
 
-        header.addView(menu)
+        header.addView(
+            menu
+        )
 
         // ---------------------------------------------------------
         // LOGO / TITLE AREA
@@ -312,11 +333,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     )
             }
 
-        /*
-         * USE THE ACTUAL VOLATILITIES INDICATOR LOGO.
-         *
-         * This replaces the old text-only "V" logo.
-         */
+        // ---------------------------------------------------------
+        // APPROVED VOLATILITIES INDICATOR LOGO
+        // ---------------------------------------------------------
+
         val logo =
             ImageView(this).apply {
 
@@ -328,7 +348,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     ImageView.ScaleType.CENTER_INSIDE
 
                 contentDescription =
-                    "Volatilities Indicator logo"
+                    "Volatilities Indicator"
 
                 layoutParams =
                     LinearLayout.LayoutParams(
@@ -337,7 +357,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     )
             }
 
-        titleBox.addView(logo)
+        titleBox.addView(
+            logo
+        )
+
+        // ---------------------------------------------------------
+        // TITLE
+        // ---------------------------------------------------------
 
         val titleColumn =
             LinearLayout(this).apply {
@@ -356,7 +382,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val title =
             TextView(this).apply {
 
-                text = "VOLATILITIES"
+                text =
+                    "VOLATILITIES"
 
                 textSize = 20f
 
@@ -365,15 +392,20 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     Typeface.BOLD
                 )
 
-                setTextColor(WHITE)
+                setTextColor(
+                    WHITE
+                )
             }
 
-        titleColumn.addView(title)
+        titleColumn.addView(
+            title
+        )
 
         val indicator =
             TextView(this).apply {
 
-                text = "INDICATOR"
+                text =
+                    "INDICATOR"
 
                 textSize = 18f
 
@@ -382,10 +414,14 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     Typeface.BOLD
                 )
 
-                setTextColor(GREEN)
+                setTextColor(
+                    GREEN
+                )
             }
 
-        titleColumn.addView(indicator)
+        titleColumn.addView(
+            indicator
+        )
 
         val subtitle =
             TextView(this).apply {
@@ -395,17 +431,25 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
                 textSize = 8f
 
-                setTextColor(MUTED)
+                setTextColor(
+                    MUTED
+                )
             }
 
-        titleColumn.addView(subtitle)
+        titleColumn.addView(
+            subtitle
+        )
 
-        titleBox.addView(titleColumn)
+        titleBox.addView(
+            titleColumn
+        )
 
-        header.addView(titleBox)
+        header.addView(
+            titleBox
+        )
 
         // ---------------------------------------------------------
-        // TOP-RIGHT FLOWER / NOTIFICATION SYMBOL
+        // TOP RIGHT SYMBOL
         // ---------------------------------------------------------
 
         val bell =
@@ -415,9 +459,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
                 textSize = 28f
 
-                setTextColor(WHITE)
+                setTextColor(
+                    WHITE
+                )
 
-                gravity = Gravity.CENTER
+                gravity =
+                    Gravity.CENTER
 
                 layoutParams =
                     LinearLayout.LayoutParams(
@@ -435,9 +482,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             ).show()
         }
 
-        header.addView(bell)
+        header.addView(
+            bell
+        )
 
-        rootLayout.addView(header)
+        rootLayout.addView(
+            header
+        )
     }
 
     // =============================================================
@@ -446,7 +497,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     private fun addPlatformSelector() {
 
-        addSectionTitle("PLATFORM")
+        addSectionTitle(
+            "PLATFORM"
+        )
 
         val row =
             LinearLayout(this).apply {
@@ -469,14 +522,16 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         user.setOnClickListener {
 
-            currentPlatform = "USER"
+            currentPlatform =
+                "USER"
 
             rebuild()
         }
 
         admin.setOnClickListener {
 
-            currentPlatform = "ADMIN"
+            currentPlatform =
+                "ADMIN"
 
             rebuild()
         }
@@ -488,7 +543,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 dp(54),
                 1f
             ).apply {
-                rightMargin = dp(5)
+
+                rightMargin =
+                    dp(5)
             }
         )
 
@@ -499,20 +556,25 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 dp(54),
                 1f
             ).apply {
-                leftMargin = dp(5)
+
+                leftMargin =
+                    dp(5)
             }
         )
 
-        rootLayout.addView(row)
+        rootLayout.addView(
+            row
+        )
     }
-
-    // =============================================================
+        // =============================================================
     // EXECUTION MODE
     // =============================================================
 
     private fun addExecutionSelector() {
 
-        addSectionTitle("EXECUTION MODE")
+        addSectionTitle(
+            "EXECUTION MODE"
+        )
 
         val row =
             LinearLayout(this).apply {
@@ -535,30 +597,46 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         demo.setOnClickListener {
 
-            executionMode = "DEMO"
+            executionMode =
+                "DEMO"
 
-            connected = false
+            connected =
+                false
 
-            accountId = ""
+            accountId =
+                ""
 
-            accountBalance = 0.0
+            accountType =
+                ""
 
-            accountCurrency = ""
+            accountBalance =
+                0.0
+
+            accountCurrency =
+                ""
 
             rebuild()
         }
 
         real.setOnClickListener {
 
-            executionMode = "REAL"
+            executionMode =
+                "REAL"
 
-            connected = false
+            connected =
+                false
 
-            accountId = ""
+            accountId =
+                ""
 
-            accountBalance = 0.0
+            accountType =
+                ""
 
-            accountCurrency = ""
+            accountBalance =
+                0.0
+
+            accountCurrency =
+                ""
 
             rebuild()
         }
@@ -570,7 +648,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 dp(54),
                 1f
             ).apply {
-                rightMargin = dp(5)
+
+                rightMargin =
+                    dp(5)
             }
         )
 
@@ -581,19 +661,22 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 dp(54),
                 1f
             ).apply {
-                leftMargin = dp(5)
+
+                leftMargin =
+                    dp(5)
             }
         )
 
-        rootLayout.addView(row)
+        rootLayout.addView(
+            row
+        )
     }
-        // =============================================================
-    // DERIV EXECUTION ACCOUNT CARD
+
+    // =============================================================
+    // DERIV EXECUTION ACCOUNT
     // =============================================================
 
     private fun addAccountCard() {
-
-        addSectionTitle("DERIV EXECUTION ACCOUNT")
 
         val card =
             LinearLayout(this).apply {
@@ -608,21 +691,20 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     dp(14)
                 )
 
-                setBackgroundColor(CARD)
+                setBackgroundColor(
+                    CARD
+                )
             }
 
         // ---------------------------------------------------------
-        // ACCOUNT STATUS
+        // ACCOUNT TITLE
         // ---------------------------------------------------------
 
-        val status =
+        val accountTitle =
             TextView(this).apply {
 
                 text =
-                    if (connected)
-                        "🟢  CONNECTED"
-                    else
-                        "🔴  NOT CONNECTED"
+                    "⚡  DERIV EXECUTION ACCOUNT"
 
                 textSize = 18f
 
@@ -632,10 +714,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 )
 
                 setTextColor(
-                    if (connected)
-                        GREEN
-                    else
-                        RED
+                    YELLOW
                 )
 
                 setPadding(
@@ -646,7 +725,50 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 )
             }
 
-        card.addView(status)
+        card.addView(
+            accountTitle
+        )
+
+        // ---------------------------------------------------------
+        // CONNECTION STATUS
+        // ---------------------------------------------------------
+
+        val status =
+            TextView(this).apply {
+
+                text =
+                    if (connected) {
+                        "🟢  CONNECTED"
+                    } else {
+                        "🔴  NOT CONNECTED"
+                    }
+
+                textSize = 18f
+
+                setTypeface(
+                    null,
+                    Typeface.BOLD
+                )
+
+                setTextColor(
+                    if (connected) {
+                        GREEN
+                    } else {
+                        RED
+                    }
+                )
+
+                setPadding(
+                    0,
+                    0,
+                    0,
+                    dp(10)
+                )
+            }
+
+        card.addView(
+            status
+        )
 
         // ---------------------------------------------------------
         // ACCOUNT NUMBER
@@ -656,14 +778,19 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             TextView(this).apply {
 
                 text =
-                    if (accountId.isNotEmpty())
+                    if (
+                        accountId.isNotEmpty()
+                    ) {
                         "Account: $accountId"
-                    else
+                    } else {
                         "Account: —"
+                    }
 
                 textSize = 16f
 
-                setTextColor(WHITE)
+                setTextColor(
+                    WHITE
+                )
 
                 setPadding(
                     0,
@@ -673,7 +800,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 )
             }
 
-        card.addView(account)
+        card.addView(
+            account
+        )
 
         // ---------------------------------------------------------
         // BALANCE
@@ -683,19 +812,41 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             TextView(this).apply {
 
                 text =
-                    if (connected)
-                        "Balance: ${
-                            String.format(
-                                "%.2f",
-                                accountBalance
-                            )
-                        } $accountCurrency"
-                    else
+                    if (
+                        connected
+                    ) {
+
+                        if (
+                            accountCurrency.isNotEmpty()
+                        ) {
+
+                            "Balance: ${
+                                String.format(
+                                    "%.2f",
+                                    accountBalance
+                                )
+                            } $accountCurrency"
+
+                        } else {
+
+                            "Balance: ${
+                                String.format(
+                                    "%.2f",
+                                    accountBalance
+                                )
+                            }"
+                        }
+
+                    } else {
+
                         "Balance: —"
+                    }
 
                 textSize = 16f
 
-                setTextColor(WHITE)
+                setTextColor(
+                    WHITE
+                )
 
                 setPadding(
                     0,
@@ -705,7 +856,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 )
             }
 
-        card.addView(balance)
+        card.addView(
+            balance
+        )
 
         // ---------------------------------------------------------
         // OPEN P/L
@@ -714,11 +867,14 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val pnl =
             TextView(this).apply {
 
-                text = "Open P/L: —"
+                text =
+                    "Open P/L: —"
 
                 textSize = 16f
 
-                setTextColor(WHITE)
+                setTextColor(
+                    WHITE
+                )
 
                 setPadding(
                     0,
@@ -728,10 +884,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 )
             }
 
-        card.addView(pnl)
+        card.addView(
+            pnl
+        )
 
         // ---------------------------------------------------------
-        // CONNECT / REFRESH
+        // BUTTON ROW
         // ---------------------------------------------------------
 
         val buttonRow =
@@ -741,14 +899,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     LinearLayout.HORIZONTAL
             }
 
+        // ---------------------------------------------------------
+        // CONNECT
+        // ---------------------------------------------------------
+
         val connect =
             createActionButton(
                 "🔗  CONNECT"
-            )
-
-        val refresh =
-            createActionButton(
-                "⟳  REFRESH"
             )
 
         connect.setOnClickListener {
@@ -756,9 +913,20 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             startDerivOAuth()
         }
 
+        // ---------------------------------------------------------
+        // REFRESH
+        // ---------------------------------------------------------
+
+        val refresh =
+            createActionButton(
+                "⟳  REFRESH"
+            )
+
         refresh.setOnClickListener {
 
-            if (connected) {
+            if (
+                connected
+            ) {
 
                 derivApiClient.requestBalance()
 
@@ -779,7 +947,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 dp(54),
                 1f
             ).apply {
-                rightMargin = dp(5)
+
+                rightMargin =
+                    dp(5)
             }
         )
 
@@ -790,11 +960,15 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 dp(54),
                 1f
             ).apply {
-                leftMargin = dp(5)
+
+                leftMargin =
+                    dp(5)
             }
         )
 
-        card.addView(buttonRow)
+        card.addView(
+            buttonRow
+        )
 
         rootLayout.addView(
             card,
@@ -803,7 +977,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply {
 
-                bottomMargin = dp(12)
+                bottomMargin =
+                    dp(12)
             }
         )
     }
@@ -814,11 +989,17 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     private fun addIndexMonitor() {
 
-        addSectionTitle("INDEX MONITOR")
+        addSectionTitle(
+            "INDEX MONITOR"
+        )
 
-        for (index in indexes) {
+        for (
+            index in indexes
+        ) {
 
-            addIndexRow(index)
+            addIndexRow(
+                index
+            )
         }
     }
 
@@ -846,9 +1027,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     dp(8)
                 )
 
-                setBackgroundColor(CARD2)
+                setBackgroundColor(
+                    CARD2
+                )
 
-                isClickable = true
+                isClickable =
+                    true
             }
 
         // ---------------------------------------------------------
@@ -858,7 +1042,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val name =
             TextView(this).apply {
 
-                text = index
+                text =
+                    index
 
                 textSize = 20f
 
@@ -881,7 +1066,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     )
             }
 
-        row.addView(name)
+        row.addView(
+            name
+        )
 
         // ---------------------------------------------------------
         // MARKET GRAPHIC
@@ -890,7 +1077,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val graph =
             TextView(this).apply {
 
-                text = "⌁⌃⌁⌄⌁⌃⌁"
+                text =
+                    "⌁⌃⌁⌄⌁⌃⌁"
 
                 textSize = 25f
 
@@ -914,7 +1102,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     )
             }
 
-        row.addView(graph)
+        row.addView(
+            graph
+        )
 
         // ---------------------------------------------------------
         // STATUS
@@ -923,7 +1113,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val status =
             TextView(this).apply {
 
-                text = "WAITING"
+                text =
+                    "WAITING"
 
                 textSize = 13f
 
@@ -932,7 +1123,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     Typeface.BOLD
                 )
 
-                setTextColor(YELLOW)
+                setTextColor(
+                    YELLOW
+                )
 
                 gravity =
                     Gravity.CENTER
@@ -944,7 +1137,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     )
             }
 
-        row.addView(status)
+        row.addView(
+            status
+        )
 
         // ---------------------------------------------------------
         // ARROW
@@ -953,11 +1148,14 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val arrow =
             TextView(this).apply {
 
-                text = "›"
+                text =
+                    "›"
 
                 textSize = 34f
 
-                setTextColor(WHITE)
+                setTextColor(
+                    WHITE
+                )
 
                 gravity =
                     Gravity.CENTER
@@ -969,11 +1167,15 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     )
             }
 
-        row.addView(arrow)
+        row.addView(
+            arrow
+        )
 
         row.setOnClickListener {
 
-            openIndex(index)
+            openIndex(
+                index
+            )
         }
 
         rootLayout.addView(
@@ -983,7 +1185,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply {
 
-                bottomMargin = dp(6)
+                bottomMargin =
+                    dp(6)
             }
         )
     }
@@ -1009,7 +1212,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     private fun addAdminFeatures() {
 
-        addSectionTitle("ADMIN CONTROL")
+        addSectionTitle(
+            "ADMIN CONTROL"
+        )
 
         val card =
             LinearLayout(this).apply {
@@ -1024,7 +1229,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     dp(14)
                 )
 
-                setBackgroundColor(CARD)
+                setBackgroundColor(
+                    CARD
+                )
             }
 
         val title =
@@ -1040,7 +1247,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     Typeface.BOLD
                 )
 
-                setTextColor(GREEN)
+                setTextColor(
+                    GREEN
+                )
 
                 setPadding(
                     0,
@@ -1050,7 +1259,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 )
             }
 
-        card.addView(title)
+        card.addView(
+            title
+        )
 
         // ---------------------------------------------------------
         // USER ACCOUNTS
@@ -1063,11 +1274,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         users.setOnClickListener {
 
-            Toast.makeText(
-                this,
-                "User Accounts",
-                Toast.LENGTH_SHORT
-            ).show()
+            showMessage(
+                "User Accounts"
+            )
         }
 
         card.addView(
@@ -1077,7 +1286,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 dp(52)
             ).apply {
 
-                bottomMargin = dp(8)
+                bottomMargin =
+                    dp(8)
             }
         )
 
@@ -1092,11 +1302,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         trade.setOnClickListener {
 
-            Toast.makeText(
-                this,
-                "Trade Control",
-                Toast.LENGTH_SHORT
-            ).show()
+            showMessage(
+                "Trade Control"
+            )
         }
 
         card.addView(
@@ -1106,7 +1314,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 dp(52)
             ).apply {
 
-                bottomMargin = dp(8)
+                bottomMargin =
+                    dp(8)
             }
         )
 
@@ -1116,10 +1325,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         val auto =
             createActionButton(
-                if (autoTradeEnabled)
+                if (
+                    autoTradeEnabled
+                ) {
                     "AUTO TRADE: ON"
-                else
+                } else {
                     "AUTO TRADE: OFF"
+                }
             )
 
         auto.setOnClickListener {
@@ -1128,10 +1340,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 !autoTradeEnabled
 
             auto.text =
-                if (autoTradeEnabled)
+                if (
+                    autoTradeEnabled
+                ) {
                     "AUTO TRADE: ON"
-                else
+                } else {
                     "AUTO TRADE: OFF"
+                }
         }
 
         card.addView(
@@ -1149,12 +1364,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply {
 
-                bottomMargin = dp(12)
+                bottomMargin =
+                    dp(12)
             }
         )
     }
-
-    // =============================================================
+        // =============================================================
     // BOTTOM NAVIGATION
     // =============================================================
 
@@ -1212,7 +1427,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             false
         )
 
-        rootLayout.addView(navigation)
+        rootLayout.addView(
+            navigation
+        )
     }
 
     // =============================================================
@@ -1246,35 +1463,43 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val iconView =
             TextView(this).apply {
 
-                text = icon
+                text =
+                    icon
 
-                textSize = 25f
+                textSize =
+                    25f
 
                 setTextColor(
-                    if (selected)
+                    if (selected) {
                         GREEN
-                    else
+                    } else {
                         MUTED
+                    }
                 )
 
                 gravity =
                     Gravity.CENTER
             }
 
-        item.addView(iconView)
+        item.addView(
+            iconView
+        )
 
         val labelView =
             TextView(this).apply {
 
-                text = label
+                text =
+                    label
 
-                textSize = 11f
+                textSize =
+                    11f
 
                 setTextColor(
-                    if (selected)
+                    if (selected) {
                         GREEN
-                    else
+                    } else {
                         MUTED
+                    }
                 )
 
                 gravity =
@@ -1288,7 +1513,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 )
             }
 
-        item.addView(labelView)
+        item.addView(
+            labelView
+        )
 
         item.setOnClickListener {
 
@@ -1301,43 +1528,37 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
                 "Trade" -> {
 
-                    Toast.makeText(
-                        this,
-                        "Trade",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    showMessage(
+                        "Trade"
+                    )
                 }
 
                 "Analysis" -> {
 
-                    Toast.makeText(
-                        this,
-                        "Analysis",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    showMessage(
+                        "Analysis"
+                    )
                 }
 
                 "News" -> {
 
-                    Toast.makeText(
-                        this,
-                        "News",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    showMessage(
+                        "News"
+                    )
                 }
 
                 "Settings" -> {
 
-                    Toast.makeText(
-                        this,
-                        "Settings",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    showMessage(
+                        "Settings"
+                    )
                 }
             }
         }
 
-        parent.addView(item)
+        parent.addView(
+            item
+        )
     }
 
     // =============================================================
@@ -1351,16 +1572,20 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val title =
             TextView(this).apply {
 
-                this.text = text
+                this.text =
+                    text
 
-                textSize = 18f
+                textSize =
+                    18f
 
                 setTypeface(
                     null,
                     Typeface.BOLD
                 )
 
-                setTextColor(WHITE)
+                setTextColor(
+                    WHITE
+                )
 
                 setPadding(
                     0,
@@ -1370,7 +1595,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 )
             }
 
-        rootLayout.addView(title)
+        rootLayout.addView(
+            title
+        )
     }
 
     // =============================================================
@@ -1384,9 +1611,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         return Button(this).apply {
 
-            this.text = text
+            this.text =
+                text
 
-            textSize = 14f
+            textSize =
+                14f
 
             setTypeface(
                 null,
@@ -1394,26 +1623,32 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             )
 
             setTextColor(
-                if (selected)
+                if (selected) {
                     Color.BLACK
-                else
+                } else {
                     WHITE
+                }
             )
 
             setBackgroundColor(
-                if (selected)
+                if (selected) {
                     GREEN
-                else
+                } else {
                     CARD2
+                }
             )
 
-            isAllCaps = false
+            isAllCaps =
+                false
 
-            stateListAnimator = null
+            stateListAnimator =
+                null
 
-            minHeight = 0
+            minHeight =
+                0
 
-            minimumHeight = 0
+            minimumHeight =
+                0
 
             setPadding(
                 dp(6),
@@ -1434,26 +1669,36 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         return Button(this).apply {
 
-            this.text = text
+            this.text =
+                text
 
-            textSize = 14f
+            textSize =
+                14f
 
             setTypeface(
                 null,
                 Typeface.BOLD
             )
 
-            setTextColor(WHITE)
+            setTextColor(
+                WHITE
+            )
 
-            setBackgroundColor(CARD2)
+            setBackgroundColor(
+                CARD2
+            )
 
-            isAllCaps = false
+            isAllCaps =
+                false
 
-            stateListAnimator = null
+            stateListAnimator =
+                null
 
-            minHeight = 0
+            minHeight =
+                0
 
-            minimumHeight = 0
+            minimumHeight =
+                0
         }
     }
 
@@ -1484,7 +1729,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     // =============================================================
-    // REBUILD SCREEN
+    // REBUILD
     // =============================================================
 
     private fun rebuild() {
@@ -1508,323 +1753,39 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     // =============================================================
-    // DERIV OAUTH
+    // SHOW MESSAGE
     // =============================================================
 
-    private fun startDerivOAuth() {
-
-        /*
-         * IMPORTANT:
-         *
-         * The previous project used:
-         *
-         *     /oauth2/authorize
-         *
-         * That route caused the 404 shown in the browser.
-         *
-         * Deriv OAuth 2.0 uses:
-         *
-         *     /oauth2/auth
-         */
-
-        oauthState =
-            UUID.randomUUID().toString()
-
-        codeVerifier =
-            generateCodeVerifier()
-
-        prefs.edit()
-            .putString(
-                "oauth_state",
-                oauthState
-            )
-            .putString(
-                "code_verifier",
-                codeVerifier
-            )
-            .apply()
-
-        val challenge =
-            generateCodeChallenge(
-                codeVerifier
-            )
-
-        val redirectUri =
-            "https://volatilitiesindicator.org.za/accounts/account-callback.php"
-
-        val authorizationUrl =
-            Uri.parse(
-                "https://auth.deriv.com/oauth2/auth"
-            )
-                .buildUpon()
-                .appendQueryParameter(
-                    "response_type",
-                    "code"
-                )
-                .appendQueryParameter(
-                    "client_id",
-                    DERIV_CLIENT_ID
-                )
-                .appendQueryParameter(
-                    "redirect_uri",
-                    redirectUri
-                )
-                .appendQueryParameter(
-                    "state",
-                    oauthState
-                )
-                .appendQueryParameter(
-                    "code_challenge",
-                    challenge
-                )
-                .appendQueryParameter(
-                    "code_challenge_method",
-                    "S256"
-                )
-                .build()
-
-        try {
-
-            val browserIntent =
-                Intent(
-                    Intent.ACTION_VIEW,
-                    authorizationUrl
-                )
-
-            startActivity(
-                browserIntent
-            )
-
-        } catch (e: Exception) {
-
-            Toast.makeText(
-                this,
-                "Unable to open Deriv login",
-                Toast.LENGTH_LONG
-            ).show()
-        }
-    }
-                object : Callback {
-
-                override fun onFailure(
-                    call: Call,
-                    e: IOException
-                ) {
-
-                    runOnUiThread {
-
-                        Toast.makeText(
-                            this@MainActivity,
-                            "OAuth connection failed: ${e.message}",
-                            Toast.LENGTH_LONG
-                        ).show()
-                    }
-                }
-
-                override fun onResponse(
-                    call: Call,
-                    response: Response
-                ) {
-
-                    val responseText =
-                        response.body?.string()
-                            ?: ""
-
-                    if (!response.isSuccessful) {
-
-                        runOnUiThread {
-
-                            Toast.makeText(
-                                this@MainActivity,
-                                "OAuth token error: ${response.code}",
-                                Toast.LENGTH_LONG
-                            ).show()
-                        }
-
-                        return
-                    }
-
-                    try {
-
-                        val json =
-                            JSONObject(
-                                responseText
-                            )
-
-                        val accessToken =
-                            json.optString(
-                                "access_token",
-                                ""
-                            )
-
-                        if (
-                            accessToken.isEmpty()
-                        ) {
-
-                            runOnUiThread {
-
-                                Toast.makeText(
-                                    this@MainActivity,
-                                    "Deriv did not return an access token",
-                                    Toast.LENGTH_LONG
-                                ).show()
-                            }
-
-                            return
-                        }
-
-                        prefs.edit()
-                            .putString(
-                                "access_token",
-                                accessToken
-                            )
-                            .apply()
-
-                        runOnUiThread {
-
-                            connectWithToken(
-                                accessToken
-                            )
-                        }
-
-                    } catch (
-                        e: Exception
-                    ) {
-
-                        runOnUiThread {
-
-                            Toast.makeText(
-                                this@MainActivity,
-                                "Invalid OAuth response",
-                                Toast.LENGTH_LONG
-                            ).show()
-                        }
-                    }
-                }
-            }
-        )
-}
-// =============================================================
-    // CONNECT TO DERIV
-    // =============================================================
-
-    private fun connectWithToken(
-        token: String
-    ) {
-
-        if (
-            token.isEmpty()
-        ) {
-
-            Toast.makeText(
-                this,
-                "No Deriv token",
-                Toast.LENGTH_LONG
-            ).show()
-
-            return
-        }
-
-        connected = false
-
-        rebuild()
-
-        derivApiClient.connect(
-            token,
-            executionMode == "REAL"
-        )
-    }
-
-    // =============================================================
-    // DERIV CALLBACK
-    // =============================================================
-
-    override fun onConnected() {
-
-        runOnUiThread {
-
-            connected = true
-
-            rebuild()
-        }
-    }
-
-    override fun onAccountReceived(
-        id: String,
-        type: String,
-        balance: Double,
-        currency: String
-    ) {
-
-        runOnUiThread {
-
-            accountId = id
-
-            accountType = type
-
-            accountBalance = balance
-
-            accountCurrency = currency
-
-            connected = true
-
-            rebuild()
-        }
-    }
-
-    override fun onBalanceReceived(
-        balance: Double,
-        currency: String
-    ) {
-
-        runOnUiThread {
-
-            accountBalance = balance
-
-            accountCurrency = currency
-
-            connected = true
-
-            rebuild()
-        }
-    }
-
-    override fun onDisconnected() {
-
-        runOnUiThread {
-
-            connected = false
-
-            rebuild()
-        }
-    }
-
-    override fun onError(
+    private fun showMessage(
         message: String
     ) {
 
-        runOnUiThread {
-
-            Toast.makeText(
-                this,
-                message,
-                Toast.LENGTH_LONG
-            ).show()
-        }
+        Toast.makeText(
+            this,
+            message,
+            Toast.LENGTH_SHORT
+        ).show()
     }
-        // =============================================================
-    // DERIV CLIENT ID
+
     // =============================================================
-    //
-    // The client ID is selected according to DEMO / REAL mode.
-    // These IDs already exist in the supplied project.
-    //
+    // OAUTH CLIENT ID
     // =============================================================
 
-    private val DERIV_CLIENT_ID: String
-        get() = DerivApiClient.clientId(
+    private fun getDerivClientId(): String {
+
+        return DerivApiClient.clientId(
             executionMode
         )
+    }
+
+    // =============================================================
+    // OAUTH REDIRECT URI
+    // =============================================================
+
+    private fun getOAuthRedirectUri(): String {
+
+        return DerivApiClient.OAUTH_REDIRECT_URI
+    }
 
     // =============================================================
     // PKCE CODE VERIFIER
@@ -1876,7 +1837,602 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     // =============================================================
-    // DP TO PIXELS
+    // START DERIV OAUTH
+    // =============================================================
+
+    private fun startDerivOAuth() {
+
+        oauthState =
+            UUID.randomUUID().toString()
+
+        codeVerifier =
+            generateCodeVerifier()
+
+        prefs.edit()
+            .putString(
+                "oauth_state",
+                oauthState
+            )
+            .putString(
+                "code_verifier",
+                codeVerifier
+            )
+            .apply()
+
+        val challenge =
+            generateCodeChallenge(
+                codeVerifier
+            )
+
+        val authorizationUrl =
+            Uri.parse(
+                "https://auth.deriv.com/oauth2/auth"
+            )
+                .buildUpon()
+                .appendQueryParameter(
+                    "response_type",
+                    "code"
+                )
+                .appendQueryParameter(
+                    "client_id",
+                    getDerivClientId()
+                )
+                .appendQueryParameter(
+                    "redirect_uri",
+                    getOAuthRedirectUri()
+                )
+                .appendQueryParameter(
+                    "state",
+                    oauthState
+                )
+                .appendQueryParameter(
+                    "code_challenge",
+                    challenge
+                )
+                .appendQueryParameter(
+                    "code_challenge_method",
+                    "S256"
+                )
+                .build()
+
+        try {
+
+            startActivity(
+                Intent(
+                    Intent.ACTION_VIEW,
+                    authorizationUrl
+                )
+            )
+
+        } catch (
+            e: Exception
+        ) {
+
+            Toast.makeText(
+                this,
+                "Unable to open Deriv login",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+        // =============================================================
+    // HANDLE OAUTH CALLBACK
+    // =============================================================
+
+    private fun handleOAuthCallback(
+        incomingIntent: Intent?
+    ) {
+
+        val data =
+            incomingIntent?.data
+                ?: return
+
+        /*
+         * The Android callback is handled through the custom
+         * Volatilities Indicator URI.
+         *
+         * Example:
+         *
+         * volatilitiesindicator://oauth-callback?code=...
+         */
+
+        if (
+            data.scheme !=
+            "volatilitiesindicator"
+        ) {
+            return
+        }
+
+        if (
+            data.host !=
+            "oauth-callback"
+        ) {
+            return
+        }
+
+        // ---------------------------------------------------------
+        // DERIV ERROR
+        // ---------------------------------------------------------
+
+        val error =
+            data.getQueryParameter(
+                "error"
+            )
+
+        if (
+            !error.isNullOrEmpty()
+        ) {
+
+            val description =
+                data.getQueryParameter(
+                    "error_description"
+                )
+
+            Toast.makeText(
+                this,
+                if (
+                    description.isNullOrEmpty()
+                ) {
+                    "Deriv login error: $error"
+                } else {
+                    "Deriv login error: $description"
+                },
+                Toast.LENGTH_LONG
+            ).show()
+
+            return
+        }
+
+        // ---------------------------------------------------------
+        // AUTHORIZATION CODE
+        // ---------------------------------------------------------
+
+        val code =
+            data.getQueryParameter(
+                "code"
+            )
+
+        if (
+            code.isNullOrEmpty()
+        ) {
+
+            Toast.makeText(
+                this,
+                "No Deriv authorization code received",
+                Toast.LENGTH_LONG
+            ).show()
+
+            return
+        }
+
+        // ---------------------------------------------------------
+        // STATE
+        // ---------------------------------------------------------
+
+        val returnedState =
+            data.getQueryParameter(
+                "state"
+            )
+
+        val savedState =
+            prefs.getString(
+                "oauth_state",
+                ""
+            )
+                ?: ""
+
+        if (
+            savedState.isEmpty()
+        ) {
+
+            Toast.makeText(
+                this,
+                "OAuth session expired",
+                Toast.LENGTH_LONG
+            ).show()
+
+            return
+        }
+
+        if (
+            returnedState != savedState
+        ) {
+
+            Toast.makeText(
+                this,
+                "OAuth security verification failed",
+                Toast.LENGTH_LONG
+            ).show()
+
+            return
+        }
+
+        // ---------------------------------------------------------
+        // CODE VERIFIER
+        // ---------------------------------------------------------
+
+        val verifier =
+            prefs.getString(
+                "code_verifier",
+                ""
+            )
+                ?: ""
+
+        if (
+            verifier.isEmpty()
+        ) {
+
+            Toast.makeText(
+                this,
+                "OAuth verifier is missing",
+                Toast.LENGTH_LONG
+            ).show()
+
+            return
+        }
+
+        // ---------------------------------------------------------
+        // EXCHANGE CODE
+        // ---------------------------------------------------------
+
+        exchangeOAuthCode(
+            code,
+            verifier
+        )
+    }
+
+    // =============================================================
+    // OAUTH TOKEN EXCHANGE
+    // =============================================================
+
+    private fun exchangeOAuthCode(
+        code: String,
+        verifier: String
+    ) {
+
+        val body =
+            FormBody.Builder()
+                .add(
+                    "grant_type",
+                    "authorization_code"
+                )
+                .add(
+                    "client_id",
+                    getDerivClientId()
+                )
+                .add(
+                    "code",
+                    code
+                )
+                .add(
+                    "redirect_uri",
+                    getOAuthRedirectUri()
+                )
+                .add(
+                    "code_verifier",
+                    verifier
+                )
+                .build()
+
+        val request =
+            Request.Builder()
+                .url(
+                    "https://auth.deriv.com/oauth2/token"
+                )
+                .post(
+                    body
+                )
+                .build()
+
+        httpClient.newCall(
+            request
+        ).enqueue(
+            object : Callback {
+
+                override fun onFailure(
+                    call: Call,
+                    e: IOException
+                ) {
+
+                    runOnUiThread {
+
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Deriv OAuth connection failed: ${
+                                e.message
+                                    ?: "Unknown error"
+                            }",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+
+                override fun onResponse(
+                    call: Call,
+                    response: Response
+                ) {
+
+                    val responseBody =
+                        response.body
+                            ?.string()
+                            ?: ""
+
+                    if (
+                        !response.isSuccessful
+                    ) {
+
+                        runOnUiThread {
+
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Deriv OAuth token error: ${
+                                    response.code
+                                }",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+
+                        return
+                    }
+
+                    try {
+
+                        val json =
+                            JSONObject(
+                                responseBody
+                            )
+
+                        val accessToken =
+                            json.optString(
+                                "access_token",
+                                ""
+                            )
+
+                        if (
+                            accessToken.isEmpty()
+                        ) {
+
+                            runOnUiThread {
+
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "Deriv did not return an access token",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+
+                            return
+                        }
+
+                        // -------------------------------------------------
+                        // SAVE TOKEN
+                        // -------------------------------------------------
+
+                        prefs.edit()
+                            .putString(
+                                "access_token",
+                                accessToken
+                            )
+                            .apply()
+
+                        // -------------------------------------------------
+                        // CLEAR ONE-TIME PKCE VALUES
+                        // -------------------------------------------------
+
+                        prefs.edit()
+                            .remove(
+                                "oauth_state"
+                            )
+                            .remove(
+                                "code_verifier"
+                            )
+                            .apply()
+
+                        // -------------------------------------------------
+                        // CONNECT TO DERIV
+                        // -------------------------------------------------
+
+                        runOnUiThread {
+
+                            connectWithToken(
+                                accessToken
+                            )
+                        }
+
+                    } catch (
+                        e: Exception
+                    ) {
+
+                        runOnUiThread {
+
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Invalid Deriv OAuth response",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                }
+            }
+        )
+    }
+
+    // =============================================================
+    // CONNECT USING ACCESS TOKEN
+    // =============================================================
+
+    private fun connectWithToken(
+        token: String
+    ) {
+
+        if (
+            token.isEmpty()
+        ) {
+
+            Toast.makeText(
+                this,
+                "Deriv access token is empty",
+                Toast.LENGTH_LONG
+            ).show()
+
+            return
+        }
+
+        connected =
+            false
+
+        buildMainScreen()
+
+        derivApiClient.connect(
+            token,
+            executionMode == "REAL"
+        )
+    }
+
+    // =============================================================
+    // DERIV CONNECTED
+    // =============================================================
+
+    override fun onConnected() {
+
+        runOnUiThread {
+
+            connected =
+                true
+
+            buildMainScreen()
+        }
+    }
+
+    // =============================================================
+    // ACCOUNT RECEIVED
+    // =============================================================
+
+    override fun onAccountReceived(
+        id: String,
+        type: String,
+        balance: Double,
+        currency: String
+    ) {
+
+        runOnUiThread {
+
+            accountId =
+                id
+
+            accountType =
+                type
+
+            accountBalance =
+                balance
+
+            accountCurrency =
+                currency
+
+            connected =
+                true
+
+            buildMainScreen()
+        }
+    }
+
+    // =============================================================
+    // BALANCE RECEIVED
+    // =============================================================
+
+    override fun onBalanceReceived(
+        balance: Double,
+        currency: String
+    ) {
+
+        runOnUiThread {
+
+            accountBalance =
+                balance
+
+            accountCurrency =
+                currency
+
+            connected =
+                true
+
+            buildMainScreen()
+        }
+    }
+
+    // =============================================================
+    // DERIV DISCONNECTED
+    // =============================================================
+
+    override fun onDisconnected() {
+
+        runOnUiThread {
+
+            connected =
+                false
+
+            buildMainScreen()
+        }
+    }
+
+    // =============================================================
+    // DERIV ERROR
+    // =============================================================
+
+    override fun onError(
+        message: String
+    ) {
+
+        runOnUiThread {
+
+            Toast.makeText(
+                this@MainActivity,
+                message,
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+        // =============================================================
+    // MANUAL DISCONNECT
+    // =============================================================
+
+    private fun disconnectDeriv() {
+
+        derivApiClient.disconnect()
+
+        connected =
+            false
+
+        accountId =
+            ""
+
+        accountType =
+            ""
+
+        accountBalance =
+            0.0
+
+        accountCurrency =
+            ""
+
+        buildMainScreen()
+    }
+
+    // =============================================================
+    // CLEAR OAUTH DATA
+    // =============================================================
+
+    private fun clearOAuthData() {
+
+        prefs.edit()
+            .remove("oauth_state")
+            .remove("code_verifier")
+            .remove("access_token")
+            .apply()
+    }
+
+    // =============================================================
+    // PIXEL CONVERSION
     // =============================================================
 
     private fun dp(
@@ -1890,100 +2446,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     // =============================================================
-    // SCREEN REBUILD
-    // =============================================================
-
-    private fun rebuildScreen() {
-
-        buildMainScreen()
-    }
-
-    // =============================================================
-    // COMPATIBILITY REBUILD
-    // =============================================================
-
-    private fun rebuild() {
-
-        rebuildScreen()
-    }
-
-    // =============================================================
-    // SPACER
-    // =============================================================
-
-    private fun spacer(
-        height: Int = 8
-    ): View {
-
-        return View(this).apply {
-
-            layoutParams =
-                LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    dp(height)
-                )
-        }
-    }
-
-    // =============================================================
-    // HORIZONTAL ROW
-    // =============================================================
-
-    private fun row(): LinearLayout {
-
-        return LinearLayout(this).apply {
-
-            orientation =
-                LinearLayout.HORIZONTAL
-
-            gravity =
-                Gravity.CENTER_VERTICAL
-
-            layoutParams =
-                LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                )
-        }
-    }
-
-    // =============================================================
-    // MESSAGE
-    // =============================================================
-
-    private fun showMessage(
-        message: String
-    ) {
-
-        Toast.makeText(
-            this,
-            message,
-            Toast.LENGTH_SHORT
-        ).show()
-    }
-
-    // =============================================================
-    // BUTTON ENABLE / DISABLE
-    // =============================================================
-
-    private fun setButtonEnabled(
-        button: Button,
-        enabled: Boolean
-    ) {
-
-        button.isEnabled =
-            enabled
-
-        button.alpha =
-            if (enabled) {
-                1.0f
-            } else {
-                0.5f
-            }
-    }
-
-    // =============================================================
-    // ACTIVITY RESULT SAFETY
+    // ACTIVITY RESUME
     // =============================================================
 
     override fun onResume() {
@@ -1991,31 +2454,29 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         super.onResume()
 
         /*
-         * Do not automatically disconnect here.
+         * IMPORTANT:
          *
-         * The Deriv WebSocket is maintained by DerivApiClient.
+         * We deliberately do NOT disconnect here.
+         *
+         * Returning to the application after opening the
+         * Deriv browser must not terminate the WebSocket.
          */
     }
 
     // =============================================================
-    // BACK BUTTON
+    // ACTIVITY PAUSE
     // =============================================================
 
-    override fun onBackPressed() {
+    override fun onPause() {
 
-        if (
-            rootScroll.scrollY > 0
-        ) {
+        super.onPause()
 
-            rootScroll.smoothScrollTo(
-                0,
-                0
-            )
-
-            return
-        }
-
-        super.onBackPressed()
+        /*
+         * Do NOT disconnect.
+         *
+         * Android may temporarily pause the Activity when the
+         * browser is opened during OAuth authentication.
+         */
     }
 
     // =============================================================
@@ -2025,11 +2486,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     override fun onDestroy() {
 
         /*
-         * The connection is closed only when the Activity
-         * itself is destroyed.
+         * Only close the Deriv connection when the Activity is
+         * actually being destroyed.
          *
-         * It is NOT disconnected by an arbitrary one-minute
-         * timeout.
+         * There is NO one-minute automatic disconnect here.
          */
 
         try {
@@ -2045,14 +2505,27 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     // =============================================================
-    // FINAL SAFETY
+    // BACK BUTTON
     // =============================================================
 
-    private fun clearOAuthState() {
+    @Deprecated(
+        "Deprecated in Java"
+    )
+    override fun onBackPressed() {
 
-        prefs.edit()
-            .remove("oauth_state")
-            .remove("code_verifier")
-            .apply()
+        if (
+            ::rootScroll.isInitialized &&
+            rootScroll.scrollY > 0
+        ) {
+
+            rootScroll.smoothScrollTo(
+                0,
+                0
+            )
+
+            return
+        }
+
+        super.onBackPressed()
     }
 }
