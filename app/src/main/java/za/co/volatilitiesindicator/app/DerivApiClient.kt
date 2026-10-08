@@ -914,7 +914,7 @@ class DerivApiClient(
      * This is sent only after the authenticated
      * WebSocket has successfully opened.
      */
-    private fun requestBalance(
+    fun requestBalance(
         socket: WebSocket
     ) {
 
