@@ -914,6 +914,24 @@ class DerivApiClient(
      * This is sent only after the authenticated
      * WebSocket has successfully opened.
      */
+     fun requestBalance() {
+
+    val socket =
+        webSocket
+
+    if (socket == null) {
+
+        callback.onError(
+            "Deriv WebSocket is unavailable."
+        )
+
+        return
+    }
+
+    requestBalance(
+        socket
+    )
+     }
     fun requestBalance(
         socket: WebSocket
     ) {
