@@ -1,18 +1,13 @@
 package za.co.volatilitiesindicator.app
 
-import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
-import org.json.JSONArray
 import org.json.JSONObject
-import java.io.IOException
-import java.net.URLEncoder
-import java.security.MessageDigest
-import java.util.Base64
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 class DerivApiClient(
@@ -20,686 +15,728 @@ class DerivApiClient(
 ) {
 
     interface Callback {
-
         fun onConnecting(message: String)
-
-        fun onConnected(
-            accountId: String,
-            accountType: String
-        )
-
-        fun onBalance(
-            balance: Double,
-            currency: String
-        )
-
+        fun onConnected(accountId: String, accountType: String)
+        fun onBalance(balance: Double, currency: String)
         fun onError(message: String)
-
         fun onDisconnected()
     }
 
     companion object {
+        private const val DERIV_URL =
+            "wss://ws.derivws.com/websockets/v3?app_id=1089"
 
-        private const val API_BASE =
-            "https://api.derivws.com"
-
-        private const val ACCOUNTS_PATH =
-            "/trading/v1/options/accounts"
-
-        private const val DEMO_CLIENT_ID =
-            "34fz6VSRiNSQnELXjApVH"
-
-        private const val REAL_CLIENT_ID =
-            "34fz9hcgpdwSzNCVeUgMR"
-
-        const val OAUTH_REDIRECT_URI =
-            "https://volatilitiesindicator.org.za/accounts/account-callback.php"
-
-        const val OAUTH_AUTH_URL =
-            "https://auth.deriv.com/oauth2/auth"
-
-        const val OAUTH_TOKEN_URL =
-            "https://auth.deriv.com/oauth2/token"
-
-        const val OAUTH_SCOPE =
-            "trade"
-
-        fun clientId(
-            accountType: String
-        ): String {
-
-            return if (
-                accountType.equals(
-                    "real",
-                    ignoreCase = true
-                )
-            ) {
-                REAL_CLIENT_ID
-            } else {
-                DEMO_CLIENT_ID
-            }
-        }
-
-        fun buildOAuthUrl(
-            accountType: String,
-            state: String,
-            codeChallenge: String
-        ): String {
-
-            val clientId =
-                clientId(accountType)
-
-            return OAUTH_AUTH_URL +
-                "?response_type=code" +
-                "&client_id=" +
-                URLEncoder.encode(
-                    clientId,
-                    "UTF-8"
-                ) +
-                "&redirect_uri=" +
-                URLEncoder.encode(
-                    OAUTH_REDIRECT_URI,
-                    "UTF-8"
-                ) +
-                "&scope=" +
-                URLEncoder.encode(
-                    OAUTH_SCOPE,
-                    "UTF-8"
-                ) +
-                "&state=" +
-                URLEncoder.encode(
-                    state,
-                    "UTF-8"
-                ) +
-                "&code_challenge=" +
-                URLEncoder.encode(
-                    codeChallenge,
-                    "UTF-8"
-                ) +
-                "&code_challenge_method=S256"
-        }
-
-        fun createCodeVerifier(): String {
-
-            val bytes =
-                ByteArray(32)
-
-            java.security.SecureRandom()
-                .nextBytes(bytes)
-
-            return Base64
-                .getUrlEncoder()
-                .withoutPadding()
-                .encodeToString(bytes)
-        }
-
-        fun createCodeChallenge(
-            verifier: String
-        ): String {
-
-            val digest =
-                MessageDigest
-                                .getInstance("SHA-256")
-                    .digest(
-                        verifier.toByteArray(
-                            Charsets.US_ASCII
-                        )
-                    )
-
-            return Base64
-                .getUrlEncoder()
-                .withoutPadding()
-                .encodeToString(digest)
-        }
+        private const val HEARTBEAT_SECONDS = 25L
+        private const val RECONNECT_DELAY_SECONDS = 3L
     }
 
-    private val httpClient =
+    private val client: OkHttpClient =
         OkHttpClient.Builder()
-            .pingInterval(30, TimeUnit.SECONDS)
+            .pingInterval(
+                HEARTBEAT_SECONDS,
+                TimeUnit.SECONDS
+            )
+            .connectTimeout(
+                30,
+                TimeUnit.SECONDS
+            )
+            .readTimeout(
+                0,
+                TimeUnit.MILLISECONDS
+            )
+            .writeTimeout(
+                30,
+                TimeUnit.SECONDS
+            )
             .build()
 
     private var webSocket: WebSocket? = null
 
-    private var manualDisconnect = false
+    private var accessToken: String? = null
 
-    private var reconnectExecutor:
-        java.util.concurrent.ScheduledExecutorService? = null
+    private var manuallyDisconnected = false
 
-    private var accessToken: String = ""
+    private var reconnectScheduled = false
 
-    private var selectedAccountId: String = ""
+    private var connected = false
 
-    private var selectedAccountType: String = ""
+    private val scheduler: ScheduledExecutorService =
+        Executors.newSingleThreadScheduledExecutor()
 
-    fun connectWithAccessToken(
-        token: String,
-        accountType: String
-    ) {
+    /**
+     * Connect to Deriv using the supplied OAuth token.
+     */
+    fun connect(token: String) {
 
-        manualDisconnect = false
-        cancelReconnect()
-
-        accessToken =
-            token.trim()
-
-        selectedAccountType =
-            accountType
-
-        if (accessToken.isEmpty()) {
-
+        if (token.isBlank()) {
             callback.onError(
-                "OAuth access token is empty."
+                "Deriv access token is empty."
             )
-
             return
         }
+
+        accessToken = token
+
+        /*
+         * This is an intentional user connection.
+         * A later socket failure may therefore reconnect.
+         */
+        manuallyDisconnected = false
+
+        reconnectScheduled = false
 
         callback.onConnecting(
             "Connecting to Deriv..."
         )
 
-        getAccounts(accountType)
+        openSocket()
     }
 
-    private fun getAccounts(
-        accountType: String
-    ) {
-
-        val request =
-            Request.Builder()
-                .url(
-                    API_BASE +
-                        ACCOUNTS_PATH
-                )
-                .addHeader(
-                    "Authorization",
-                    "Bearer $accessToken"
-                )
-                .get()
-                .build()
-
-        httpClient
-            .newCall(request)
-            .enqueue(
-                object : okhttp3.Callback {
-
-                    override fun onFailure(
-                        call: Call,
-                        e: IOException
-                    ) {
-
-                        callback.onError(
-                            "Unable to get Deriv accounts: " +
-                                (
-                                    e.message
-                                        ?: "network error"
-                                )
-                        )
-                    }
-
-                    override fun onResponse(
-                        call: Call,
-                        response: Response
-                    ) {
-
-                        response.use {
-
-                            val body =
-                                it.body
-                                    ?.string()
-                                    .orEmpty()
-
-                            if (!it.isSuccessful) {
-
-                                callback.onError(
-                                    "Deriv account request failed: " +
-                                        it.code +
-                                        " " +
-                                        body
-                                )
-
-                                return
-                            }
-
-                            try {
-
-                                val json =
-                                    JSONObject(body)
-
-                                val data =
-                                    json.opt("data")
-
-                                var foundAccountId =
-                                    ""
-
-                                if (
-                                    data is JSONArray
-                                ) {
-
-                                    for (
-                                        i in 0 until data.length()
-                                    ) {
-                                                                              val account =
-                                            data.optJSONObject(i)
-                                                ?: continue
-
-                                        val type =
-                                            account.optString(
-                                                "account_type"
-                                            )
-
-                                        val id =
-                                            account.optString(
-                                                "account_id"
-                                            )
-
-                                        if (
-                                            type.equals(
-                                                accountType,
-                                                ignoreCase = true
-                                            ) &&
-                                            id.isNotEmpty()
-                                        ) {
-
-                                            foundAccountId =
-                                                id
-
-                                            break
-                                        }
-                                    }
-
-                                } else if (
-                                    data is JSONObject
-                                ) {
-
-                                    val type =
-                                        data.optString(
-                                            "account_type"
-                                        )
-
-                                    val id =
-                                        data.optString(
-                                            "account_id"
-                                        )
-
-                                    if (
-                                        type.equals(
-                                            accountType,
-                                            ignoreCase = true
-                                        )
-                                    ) {
-
-                                        foundAccountId =
-                                            id
-                                    }
-                                }
-
-                                if (
-                                    foundAccountId.isEmpty()
-                                ) {
-
-                                    callback.onError(
-                                        "No $accountType Deriv account was found."
-                                    )
-
-                                    return
-                                }
-
-                                selectedAccountId =
-                                    foundAccountId
-
-                                requestWebSocketUrl(
-                                    accountType
-                                )
-
-                            } catch (
-                                e: Exception
-                            ) {
-
-                                callback.onError(
-                                    "Invalid Deriv account response: " +
-                                        (
-                                            e.message
-                                                ?: "unknown error"
-                                        )
-                                )
-                            }
-                        }
-                    }
-                }
-            )
-    }
-
-    private fun requestWebSocketUrl(
-        accountType: String
-    ) {
-
-        val url =
-            "$API_BASE$ACCOUNTS_PATH/" +
-                "$selectedAccountId/otp"
-
-        val request =
-            Request.Builder()
-                .url(url)
-                .addHeader(
-                    "Authorization",
-                    "Bearer $accessToken"
-                )
-                .post(
-                    RequestBody.create(
-                        null,
-                        ByteArray(0)
-                    )
-                )
-                .build()
-
-        httpClient
-            .newCall(request)
-            .enqueue(
-                object : okhttp3.Callback {
-
-                    override fun onFailure(
-                        call: Call,
-                        e: IOException
-                    ) {
-
-                        callback.onError(
-                            "Unable to create Deriv connection: " +
-                                (
-                                    e.message
-                                        ?: "network error"
-                                )
-                        )
-                    }
-
-                    override fun onResponse(
-                        call: Call,
-                        response: Response
-                    ) {
-
-                        response.use {
-
-                            val body =
-                                                            it.body
-                                    ?.string()
-                                    .orEmpty()
-
-                            if (!it.isSuccessful) {
-
-                                callback.onError(
-                                    "Deriv OTP request failed: " +
-                                        it.code +
-                                        " " +
-                                        body
-                                )
-
-                                return
-                            }
-
-                            try {
-
-                                val json =
-                                    JSONObject(body)
-
-                                val data =
-                                    json.optJSONObject(
-                                        "data"
-                                    )
-
-                                val wsUrl =
-                                    data
-                                        ?.optString(
-                                            "url"
-                                        )
-                                        .orEmpty()
-
-                                if (
-                                    wsUrl.isEmpty()
-                                ) {
-
-                                    callback.onError(
-                                        "Deriv did not return a WebSocket URL."
-                                    )
-
-                                    return
-                                }
-
-                                openWebSocket(
-                                    wsUrl,
-                                    accountType
-                                )
-
-                            } catch (
-                                e: Exception
-                            ) {
-
-                                callback.onError(
-                                    "Invalid Deriv connection response: " +
-                                        (
-                                            e.message
-                                                ?: "unknown error"
-                                        )
-                                )
-                            }
-                        }
-                    }
-                }
-            )
-    }
-
-    private fun openWebSocket(
-        wsUrl: String,
-        accountType: String
-    ) {
-
-        manualDisconnect = false
-
-        val request =
-            Request.Builder()
-                .url(wsUrl)
-                .build()
-
-        webSocket =
-            httpClient.newWebSocket(
-                request,
-                object : WebSocketListener() {
-
-                    override fun onOpen(
-                        webSocket: WebSocket,
-                        response: Response
-                    ) {
-
-                        callback.onConnected(
-                            selectedAccountId,
-                            accountType
-                        )
-
-                        val balanceRequest =
-                            JSONObject()
-                                .put(
-                                    "balance",
-                                    1
-                                )
-                                .put(
-                                    "subscribe",
-                                    1
-                                )
-                                .put(
-                                    "req_id",
-                                    1
-                                )
-
-                        webSocket.send(
-                            balanceRequest.toString()
-                        )
-                    }
-
-                    override fun onMessage(
-                        webSocket: WebSocket,
-                        text: String
-                    ) {
-
-                        try {
-
-                            val json =
-                                JSONObject(text)
-
-                            val balanceObject =
-                                json.optJSONObject(
-                                    "balance"
-                                )
-
-                            if (
-                                balanceObject != null
-                            ) {
-
-                                val balance =
-                                    balanceObject.optDouble(
-                                        "balance",
-                                        Double.NaN
-                                    )
-
-                                val currency =
-                                    balanceObject.optString(
-                                                                                "currency",
-                                        ""
-                                    )
-
-                                if (
-                                    !balance.isNaN()
-                                ) {
-
-                                    callback.onBalance(
-                                        balance,
-                                        currency
-                                    )
-                                }
-                            }
-
-                            val errorObject =
-                                json.optJSONObject(
-                                    "error"
-                                )
-
-                            if (
-                                errorObject != null
-                            ) {
-
-                                callback.onError(
-                                    errorObject.optString(
-                                        "message",
-                                        "Deriv returned an error."
-                                    )
-                                )
-                            }
-
-                        } catch (_: Exception) {
-
-                            // Ignore malformed/non-critical messages.
-                        }
-                    }
-
-                    override fun onFailure(
-                        webSocket: WebSocket,
-                        t: Throwable,
-                        response: Response?
-                    ) {
-
-                        if (manualDisconnect) {
-                            return
-                        }
-
-                        callback.onConnecting(
-                            "Connection interrupted. Reconnecting..."
-                        )
-
-                        scheduleReconnect(accountType)
-                    }
-
-                    override fun onClosed(
-                        webSocket: WebSocket,
-                        code: Int,
-                        reason: String
-                    ) {
-
-                        if (manualDisconnect) {
-                            callback.onDisconnected()
-                            return
-                        }
-
-                        callback.onConnecting(
-                            "Connection closed. Reconnecting..."
-                        )
-
-                        scheduleReconnect(accountType)
-                    }
-                }
-            )
-    }
-
-    private fun scheduleReconnect(
-        accountType: String
-    ) {
-
-        if (manualDisconnect || accessToken.isBlank()) {
+    /**
+     * Open the WebSocket.
+     */
+    private fun openSocket() {
+
+        if (manuallyDisconnected) {
             return
         }
 
-        cancelReconnect()
+        val token = accessToken
 
-        reconnectExecutor =
-            java.util.concurrent.Executors
-                .newSingleThreadScheduledExecutor()
+        if (token.isNullOrBlank()) {
+            callback.onError(
+                "No Deriv access token available."
+            )
+            return
+        }
 
-        reconnectExecutor?.schedule(
-            {
+        /*
+         * Do not create multiple sockets at the same time.
+         */
+        if (
+            webSocket != null &&
+            connected
+        ) {
+            return
+        }
 
-                if (manualDisconnect || accessToken.isBlank()) {
-                    return@schedule
+        val request = Request.Builder()
+            .url(DERIV_URL)
+            .build()
+
+        webSocket = client.newWebSocket(
+            request,
+            object : WebSocketListener() {
+
+                override fun onOpen(
+                    socket: WebSocket,
+                    response: Response
+                ) {
+                    if (manuallyDisconnected) {
+                        socket.close(
+                            1000,
+                            "Manual disconnect"
+                        )
+                        return
+                    }
+
+                    webSocket = socket
+
+                    connected = true
+
+                    reconnectScheduled = false
+
+                    callback.onConnecting(
+                        "Authorizing Deriv account..."
+                    )
+
+                    authorize(
+                        socket,
+                        token
+                    )
                 }
 
-                callback.onConnecting(
-                    "Reconnecting to Deriv..."
+                override fun onMessage(
+                    socket: WebSocket,
+                    text: String
+                ) {
+                    handleMessage(
+                        socket,
+                        text
+                    )
+                }
+
+                override fun onFailure(
+                    socket: WebSocket,
+                    t: Throwable,
+                    response: Response?
+                ) {
+                    connected = false
+
+                    webSocket = null
+
+                    val message =
+                        t.message
+                            ?.takeIf {
+                                it.isNotBlank()
+                            }
+                            ?: "Unknown error"
+
+                    if (!manuallyDisconnected) {
+
+                        callback.onError(
+                            "Deriv connection interrupted: $message"
+                        )
+
+                        scheduleReconnect()
+                    }
+                }
+
+                override fun onClosed(
+                    socket: WebSocket,
+                    code: Int,
+                    reason: String
+                ) {
+                    connected = false
+
+                    if (webSocket == socket) {
+                        webSocket = null
+                    }
+
+                    if (manuallyDisconnected) {
+                        callback.onDisconnected()
+                    } else {
+                        scheduleReconnect()
+                    }
+                }
+            }
+        )
+    }
+
+    /**
+     * Authorize the Deriv account.
+     */
+    private fun authorize(
+        socket: WebSocket,
+        token: String
+    ) {
+
+        try {
+
+            val request = JSONObject()
+                .put(
+                    "authorize",
+                    token
                 )
 
-                getAccounts(accountType)
+            socket.send(
+                request.toString()
+            )
+
+        } catch (e: Exception) {
+
+            callback.onError(
+                "Unable to authorize Deriv account: ${
+                    e.message
+                        ?: "unknown error"
+                }"
+            )
+        }
+    }
+        /**
+     * Process messages received from Deriv.
+     */
+    private fun handleMessage(
+        socket: WebSocket,
+        text: String
+    ) {
+
+        try {
+
+            val json = JSONObject(text)
+
+            /*
+             * API error.
+             */
+            if (json.has("error")) {
+
+                val error =
+                    json.optJSONObject("error")
+
+                val message =
+                    error
+                        ?.optString("message")
+                        ?.takeIf {
+                            it.isNotBlank()
+                        }
+                        ?: "Deriv API error"
+
+                callback.onError(
+                    message
+                )
+
+                return
+            }
+
+            /*
+             * Authorization response.
+             */
+            if (json.has("authorize")) {
+
+                val authorize =
+                    json.optJSONObject(
+                        "authorize"
+                    )
+
+                if (authorize != null) {
+
+                    val accountId =
+                        authorize.optString(
+                            "loginid",
+                            ""
+                        )
+
+                    val accountType =
+                        authorize.optString(
+                            "account_type",
+                            ""
+                        )
+
+                    val balance =
+                        authorize.optDouble(
+                            "balance",
+                            Double.NaN
+                        )
+
+                    val currency =
+                        authorize.optString(
+                            "currency",
+                            ""
+                        )
+
+                    connected = true
+
+                    callback.onConnected(
+                        accountId,
+                        accountType
+                    )
+
+                    /*
+                     * Send the current balance immediately
+                     * when Deriv supplies it during authorization.
+                     */
+                    if (!balance.isNaN()) {
+
+                        callback.onBalance(
+                            balance,
+                            currency
+                        )
+                    }
+
+                    /*
+                     * Subscribe to live balance updates.
+                     */
+                    subscribeToBalance(
+                        socket
+                    )
+
+                    /*
+                     * Start the application-level heartbeat.
+                     */
+                    startHeartbeatIfNeeded(
+                        socket
+                    )
+                }
+
+                return
+            }
+
+            /*
+             * Balance subscription response.
+             */
+            if (json.has("balance")) {
+
+                val balanceObject =
+                    json.optJSONObject(
+                        "balance"
+                    )
+
+                if (balanceObject != null) {
+
+                    val balance =
+                        balanceObject.optDouble(
+                            "balance",
+                            Double.NaN
+                        )
+
+                    val currency =
+                        balanceObject.optString(
+                            "currency",
+                            ""
+                        )
+
+                    if (!balance.isNaN()) {
+
+                        callback.onBalance(
+                            balance,
+                            currency
+                        )
+                    }
+                }
+
+                return
+            }
+
+            /*
+             * Application-level ping response.
+             */
+            if (json.has("ping")) {
+                return
+            }
+
+        } catch (e: Exception) {
+
+            callback.onError(
+                "Invalid Deriv response: ${
+                    e.message
+                        ?: "unknown error"
+                }"
+            )
+        }
+    }
+
+    /**
+     * Subscribe to live account balance.
+     */
+    private fun subscribeToBalance(
+        socket: WebSocket
+    ) {
+
+        try {
+
+            val request = JSONObject()
+                .put(
+                    "balance",
+                    1
+                )
+                .put(
+                    "subscribe",
+                    1
+                )
+
+            socket.send(
+                request.toString()
+            )
+
+        } catch (e: Exception) {
+
+            callback.onError(
+                "Unable to subscribe to balance: ${
+                    e.message
+                        ?: "unknown error"
+                }"
+            )
+        }
+    }
+
+    /**
+     * Keep the application-level Deriv connection alive.
+     *
+     * OkHttp also sends WebSocket ping frames through
+     * pingInterval(). This additional Deriv ping helps prevent
+     * the application session from being treated as idle.
+     */
+    private fun startApplicationHeartbeat(
+        socket: WebSocket
+    ) {
+
+        scheduler.scheduleAtFixedRate(
+            {
+
+                if (
+                    !manuallyDisconnected &&
+                    connected &&
+                    webSocket == socket
+                ) {
+
+                    try {
+
+                        val ping =
+                            JSONObject()
+                                .put(
+                                    "ping",
+                                    1
+                                )
+
+                        socket.send(
+                            ping.toString()
+                        )
+
+                    } catch (_: Exception) {
+
+                        /*
+                         * The WebSocket failure will be handled
+                         * by OkHttp's WebSocketListener.
+                         */
+                    }
+                }
 
             },
-            5,
+            HEARTBEAT_SECONDS,
+            HEARTBEAT_SECONDS,
             TimeUnit.SECONDS
         )
     }
 
-    private fun cancelReconnect() {
+    /**
+     * Start heartbeat once the account is connected.
+     */
+    private fun startHeartbeatIfNeeded(
+        socket: WebSocket
+    ) {
 
-        try {
-            reconnectExecutor?.shutdownNow()
-        } catch (_: Exception) {
-            // Ignore shutdown errors.
+        /*
+         * The scheduler remains available for the lifetime
+         * of this client.
+         */
+        startApplicationHeartbeat(
+            socket
+        )
+    }
+        /**
+     * Reconnect automatically after an unexpected network
+     * or WebSocket failure.
+     *
+     * This is NOT a deliberate disconnect.
+     */
+    private fun scheduleReconnect() {
+
+        if (manuallyDisconnected) {
+            return
         }
 
-        reconnectExecutor = null
+        if (reconnectScheduled) {
+            return
+        }
+
+        reconnectScheduled = true
+
+        scheduler.schedule(
+            {
+
+                reconnectScheduled = false
+
+                if (!manuallyDisconnected) {
+
+                    callback.onConnecting(
+                        "Reconnecting to Deriv..."
+                    )
+
+                    openSocket()
+                }
+
+            },
+            RECONNECT_DELAY_SECONDS,
+            TimeUnit.SECONDS
+        )
     }
 
+    /**
+     * MANUAL DISCONNECT ONLY.
+     *
+     * This method intentionally terminates the Deriv connection.
+     *
+     * It must only be called when the user deliberately
+     * disconnects the account.
+     */
     fun disconnect() {
 
-        manualDisconnect = true
+        manuallyDisconnected = true
 
-        cancelReconnect()
+        connected = false
 
-        webSocket?.close(
-            1000,
-            "User disconnected"
-        )
+        reconnectScheduled = false
+
+        accessToken = null
+
+        val socket = webSocket
 
         webSocket = null
 
-        accessToken = ""
+        try {
 
-        selectedAccountId = ""
+            socket?.close(
+                1000,
+                "Manual disconnect"
+            )
 
-        selectedAccountType = ""
+        } catch (_: Exception) {
+        }
 
         callback.onDisconnected()
+    }
+
+    /**
+     * Returns true when the Deriv WebSocket is currently
+     * connected and has not been manually disconnected.
+     */
+    fun isConnected(): Boolean {
+
+        return connected &&
+                webSocket != null &&
+                !manuallyDisconnected
+    }
+
+    /**
+     * Release resources when this client is permanently
+     * destroyed.
+     *
+     * This must NOT be called merely because the Activity
+     * goes into the background.
+     */
+    fun shutdown() {
+
+        manuallyDisconnected = true
+
+        connected = false
+
+        reconnectScheduled = false
+
+        accessToken = null
+
+        try {
+
+            webSocket?.cancel()
+
+        } catch (_: Exception) {
+        }
+
+        webSocket = null
+
+        try {
+
+            scheduler.shutdownNow()
+
+        } catch (_: Exception) {
+        }
+
+        try {
+
+            client.dispatcher
+                .executorService
+                .shutdown()
+
+        } catch (_: Exception) {
+        }
+
+        try {
+
+            client.connectionPool
+                .evictAll()
+
+        } catch (_: Exception) {
+        }
+    }
+        /*
+     * The DerivApiClient intentionally does not disconnect
+     * when the Activity is paused, stopped, refreshed, or
+     * temporarily moved to the background.
+     *
+     * The connection remains under the control of the client
+     * until disconnect() or shutdown() is explicitly called.
+     */
+
+    /**
+     * Check whether the client currently has an active
+     * WebSocket connection.
+     */
+    fun hasActiveConnection(): Boolean {
+
+        return webSocket != null &&
+                connected &&
+                !manuallyDisconnected
+    }
+
+    /**
+     * Send a request through the existing Deriv connection.
+     *
+     * This method does not create another connection and does
+     * not disconnect the existing connection.
+     */
+    fun send(request: JSONObject): Boolean {
+
+        val socket = webSocket
+
+        if (
+            socket == null ||
+            !connected ||
+            manuallyDisconnected
+        ) {
+            return false
+        }
+
+        return try {
+
+            socket.send(
+                request.toString()
+            )
+
+        } catch (e: Exception) {
+
+            callback.onError(
+                "Unable to send Deriv request: ${
+                    e.message
+                        ?: "unknown error"
+                }"
+            )
+
+            false
+        }
+    }
+
+    /**
+     * Request the current balance.
+     *
+     * This uses the existing WebSocket connection.
+     */
+    fun requestBalance(): Boolean {
+
+        val request = JSONObject()
+            .put(
+                "balance",
+                1
+            )
+            .put(
+                "subscribe",
+                1
+            )
+
+        return send(request)
+    }
+
+    /**
+     * Send a Deriv ping manually when required.
+     *
+     * This does NOT create a new connection.
+     */
+    fun ping(): Boolean {
+
+        val request = JSONObject()
+            .put(
+                "ping",
+                1
+            )
+
+        return send(request)
+    }
+        /**
+     * Close the Deriv connection permanently from the
+     * application's point of view.
+     *
+     * This is reserved for permanent cleanup only.
+     */
+    fun close() {
+
+        shutdown()
     }
 }
