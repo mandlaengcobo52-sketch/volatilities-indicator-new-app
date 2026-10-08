@@ -934,16 +934,3 @@ class DerivApiClient(
 
         selectedAccountType = ""
     }
-        // =============================================================
-    // FINAL CLEANUP
-    // =============================================================
-
-    override fun finalize() {
-        try {
-            disconnect()
-        } catch (_: Exception) {
-        }
-
-        super.finalize()
-    }
-}
