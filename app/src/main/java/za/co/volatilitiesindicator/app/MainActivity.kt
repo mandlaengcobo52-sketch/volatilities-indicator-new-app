@@ -313,27 +313,22 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             }
 
         /*
-         * The actual project launcher/logo resource can be
-         * inserted here when its resource name is available.
+         * USE THE ACTUAL VOLATILITIES INDICATOR LOGO.
          *
-         * Do not use android.R.drawable.ic_dialog_info.
+         * This replaces the old text-only "V" logo.
          */
-
         val logo =
-            TextView(this).apply {
+            ImageView(this).apply {
 
-                text = "V"
-
-                textSize = 30f
-
-                setTypeface(
-                    null,
-                    Typeface.BOLD
+                setImageResource(
+                    R.drawable.volatilities_indicator_logo
                 )
 
-                setTextColor(GREEN)
+                scaleType =
+                    ImageView.ScaleType.CENTER_INSIDE
 
-                gravity = Gravity.CENTER
+                contentDescription =
+                    "Volatilities Indicator logo"
 
                 layoutParams =
                     LinearLayout.LayoutParams(
@@ -410,7 +405,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         header.addView(titleBox)
 
         // ---------------------------------------------------------
-        // BELL
+        // TOP-RIGHT FLOWER / NOTIFICATION SYMBOL
         // ---------------------------------------------------------
 
         val bell =
@@ -592,12 +587,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         rootLayout.addView(row)
     }
-
-    // =============================================================
-    // DERIV ACCOUNT CARD
+        // =============================================================
+    // DERIV EXECUTION ACCOUNT CARD
     // =============================================================
 
     private fun addAccountCard() {
+
+        addSectionTitle("DERIV EXECUTION ACCOUNT")
 
         val card =
             LinearLayout(this).apply {
@@ -607,53 +603,28 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
                 setPadding(
                     dp(14),
-                    dp(12),
                     dp(14),
-                    dp(12)
+                    dp(14),
+                    dp(14)
                 )
 
                 setBackgroundColor(CARD)
-
-                layoutParams =
-                    LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT
-                    ).apply {
-
-                        topMargin = dp(14)
-
-                        bottomMargin = dp(14)
-                    }
             }
 
-        val heading =
-            TextView(this).apply {
-
-                text =
-                    "⚡  DERIV EXECUTION ACCOUNT"
-
-                textSize = 15f
-
-                setTypeface(
-                    null,
-                    Typeface.BOLD
-                )
-
-                setTextColor(YELLOW)
-            }
-
-        card.addView(heading)
+        // ---------------------------------------------------------
+        // ACCOUNT STATUS
+        // ---------------------------------------------------------
 
         val status =
             TextView(this).apply {
 
                 text =
                     if (connected)
-                        "🟢  CONNECTION READY"
+                        "🟢  CONNECTED"
                     else
                         "🔴  NOT CONNECTED"
 
-                textSize = 14f
+                textSize = 18f
 
                 setTypeface(
                     null,
@@ -669,266 +640,172 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
                 setPadding(
                     0,
-                    dp(8),
                     0,
-                    dp(4)
+                    0,
+                    dp(10)
                 )
             }
 
         card.addView(status)
 
+        // ---------------------------------------------------------
+        // ACCOUNT NUMBER
+        // ---------------------------------------------------------
+
         val account =
             TextView(this).apply {
 
                 text =
-                    if (accountId.isEmpty())
-                        "Account: —"
-                    else
+                    if (accountId.isNotEmpty())
                         "Account: $accountId"
+                    else
+                        "Account: —"
 
-                textSize = 14f
+                textSize = 16f
 
                 setTextColor(WHITE)
+
+                setPadding(
+                    0,
+                    dp(2),
+                    0,
+                    dp(8)
+                )
             }
 
         card.addView(account)
+
+        // ---------------------------------------------------------
+        // BALANCE
+        // ---------------------------------------------------------
 
         val balance =
             TextView(this).apply {
 
                 text =
-                    if (accountCurrency.isEmpty()) {
-
+                    if (connected)
+                        "Balance: ${
+                            String.format(
+                                "%.2f",
+                                accountBalance
+                            )
+                        } $accountCurrency"
+                    else
                         "Balance: —"
 
-                    } else {
-
-                        "Balance: %.2f %s".format(
-                            accountBalance,
-                            accountCurrency
-                        )
-                    }
-
-                textSize = 14f
+                textSize = 16f
 
                 setTextColor(WHITE)
 
                 setPadding(
                     0,
-                    dp(5),
+                    dp(2),
                     0,
-                    dp(5)
+                    dp(8)
                 )
             }
 
         card.addView(balance)
 
-        val openPnl =
+        // ---------------------------------------------------------
+        // OPEN P/L
+        // ---------------------------------------------------------
+
+        val pnl =
             TextView(this).apply {
 
                 text = "Open P/L: —"
 
-                textSize = 14f
+                textSize = 16f
 
                 setTextColor(WHITE)
+
+                setPadding(
+                    0,
+                    dp(2),
+                    0,
+                    dp(12)
+                )
             }
 
-        card.addView(openPnl)
+        card.addView(pnl)
 
         // ---------------------------------------------------------
         // CONNECT / REFRESH
         // ---------------------------------------------------------
 
-        val buttons =
+        val buttonRow =
             LinearLayout(this).apply {
 
                 orientation =
                     LinearLayout.HORIZONTAL
-
-                setPadding(
-                    0,
-                    dp(12),
-                    0,
-                    0
-                )
             }
 
         val connect =
-            createMainButton(
-                if (connected)
-                    "✓  CONNECTED"
-                else
-                    "🔗  CONNECT",
-                connected
+            createActionButton(
+                "🔗  CONNECT"
+            )
+
+        val refresh =
+            createActionButton(
+                "⟳  REFRESH"
             )
 
         connect.setOnClickListener {
 
-            if (!connected) {
+            startDerivOAuth()
+        }
 
-                startDerivOAuth()
+        refresh.setOnClickListener {
+
+            if (connected) {
+
+                derivApiClient.requestBalance()
 
             } else {
 
                 Toast.makeText(
                     this,
-                    "Deriv account already connected",
+                    "Deriv account is not connected",
                     Toast.LENGTH_SHORT
                 ).show()
             }
         }
 
-        val refresh =
-            createSecondaryButton(
-                "⟳  REFRESH"
-            )
-
-        refresh.setOnClickListener {
-
-            refreshDerivConnection()
-        }
-
-        buttons.addView(
+        buttonRow.addView(
             connect,
             LinearLayout.LayoutParams(
                 0,
-                dp(50),
+                dp(54),
                 1f
             ).apply {
                 rightMargin = dp(5)
             }
         )
 
-        buttons.addView(
+        buttonRow.addView(
             refresh,
             LinearLayout.LayoutParams(
                 0,
-                dp(50),
+                dp(54),
                 1f
             ).apply {
                 leftMargin = dp(5)
             }
         )
 
-        card.addView(buttons)
+        card.addView(buttonRow)
 
-        rootLayout.addView(card)
-    }
-        // =============================================================
-    // AUTO TRADE
-    // =============================================================
-
-    private fun addAutoTrade() {
-
-        val card =
-            LinearLayout(this).apply {
-
-                orientation =
-                    LinearLayout.HORIZONTAL
-
-                gravity =
-                    Gravity.CENTER_VERTICAL
-
-                setPadding(
-                    dp(12),
-                    dp(7),
-                    dp(12),
-                    dp(7)
-                )
-
-                setBackgroundColor(CARD)
-
-                layoutParams =
-                    LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        dp(48)
-                    ).apply {
-                        bottomMargin = dp(8)
-                    }
-            }
-
-        val label =
-            TextView(this).apply {
-
-                text = "AUTO TRADE"
-
-                textSize = 13f
-
-                setTypeface(
-                    null,
-                    Typeface.BOLD
-                )
-
-                setTextColor(WHITE)
-
-                layoutParams =
-                    LinearLayout.LayoutParams(
-                        0,
-                        LinearLayout.LayoutParams.WRAP_CONTENT,
-                        1f
-                    )
-            }
-
-        card.addView(label)
-
-        val state =
-            TextView(this).apply {
-
-                text =
-                    if (autoTradeEnabled)
-                        "ON"
-                    else
-                        "OFF"
-
-                textSize = 13f
-
-                setTypeface(
-                    null,
-                    Typeface.BOLD
-                )
-
-                setTextColor(
-                    if (autoTradeEnabled)
-                        GREEN
-                    else
-                        YELLOW
-                )
-
-                gravity =
-                    Gravity.CENTER
-
-                setPadding(
-                    dp(12),
-                    dp(4),
-                    dp(12),
-                    dp(4)
-                )
-
-                setOnClickListener {
-
-                    autoTradeEnabled =
-                        !autoTradeEnabled
-
-                    prefs.edit()
-                        .putBoolean(
-                            "auto_trade_enabled",
-                            autoTradeEnabled
-                        )
-                        .apply()
-
-                    rebuild()
-                }
-            }
-
-        card.addView(
-            state,
+        rootLayout.addView(
+            card,
             LinearLayout.LayoutParams(
-                dp(70),
-                dp(36)
-            )
-        )
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
 
-        rootLayout.addView(card)
+                bottomMargin = dp(12)
+            }
+        )
     }
 
     // =============================================================
@@ -939,33 +816,19 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         addSectionTitle("INDEX MONITOR")
 
-        val monitor =
-            LinearLayout(this).apply {
-
-                orientation =
-                    LinearLayout.VERTICAL
-            }
-
         for (index in indexes) {
 
-            monitor.addView(
-                createIndexRow(index)
-            )
+            addIndexRow(index)
         }
-
-        rootLayout.addView(monitor)
     }
 
     // =============================================================
     // INDEX ROW
     // =============================================================
 
-    private fun createIndexRow(
+    private fun addIndexRow(
         index: String
-    ): LinearLayout {
-
-        val colour =
-            indexColor(index)
+    ) {
 
         val row =
             LinearLayout(this).apply {
@@ -977,23 +840,15 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     Gravity.CENTER_VERTICAL
 
                 setPadding(
-                    dp(10),
-                    dp(5),
-                    dp(5),
-                    dp(5)
+                    dp(12),
+                    dp(8),
+                    dp(8),
+                    dp(8)
                 )
 
-                setBackgroundColor(CARD)
+                setBackgroundColor(CARD2)
 
-                layoutParams =
-                    LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        dp(52)
-                    ).apply {
-
-                        bottomMargin =
-                            dp(5)
-                    }
+                isClickable = true
             }
 
         // ---------------------------------------------------------
@@ -1005,45 +860,48 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
                 text = index
 
-                textSize = 16f
+                textSize = 20f
 
                 setTypeface(
                     null,
                     Typeface.BOLD
                 )
 
-                setTextColor(colour)
+                setTextColor(
+                    indexColor(index)
+                )
 
                 gravity =
                     Gravity.CENTER_VERTICAL
 
                 layoutParams =
                     LinearLayout.LayoutParams(
-                        dp(72),
-                        LinearLayout.LayoutParams.MATCH_PARENT
+                        dp(105),
+                        dp(58)
                     )
             }
 
         row.addView(name)
 
         // ---------------------------------------------------------
-        // SIMPLE MARKET LINE
+        // MARKET GRAPHIC
         // ---------------------------------------------------------
 
         val graph =
             TextView(this).apply {
 
-                text =
-                    "╱╲╱╲╲╱"
+                text = "⌁⌃⌁⌄⌁⌃⌁"
 
-                textSize = 14f
+                textSize = 25f
 
                 setTypeface(
                     null,
                     Typeface.BOLD
                 )
 
-                setTextColor(colour)
+                setTextColor(
+                    indexColor(index)
+                )
 
                 gravity =
                     Gravity.CENTER
@@ -1051,7 +909,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 layoutParams =
                     LinearLayout.LayoutParams(
                         0,
-                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        dp(58),
                         1f
                     )
             }
@@ -1067,7 +925,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
                 text = "WAITING"
 
-                textSize = 10f
+                textSize = 13f
 
                 setTypeface(
                     null,
@@ -1081,8 +939,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
                 layoutParams =
                     LinearLayout.LayoutParams(
-                        dp(66),
-                        LinearLayout.LayoutParams.MATCH_PARENT
+                        dp(105),
+                        dp(58)
                     )
             }
 
@@ -1097,7 +955,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
                 text = "›"
 
-                textSize = 27f
+                textSize = 34f
 
                 setTextColor(WHITE)
 
@@ -1106,23 +964,32 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
                 layoutParams =
                     LinearLayout.LayoutParams(
-                        dp(30),
-                        LinearLayout.LayoutParams.MATCH_PARENT
+                        dp(32),
+                        dp(58)
                     )
             }
 
-        arrow.setOnClickListener {
+        row.addView(arrow)
+
+        row.setOnClickListener {
 
             openIndex(index)
         }
 
-        row.addView(arrow)
+        rootLayout.addView(
+            row,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
 
-        return row
+                bottomMargin = dp(6)
+            }
+        )
     }
 
     // =============================================================
-    // INDEX DETAILS
+    // INDEX DETAIL
     // =============================================================
 
     private fun openIndex(
@@ -1142,227 +1009,29 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     private fun addAdminFeatures() {
 
-        addSectionTitle(
-            "ADMIN FEATURES"
-        )
+        addSectionTitle("ADMIN CONTROL")
 
-        val container =
-            LinearLayout(this).apply {
-
-                orientation =
-                    LinearLayout.VERTICAL
-            }
-
-        addAdminFeature(
-            container,
-            "⌂   DASHBOARD"
-        )
-
-        addAdminFeature(
-            container,
-            "▥   INDEX SETTINGS"
-        )
-
-        addAdminFeature(
-            container,
-            "◆   RISK CATEGORIES"
-        )
-
-        addAdminFeature(
-            container,
-            "●●   USER ACCOUNTS"
-        )
-
-        addAdminFeature(
-            container,
-            "♧   NOTIFICATIONS"
-        )
-
-        addAdminFeature(
-            container,
-            "▤   TRADING LOGS"
-        )
-
-        addAdminFeature(
-            container,
-            "⚙   SYSTEM SETTINGS"
-        )
-
-        addAdminFeature(
-            container,
-            "⇥   LOGOUT"
-        )
-
-        rootLayout.addView(container)
-    }
-
-    // =============================================================
-    // ADMIN FEATURE BUTTON
-    // =============================================================
-
-    private fun addAdminFeature(
-        parent: LinearLayout,
-        label: String
-    ) {
-
-        val button =
-            createSecondaryButton(label)
-
-        button.setOnClickListener {
-
-            handleAdminFeature(label)
-        }
-
-        parent.addView(
-            button,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(44)
-            ).apply {
-
-                bottomMargin =
-                    dp(5)
-            }
-        )
-    }
-
-    // =============================================================
-    // ADMIN FEATURE ACTIONS
-    // =============================================================
-
-    private fun handleAdminFeature(
-        label: String
-    ) {
-
-        when {
-
-            label.contains(
-                "USER ACCOUNTS"
-            ) -> {
-
-                showAdminMessage(
-                    "User Accounts"
-                )
-            }
-
-            label.contains(
-                "INDEX SETTINGS"
-            ) -> {
-
-                showAdminMessage(
-                    "Index Settings"
-                )
-            }
-
-            label.contains(
-                "RISK CATEGORIES"
-            ) -> {
-
-                showAdminMessage(
-                    "Risk Categories"
-                )
-            }
-
-            label.contains(
-                "NOTIFICATIONS"
-            ) -> {
-
-                showAdminMessage(
-                    "Notifications"
-                )
-            }
-
-            label.contains(
-                "TRADING LOGS"
-            ) -> {
-
-                showAdminMessage(
-                    "Trading Logs"
-                )
-            }
-
-            label.contains(
-                "SYSTEM SETTINGS"
-            ) -> {
-
-                showAdminMessage(
-                    "System Settings"
-                )
-            }
-
-            label.contains(
-                "LOGOUT"
-            ) -> {
-
-                logout()
-            }
-
-            else -> {
-
-                showAdminMessage(
-                    "Admin Dashboard"
-                )
-            }
-        }
-    }
-
-    // =============================================================
-    // ADMIN MESSAGE
-    // =============================================================
-
-    private fun showAdminMessage(
-        message: String
-    ) {
-
-        Toast.makeText(
-            this,
-            message,
-            Toast.LENGTH_SHORT
-        ).show()
-    }
-
-    // =============================================================
-    // USER MENU
-    // =============================================================
-
-    private fun showUserMenu() {
-
-        Toast.makeText(
-            this,
-            "User menu",
-            Toast.LENGTH_SHORT
-        ).show()
-    }
-
-    // =============================================================
-    // ADMIN MENU
-    // =============================================================
-
-    private fun showAdminMenu() {
-
-        val menu =
+        val card =
             LinearLayout(this).apply {
 
                 orientation =
                     LinearLayout.VERTICAL
 
                 setPadding(
-                    dp(16),
-                    dp(16),
-                    dp(16),
-                    dp(16)
+                    dp(14),
+                    dp(14),
+                    dp(14),
+                    dp(14)
                 )
 
                 setBackgroundColor(CARD)
             }
 
-        val dialog =
-            android.app.Dialog(this)
-
         val title =
             TextView(this).apply {
 
-                text = "ADMIN MENU"
+                text =
+                    "ADMINISTRATION"
 
                 textSize = 18f
 
@@ -1381,56 +1050,107 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 )
             }
 
-        menu.addView(title)
+        card.addView(title)
 
-        val items =
-            listOf(
-                "Dashboard",
-                "Index Settings",
-                "Risk Categories",
+        // ---------------------------------------------------------
+        // USER ACCOUNTS
+        // ---------------------------------------------------------
+
+        val users =
+            createActionButton(
+                "USER ACCOUNTS"
+            )
+
+        users.setOnClickListener {
+
+            Toast.makeText(
+                this,
                 "User Accounts",
-                "Notifications",
-                "Trading Logs",
-                "System Settings",
-                "Logout"
-            )
-
-        for (item in items) {
-
-            val button =
-                createSecondaryButton(item)
-
-            button.setOnClickListener {
-
-                dialog.dismiss()
-
-                handleAdminFeature(item)
-            }
-
-            menu.addView(
-                button,
-                LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    dp(42)
-                ).apply {
-
-                    bottomMargin =
-                        dp(5)
-                }
-            )
+                Toast.LENGTH_SHORT
+            ).show()
         }
 
-        dialog.setContentView(menu)
+        card.addView(
+            users,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(52)
+            ).apply {
 
-        dialog.window?.setBackgroundDrawableResource(
-            android.R.color.transparent
+                bottomMargin = dp(8)
+            }
         )
 
-        dialog.show()
+        // ---------------------------------------------------------
+        // TRADE CONTROL
+        // ---------------------------------------------------------
 
-        dialog.window?.setLayout(
-            dp(300),
-            LinearLayout.LayoutParams.WRAP_CONTENT
+        val trade =
+            createActionButton(
+                "TRADE CONTROL"
+            )
+
+        trade.setOnClickListener {
+
+            Toast.makeText(
+                this,
+                "Trade Control",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+
+        card.addView(
+            trade,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(52)
+            ).apply {
+
+                bottomMargin = dp(8)
+            }
+        )
+
+        // ---------------------------------------------------------
+        // AUTO TRADE
+        // ---------------------------------------------------------
+
+        val auto =
+            createActionButton(
+                if (autoTradeEnabled)
+                    "AUTO TRADE: ON"
+                else
+                    "AUTO TRADE: OFF"
+            )
+
+        auto.setOnClickListener {
+
+            autoTradeEnabled =
+                !autoTradeEnabled
+
+            auto.text =
+                if (autoTradeEnabled)
+                    "AUTO TRADE: ON"
+                else
+                    "AUTO TRADE: OFF"
+        }
+
+        card.addView(
+            auto,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(52)
+            )
+        )
+
+        rootLayout.addView(
+            card,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+
+                bottomMargin = dp(12)
+            }
         )
     }
 
@@ -1440,7 +1160,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     private fun addBottomNavigation() {
 
-        val nav =
+        val navigation =
             LinearLayout(this).apply {
 
                 orientation =
@@ -1451,48 +1171,48 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
                 setPadding(
                     0,
-                    dp(12),
+                    dp(18),
                     0,
-                    0
+                    dp(4)
                 )
             }
 
         addNavigationItem(
-            nav,
+            navigation,
             "⌂",
             "Home",
             true
         )
 
         addNavigationItem(
-            nav,
+            navigation,
             "▥",
             "Trade",
             false
         )
 
         addNavigationItem(
-            nav,
-            "⌁",
+            navigation,
+            "ϟ",
             "Analysis",
             false
         )
 
         addNavigationItem(
-            nav,
+            navigation,
             "▤",
             "News",
             false
         )
 
         addNavigationItem(
-            nav,
+            navigation,
             "⚙",
             "Settings",
             false
         )
 
-        rootLayout.addView(nav)
+        rootLayout.addView(navigation)
     }
 
     // =============================================================
@@ -1518,7 +1238,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 layoutParams =
                     LinearLayout.LayoutParams(
                         0,
-                        dp(58),
+                        dp(70),
                         1f
                     )
             }
@@ -1528,7 +1248,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
                 text = icon
 
-                textSize = 21f
+                textSize = 25f
 
                 setTextColor(
                     if (selected)
@@ -1548,7 +1268,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
                 text = label
 
-                textSize = 9f
+                textSize = 11f
 
                 setTextColor(
                     if (selected)
@@ -1559,17 +1279,62 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
                 gravity =
                     Gravity.CENTER
+
+                setPadding(
+                    0,
+                    dp(4),
+                    0,
+                    0
+                )
             }
 
         item.addView(labelView)
 
         item.setOnClickListener {
 
-            Toast.makeText(
-                this@MainActivity,
-                label,
-                Toast.LENGTH_SHORT
-            ).show()
+            when (label) {
+
+                "Home" -> {
+
+                    scrollToTop()
+                }
+
+                "Trade" -> {
+
+                    Toast.makeText(
+                        this,
+                        "Trade",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+
+                "Analysis" -> {
+
+                    Toast.makeText(
+                        this,
+                        "Analysis",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+
+                "News" -> {
+
+                    Toast.makeText(
+                        this,
+                        "News",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+
+                "Settings" -> {
+
+                    Toast.makeText(
+                        this,
+                        "Settings",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
         }
 
         parent.addView(item)
@@ -1580,15 +1345,15 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     // =============================================================
 
     private fun addSectionTitle(
-        title: String
+        text: String
     ) {
 
-        val view =
+        val title =
             TextView(this).apply {
 
-                text = title
+                this.text = text
 
-                textSize = 14f
+                textSize = 18f
 
                 setTypeface(
                     null,
@@ -1601,11 +1366,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     0,
                     dp(8),
                     0,
-                    dp(8)
+                    dp(10)
                 )
             }
 
-        rootLayout.addView(view)
+        rootLayout.addView(title)
     }
 
     // =============================================================
@@ -1613,17 +1378,15 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     // =============================================================
 
     private fun createMainButton(
-        textValue: String,
+        text: String,
         selected: Boolean
     ): Button {
 
         return Button(this).apply {
 
-            text = textValue
+            this.text = text
 
-            textSize = 12f
-
-            isAllCaps = false
+            textSize = 14f
 
             setTypeface(
                 null,
@@ -1644,36 +1407,36 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     CARD2
             )
 
+            isAllCaps = false
+
+            stateListAnimator = null
+
             minHeight = 0
 
             minimumHeight = 0
 
-            stateListAnimator = null
-
             setPadding(
-                dp(4),
+                dp(6),
                 0,
-                dp(4),
+                dp(6),
                 0
             )
         }
     }
 
     // =============================================================
-    // SECONDARY BUTTON
+    // ACTION BUTTON
     // =============================================================
 
-    private fun createSecondaryButton(
-        textValue: String
+    private fun createActionButton(
+        text: String
     ): Button {
 
         return Button(this).apply {
 
-            text = textValue
+            this.text = text
 
-            textSize = 11f
-
-            isAllCaps = false
+            textSize = 14f
 
             setTypeface(
                 null,
@@ -1684,142 +1447,411 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
             setBackgroundColor(CARD2)
 
-            minHeight = 0
-
-            minimumHeight = 0
+            isAllCaps = false
 
             stateListAnimator = null
 
-            setPadding(
-                dp(5),
+            minHeight = 0
+
+            minimumHeight = 0
+        }
+    }
+
+    // =============================================================
+    // USER MENU
+    // =============================================================
+
+    private fun showUserMenu() {
+
+        Toast.makeText(
+            this,
+            "User menu",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    // =============================================================
+    // ADMIN MENU
+    // =============================================================
+
+    private fun showAdminMenu() {
+
+        Toast.makeText(
+            this,
+            "Admin menu",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    // =============================================================
+    // REBUILD SCREEN
+    // =============================================================
+
+    private fun rebuild() {
+
+        buildMainScreen()
+    }
+
+    // =============================================================
+    // SCROLL TO TOP
+    // =============================================================
+
+    private fun scrollToTop() {
+
+        rootScroll.post {
+
+            rootScroll.smoothScrollTo(
                 0,
-                dp(5),
                 0
             )
         }
     }
-        // =============================================================
-    // START DERIV OAUTH
+
+    // =============================================================
+    // DERIV OAUTH
     // =============================================================
 
     private fun startDerivOAuth() {
 
+        /*
+         * IMPORTANT:
+         *
+         * The previous project used:
+         *
+         *     /oauth2/authorize
+         *
+         * That route caused the 404 shown in the browser.
+         *
+         * Deriv OAuth 2.0 uses:
+         *
+         *     /oauth2/auth
+         */
+
+        oauthState =
+            UUID.randomUUID().toString()
+
+        codeVerifier =
+            generateCodeVerifier()
+
+        prefs.edit()
+            .putString(
+                "oauth_state",
+                oauthState
+            )
+            .putString(
+                "code_verifier",
+                codeVerifier
+            )
+            .apply()
+
+        val challenge =
+            generateCodeChallenge(
+                codeVerifier
+            )
+
+        val redirectUri =
+            "https://volatilitiesindicator.org.za/accounts/account-callback.php"
+
+        val authorizationUrl =
+            Uri.parse(
+                "https://auth.deriv.com/oauth2/auth"
+            )
+                .buildUpon()
+                .appendQueryParameter(
+                    "response_type",
+                    "code"
+                )
+                .appendQueryParameter(
+                    "client_id",
+                    DERIV_CLIENT_ID
+                )
+                .appendQueryParameter(
+                    "redirect_uri",
+                    redirectUri
+                )
+                .appendQueryParameter(
+                    "state",
+                    oauthState
+                )
+                .appendQueryParameter(
+                    "code_challenge",
+                    challenge
+                )
+                .appendQueryParameter(
+                    "code_challenge_method",
+                    "S256"
+                )
+                .build()
+
         try {
 
-            val state =
-                UUID.randomUUID().toString()
-
-            val verifierBytes =
-                ByteArray(32)
-
-            SecureRandom()
-                .nextBytes(verifierBytes)
-
-            val verifier =
-                Base64.encodeToString(
-                    verifierBytes,
-                    Base64.URL_SAFE or
-                        Base64.NO_WRAP or
-                        Base64.NO_PADDING
-                )
-
-            val challenge =
-                createCodeChallenge(
-                    verifier
-                )
-
-            oauthState =
-                state
-
-            codeVerifier =
-                verifier
-
-            prefs.edit()
-                .putString(
-                    "oauth_state",
-                    state
-                )
-                .putString(
-                    "code_verifier",
-                    verifier
-                )
-                .putString(
-                    "oauth_mode",
-                    executionMode
-                )
-                .apply()
-
-            val clientId =
-                DerivApiClient.clientId(
-                    executionMode
-                )
-
-            val authorizationUrl =
-                Uri.Builder()
-                    .scheme("https")
-                    .authority(
-                        "auth.deriv.com"
-                    )
-                    .appendPath("oauth2")
-                    .appendPath("authorize")
-                    .appendQueryParameter(
-                        "app_id",
-                        clientId
-                    )
-                    .appendQueryParameter(
-                        "client_id",
-                        clientId
-                    )
-                    .appendQueryParameter(
-                        "redirect_uri",
-                        DerivApiClient
-                            .OAUTH_REDIRECT_URI
-                    )
-                    .appendQueryParameter(
-                        "response_type",
-                        "code"
-                    )
-                    .appendQueryParameter(
-                        "scope",
-                        DerivApiClient
-                            .OAUTH_SCOPE
-                    )
-                    .appendQueryParameter(
-                        "state",
-                        state
-                    )
-                    .appendQueryParameter(
-                        "code_challenge",
-                        challenge
-                    )
-                    .appendQueryParameter(
-                        "code_challenge_method",
-                        "S256"
-                    )
-                    .build()
-
-            startActivity(
+            val browserIntent =
                 Intent(
                     Intent.ACTION_VIEW,
                     authorizationUrl
                 )
+
+            startActivity(
+                browserIntent
             )
 
         } catch (e: Exception) {
 
             Toast.makeText(
                 this,
-                "OAuth error: ${e.message}",
+                "Unable to open Deriv login",
                 Toast.LENGTH_LONG
             ).show()
         }
+    }
+                object : Callback {
+
+                override fun onFailure(
+                    call: Call,
+                    e: IOException
+                ) {
+
+                    runOnUiThread {
+
+                        Toast.makeText(
+                            this@MainActivity,
+                            "OAuth connection failed: ${e.message}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+
+                override fun onResponse(
+                    call: Call,
+                    response: Response
+                ) {
+
+                    val responseText =
+                        response.body?.string()
+                            ?: ""
+
+                    if (!response.isSuccessful) {
+
+                        runOnUiThread {
+
+                            Toast.makeText(
+                                this@MainActivity,
+                                "OAuth token error: ${response.code}",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+
+                        return
+                    }
+
+                    try {
+
+                        val json =
+                            JSONObject(
+                                responseText
+                            )
+
+                        val accessToken =
+                            json.optString(
+                                "access_token",
+                                ""
+                            )
+
+                        if (
+                            accessToken.isEmpty()
+                        ) {
+
+                            runOnUiThread {
+
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "Deriv did not return an access token",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+
+                            return
+                        }
+
+                        prefs.edit()
+                            .putString(
+                                "access_token",
+                                accessToken
+                            )
+                            .apply()
+
+                        runOnUiThread {
+
+                            connectWithToken(
+                                accessToken
+                            )
+                        }
+
+                    } catch (
+                        e: Exception
+                    ) {
+
+                        runOnUiThread {
+
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Invalid OAuth response",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                }
+            }
+        )
+}
+// =============================================================
+    // CONNECT TO DERIV
+    // =============================================================
+
+    private fun connectWithToken(
+        token: String
+    ) {
+
+        if (
+            token.isEmpty()
+        ) {
+
+            Toast.makeText(
+                this,
+                "No Deriv token",
+                Toast.LENGTH_LONG
+            ).show()
+
+            return
+        }
+
+        connected = false
+
+        rebuild()
+
+        derivApiClient.connect(
+            token,
+            executionMode == "REAL"
+        )
+    }
+
+    // =============================================================
+    // DERIV CALLBACK
+    // =============================================================
+
+    override fun onConnected() {
+
+        runOnUiThread {
+
+            connected = true
+
+            rebuild()
+        }
+    }
+
+    override fun onAccountReceived(
+        id: String,
+        type: String,
+        balance: Double,
+        currency: String
+    ) {
+
+        runOnUiThread {
+
+            accountId = id
+
+            accountType = type
+
+            accountBalance = balance
+
+            accountCurrency = currency
+
+            connected = true
+
+            rebuild()
+        }
+    }
+
+    override fun onBalanceReceived(
+        balance: Double,
+        currency: String
+    ) {
+
+        runOnUiThread {
+
+            accountBalance = balance
+
+            accountCurrency = currency
+
+            connected = true
+
+            rebuild()
+        }
+    }
+
+    override fun onDisconnected() {
+
+        runOnUiThread {
+
+            connected = false
+
+            rebuild()
+        }
+    }
+
+    override fun onError(
+        message: String
+    ) {
+
+        runOnUiThread {
+
+            Toast.makeText(
+                this,
+                message,
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+        // =============================================================
+    // DERIV CLIENT ID
+    // =============================================================
+    //
+    // The client ID is selected according to DEMO / REAL mode.
+    // These IDs already exist in the supplied project.
+    //
+    // =============================================================
+
+    private val DERIV_CLIENT_ID: String
+        get() = DerivApiClient.clientId(
+            executionMode
+        )
+
+    // =============================================================
+    // PKCE CODE VERIFIER
+    // =============================================================
+
+    private fun generateCodeVerifier(): String {
+
+        val random =
+            ByteArray(32)
+
+        SecureRandom().nextBytes(
+            random
+        )
+
+        return Base64.encodeToString(
+            random,
+            Base64.URL_SAFE or
+                    Base64.NO_WRAP or
+                    Base64.NO_PADDING
+        )
     }
 
     // =============================================================
     // PKCE CODE CHALLENGE
     // =============================================================
 
-    private fun createCodeChallenge(
+    private fun generateCodeChallenge(
         verifier: String
     ): String {
 
@@ -1838,686 +1870,97 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         return Base64.encodeToString(
             hash,
             Base64.URL_SAFE or
-                Base64.NO_WRAP or
-                Base64.NO_PADDING
+                    Base64.NO_WRAP or
+                    Base64.NO_PADDING
         )
     }
 
     // =============================================================
-    // OAUTH CALLBACK
+    // DP TO PIXELS
     // =============================================================
 
-    private fun handleOAuthCallback(
-        callbackIntent: Intent?
-    ) {
+    private fun dp(
+        value: Int
+    ): Int {
 
-        if (callbackIntent == null) {
-            return
-        }
-
-        val uri =
-            callbackIntent.data
-                ?: return
-
-        if (
-            uri.scheme !=
-                "volatilitiesindicator" ||
-            uri.host !=
-                "oauth-callback"
-        ) {
-            return
-        }
-
-        // ---------------------------------------------------------
-        // OAUTH ERROR
-        // ---------------------------------------------------------
-
-        val error =
-            uri.getQueryParameter(
-                "error"
-            )
-
-        if (!error.isNullOrEmpty()) {
-
-            Toast.makeText(
-                this,
-                "OAuth error: $error",
-                Toast.LENGTH_LONG
-            ).show()
-
-            return
-        }
-
-        // ---------------------------------------------------------
-        // STATE
-        // ---------------------------------------------------------
-
-        val returnedState =
-            uri.getQueryParameter(
-                "state"
-            )
-
-        val savedState =
-            prefs.getString(
-                "oauth_state",
-                ""
-            )
-                ?: ""
-
-        if (
-            returnedState.isNullOrEmpty() ||
-            returnedState != savedState
-        ) {
-
-            Toast.makeText(
-                this,
-                "OAuth security check failed.",
-                Toast.LENGTH_LONG
-            ).show()
-
-            return
-        }
-
-        // ---------------------------------------------------------
-        // CODE
-        // ---------------------------------------------------------
-
-        val code =
-            uri.getQueryParameter(
-                "code"
-            )
-
-        val verifier =
-            prefs.getString(
-                "code_verifier",
-                ""
-            )
-                ?: ""
-
-        if (
-            code.isNullOrEmpty() ||
-            verifier.isEmpty()
-        ) {
-
-            Toast.makeText(
-                this,
-                "OAuth authorization code missing.",
-                Toast.LENGTH_LONG
-            ).show()
-
-            return
-        }
-
-        exchangeOAuthCode(
-            code,
-            verifier
-        )
+        return (
+            value *
+                resources.displayMetrics.density
+            ).toInt()
     }
 
     // =============================================================
-    // TOKEN EXCHANGE
+    // SCREEN REBUILD
     // =============================================================
 
-    private fun exchangeOAuthCode(
-        code: String,
-        verifier: String
-    ) {
+    private fun rebuildScreen() {
 
-        val selectedMode =
-            prefs.getString(
-                "oauth_mode",
-                executionMode
-            )
-                ?: executionMode
-
-        val clientId =
-            DerivApiClient.clientId(
-                selectedMode
-            )
-
-        val requestBody =
-            FormBody.Builder()
-                .add(
-                    "grant_type",
-                    "authorization_code"
-                )
-                .add(
-                    "code",
-                    code
-                )
-                .add(
-                    "client_id",
-                    clientId
-                )
-                .add(
-                    "redirect_uri",
-                    DerivApiClient
-                        .OAUTH_REDIRECT_URI
-                )
-                .add(
-                    "code_verifier",
-                    verifier
-                )
-                .build()
-
-        val request =
-            Request.Builder()
-                .url(
-                    DerivApiClient
-                        .OAUTH_TOKEN_URL
-                )
-                .post(
-                    requestBody
-                )
-                .build()
-
-        Toast.makeText(
-            this,
-            "Connecting to Deriv...",
-            Toast.LENGTH_SHORT
-        ).show()
-
-        httpClient
-            .newCall(request)
-            .enqueue(
-                object : Callback {
-
-                    override fun onFailure(
-                        call: Call,
-                        e: IOException
-                    ) {
-
-                        runOnUiThread {
-
-                            connected =
-                                false
-
-                            Toast.makeText(
-                                this@MainActivity,
-                                "Connection failed: ${e.message}",
-                                Toast.LENGTH_LONG
-                            ).show()
-
-                            rebuild()
-                        }
-                    }
-
-                    override fun onResponse(
-                        call: Call,
-                        response: Response
-                    ) {
-
-                        val responseBody =
-                            response.body
-                                ?.string()
-                                .orEmpty()
-
-                        if (!response.isSuccessful) {
-
-                            runOnUiThread {
-
-                                connected =
-                                    false
-
-                                Toast.makeText(
-                                    this@MainActivity,
-                                    "OAuth token error: ${response.code}",
-                                    Toast.LENGTH_LONG
-                                ).show()
-
-                                rebuild()
-                            }
-
-                            return
-                        }
-
-                        try {
-
-                            val json =
-                                JSONObject(
-                                    responseBody
-                                )
-
-                            val accessToken =
-                                json.optString(
-                                    "access_token",
-                                    ""
-                                )
-
-                            if (
-                                accessToken.isEmpty()
-                            ) {
-
-                                runOnUiThread {
-
-                                    connected =
-                                        false
-
-                                    Toast.makeText(
-                                        this@MainActivity,
-                                        "No access token returned.",
-                                        Toast.LENGTH_LONG
-                                    ).show()
-
-                                    rebuild()
-                                }
-
-                                return
-                            }
-
-                            // -------------------------------------------------
-                            // SAVE TOKEN
-                            // -------------------------------------------------
-
-                            prefs.edit()
-                                .putString(
-                                    "access_token",
-                                    accessToken
-                                )
-                                .putString(
-                                    "oauth_mode",
-                                    selectedMode
-                                )
-                                .apply()
-
-                            /*
-                             * IMPORTANT:
-                             *
-                             * OAuth success does NOT mean the Deriv
-                             * execution account is connected.
-                             *
-                             * The token is now passed to the existing
-                             * DerivApiClient.
-                             *
-                             * DerivApiClient will:
-                             *
-                             * 1. Request the available accounts.
-                             * 2. Find DEMO or REAL.
-                             * 3. Obtain the WebSocket connection.
-                             * 4. Connect to the selected account.
-                             * 5. Return account ID.
-                             * 6. Return balance and currency.
-                             */
-
-                            runOnUiThread {
-
-                                Toast.makeText(
-                                    this@MainActivity,
-                                    "OAuth successful. Connecting account...",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-
-                                rebuild()
-                            }
-
-                            derivApiClient
-                                .connectWithAccessToken(
-                                    accessToken,
-                                    selectedMode
-                                )
-
-                        } catch (
-                            e: Exception
-                        ) {
-
-                            runOnUiThread {
-
-                                connected =
-                                    false
-
-                                Toast.makeText(
-                                    this@MainActivity,
-                                    "Invalid OAuth response.",
-                                    Toast.LENGTH_LONG
-                                ).show()
-
-                                rebuild()
-                            }
-                        }
-                    }
-                }
-            )
+        buildMainScreen()
     }
 
     // =============================================================
-    // REFRESH DERIV CONNECTION
-    // =============================================================
-
-    private fun refreshDerivConnection() {
-
-        val token =
-            prefs.getString(
-                "access_token",
-                ""
-            )
-                ?: ""
-
-        if (token.isEmpty()) {
-
-            Toast.makeText(
-                this,
-                "No Deriv connection found. Press CONNECT.",
-                Toast.LENGTH_SHORT
-            ).show()
-
-            return
-        }
-
-        connected =
-            false
-
-        rebuild()
-
-        derivApiClient
-            .connectWithAccessToken(
-                token,
-                executionMode
-            )
-    }
-
-    // =============================================================
-    // DERIV CALLBACK
-    // =============================================================
-
-    override fun onConnecting(
-        message: String
-    ) {
-
-        runOnUiThread {
-
-            connected =
-                false
-
-            rebuild()
-        }
-    }
-
-    // =============================================================
-    // DERIV CONNECTED
-    // =============================================================
-
-    override fun onConnected(
-        accountId: String,
-        accountType: String
-    ) {
-
-        runOnUiThread {
-
-            this.accountId =
-                accountId
-
-            this.accountType =
-                accountType
-
-            connected =
-                true
-
-            rebuild()
-
-            Toast.makeText(
-                this@MainActivity,
-                "Deriv account connected",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-    }
-
-    // =============================================================
-    // DERIV BALANCE
-    // =============================================================
-
-    override fun onBalance(
-        balance: Double,
-        currency: String
-    ) {
-
-        runOnUiThread {
-
-            accountBalance =
-                balance
-
-            accountCurrency =
-                currency
-
-            connected =
-                true
-
-            rebuild()
-        }
-    }
-
-    // =============================================================
-    // DERIV ERROR
-    // =============================================================
-
-    override fun onError(
-        message: String
-    ) {
-
-        runOnUiThread {
-
-            connected =
-                false
-
-            rebuild()
-
-            Toast.makeText(
-                this@MainActivity,
-                message,
-                Toast.LENGTH_LONG
-            ).show()
-        }
-    }
-
-    // =============================================================
-    // DERIV DISCONNECTED
-    // =============================================================
-
-    override fun onDisconnected() {
-
-        runOnUiThread {
-
-            connected =
-                false
-
-            accountId =
-                ""
-
-            accountType =
-                ""
-
-            accountBalance =
-                0.0
-
-            accountCurrency =
-                ""
-
-            rebuild()
-        }
-    }
-
-    // =============================================================
-    // LOGOUT
-    // =============================================================
-
-    private fun logout() {
-
-        derivApiClient.disconnect()
-
-        prefs.edit()
-            .remove("access_token")
-            .remove("oauth_state")
-            .remove("code_verifier")
-            .remove("oauth_mode")
-            .apply()
-
-        connected =
-            false
-
-        accountId =
-            ""
-
-        accountType =
-            ""
-
-        accountBalance =
-            0.0
-
-        accountCurrency =
-            ""
-
-        currentPlatform =
-            "USER"
-
-        rebuild()
-
-        Toast.makeText(
-            this,
-            "Logged out.",
-            Toast.LENGTH_SHORT
-        ).show()
-    }
-        // =============================================================
-    // REBUILD SCREEN
+    // COMPATIBILITY REBUILD
     // =============================================================
 
     private fun rebuild() {
-        if (!::rootLayout.isInitialized) return
 
-        rootLayout.removeAllViews()
-
-        addHeader()
-        addPlatformSelector()
-        addExecutionSelector()
-        addAccountCard()
-        addAutoTrade()
-        addIndexMonitor()
-
-        if (currentPlatform == "ADMIN") {
-            addAdminFeatures()
-        }
-
-        addBottomNavigation()
+        rebuildScreen()
     }
 
-
     // =============================================================
-    // DP HELPER
-    // =============================================================
-
-    private fun dp(value: Int): Int {
-        return (value * resources.displayMetrics.density).toInt()
-    }
-
-
-    // =============================================================
-    // TEXT VIEW HELPER
+    // SPACER
     // =============================================================
 
-    private fun text(
-        value: String,
-        size: Float = 14f,
-        color: Int = WHITE,
-        bold: Boolean = false
-    ): TextView {
+    private fun spacer(
+        height: Int = 8
+    ): View {
 
-        return TextView(this).apply {
-            text = value
-            textSize = size
-            setTextColor(color)
-            gravity = Gravity.CENTER_VERTICAL
+        return View(this).apply {
 
-            if (bold) {
-                setTypeface(typeface, Typeface.BOLD)
-            }
-
-            setPadding(
-                dp(4),
-                dp(2),
-                dp(4),
-                dp(2)
-            )
-        }
-    }
-
-
-    // =============================================================
-    // CARD HELPER
-    // =============================================================
-
-    private fun card(): LinearLayout {
-
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(
-                dp(12),
-                dp(10),
-                dp(12),
-                dp(10)
-            )
-
-            setBackgroundColor(CARD)
-
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                setMargins(
-                    dp(8),
-                    dp(5),
-                    dp(8),
-                    dp(5)
+            layoutParams =
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    dp(height)
                 )
-            }
         }
     }
 
-
     // =============================================================
-    // HORIZONTAL ROW HELPER
+    // HORIZONTAL ROW
     // =============================================================
 
     private fun row(): LinearLayout {
 
         return LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
 
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
+            orientation =
+                LinearLayout.HORIZONTAL
+
+            gravity =
+                Gravity.CENTER_VERTICAL
+
+            layoutParams =
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
         }
     }
 
-
     // =============================================================
-    // SMALL SPACER
-    // =============================================================
-
-    private fun spacer(height: Int = 8): View {
-
-        return View(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(height)
-            )
-        }
-    }
-
-
-    // =============================================================
-    // TOAST HELPER
+    // MESSAGE
     // =============================================================
 
-    private fun showMessage(message: String) {
+    private fun showMessage(
+        message: String
+    ) {
+
         Toast.makeText(
             this,
             message,
             Toast.LENGTH_SHORT
         ).show()
     }
-
 
     // =============================================================
     // BUTTON ENABLE / DISABLE
@@ -2527,30 +1970,89 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         button: Button,
         enabled: Boolean
     ) {
-        button.isEnabled = enabled
 
-        button.alpha = if (enabled) {
-            1.0f
-        } else {
-            0.5f
-        }
+        button.isEnabled =
+            enabled
+
+        button.alpha =
+            if (enabled) {
+                1.0f
+            } else {
+                0.5f
+            }
     }
-        // =============================================================
-    // ACTIVITY LIFECYCLE
+
+    // =============================================================
+    // ACTIVITY RESULT SAFETY
+    // =============================================================
+
+    override fun onResume() {
+
+        super.onResume()
+
+        /*
+         * Do not automatically disconnect here.
+         *
+         * The Deriv WebSocket is maintained by DerivApiClient.
+         */
+    }
+
+    // =============================================================
+    // BACK BUTTON
+    // =============================================================
+
+    override fun onBackPressed() {
+
+        if (
+            rootScroll.scrollY > 0
+        ) {
+
+            rootScroll.smoothScrollTo(
+                0,
+                0
+            )
+
+            return
+        }
+
+        super.onBackPressed()
+    }
+
+    // =============================================================
+    // ACTIVITY DESTROY
     // =============================================================
 
     override fun onDestroy() {
-        super.onDestroy()
+
+        /*
+         * The connection is closed only when the Activity
+         * itself is destroyed.
+         *
+         * It is NOT disconnected by an arbitrary one-minute
+         * timeout.
+         */
 
         try {
+
             derivApiClient.disconnect()
-        } catch (_: Exception) {
+
+        } catch (
+            _: Exception
+        ) {
         }
+
+        super.onDestroy()
     }
 
-
     // =============================================================
-    // FINAL CLASS
+    // FINAL SAFETY
     // =============================================================
 
+    private fun clearOAuthState() {
+
+        prefs.edit()
+            .remove("oauth_state")
+            .remove("code_verifier")
+            .apply()
+    }
 }
