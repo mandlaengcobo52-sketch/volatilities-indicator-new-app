@@ -170,9 +170,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             intent
         )
 
-        if (intent != null) {
+        if (
+            intent != null
+        ) {
 
-            setIntent(intent)
+            setIntent(
+                intent
+            )
 
             handleOAuthCallback(
                 intent
@@ -228,7 +232,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         addHeader()
 
-        if (currentPlatform == "ADMIN") {
+        if (
+            currentPlatform == "ADMIN"
+        ) {
+
             addPlatformSelector()
         }
 
@@ -271,10 +278,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 )
             }
 
-        // ---------------------------------------------------------
-        // MENU
-        // ---------------------------------------------------------
-
         val menu =
             TextView(this).apply {
 
@@ -314,10 +317,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             menu
         )
 
-        // ---------------------------------------------------------
-        // LOGO / TITLE AREA
-        // ---------------------------------------------------------
-
         val titleBox =
             LinearLayout(this).apply {
 
@@ -334,10 +333,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                         1f
                     )
             }
-
-        // ---------------------------------------------------------
-        // APPROVED VOLATILITIES INDICATOR LOGO
-        // ---------------------------------------------------------
 
         val logo =
             ImageView(this).apply {
@@ -362,10 +357,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         titleBox.addView(
             logo
         )
-
-        // ---------------------------------------------------------
-        // TITLE
-        // ---------------------------------------------------------
 
         val titleColumn =
             LinearLayout(this).apply {
@@ -450,10 +441,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             titleBox
         )
 
-        // ---------------------------------------------------------
-        // TOP RIGHT SYMBOL
-        // ---------------------------------------------------------
-
         val bell =
             TextView(this).apply {
 
@@ -518,7 +505,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         val admin =
             createMainButton(
-                                "●   ADMIN",
+                "●   ADMIN",
                 currentPlatform == "ADMIN"
             )
 
@@ -601,8 +588,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         demo.setOnClickListener {
 
             if (
-                executionMode != "DEMO" ||
-                connected
+                executionMode != "DEMO"
             ) {
 
                 try {
@@ -612,26 +598,24 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 } catch (_: Exception) {
                 }
 
-                clearOAuthData()
+                connected =
+                    false
+
+                accountId =
+                    ""
+
+                accountType =
+                    ""
+
+                accountBalance =
+                    0.0
+
+                accountCurrency =
+                    ""
             }
 
             executionMode =
                 "DEMO"
-
-            connected =
-                false
-
-            accountId =
-                ""
-
-            accountType =
-                ""
-
-            accountBalance =
-                0.0
-
-            accountCurrency =
-                ""
 
             rebuild()
         }
@@ -639,8 +623,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         real.setOnClickListener {
 
             if (
-                executionMode != "REAL" ||
-                connected
+                executionMode != "REAL"
             ) {
 
                 try {
@@ -650,26 +633,24 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 } catch (_: Exception) {
                 }
 
-                clearOAuthData()
+                connected =
+                    false
+
+                accountId =
+                    ""
+
+                accountType =
+                    ""
+
+                accountBalance =
+                    0.0
+
+                accountCurrency =
+                    ""
             }
 
             executionMode =
                 "REAL"
-
-            connected =
-                false
-
-            accountId =
-                ""
-
-            accountType =
-                ""
-
-            accountBalance =
-                0.0
-
-            accountCurrency =
-                ""
 
             rebuild()
         }
@@ -703,11 +684,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         rootLayout.addView(
             row
         )
-
-        addAutoTradeControl()
     }
 
-    // =============================================================
+        // =============================================================
     // AUTO TRADE
     // =============================================================
 
@@ -770,11 +749,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     if (
                         autoTradeEnabled
                     ) {
-
                         "● ON"
-
                     } else {
-
                         "● OFF"
                     }
 
@@ -790,11 +766,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     if (
                         autoTradeEnabled
                     ) {
-
                         GREEN
-
                     } else {
-
                         RED
                     }
                 )
@@ -823,11 +796,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 if (
                     autoTradeEnabled
                 ) {
-
                     "● ON"
-
                 } else {
-
                     "● OFF"
                 }
 
@@ -835,11 +805,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 if (
                     autoTradeEnabled
                 ) {
-
                     GREEN
-
                 } else {
-
                     RED
                 }
             )
@@ -849,11 +816,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 if (
                     autoTradeEnabled
                 ) {
-
                     "AUTO TRADE ON"
-
                 } else {
-
                     "AUTO TRADE OFF"
                 },
                 Toast.LENGTH_SHORT
@@ -874,6 +838,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     // =============================================================
 
     private fun addAccountCard() {
+
+        addAutoTradeControl()
 
         val card =
             createCard()
@@ -922,12 +888,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             TextView(this).apply {
 
                 text =
-                    if (connected) {
-
+                    if (
+                        connected
+                    ) {
                         "● CONNECTED"
-
                     } else {
-
                         "● DISCONNECTED"
                     }
 
@@ -940,12 +905,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 )
 
                 setTextColor(
-                    if (connected) {
-
+                    if (
+                        connected
+                    ) {
                         GREEN
-
                     } else {
-
                         RED
                     }
                 )
@@ -958,10 +922,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         card.addView(
             titleRow
         )
-
-        // ---------------------------------------------------------
-        // ACCOUNT INFORMATION
-        // ---------------------------------------------------------
 
         val information =
             LinearLayout(this).apply {
@@ -1071,15 +1031,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             information
         )
 
-        // ---------------------------------------------------------
-        // CONNECT / DISCONNECT
-        // ---------------------------------------------------------
-
         val connectButton =
             Button(this).apply {
 
                 text =
-                    if (connected) {
+                    if (
+                        connected
+                    ) {
 
                         "DISCONNECT"
 
@@ -1088,11 +1046,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                         if (
                             executionMode == "REAL"
                         ) {
-
                             "CONNECT REAL"
-
                         } else {
-
                             "CONNECT DEMO"
                         }
                     }
@@ -1115,12 +1070,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 )
 
                 setBackgroundColor(
-                    if (connected) {
-
+                    if (
+                        connected
+                    ) {
                         RED
-
                     } else {
-
                         GREEN
                     }
                 )
@@ -1128,9 +1082,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         connectButton.setOnClickListener {
 
-            if (connected) {
+            if (
+                connected
+            ) {
 
-                disconnectFromDeriv()
+                disconnectDeriv()
 
             } else {
 
@@ -1211,7 +1167,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 )
 
                 setTextColor(
-                    indexColor(index)
+                    indexColor(
+                        index
+                    )
                 )
 
                 layoutParams =
@@ -1248,10 +1206,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             header
         )
 
-        // ---------------------------------------------------------
-        // CURRENT PRICE
-        // ---------------------------------------------------------
-
         val price =
             TextView(this).apply {
 
@@ -1281,10 +1235,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         card.addView(
             price
         )
-
-        // ---------------------------------------------------------
-        // PHASE
-        // ---------------------------------------------------------
 
         val phaseRow =
             LinearLayout(this).apply {
@@ -1333,9 +1283,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                         dp(6)
                     )
 
-                    background =
-                        null
-
                     layoutParams =
                         LinearLayout.LayoutParams(
                             0,
@@ -1352,10 +1299,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         card.addView(
             phaseRow
         )
-
-        // ---------------------------------------------------------
-        // SUPPORT / RESISTANCE
-        // ---------------------------------------------------------
 
         val support =
             TextView(this).apply {
@@ -1400,10 +1343,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             resistance
         )
 
-        // ---------------------------------------------------------
-        // DIRECTION
-        // ---------------------------------------------------------
-
         val direction =
             TextView(this).apply {
 
@@ -1434,10 +1373,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             direction
         )
 
-        // ---------------------------------------------------------
-        // QUALIFYING
-        // ---------------------------------------------------------
-
         val qualifying =
             TextView(this).apply {
 
@@ -1455,10 +1390,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         card.addView(
             qualifying
         )
-
-        // ---------------------------------------------------------
-        // TARGET
-        // ---------------------------------------------------------
 
         val target =
             TextView(this).apply {
@@ -1489,7 +1420,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             card
         )
     }
-        // =============================================================
+
+    // =============================================================
     // ADMIN FEATURES
     // =============================================================
 
@@ -1550,69 +1482,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             description
         )
 
-        // ---------------------------------------------------------
-        // ADMIN AUTO TRADE
-        // ---------------------------------------------------------
-
-        val autoTrade =
-            Button(this).apply {
-
-                text =
-                    if (
-                        autoTradeEnabled
-                    ) {
-
-                        "AUTO TRADE: ON"
-
-                    } else {
-
-                        "AUTO TRADE: OFF"
-                    }
-
-                textSize =
-                    11f
-
-                isAllCaps =
-                    false
-
-                setTextColor(
-                    WHITE
-                )
-
-                setBackgroundColor(
-                    if (
-                        autoTradeEnabled
-                    ) {
-
-                        GREEN
-
-                    } else {
-
-                        RED
-                    }
-                )
-            }
-
-        autoTrade.setOnClickListener {
-
-            autoTradeEnabled =
-                !autoTradeEnabled
-
-            rebuild()
-        }
-
-        card.addView(
-            autoTrade,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(44)
-            )
-        )
-
-        // ---------------------------------------------------------
-        // ADMIN USER MANAGEMENT
-        // ---------------------------------------------------------
-
         val users =
             Button(this).apply {
 
@@ -1644,16 +1513,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 dp(44)
-            ).apply {
-
-                topMargin =
-                    dp(7)
-            }
+            )
         )
-
-        // ---------------------------------------------------------
-        // ADMIN REFRESH
-        // ---------------------------------------------------------
 
         val refresh =
             Button(this).apply {
@@ -1697,8 +1558,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             card
         )
     }
-
-    // =============================================================
+        // =============================================================
     // BOTTOM NAVIGATION
     // =============================================================
 
@@ -1758,7 +1618,16 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         refresh.setOnClickListener {
 
-            rebuild()
+            if (
+                connected
+            ) {
+
+                derivApiClient.requestBalance()
+
+            } else {
+
+                rebuild()
+            }
         }
 
         val disconnect =
@@ -1769,7 +1638,20 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         disconnect.setOnClickListener {
 
-            disconnectFromDeriv()
+            if (
+                connected
+            ) {
+
+                disconnectDeriv()
+
+            } else {
+
+                Toast.makeText(
+                    this,
+                    "Deriv is already disconnected.",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
         }
 
         nav.addView(
@@ -1810,56 +1692,66 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     private fun beginDerivConnection() {
 
-        if (
-            executionMode == "REAL"
-        ) {
+        /*
+         * If a saved token exists for the selected mode,
+         * use it directly.
+         *
+         * Otherwise start OAuth.
+         */
 
-            startOAuth(
-                "REAL"
-            )
+        val tokenKey =
+            if (
+                executionMode.equals(
+                    "REAL",
+                    ignoreCase = true
+                )
+            ) {
 
-            return
-        }
+                "real_token"
 
-        val demoToken =
+            } else {
+
+                "demo_token"
+            }
+
+        val savedToken =
             prefs.getString(
-                "demo_token",
+                tokenKey,
                 ""
             ) ?: ""
 
         if (
-            demoToken.isNotEmpty()
+            savedToken.isNotBlank()
         ) {
 
             connectWithToken(
-                demoToken,
-                "DEMO"
+                savedToken
             )
 
         } else {
 
-            startOAuth(
-                "DEMO"
-            )
+            startDerivOAuth()
         }
     }
 
     // =============================================================
-    // START OAUTH
+    // DERIV OAUTH
     // =============================================================
 
-    private fun startOAuth(
-        mode: String
-    ) {
-
-        executionMode =
-            mode
+    private fun startDerivOAuth() {
 
         oauthState =
             UUID.randomUUID().toString()
 
         codeVerifier =
             generateCodeVerifier()
+
+        /*
+         * Save the mode together with the PKCE values.
+         * This is important because after returning from
+         * the browser we must know whether the user selected
+         * DEMO or REAL.
+         */
 
         prefs.edit()
             .putString(
@@ -1872,7 +1764,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             )
             .putString(
                 "oauth_mode",
-                mode
+                executionMode
             )
             .apply()
 
@@ -1882,32 +1774,18 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             )
 
         val clientId =
-            if (
-                mode == "REAL"
-            ) {
-
-                "34fz9hcgpdWwSzNCVeUgMR"
-
-            } else {
-
-                "34fz6VSRiNSQnELXjApVH"
-            }
+            DerivApiClient.clientId(
+                executionMode
+            )
 
         val redirectUri =
-            "https://volatilitiesindicator.org.za/accounts/account-callback.php"
+            DerivApiClient.OAUTH_REDIRECT_URI
 
         val authorizationUrl =
-            Uri.Builder()
-                .scheme("https")
-                .authority(
-                    "auth.deriv.com"
-                )
-                .appendPath(
-                    "oauth2"
-                )
-                .appendPath(
-                    "auth"
-                )
+            Uri.parse(
+                DerivApiClient.OAUTH_AUTH_URL
+            )
+                .buildUpon()
                 .appendQueryParameter(
                     "response_type",
                     "code"
@@ -1922,7 +1800,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 )
                 .appendQueryParameter(
                     "scope",
-                    "trade"
+                    DerivApiClient.OAUTH_SCOPE
                 )
                 .appendQueryParameter(
                     "state",
@@ -1940,14 +1818,14 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         try {
 
-            val browser =
+            val intent =
                 Intent(
                     Intent.ACTION_VIEW,
                     authorizationUrl
                 )
 
             startActivity(
-                browser
+                intent
             )
 
         } catch (
@@ -1956,7 +1834,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
             Toast.makeText(
                 this,
-                "Unable to open Deriv login: ${e.message}",
+                "Unable to open Deriv login: ${
+                    e.message
+                }",
                 Toast.LENGTH_LONG
             ).show()
         }
@@ -1967,17 +1847,24 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     // =============================================================
 
     private fun handleOAuthCallback(
-        intent: Intent
+        intent: Intent?
     ) {
 
         val data =
-            intent.data
+            intent?.data
                 ?: return
+
+        /*
+         * The website callback must redirect into:
+         *
+         * volatilitiesindicator://oauth-callback
+         */
 
         if (
             data.scheme !=
             "volatilitiesindicator"
         ) {
+
             return
         }
 
@@ -1985,18 +1872,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             data.host !=
             "oauth-callback"
         ) {
+
             return
         }
-
-        val returnedState =
-            data.getQueryParameter(
-                "state"
-            )
-
-        val code =
-            data.getQueryParameter(
-                "code"
-            )
 
         val error =
             data.getQueryParameter(
@@ -2004,12 +1882,35 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             )
 
         if (
-            !error.isNullOrEmpty()
+            !error.isNullOrBlank()
         ) {
 
             Toast.makeText(
                 this,
                 "Deriv OAuth error: $error",
+                Toast.LENGTH_LONG
+            ).show()
+
+            return
+        }
+
+        val code =
+            data.getQueryParameter(
+                "code"
+            )
+
+        val returnedState =
+            data.getQueryParameter(
+                "state"
+            )
+
+        if (
+            code.isNullOrBlank()
+        ) {
+
+            Toast.makeText(
+                this,
+                "No Deriv authorization code received.",
                 Toast.LENGTH_LONG
             ).show()
 
@@ -2023,8 +1924,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             ) ?: ""
 
         if (
-            returnedState.isNullOrEmpty() ||
-            savedState.isEmpty() ||
+            savedState.isBlank() ||
+            returnedState.isNullOrBlank() ||
             returnedState != savedState
         ) {
 
@@ -2037,28 +1938,29 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             return
         }
 
-        if (
-            code.isNullOrEmpty()
-        ) {
-
-            Toast.makeText(
-                this,
-                "No Deriv authorization code received.",
-                Toast.LENGTH_LONG
-            ).show()
-
-            return
-        }
-
         val mode =
             prefs.getString(
                 "oauth_mode",
                 executionMode
             ) ?: executionMode
 
+        executionMode =
+            if (
+                mode.equals(
+                    "REAL",
+                    ignoreCase = true
+                )
+            ) {
+
+                "REAL"
+
+            } else {
+
+                "DEMO"
+            }
+
         exchangeOAuthCode(
-            code,
-            mode
+            code
         )
     }
 
@@ -2067,8 +1969,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     // =============================================================
 
     private fun exchangeOAuthCode(
-        code: String,
-        mode: String
+        code: String
     ) {
 
         val verifier =
@@ -2078,7 +1979,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             ) ?: ""
 
         if (
-            verifier.isEmpty()
+            verifier.isBlank()
         ) {
 
             Toast.makeText(
@@ -2091,21 +1992,14 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
 
         val clientId =
-            if (
-                mode == "REAL"
-            ) {
-
-                "34fz9hcgpdWwSzNCVeUgMR"
-
-            } else {
-
-                "34fz6VSRiNSQnELXjApVH"
-            }
+            DerivApiClient.clientId(
+                executionMode
+            )
 
         val redirectUri =
-            "https://volatilitiesindicator.org.za/accounts/account-callback.php"
+            DerivApiClient.OAUTH_REDIRECT_URI
 
-        val body =
+        val requestBody =
             FormBody.Builder()
                 .add(
                     "grant_type",
@@ -2132,16 +2026,16 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val request =
             Request.Builder()
                 .url(
-                    "https://auth.deriv.com/oauth2/token"
+                    DerivApiClient.OAUTH_TOKEN_URL
                 )
                 .post(
-                    body
+                    requestBody
                 )
                 .build()
 
         Toast.makeText(
             this,
-            "Connecting to Deriv $mode...",
+            "Connecting to Deriv $executionMode...",
             Toast.LENGTH_SHORT
         ).show()
 
@@ -2159,7 +2053,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
                         Toast.makeText(
                             this@MainActivity,
-                            "OAuth connection failed: ${e.message}",
+                            "OAuth connection failed: ${
+                                e.message
+                                    ?: "network error"
+                            }",
                             Toast.LENGTH_LONG
                         ).show()
                     }
@@ -2171,8 +2068,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 ) {
 
                     val responseBody =
-                        response.body?.string()
-                            ?: ""
+                        response.body
+                            ?.string()
+                            .orEmpty()
 
                     if (
                         !response.isSuccessful
@@ -2209,7 +2107,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                             )
 
                         if (
-                            accessToken.isEmpty()
+                            accessToken.isBlank()
                         ) {
 
                             runOnUiThread {
@@ -2224,28 +2122,47 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                             return
                         }
 
+                        /*
+                         * Save a separate token for the selected
+                         * execution mode.
+                         */
+
+                        val tokenKey =
+                            if (
+                                executionMode.equals(
+                                    "REAL",
+                                    ignoreCase = true
+                                )
+                            ) {
+
+                                "real_token"
+
+                            } else {
+
+                                "demo_token"
+                            }
+
                         prefs.edit()
                             .putString(
-                                if (
-                                    mode == "REAL"
-                                ) {
-                                    "real_token"
-                                } else {
-                                    "demo_token"
-                                },
+                                tokenKey,
                                 accessToken
                             )
                             .putString(
                                 "oauth_mode",
-                                mode
+                                executionMode
+                            )
+                            .remove(
+                                "oauth_state"
+                            )
+                            .remove(
+                                "code_verifier"
                             )
                             .apply()
 
                         runOnUiThread {
 
                             connectWithToken(
-                                accessToken,
-                                mode
+                                accessToken
                             )
                         }
 
@@ -2257,7 +2174,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
                             Toast.makeText(
                                 this@MainActivity,
-                                "Invalid Deriv response: ${e.message}",
+                                "Invalid Deriv OAuth response: ${
+                                    e.message
+                                }",
                                 Toast.LENGTH_LONG
                             ).show()
                         }
@@ -2266,7 +2185,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             }
         )
     }
-    // =============================================================
+        // =============================================================
     // CONNECT USING ACCESS TOKEN
     // =============================================================
 
@@ -2274,28 +2193,47 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         token: String
     ) {
 
-        if (token.isBlank()) {
+        if (
+            token.isBlank()
+        ) {
 
             Toast.makeText(
                 this,
-                "Deriv access token is empty",
+                "Deriv access token is empty.",
                 Toast.LENGTH_LONG
             ).show()
 
             return
         }
 
+        try {
+
+            derivApiClient.disconnect()
+
+        } catch (_: Exception) {
+        }
+
         connected = false
 
-        buildMainScreen()
+        accountId = ""
+
+        accountType = ""
+
+        accountBalance = 0.0
+
+        accountCurrency = ""
+
+        rebuild()
 
         /*
          * IMPORTANT:
-         * Use the selected executionMode.
+         * Do NOT call derivApiClient.connect(token).
          *
-         * This fixes the previous problem where
-         * connect(token) always forced DEMO.
+         * That compatibility method defaults to DEMO.
+         *
+         * The selected DEMO/REAL mode is passed explicitly.
          */
+
         derivApiClient.connectWithAccessToken(
             token,
             executionMode
@@ -2329,9 +2267,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         runOnUiThread {
 
-            this.accountId = accountId
+            this.accountId =
+                accountId
 
-            this.accountType = accountType
+            this.accountType =
+                accountType
 
             connected = true
 
@@ -2339,7 +2279,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
             Toast.makeText(
                 this@MainActivity,
-                "Deriv account connected",
+                "Deriv ${executionMode} connected.",
                 Toast.LENGTH_SHORT
             ).show()
         }
@@ -2356,9 +2296,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         runOnUiThread {
 
-            accountBalance = balance
+            accountBalance =
+                balance
 
-            accountCurrency = currency
+            accountCurrency =
+                currency
 
             connected = true
 
@@ -2412,7 +2354,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     private fun disconnectDeriv() {
 
-        derivApiClient.disconnect()
+        try {
+
+            derivApiClient.disconnect()
+
+        } catch (_: Exception) {
+        }
 
         connected = false
 
@@ -2424,114 +2371,26 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         accountCurrency = ""
 
-        buildMainScreen()
+        rebuild()
+
+        Toast.makeText(
+            this,
+            "Deriv disconnected.",
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     // =============================================================
-    // DERIV CALLBACK - CONNECTED
+    // USER ACCOUNTS
     // =============================================================
 
-    override fun onConnected() {
+    private fun showUserAccounts() {
 
-        runOnUiThread {
-
-            connected =
-                true
-
-            rebuild()
-
-            Toast.makeText(
-                this,
-                "Deriv ${executionMode} connected.",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-    }
-
-    // =============================================================
-    // DERIV CALLBACK - DISCONNECTED
-    // =============================================================
-
-    override fun onDisconnected() {
-
-        runOnUiThread {
-
-            connected =
-                false
-
-            rebuild()
-        }
-    }
-
-    // =============================================================
-    // DERIV CALLBACK - ERROR
-    // =============================================================
-
-    override fun onError(
-        message: String
-    ) {
-
-        runOnUiThread {
-
-            Toast.makeText(
-                this,
-                message,
-                Toast.LENGTH_LONG
-            ).show()
-        }
-    }
-
-    // =============================================================
-    // DERIV CALLBACK - ACCOUNT
-    // =============================================================
-
-    override fun onAccountInfo(
-        id: String,
-        type: String,
-        balance: Double,
-        currency: String
-    ) {
-
-        runOnUiThread {
-
-            accountId =
-                id
-
-            accountType =
-                type
-
-            accountBalance =
-                balance
-
-            accountCurrency =
-                currency
-
-            connected =
-                true
-
-            rebuild()
-        }
-    }
-
-    // =============================================================
-    // DERIV CALLBACK - BALANCE
-    // =============================================================
-
-    override fun onBalance(
-        balance: Double,
-        currency: String
-    ) {
-
-        runOnUiThread {
-
-            accountBalance =
-                balance
-
-            accountCurrency =
-                currency
-
-            rebuild()
-        }
+        Toast.makeText(
+            this,
+            "User account management",
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     // =============================================================
@@ -2561,76 +2420,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     // =============================================================
-    // USER ACCOUNTS
-    // =============================================================
-
-    private fun showUserAccounts() {
-
-        val card =
-            createCard()
-
-        val title =
-            TextView(this).apply {
-
-                text =
-                    "USER ACCOUNTS"
-
-                textSize =
-                    15f
-
-                setTypeface(
-                    null,
-                    Typeface.BOLD
-                )
-
-                setTextColor(
-                    WHITE
-                )
-            }
-
-        card.addView(
-            title
-        )
-
-        val information =
-            TextView(this).apply {
-
-                text =
-                    "User account management is available from the admin control panel."
-
-                textSize =
-                    11f
-
-                setTextColor(
-                    MUTED
-                )
-
-                setPadding(
-                    0,
-                    dp(8),
-                    0,
-                    dp(8)
-                )
-            }
-
-        card.addView(
-            information
-        )
-
-        rootLayout.addView(
-            card
-        )
-
-        rootScroll.post {
-
-            rootScroll.fullScroll(
-                View.FOCUS_DOWN
-            )
-        }
-    }
-
-    // =============================================================
-    // REBUILD
+    // REBUILD SCREEN
     // =============================================================
 
     private fun rebuild() {
@@ -2644,6 +2434,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         rootLayout.removeAllViews()
 
         addHeader()
+
+        /*
+         * PLATFORM selector appears only on ADMIN.
+         *
+         * USER therefore does NOT get the PLATFORM selector.
+         */
 
         if (
             currentPlatform == "ADMIN"
@@ -2763,7 +2559,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 false
 
             setTextColor(
-                if (selected) {
+                if (
+                    selected
+                ) {
 
                     BG
 
@@ -2779,7 +2577,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             )
 
             setBackgroundColor(
-                if (selected) {
+                if (
+                    selected
+                ) {
 
                     GREEN
 
@@ -2787,6 +2587,47 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
                     CARD2
                 }
+            )
+
+            setPadding(
+                dp(3),
+                0,
+                dp(3),
+                0
+            )
+        }
+    }
+
+    // =============================================================
+    // ACTION BUTTON
+    // =============================================================
+
+    private fun createActionButton(
+        textValue: String
+    ): Button {
+
+        return Button(this).apply {
+
+            text =
+                textValue
+
+            textSize =
+                11f
+
+            isAllCaps =
+                false
+
+            setTextColor(
+                WHITE
+            )
+
+            setTypeface(
+                null,
+                Typeface.BOLD
+            )
+
+            setBackgroundColor(
+                CARD2
             )
 
             setPadding(
@@ -2918,28 +2759,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 Base64.NO_PADDING
         )
     }
-
-    // =============================================================
-    // CLEAR OAUTH DATA
-    // =============================================================
-
-    private fun clearOAuthData() {
-
-        prefs.edit()
-            .remove(
-                "oauth_state"
-            )
-            .remove(
-                "code_verifier"
-            )
-            .remove(
-                "oauth_mode"
-            )
-            .apply()
-    }
-
-    // =============================================================
-    // HTTP ERROR
+        // =============================================================
+    // HTTP ERROR FORMATTER
     // =============================================================
 
     private fun formatHttpError(
@@ -2957,7 +2778,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         return try {
 
             val json =
-                JSONObject(body)
+                JSONObject(
+                    body
+                )
 
             val error =
                 json.optJSONObject(
@@ -2968,27 +2791,33 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 error != null
             ) {
 
+                val errorCode =
+                    error.optString(
+                        "code",
+                        ""
+                    )
+
                 val message =
                     error.optString(
                         "message",
                         ""
                     )
 
-                val codeText =
-                    error.optString(
-                        "code",
-                        ""
-                    )
+                when {
 
-                if (
-                    codeText.isNotEmpty()
-                ) {
+                    errorCode.isNotBlank() &&
+                        message.isNotBlank() -> {
 
-                    "$codeText: $message"
+                        "$errorCode: $message"
+                    }
 
-                } else {
+                    message.isNotBlank() -> {
 
-                    message.ifEmpty {
+                        message
+                    }
+
+                    else -> {
+
                         "HTTP $code"
                     }
                 }
@@ -3001,7 +2830,14 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                         ""
                     )
 
-                message.ifEmpty {
+                if (
+                    message.isNotBlank()
+                ) {
+
+                    message
+
+                } else {
+
                     "HTTP $code: $body"
                 }
             }
@@ -3010,6 +2846,25 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
             "HTTP $code: $body"
         }
+    }
+
+    // =============================================================
+    // CLEAR TEMPORARY OAUTH DATA
+    // =============================================================
+
+    private fun clearOAuthData() {
+
+        prefs.edit()
+            .remove(
+                "oauth_state"
+            )
+            .remove(
+                "code_verifier"
+            )
+            .remove(
+                "oauth_mode"
+            )
+            .apply()
     }
 
     // =============================================================
@@ -3033,6 +2888,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     override fun onDestroy() {
 
         super.onDestroy()
+
+        /*
+         * Do not deliberately disconnect simply because the
+         * screen is rebuilt. Only clean up when the Activity
+         * itself is actually destroyed.
+         */
 
         try {
 
