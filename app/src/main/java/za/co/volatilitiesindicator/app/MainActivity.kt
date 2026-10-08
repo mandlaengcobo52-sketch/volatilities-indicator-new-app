@@ -2284,12 +2284,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         buildMainScreen()
 
         derivApiClient.connect(
-            token,
-            executionMode == "REAL"
+    token
+)
         )
     }
 
-        // =============================================================
+    // =============================================================
     // DERIV CONNECTING
     // =============================================================
 
@@ -2316,11 +2316,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         runOnUiThread {
 
-            this.accountId =
-                accountId
+            this.accountId = accountId
 
-            this.accountType =
-                accountType
+            this.accountType = accountType
 
             connected = true
 
@@ -2345,11 +2343,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         runOnUiThread {
 
-            accountBalance =
-                balance
+            accountBalance = balance
 
-            accountCurrency =
-                currency
+            accountCurrency = currency
 
             connected = true
 
@@ -2366,10 +2362,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     ) {
 
         runOnUiThread {
-
-            connected = false
-
-            rebuild()
 
             Toast.makeText(
                 this@MainActivity,
