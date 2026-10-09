@@ -797,8 +797,7 @@ titleColumn.addView(
                 "▥   REAL",
                 executionMode == "REAL"
             )
-
-        demo.setOnClickListener {
+            demo.setOnClickListener {
 
             if (
                 executionMode != "DEMO"
@@ -1598,7 +1597,7 @@ indexTargetViews[index] = target
             card
         )
     }
-       // =============================================================
+    // =============================================================
     // ADMIN FEATURES
     // =============================================================
 
@@ -2397,7 +2396,6 @@ indexTargetViews[index] = target
 
             this.accountType =
                 accountType
-
             connected = true
 
             derivApiClient.requestHistoricalCandles()
@@ -2911,6 +2909,7 @@ override fun onCandles(
     // =============================================================
     // USER MENU
     // =============================================================
+
     private fun showUserMenu() {
 
         Toast.makeText(
@@ -3200,7 +3199,6 @@ addBottomNavigation()
         SecureRandom().nextBytes(
             bytes
         )
-
         return Base64.encodeToString(
             bytes,
             Base64.URL_SAFE or
@@ -3375,5 +3373,3 @@ stopCandleRefresh()
         }
     }
 }
-
-       
