@@ -97,7 +97,7 @@ class DerivApiClient(
             "34fz6VSRiNSQnELXjApVH"
 
         private const val REAL_CLIENT_ID =
-            "34fz9hcgpdwWSzNCVeUgMR"
+    "34fz9hcgpdwSzNCVeUgMR"
 
         /*
          * Return the client ID selected by the
