@@ -120,9 +120,17 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 // LIVE INDEX PRICE STORAGE
 // =============================================================
 private val indexPrices = mutableMapOf<String, Double>()
+
 private val indexPriceHistory =
     mutableMapOf<String, MutableList<Double>>()
+
 private val indexPriceViews =
+    mutableMapOf<String, TextView>()
+
+private val indexSupportViews =
+    mutableMapOf<String, TextView>()
+
+private val indexResistanceViews =
     mutableMapOf<String, TextView>()
     // =============================================================
     // INDEX COLOURS
@@ -1316,7 +1324,7 @@ titleColumn.addView(
                     dp(2)
                 )
             }
-
+indexSupportViews[index] = support
         card.addView(
             support
         )
@@ -1333,7 +1341,7 @@ titleColumn.addView(
                     RED
                 )
             }
-
+indexResistanceViews[index] = resistance
         card.addView(
             resistance
         )
@@ -2286,12 +2294,6 @@ android.util.Log.d(
     "$symbol | Support: $supportPrice | Resistance: $resistancePrice"
 )
 
-history.add(quote)
-
-// Keep the latest 200 prices per index.
-if (history.size > 200) {
-    history.removeAt(0)
-}
         val priceView = indexPriceViews[symbol]
 
         val decimals = when (symbol) {
@@ -2302,7 +2304,24 @@ if (history.size > 200) {
     "R_100" -> 2
     else -> 2
 }
+val supportView = indexSupportViews[symbol]
+val resistanceView = indexResistanceViews[symbol]
 
+supportPrice?.let {
+    supportView?.text = String.format(
+        java.util.Locale.US,
+        "SUPPORT %.${decimals}f",
+        it
+    )
+}
+
+resistancePrice?.let {
+    resistanceView?.text = String.format(
+        java.util.Locale.US,
+        "RESISTANCE %.${decimals}f",
+        it
+    )
+}
 priceView?.text = String.format(
     java.util.Locale.US,
     "CURRENT PRICE  %.${decimals}f",
