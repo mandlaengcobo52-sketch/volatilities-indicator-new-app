@@ -806,8 +806,7 @@ private val candleIndexes = listOf(
                     "websocket",
                     ""
                 ).trim()
-
-            if (
+                if (
                 websocket.isNotEmpty()
             ) {
 
@@ -1550,29 +1549,34 @@ if (tick != null) {
      * Start the application heartbeat.
      */
     private fun startHeartbeat() {
-
         stopHeartbeat()
-
-        heartbeatFuture =
-            scheduler.scheduleAtFixedRate(
-                {
-
-                    try {
-
-                        if (
-                            manuallyDisconnected
-                        ) {
-
-                            return@scheduleAtFixedRate
-                        }
-
-                        if (
-                            !connected
-                        ) {
-                            heartbeatFuture =
-            null
+        heartbeatFuture = scheduler.scheduleAtFixedRate(
+            {
+                try {
+                    if (manuallyDisconnected || !connected) {
+                        return@scheduleAtFixedRate
+                    }
+                    val socket = webSocket ?: return@scheduleAtFixedRate
+                    requestBalance(socket)
+                } catch (_: Exception) {
+                    // WebSocket callbacks report connection failures.
+                }
+            },
+            20,
+            20,
+            TimeUnit.SECONDS
+            )
     }
-        /*
+
+    /*
+     * Stop the application heartbeat.
+     */
+    private fun stopHeartbeat() {
+        heartbeatFuture?.cancel(true)
+        heartbeatFuture = null
+    }
+
+    /*
      * Format an HTTP error returned by Deriv.
      *
      * Current Deriv REST errors use:
@@ -2138,5 +2142,4 @@ if (tick != null) {
         ) {
         }
     }
-                    }
-                    
+    
