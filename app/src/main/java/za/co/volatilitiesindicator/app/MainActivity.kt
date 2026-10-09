@@ -2692,9 +2692,11 @@ priceView?.text = String.format(
 
         addIndexMonitor()
 
-        addPlatformSelector()
+if (currentPlatform == "ADMIN") {
+    addAdminFeatures()
+}
 
-        addBottomNavigation()
+addBottomNavigation()
     }
 
     // =============================================================
