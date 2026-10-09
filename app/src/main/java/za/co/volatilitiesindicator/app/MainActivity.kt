@@ -26,6 +26,7 @@ import java.io.IOException
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.UUID
+import android.app.AlertDialog
 
 class MainActivity : Activity(), DerivApiClient.Callback {
 
@@ -2382,6 +2383,13 @@ priceView?.text = String.format(
     // =============================================================
     // USER ACCOUNTS
     // =============================================================
+    private fun showUserAccounts() {
+    Toast.makeText(
+        this,
+        "User account management",
+        Toast.LENGTH_SHORT
+    ).show()
+    }
 
     
 
@@ -2429,9 +2437,7 @@ priceView?.text = String.format(
          * The USER dashboard does not display it.
          */
 
-        if (currentPlatform == "ADMIN") {
-            addPlatformSelector()
-        }
+        addPlatformSelector()
 
         addExecutionSelector()
 
