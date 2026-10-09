@@ -364,74 +364,85 @@ private fun calculateStrategyStake(): Double {
 // =============================================================
 
 private fun updateStrategyAnalysis(symbol: String) {
-
     val candles = historicalCandles[symbol]
-        ?: return
 
-    if (candles.size < 20) {
+    if (candles == null || candles.size < 20) {
+        runOnUiThread {
+            indexDirectionViews[symbol]?.text = "DIRECTION WAITING"
+            indexQualifyingViews[symbol]?.text = "QUALIFYING —"
+            indexTargetViews[symbol]?.text = "TARGET PRICE —"
+        }
+        android.util.Log.w(
+            "StrategyAnalysis",
+            "$symbol waiting for at least 20 historical candles; received ${candles?.size ?: 0}"
+        )
         return
     }
 
-    val recentCandles = candles.takeLast(20)
+    // Deriv candle responses are normally chronological; sort explicitly
+    // so the first/last comparison cannot be reversed by response ordering.
+    val recentCandles = candles
+        .filter { it.close.isFinite() && it.close > 0.0 && it.epoch > 0L }
+        .sortedBy { it.epoch }
+        .takeLast(20)
+
+    if (recentCandles.size < 20) {
+        runOnUiThread {
+            indexDirectionViews[symbol]?.text = "DIRECTION WAITING"
+            indexQualifyingViews[symbol]?.text = "QUALIFYING —"
+            indexTargetViews[symbol]?.text = "TARGET PRICE —"
+        }
+        return
+    }
 
     val firstClose = recentCandles.first().close
-    val lastClose = recentCandles.last().close
+    val candleClose = recentCandles.last().close
+    val livePrice = indexPrices[symbol]?.takeIf { it.isFinite() && it > 0.0 }
+        ?: candleClose
 
-    if (firstClose <= 0.0) {
-        return
+    val changePercent = ((candleClose - firstClose) / firstClose) * 100.0
+    val directionText = when {
+        changePercent > 0.0 -> "BUY"
+        changePercent < 0.0 -> "SELL"
+        else -> "WAIT"
     }
 
-    val changePercent =
-        ((lastClose - firstClose) / firstClose) * 100.0
-
-    val directionText: String
-    val signalScore: Double
-
-    when {
-        changePercent > 0.0 -> {
-            directionText = "BUY"
-            signalScore = minOf(
-                100.0,
-                50.0 + kotlin.math.abs(changePercent) * 10.0
-            )
-        }
-
-        changePercent < 0.0 -> {
-            directionText = "SELL"
-            signalScore = minOf(
-                100.0,
-                50.0 + kotlin.math.abs(changePercent) * 10.0
-            )
-        }
-
-        else -> {
-            directionText = "WAIT"
-            signalScore = 0.0
-        }
+    // This is a heuristic signal score, not a statistically validated probability.
+    val signalScore = if (directionText == "WAIT") {
+        0.0
+    } else {
+        minOf(100.0, 50.0 + kotlin.math.abs(changePercent) * 10.0)
     }
 
-    val targetPrice =
-        if (directionText == "BUY") {
-            lastClose * (1.0 + strategyTargetProfitPercent / 100.0)
-        } else {
-            lastClose * (1.0 - strategyTargetProfitPercent / 100.0)
-        }
+    val targetPrice = when (directionText) {
+        "BUY" -> livePrice * (1.0 + strategyTargetProfitPercent / 100.0)
+        "SELL" -> livePrice * (1.0 - strategyTargetProfitPercent / 100.0)
+        else -> Double.NaN
+    }
+
+    val decimals = when (symbol) {
+        "R_10", "R_25" -> 3
+        "R_50" -> 4
+        "R_75", "R_100" -> 2
+        else -> 3
+    }
 
     runOnUiThread {
-
-        indexDirectionViews[symbol]?.text =
-            "DIRECTION $directionText"
-
+        indexDirectionViews[symbol]?.text = "DIRECTION $directionText"
         indexQualifyingViews[symbol]?.text =
-            "SIGNAL SCORE ${"%.1f".format(signalScore)}%"
-
+            "QUALIFYING ${String.format(java.util.Locale.US, "%.1f", signalScore)}% (HEURISTIC)"
         indexTargetViews[symbol]?.text =
-            if (directionText == "WAIT") {
-                "TARGET PRICE —"
+            if (targetPrice.isFinite()) {
+                "TARGET PRICE ${String.format(java.util.Locale.US, "%.${decimals}f", targetPrice)}"
             } else {
-                "TARGET PRICE ${"%.5f".format(targetPrice)}"
+                "TARGET PRICE —"
             }
     }
+
+    android.util.Log.d(
+        "StrategyAnalysis",
+        "$symbol candles=${recentCandles.size}, direction=$directionText, score=$signalScore, livePrice=$livePrice, target=$targetPrice"
+    )
 }
     private fun addHeader() {
 
@@ -1587,8 +1598,7 @@ indexTargetViews[index] = target
             card
         )
     }
-
-    // =============================================================
+       // =============================================================
     // ADMIN FEATURES
     // =============================================================
 
@@ -2390,9 +2400,10 @@ indexTargetViews[index] = target
 
             connected = true
 
-derivApiClient.requestHistoricalCandles()
+            derivApiClient.requestHistoricalCandles()
+            startCandleRefresh()
 
-rebuild()
+            rebuild()
 
             Toast.makeText(
                 this@MainActivity,
@@ -2506,6 +2517,11 @@ priceView?.text = String.format(
     quote
 )
 
+        // Refresh target-price display using the latest live quote.
+        if ((historicalCandles[symbol]?.size ?: 0) >= 20) {
+            updateStrategyAnalysis(symbol)
+        }
+
         android.util.Log.d(
             "DerivLiveTick",
             "$symbol price: $quote at $epoch"
@@ -2529,12 +2545,28 @@ override fun onCandles(
             return@runOnUiThread
         }
 
-        historicalCandles[symbol] = candles
+        val orderedCandles = candles
+            .filter {
+                it.epoch > 0L &&
+                it.open.isFinite() &&
+                it.high.isFinite() &&
+                it.low.isFinite() &&
+                it.close.isFinite()
+            }
+            .distinctBy { it.epoch }
+            .sortedBy { it.epoch }
+
+        if (orderedCandles.isEmpty()) {
+            android.util.Log.w("DerivCandles", "$symbol response contained no valid candles")
+            return@runOnUiThread
+        }
+
+        historicalCandles[symbol] = orderedCandles
         updateStrategyAnalysis(symbol)
 
         android.util.Log.d(
             "DerivCandles",
-            "$symbol received ${candles.size} historical candles"
+            "$symbol received ${orderedCandles.size} valid historical candles; latest epoch=${orderedCandles.last().epoch}"
         )
     }
 }
@@ -2879,7 +2911,6 @@ override fun onCandles(
     // =============================================================
     // USER MENU
     // =============================================================
-
     private fun showUserMenu() {
 
         Toast.makeText(
@@ -3344,3 +3375,5 @@ stopCandleRefresh()
         }
     }
 }
+
+       
