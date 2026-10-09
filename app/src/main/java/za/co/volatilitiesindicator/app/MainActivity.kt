@@ -2283,8 +2283,10 @@ rebuild()
     runOnUiThread {
 
         accountBalance = balance
-        accountCurrency = currency
-        connected = true
+accountCurrency = currency
+connected = true
+
+updateDailyStartingCapital()
 
         accountBalanceView?.text =
             "BALANCE       ${
