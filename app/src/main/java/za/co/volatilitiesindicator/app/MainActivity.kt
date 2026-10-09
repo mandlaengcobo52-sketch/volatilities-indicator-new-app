@@ -8,15 +8,16 @@ import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 
 /**
- * VOLATILITIES INDICATOR
- * Android shell and visual design only.
- * Deriv connection will be implemented separately.
+ * Volatilities Indicator.
+ * Shell, branding and navigation only.
+ * Deriv connection will be integrated separately.
  */
 class MainActivity : Activity() {
 
@@ -35,6 +36,9 @@ class MainActivity : Activity() {
     private var executionMode = "DEMO"
     private var selectedTab = "Home"
     private var drawerOpen = false
+
+    private lateinit var page: LinearLayout
+    private lateinit var accountStatus: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -57,35 +61,44 @@ class MainActivity : Activity() {
             overScrollMode = View.OVER_SCROLL_NEVER
         }
 
-        val page = LinearLayout(this).apply {
+        page = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(8), dp(14), dp(18))
             setBackgroundColor(bg)
         }
 
         scroll.addView(page)
-        outer.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        outer.addView(
+            scroll,
+            LinearLayout.LayoutParams(-1, 0, 1f)
+        )
+
         setContentView(outer)
 
-        addHeader(page)
+        addHeader()
 
         if (drawerOpen) {
-            addDrawer(page)
+            addDrawer()
         }
 
-        addPlatformSelector(page)
-        addExecutionSelector(page)
-        addAccountCard(page)
-        addIndexMonitor(page)
+        addPlatformSelector()
+        addExecutionSelector()
+        addAccountCard()
+        addIndexMonitor()
 
         if (platform == "ADMIN") {
-            addAdminPreview(page)
+            addAdminPreview()
         }
 
         addBottomNavigation(outer)
     }
 
-    private fun addHeader(page: LinearLayout) {
+    // =========================================================
+    // HEADER: EXISTING LOGO AND NOTIFICATION BELL
+    // =========================================================
+
+    private fun addHeader() {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -94,29 +107,36 @@ class MainActivity : Activity() {
 
         val menu = label("☰", 28f, white, true).apply {
             gravity = Gravity.CENTER
+
             setOnClickListener {
                 drawerOpen = !drawerOpen
                 render()
             }
         }
 
-        row.addView(menu, LinearLayout.LayoutParams(dp(40), dp(54)))
+        row.addView(
+            menu,
+            LinearLayout.LayoutParams(dp(40), dp(54))
+        )
 
-        val logo = TextView(this).apply {
-            text = "V"
-            textSize = 32f
-            gravity = Gravity.CENTER
-            typeface = Typeface.create(
-                "sans-serif-black",
-                Typeface.BOLD_ITALIC
+        // Use the logo PNG already in res/drawable.
+        val logo = ImageView(this).apply {
+            setImageResource(
+                R.drawable.volatilities_indicator_logo
             )
-            setTextColor(green)
+
+            scaleType = ImageView.ScaleType.CENTER_CROP
+
+            contentDescription = "Volatilities Indicator logo"
+
             background = shape(
                 Color.rgb(0, 22, 12),
                 green,
                 100,
                 2
             )
+
+            clipToOutline = true
         }
 
         row.addView(
@@ -148,23 +168,40 @@ class MainActivity : Activity() {
             LinearLayout.LayoutParams(0, -2, 1f)
         )
 
-        val bell = label("♧", 27f, white, false).apply {
+        // Notification bell. Notification functionality is not
+        // connected yet.
+        val bell = TextView(this).apply {
+            text = "♧"
+            textSize = 29f
+            setTextColor(white)
             gravity = Gravity.CENTER
+            contentDescription = "Notifications"
+
             setOnClickListener {
                 toast("Notifications will be connected later")
             }
         }
 
+        // Draw a clear bell symbol rather than using the club glyph.
+        bell.text = "🔔"
+        bell.textSize = 25f
+
         row.addView(
             bell,
-            LinearLayout.LayoutParams(dp(36), dp(52))
+            LinearLayout.LayoutParams(dp(42), dp(52))
         )
 
         page.addView(row)
     }
 
-    private fun addDrawer(page: LinearLayout) {
+    // =========================================================
+    // NAVIGATION DRAWER
+    // =========================================================
+
+    private fun addDrawer() {
         val card = card()
+
+        card.orientation = LinearLayout.VERTICAL
 
         card.addView(
             label("NAVIGATION", 13f, green, true)
@@ -220,7 +257,11 @@ class MainActivity : Activity() {
         )
     }
 
-    private fun addPlatformSelector(page: LinearLayout) {
+    // =========================================================
+    // PLATFORM SELECTOR
+    // =========================================================
+
+    private fun addPlatformSelector() {
         page.addView(sectionTitle("PLATFORM"))
 
         val row = horizontalRow()
@@ -248,7 +289,11 @@ class MainActivity : Activity() {
         page.addView(row)
     }
 
-    private fun addExecutionSelector(page: LinearLayout) {
+    // =========================================================
+    // EXECUTION MODE SELECTOR
+    // =========================================================
+
+    private fun addExecutionSelector() {
         page.addView(sectionTitle("EXECUTION MODE"))
 
         val row = horizontalRow()
@@ -274,7 +319,11 @@ class MainActivity : Activity() {
         page.addView(row)
     }
 
-    private fun addAccountCard(page: LinearLayout) {
+    // =========================================================
+    // DERIV ACCOUNT CARD — VISUAL PLACEHOLDER ONLY
+    // =========================================================
+
+    private fun addAccountCard() {
         val card = card()
 
         card.orientation = LinearLayout.VERTICAL
@@ -295,13 +344,25 @@ class MainActivity : Activity() {
             )
         )
 
+        accountStatus = label(
+            "●  NOT CONNECTED",
+            14f,
+            red,
+            true
+        )
+
+        val statusLine = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        statusLine.addView(
+            accountStatus,
+            LinearLayout.LayoutParams(-1, -2)
+        )
+
         card.addView(
-            label(
-                "●  NOT CONNECTED",
-                14f,
-                red,
-                true
-            ),
+            statusLine,
             matchWrap().apply {
                 topMargin = dp(4)
             }
@@ -333,7 +394,7 @@ class MainActivity : Activity() {
         buttons.addView(
             button("↗  CONNECT", true) {
                 toast(
-                    "Deriv connection will be added in the next step."
+                    "Deriv connection will be integrated separately."
                 )
             },
             weighted()
@@ -344,7 +405,7 @@ class MainActivity : Activity() {
         buttons.addView(
             button("⟳  REFRESH", false) {
                 toast(
-                    "Account refresh will be added after connection setup."
+                    "Account refresh will be available after connection."
                 )
             },
             weighted()
@@ -366,7 +427,11 @@ class MainActivity : Activity() {
         )
     }
 
-    private fun addIndexMonitor(page: LinearLayout) {
+    // =========================================================
+    // INDEX MONITOR — VISUAL PLACEHOLDER ONLY
+    // =========================================================
+
+    private fun addIndexMonitor() {
         val titleRow = horizontalRow().apply {
             gravity = Gravity.CENTER_VERTICAL
 
@@ -406,17 +471,10 @@ class MainActivity : Activity() {
                     dp(8)
                 )
 
-                background = shape(
-                    panel,
-                    tint,
-                    12,
-                    1
-                )
+                background = shape(panel, tint, 12, 1)
 
                 setOnClickListener {
-                    toast(
-                        "$name details will be added after the shell."
-                    )
+                    toast("$name details will be added later.")
                 }
             }
 
@@ -448,12 +506,18 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun addAdminPreview(page: LinearLayout) {
+    // =========================================================
+    // ADMIN PREVIEW
+    // =========================================================
+
+    private fun addAdminPreview() {
         page.addView(sectionTitle("ADMINISTRATION"))
 
         val card = card()
 
-        val items = listOf(
+        card.orientation = LinearLayout.VERTICAL
+
+        listOf(
             "Dashboard",
             "Index Settings",
             "Risk Categories",
@@ -461,12 +525,10 @@ class MainActivity : Activity() {
             "Notifications",
             "Trading Logs",
             "System Settings"
-        )
-
-        items.forEach { item ->
+        ).forEach { item ->
             card.addView(
                 button("⚙  $item", false) {
-                    toast("$item screen will be built after the shell.")
+                    toast("$item screen will be built separately.")
                 },
                 matchWrap().apply {
                     bottomMargin = dp(5)
@@ -481,6 +543,10 @@ class MainActivity : Activity() {
             }
         )
     }
+
+    // =========================================================
+    // BOTTOM NAVIGATION
+    // =========================================================
 
     private fun addBottomNavigation(outer: LinearLayout) {
         val nav = LinearLayout(this).apply {
@@ -569,6 +635,10 @@ class MainActivity : Activity() {
             LinearLayout.LayoutParams(-1, dp(65))
         )
     }
+
+    // =========================================================
+    // UI HELPERS
+    // =========================================================
 
     private fun sectionTitle(text: String): TextView {
         return label(
@@ -710,10 +780,7 @@ class MainActivity : Activity() {
 
     private fun space(width: Int): View {
         return View(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                width,
-                1
-            )
+            layoutParams = LinearLayout.LayoutParams(width, 1)
         }
     }
 
