@@ -2421,6 +2421,7 @@ override fun onCandles(
         }
 
         historicalCandles[symbol] = candles
+        updateStrategyAnalysis(symbol)
 
         android.util.Log.d(
             "DerivCandles",
