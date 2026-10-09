@@ -2243,11 +2243,20 @@ override fun onTick(
 
         val priceView = indexPriceViews[symbol]
 
-        priceView?.text = String.format(
-            java.util.Locale.US,
-            "CURRENT PRICE  %.5f",
-            quote
-        )
+        val decimals = when (symbol) {
+    "R_10" -> 3
+    "R_25" -> 3
+    "R_50" -> 4
+    "R_75" -> 2
+    "R_100" -> 2
+    else -> 2
+}
+
+priceView?.text = String.format(
+    java.util.Locale.US,
+    "CURRENT PRICE  %.${decimals}f",
+    quote
+)
 
         android.util.Log.d(
             "DerivLiveTick",
