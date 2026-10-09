@@ -1448,7 +1448,7 @@ indexDirectionViews[index] = direction
         card.addView(
             qualifying
         )
-
+indexQualifyingViews[index] = qualifying
         val target =
             TextView(this).apply {
 
@@ -1473,7 +1473,7 @@ indexDirectionViews[index] = direction
         card.addView(
             target
         )
-
+indexTargetViews[index] = target
         rootLayout.addView(
             card
         )
