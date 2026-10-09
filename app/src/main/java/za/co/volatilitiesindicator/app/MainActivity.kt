@@ -1430,7 +1430,7 @@ indexResistanceViews[index] = resistance
         card.addView(
             direction
         )
-
+indexDirectionViews[index] = direction
         val qualifying =
             TextView(this).apply {
 
