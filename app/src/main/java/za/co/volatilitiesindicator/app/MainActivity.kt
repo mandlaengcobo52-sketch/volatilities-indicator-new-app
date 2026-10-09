@@ -2385,11 +2385,31 @@ priceView?.text = String.format(
     // USER ACCOUNTS
     // =============================================================
     private fun showUserAccounts() {
-    Toast.makeText(
-        this,
-        "User account management",
-        Toast.LENGTH_SHORT
-    ).show()
+
+    val options = arrayOf(
+        "ADD USER",
+        "VIEW USERS",
+        "EDIT USER",
+        "DELETE USER"
+    )
+
+    AlertDialog.Builder(this)
+        .setTitle("ADMIN — USER MANAGEMENT")
+        .setItems(options) { _, selected ->
+
+            when (selected) {
+
+                0 -> showAddUserDialog()
+
+                1 -> showViewUsersDialog()
+
+                2 -> showEditUserDialog()
+
+                3 -> showDeleteUserDialog()
+            }
+        }
+        .setNegativeButton("CLOSE", null)
+        .show()
     }
 
     
