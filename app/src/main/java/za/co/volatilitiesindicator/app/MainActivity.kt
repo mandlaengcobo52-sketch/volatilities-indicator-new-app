@@ -238,13 +238,7 @@ private val indexPriceViews =
         )
 
         addHeader()
-
-        if (
-            currentPlatform == "ADMIN"
-        ) {
-
-            addPlatformSelector()
-        }
+addPlatformSelector()
 
         addExecutionSelector()
 
@@ -2360,14 +2354,7 @@ priceView?.text = String.format(
     // USER ACCOUNTS
     // =============================================================
 
-    private fun showUserAccounts() {
-
-        Toast.makeText(
-            this,
-            "User account management",
-            Toast.LENGTH_SHORT
-        ).show()
-    }
+    
 
     // =============================================================
     // ADMIN MENU
