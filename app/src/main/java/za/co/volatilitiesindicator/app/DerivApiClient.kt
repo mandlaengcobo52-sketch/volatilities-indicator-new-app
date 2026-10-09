@@ -18,25 +18,27 @@ class DerivApiClient(
 
     interface Callback {
 
-        fun onConnecting(
-            message: String
-        )
+    fun onConnecting(message: String)
 
-        fun onConnected(
-            accountId: String,
-            accountType: String
-        )
+    fun onConnected(
+        accountId: String,
+        accountType: String
+    )
 
-        fun onBalance(
-            balance: Double,
-            currency: String
-        )
+    fun onBalance(
+        balance: Double,
+        currency: String
+    )
 
-        fun onError(
-            message: String
-        )
+    fun onTick(
+        symbol: String,
+        quote: Double,
+        epoch: Long
+    )
 
-        fun onDisconnected()
+    fun onError(message: String)
+
+    fun onDisconnected()
     }
 
     companion object {
@@ -878,6 +880,7 @@ class DerivApiClient(
                                     ?: "",
                                 accountType
                             )
+                            subscribeToLiveTicks()
 
                             startHeartbeat()
 
@@ -1040,6 +1043,37 @@ class DerivApiClient(
     /*
      * Process messages received from Deriv.
      */
+     // =============================================================
+// LIVE INDEX PRICE SUBSCRIPTIONS
+// =============================================================
+
+private val liveIndexes = listOf(
+    "R_10",
+    "R_25",
+    "R_50",
+    "R_75",
+    "R_100"
+)
+
+fun subscribeToLiveTicks() {
+
+    if (!connected) {
+        callback.onError(
+            "Cannot subscribe to prices: Deriv is not connected."
+        )
+        return
+    }
+
+    for (symbol in liveIndexes) {
+
+        val request = JSONObject().apply {
+            put("ticks", symbol)
+            put("subscribe", 1)
+        }
+
+        send(request)
+    }
+}
     private fun handleWebSocketMessage(
         text: String
     ) {
@@ -1050,7 +1084,30 @@ class DerivApiClient(
                 JSONObject(
                     text
                 )
+// =============================================================
+// PROCESS LIVE TICK RESPONSES
+// =============================================================
 
+val tick = json.optJSONObject("tick")
+
+if (tick != null) {
+
+    val symbol = tick.optString("symbol", "")
+    val quote = tick.optDouble("quote", Double.NaN)
+    val epoch = tick.optLong("epoch", 0L)
+
+    if (
+        symbol in liveIndexes &&
+        !quote.isNaN() &&
+        quote.isFinite()
+    ) {
+        callback.onTick(
+            symbol,
+            quote,
+            epoch
+        )
+    }
+}
             /*
              * Deriv WebSocket error.
              */
