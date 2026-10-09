@@ -2285,9 +2285,11 @@ if (history.size > 200) {
     history.removeAt(0)
 }
 
-// Calculate rolling support and resistance.
-val supportPrice = history.minOrNull()
-val resistancePrice = history.maxOrNull()
+// Calculate support and resistance from previous prices.
+val previousPrices = history.dropLast(1)
+
+val supportPrice = previousPrices.minOrNull()
+val resistancePrice = previousPrices.maxOrNull()
 
 android.util.Log.d(
     "MarketLevels",
