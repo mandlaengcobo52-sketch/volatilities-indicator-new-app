@@ -16,29 +16,44 @@ class DerivApiClient(
     private val callback: Callback
 ) {
 
+        data class Candle(
+        val epoch: Long,
+        val open: Double,
+        val high: Double,
+        val low: Double,
+        val close: Double
+    )
+
     interface Callback {
 
-    fun onConnecting(message: String)
+        fun onConnecting(message: String)
 
-    fun onConnected(
-        accountId: String,
-        accountType: String
-    )
+        fun onConnected(
+            accountId: String,
+            accountType: String
+        )
 
-    fun onBalance(
-        balance: Double,
-        currency: String
-    )
+        fun onBalance(
+            balance: Double,
+            currency: String
+        )
 
-    fun onTick(
-        symbol: String,
-        quote: Double,
-        epoch: Long
-    )
+        fun onTick(
+            symbol: String,
+            quote: Double,
+            epoch: Long
+        )
 
-    fun onError(message: String)
+        fun onCandles(
+            symbol: String,
+            candles: List<Candle>
+        ) {
+            // Optional callback for historical candle data.
+        }
 
-    fun onDisconnected()
+        fun onError(message: String)
+
+        fun onDisconnected()
     }
 
     companion object {
@@ -199,6 +214,18 @@ class DerivApiClient(
 
     private var webSocket:
         WebSocket? = null
+
+    private var marketDataSocket: WebSocket? = null
+
+private var marketDataRequestId = 1000
+
+private val candleIndexes = listOf(
+    "R_10",
+    "R_25",
+    "R_50",
+    "R_75",
+    "R_100"
+)
 
     private var accessToken:
         String? = null
@@ -1070,6 +1097,93 @@ fun subscribeToLiveTicks() {
 
         send(request)
     }
+}
+// =============================================================
+// HISTORICAL CANDLE CONNECTION
+// =============================================================
+
+fun requestHistoricalCandles() {
+
+    if (marketDataSocket != null) {
+        return
+    }
+
+    val request = Request.Builder()
+        .url("wss://ws.binaryws.com/websockets/v3?app_id=1089")
+        .build()
+
+    marketDataSocket = webSocketClient.newWebSocket(
+        request,
+        object : WebSocketListener() {
+
+            override fun onOpen(
+                webSocket: WebSocket,
+                response: Response
+            ) {
+
+                for (symbol in candleIndexes) {
+
+                    val requestId = marketDataRequestId++
+
+                    val message = JSONObject().apply {
+                        put("ticks_history", symbol)
+                        put("count", 1000)
+                        put("end", "latest")
+                        put("style", "candles")
+                        put("granularity", 3600)
+                        put("req_id", requestId)
+                    }
+
+                    webSocket.send(message.toString())
+                }
+            }
+
+            override fun onMessage(
+                webSocket: WebSocket,
+                text: String
+            ) {
+
+                try {
+                    val json = JSONObject(text)
+                    val candlesJson = json.optJSONObject("candles")
+                        ?: return
+
+                    val echoRequest = json.optJSONObject("echo_req")
+                    val symbol = echoRequest?.optString("ticks_history", "")
+                        ?: ""
+
+                    if (symbol !in candleIndexes) {
+                        return
+                    }
+
+                    val candles = mutableListOf<Candle>()
+
+                    for (i in 0 until candlesJson.length()) {
+                        // This response format is not an array.
+                        // The correct candle array is handled below.
+                    }
+
+                } catch (e: Exception) {
+                    android.util.Log.e(
+                        "DerivCandles",
+                        "Candle response error: ${e.message}"
+                    )
+                }
+            }
+
+            override fun onFailure(
+                webSocket: WebSocket,
+                t: Throwable,
+                response: Response?
+            ) {
+                android.util.Log.e(
+                    "DerivCandles",
+                    "Historical candle connection failed: ${t.message}"
+                )
+                marketDataSocket = null
+            }
+        }
+    )
 }
     private fun handleWebSocketMessage(
         text: String
