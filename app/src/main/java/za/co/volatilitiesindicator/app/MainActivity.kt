@@ -1044,6 +1044,7 @@ titleColumn.addView(
                     CYAN
                 )
             }
+    accountBalanceView = balanceText
 
         information.addView(
             balanceText
@@ -2241,23 +2242,31 @@ indexResistanceViews[index] = resistance
     // =============================================================
 
     override fun onBalance(
-        balance: Double,
-        currency: String
-    ) {
+    balance: Double,
+    currency: String
+) {
+    runOnUiThread {
 
-        runOnUiThread {
+        accountBalance = balance
+        accountCurrency = currency
+        connected = true
 
-            accountBalance =
-                balance
-
-            accountCurrency =
-                currency
-
-            connected = true
-
-            rebuild()
-        }
+        accountBalanceView?.text =
+            "BALANCE       ${
+                if (accountCurrency.isNotEmpty()) {
+                    accountCurrency
+                } else {
+                    ""
+                }
+            } ${
+                String.format(
+                    java.util.Locale.US,
+                    "%.2f",
+                    accountBalance
+                )
+            }"
     }
+}
  // =============================================================
 // LIVE TICK CALLBACK
 // =============================================================
