@@ -148,6 +148,14 @@ private val indexSupportViews =
 
 private val indexResistanceViews =
     mutableMapOf<String, TextView>()
+private val indexDirectionViews =
+    mutableMapOf<String, TextView>()
+
+private val indexQualifyingViews =
+    mutableMapOf<String, TextView>()
+
+private val indexTargetViews =
+    mutableMapOf<String, TextView>()
     // =============================================================
     // INDEX COLOURS
     // =============================================================
