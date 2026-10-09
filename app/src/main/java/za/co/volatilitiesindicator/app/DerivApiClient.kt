@@ -798,7 +798,6 @@ private val candleIndexes = listOf(
             if (
                 websocketUrl.isNotEmpty()
             ) {
-
                 return websocketUrl
             }
 
@@ -836,7 +835,8 @@ private val candleIndexes = listOf(
 
         return null
     }
-      /*
+
+    /*
      * Open the authenticated WebSocket returned by
      * Deriv's OTP endpoint.
      */
@@ -1569,53 +1569,7 @@ if (tick != null) {
                         if (
                             !connected
                         ) {
-
-                            return@scheduleAtFixedRate
-                        }
-
-                        val socket =
-                            webSocket
-                                ?: return@scheduleAtFixedRate
-
-                        requestBalance(
-                            socket
-                        )
-
-                    } catch (
-                        _: Exception
-                    ) {
-                        /*
-                         * WebSocket callbacks handle actual
-                         * connection failures.
-                         */
-                    }
-
-                },
-                20,
-                20,
-                TimeUnit.SECONDS
-            )
-    }
-    /*
-     * Stop the application heartbeat.
-     */
-    private fun stopHeartbeat() {
-
-        heartbeatFuture
-            ?.cancel(
-                true
-            )
-
-        heartbeatFuture =
-            null
-    }
-        /*
-     * Format an HTTP error returned by Deriv.
-     *
-     * Current Deriv REST errors use:
-     *
-     * {
-     *     "errors": [
+                              *     "errors": [
      *         {
      *             "status": 401,
      *             "code": "Unauthorized",
@@ -2175,4 +2129,4 @@ if (tick != null) {
         ) {
         }
     }
-}
+                    }
