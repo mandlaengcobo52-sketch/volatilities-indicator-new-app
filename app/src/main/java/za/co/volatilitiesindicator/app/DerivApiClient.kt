@@ -1569,7 +1569,16 @@ if (tick != null) {
                         if (
                             !connected
                         ) {
-                              *     "errors": [
+                            heartbeatFuture =
+            null
+    }
+        /*
+     * Format an HTTP error returned by Deriv.
+     *
+     * Current Deriv REST errors use:
+     *
+     * {
+     *     "errors": [
      *         {
      *             "status": 401,
      *             "code": "Unauthorized",
@@ -2130,3 +2139,4 @@ if (tick != null) {
         }
     }
                     }
+                    
