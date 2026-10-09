@@ -1214,6 +1214,47 @@ if (candles.isNotEmpty()) {
         }
     )
 }
+// =============================================================
+// REFRESH HISTORICAL CANDLES
+// =============================================================
+
+fun refreshHistoricalCandles() {
+
+    val socket = marketDataSocket
+
+    if (socket == null) {
+        requestHistoricalCandles()
+        return
+    }
+
+    for (symbol in candleIndexes) {
+
+        val requestId = marketDataRequestId++
+
+        val message = JSONObject().apply {
+            put("ticks_history", symbol)
+            put("count", 1000)
+            put("end", "latest")
+            put("style", "candles")
+            put("granularity", 3600)
+            put("req_id", requestId)
+        }
+
+        val sent = socket.send(message.toString())
+
+        if (!sent) {
+            android.util.Log.e(
+                "DerivCandles",
+                "Failed to request refreshed candles for $symbol"
+            )
+        }
+    }
+
+    android.util.Log.d(
+        "DerivCandles",
+        "Historical candle refresh requested for all indexes"
+    )
+}
     private fun handleWebSocketMessage(
         text: String
     ) {
