@@ -891,9 +891,6 @@ class DerivApiClient(
                              * Immediately request the current
                              * account balance after connection.
                              */
-                            requestBalance(
-                                socket
-                            )
                         }
 
                         override fun onMessage(
