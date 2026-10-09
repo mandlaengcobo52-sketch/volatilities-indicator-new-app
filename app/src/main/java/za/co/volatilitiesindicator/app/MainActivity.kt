@@ -1274,8 +1274,7 @@ private val indexPriceViews =
         val support =
             TextView(this).apply {
 
-                text =
-                    "SUPPORT       AUTO"
+                text = "SUPPORT       —"
 
                 textSize =
                     10f
@@ -1299,8 +1298,7 @@ private val indexPriceViews =
         val resistance =
             TextView(this).apply {
 
-                text =
-                    "RESISTANCE    AUTO"
+                text = "RESISTANCE       —"
 
                 textSize =
                     10f
