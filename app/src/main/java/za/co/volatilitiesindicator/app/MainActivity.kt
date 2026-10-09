@@ -69,7 +69,43 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     // =============================================================
 
     private var autoTradeEnabled = false
+// =============================================================
+// HISTORICAL CANDLE REFRESH TIMER
+// =============================================================
 
+private val candleRefreshHandler =
+    android.os.Handler(android.os.Looper.getMainLooper())
+
+private val candleRefreshRunnable =
+    object : Runnable {
+        override fun run() {
+            if (connected) {
+                derivApiClient.refreshHistoricalCandles()
+            }
+
+            candleRefreshHandler.postDelayed(
+                this,
+                60_000L
+            )
+        }
+    }
+
+private fun startCandleRefresh() {
+    candleRefreshHandler.removeCallbacks(
+        candleRefreshRunnable
+    )
+
+    candleRefreshHandler.postDelayed(
+        candleRefreshRunnable,
+        60_000L
+    )
+}
+
+private fun stopCandleRefresh() {
+    candleRefreshHandler.removeCallbacks(
+        candleRefreshRunnable
+    )
+}
 // =============================================================
 // NEW TRADING STRATEGY SETTINGS
 // =============================================================
@@ -2511,7 +2547,7 @@ override fun onCandles(
         runOnUiThread {
 
             connected = false
-
+            stopCandleRefresh()
             accountId = ""
             accountType = ""
             accountBalance = 0.0
@@ -2553,6 +2589,7 @@ override fun onCandles(
         }
 
         connected = false
+        stopCandleRefresh()
         accountId = ""
         accountType = ""
         accountBalance = 0.0
@@ -3288,7 +3325,7 @@ addBottomNavigation()
     // =============================================================
 
     override fun onDestroy() {
-
+stopCandleRefresh()
         super.onDestroy()
 
         /*
