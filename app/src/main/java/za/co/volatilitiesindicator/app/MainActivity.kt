@@ -2240,7 +2240,17 @@ override fun onTick(
         }
 
         indexPrices[symbol] = quote
+// Record recent prices for support and resistance.
+val history = indexPriceHistory.getOrPut(symbol) {
+    mutableListOf()
+}
 
+history.add(quote)
+
+// Keep the latest 200 prices per index.
+if (history.size > 200) {
+    history.removeAt(0)
+}
         val priceView = indexPriceViews[symbol]
 
         val decimals = when (symbol) {
