@@ -1696,7 +1696,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         // The website callback uses this prefix to identify
         // Android OAuth requests.
         oauthState =
-            "android-" + UUID.randomUUID().toString()
+    "android-" + UUID.randomUUID().toString()
 
         codeVerifier =
             generateCodeVerifier()
