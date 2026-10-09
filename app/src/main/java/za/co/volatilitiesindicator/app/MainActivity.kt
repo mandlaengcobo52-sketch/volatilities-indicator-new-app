@@ -303,6 +303,19 @@ private fun updateDailyStartingCapital() {
         dailyCapitalDate = today
     }
 }
+// =============================================================
+// STRATEGY STAKE CALCULATOR
+// =============================================================
+
+private fun calculateStrategyStake(): Double {
+
+    if (dailyStartingCapital <= 0.0) {
+        return 0.0
+    }
+
+    return dailyStartingCapital *
+        strategyStakePercent / 100.0
+}
     private fun addHeader() {
 
         val header =
