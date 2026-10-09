@@ -7,8 +7,6 @@
     <application
         android:allowBackup="true"
         android:label="Volatilities Indicator"
-        android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.VolatilitiesIndicator"
         android:usesCleartextTraffic="false">
@@ -17,7 +15,7 @@
             android:name=".MainActivity"
             android:exported="true">
 
-            <!-- Normal app launch -->
+            <!-- Main app launcher -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
