@@ -126,7 +126,7 @@ private val indexPriceHistory =
 
 private val indexPriceViews =
     mutableMapOf<String, TextView>()
-
+private var accountBalanceView: TextView? = null
 private val indexSupportViews =
     mutableMapOf<String, TextView>()
 
