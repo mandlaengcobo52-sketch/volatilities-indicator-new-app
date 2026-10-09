@@ -289,10 +289,9 @@ addPlatformSelector()
 
         addBottomNavigation()
     }
-
-    // =============================================================
-    // HEADER
-    // =============================================================
+// =============================================================  
+// HEADER
+// =============================================================
 // =============================================================
 // DAILY CAPITAL MANAGEMENT
 // =============================================================
@@ -323,6 +322,80 @@ private fun calculateStrategyStake(): Double {
 
     return dailyStartingCapital *
         strategyStakePercent / 100.0
+}
+// =============================================================
+// STRATEGY CANDLE ANALYSIS
+// =============================================================
+
+private fun updateStrategyAnalysis(symbol: String) {
+
+    val candles = historicalCandles[symbol]
+        ?: return
+
+    if (candles.size < 20) {
+        return
+    }
+
+    val recentCandles = candles.takeLast(20)
+
+    val firstClose = recentCandles.first().close
+    val lastClose = recentCandles.last().close
+
+    if (firstClose <= 0.0) {
+        return
+    }
+
+    val changePercent =
+        ((lastClose - firstClose) / firstClose) * 100.0
+
+    val directionText: String
+    val signalScore: Double
+
+    when {
+        changePercent > 0.0 -> {
+            directionText = "BUY"
+            signalScore = minOf(
+                100.0,
+                50.0 + kotlin.math.abs(changePercent) * 10.0
+            )
+        }
+
+        changePercent < 0.0 -> {
+            directionText = "SELL"
+            signalScore = minOf(
+                100.0,
+                50.0 + kotlin.math.abs(changePercent) * 10.0
+            )
+        }
+
+        else -> {
+            directionText = "WAIT"
+            signalScore = 0.0
+        }
+    }
+
+    val targetPrice =
+        if (directionText == "BUY") {
+            lastClose * (1.0 + strategyTargetProfitPercent / 100.0)
+        } else {
+            lastClose * (1.0 - strategyTargetProfitPercent / 100.0)
+        }
+
+    runOnUiThread {
+
+        indexDirectionViews[symbol]?.text =
+            "DIRECTION $directionText"
+
+        indexQualifyingViews[symbol]?.text =
+            "SIGNAL SCORE ${"%.1f".format(signalScore)}%"
+
+        indexTargetViews[symbol]?.text =
+            if (directionText == "WAIT") {
+                "TARGET PRICE —"
+            } else {
+                "TARGET PRICE ${"%.5f".format(targetPrice)}"
+            }
+    }
 }
     private fun addHeader() {
 
@@ -573,7 +646,7 @@ titleColumn.addView(
             header
         )
     }
-        // =============================================================
+     // =============================================================
     // PLATFORM SELECTOR
     // =============================================================
 
