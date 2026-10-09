@@ -27,6 +27,7 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.UUID
 import android.app.AlertDialog
+import android.widget.EditText
 
 class MainActivity : Activity(), DerivApiClient.Callback {
 
