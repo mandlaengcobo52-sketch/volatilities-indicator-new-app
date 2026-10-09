@@ -1145,23 +1145,52 @@ fun requestHistoricalCandles() {
 
                 try {
                     val json = JSONObject(text)
-                    val candlesJson = json.optJSONObject("candles")
-                        ?: return
+                    val candlesJson = json.optJSONArray("candles")
+    ?: return
 
-                    val echoRequest = json.optJSONObject("echo_req")
-                    val symbol = echoRequest?.optString("ticks_history", "")
-                        ?: ""
+val echoRequest = json.optJSONObject("echo_req")
+val symbol = echoRequest?.optString("ticks_history", "")
+    ?: ""
 
-                    if (symbol !in candleIndexes) {
-                        return
-                    }
+if (symbol !in candleIndexes) {
+    return
+}
 
-                    val candles = mutableListOf<Candle>()
+val candles = mutableListOf<Candle>()
 
-                    for (i in 0 until candlesJson.length()) {
-                        // This response format is not an array.
-                        // The correct candle array is handled below.
-                    }
+for (i in 0 until candlesJson.length()) {
+
+    val item = candlesJson.optJSONObject(i)
+        ?: continue
+
+    val epoch = item.optLong("epoch", 0L)
+    val open = item.optDouble("open", Double.NaN)
+    val high = item.optDouble("high", Double.NaN)
+    val low = item.optDouble("low", Double.NaN)
+    val close = item.optDouble("close", Double.NaN)
+
+    if (
+        epoch > 0L &&
+        open.isFinite() &&
+        high.isFinite() &&
+        low.isFinite() &&
+        close.isFinite()
+    ) {
+        candles.add(
+            Candle(
+                epoch = epoch,
+                open = open,
+                high = high,
+                low = low,
+                close = close
+            )
+        )
+    }
+}
+
+if (candles.isNotEmpty()) {
+    callback.onCandles(symbol, candles)
+}
 
                 } catch (e: Exception) {
                     android.util.Log.e(
