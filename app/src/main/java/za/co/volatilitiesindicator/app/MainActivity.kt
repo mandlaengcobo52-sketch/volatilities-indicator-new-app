@@ -2240,6 +2240,27 @@ override fun onTick(
         }
 
         indexPrices[symbol] = quote
+
+// Record recent prices for support and resistance.
+val history = indexPriceHistory.getOrPut(symbol) {
+    mutableListOf()
+}
+
+history.add(quote)
+
+// Keep the latest 200 prices per index.
+if (history.size > 200) {
+    history.removeAt(0)
+}
+
+// Calculate rolling support and resistance.
+val supportPrice = history.minOrNull()
+val resistancePrice = history.maxOrNull()
+
+android.util.Log.d(
+    "MarketLevels",
+    "$symbol | Support: $supportPrice | Resistance: $resistancePrice"
+)
 // Record recent prices for support and resistance.
 val history = indexPriceHistory.getOrPut(symbol) {
     mutableListOf()
