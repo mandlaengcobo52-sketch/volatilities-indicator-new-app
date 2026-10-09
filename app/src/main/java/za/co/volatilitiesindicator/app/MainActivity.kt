@@ -2411,8 +2411,234 @@ priceView?.text = String.format(
         .setNegativeButton("CLOSE", null)
         .show()
     }
+    private fun showAddUserDialog() {
 
-    
+    val input = EditText(this).apply {
+        hint = "Enter username"
+        setSingleLine(true)
+    }
+
+    AlertDialog.Builder(this)
+        .setTitle("ADD USER")
+        .setView(input)
+        .setPositiveButton("SAVE") { _, _ ->
+
+            val username = input.text
+                .toString()
+                .trim()
+
+            if (username.isEmpty()) {
+
+                Toast.makeText(
+                    this,
+                    "Username cannot be empty",
+                    Toast.LENGTH_SHORT
+                ).show()
+
+            } else {
+
+                val prefs = getSharedPreferences(
+                    "admin_user_accounts",
+                    MODE_PRIVATE
+                )
+
+                val users = prefs.getStringSet(
+                    "users",
+                    emptySet()
+                )?.toMutableSet() ?: mutableSetOf()
+
+                if (users.add(username)) {
+
+                    prefs.edit()
+                        .putStringSet("users", users.toSet())
+                        .apply()
+
+                    Toast.makeText(
+                        this,
+                        "User added successfully",
+                        Toast.LENGTH_SHORT
+                    ).show()
+
+                } else {
+
+                    Toast.makeText(
+                        this,
+                        "That username already exists",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }
+        .setNegativeButton("CANCEL", null)
+        .show()
+    }
+    private fun showViewUsersDialog() {
+
+    val prefs = getSharedPreferences(
+        "admin_user_accounts",
+        MODE_PRIVATE
+    )
+
+    val users = prefs.getStringSet(
+        "users",
+        emptySet()
+    )?.toList()?.sorted() ?: emptyList()
+
+    if (users.isEmpty()) {
+
+        AlertDialog.Builder(this)
+            .setTitle("REGISTERED USERS")
+            .setMessage("No users have been added yet.")
+            .setPositiveButton("OK", null)
+            .show()
+
+        return
+    }
+
+    AlertDialog.Builder(this)
+        .setTitle("REGISTERED USERS (${users.size})")
+        .setItems(users.toTypedArray(), null)
+        .setPositiveButton("CLOSE", null)
+        .show()
+    }
+    private fun showEditUserDialog() {
+
+    val prefs = getSharedPreferences(
+        "admin_user_accounts",
+        MODE_PRIVATE
+    )
+
+    val users = prefs.getStringSet(
+        "users",
+        emptySet()
+    )?.toList()?.sorted() ?: emptyList()
+
+    if (users.isEmpty()) {
+        AlertDialog.Builder(this)
+            .setTitle("EDIT USER")
+            .setMessage("No users available to edit.")
+            .setPositiveButton("OK", null)
+            .show()
+        return
+    }
+
+    AlertDialog.Builder(this)
+        .setTitle("SELECT USER TO EDIT")
+        .setItems(users.toTypedArray()) { _, index ->
+
+            val oldUsername = users[index]
+
+            val input = EditText(this).apply {
+                setText(oldUsername)
+                hint = "Enter new username"
+                setSingleLine(true)
+            }
+
+            AlertDialog.Builder(this)
+                .setTitle("EDIT USER")
+                .setView(input)
+                .setPositiveButton("SAVE") { _, _ ->
+
+                    val newUsername = input.text
+                        .toString()
+                        .trim()
+
+                    if (newUsername.isEmpty()) {
+                        Toast.makeText(
+                            this,
+                            "Username cannot be empty",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        return@setPositiveButton
+                    }
+
+                    if (
+                        newUsername != oldUsername &&
+                        users.contains(newUsername)
+                    ) {
+                        Toast.makeText(
+                            this,
+                            "That username already exists",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        return@setPositiveButton
+                    }
+
+                    val updatedUsers = users.toMutableSet()
+                    updatedUsers.remove(oldUsername)
+                    updatedUsers.add(newUsername)
+
+                    prefs.edit()
+                        .putStringSet("users", updatedUsers)
+                        .apply()
+
+                    Toast.makeText(
+                        this,
+                        "Username updated",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+                .setNegativeButton("CANCEL", null)
+                .show()
+        }
+        .setNegativeButton("CLOSE", null)
+        .show()
+    }
+    private fun showDeleteUserDialog() {
+
+    val prefs = getSharedPreferences(
+        "admin_user_accounts",
+        MODE_PRIVATE
+    )
+
+    val users = prefs.getStringSet(
+        "users",
+        emptySet()
+    )?.toList()?.sorted() ?: emptyList()
+
+    if (users.isEmpty()) {
+
+        AlertDialog.Builder(this)
+            .setTitle("DELETE USER")
+            .setMessage("No users available to delete.")
+            .setPositiveButton("OK", null)
+            .show()
+
+        return
+    }
+
+    AlertDialog.Builder(this)
+        .setTitle("SELECT USER TO DELETE")
+        .setItems(users.toTypedArray()) { _, index ->
+
+            val selectedUser = users[index]
+
+            AlertDialog.Builder(this)
+                .setTitle("CONFIRM DELETION")
+                .setMessage(
+                    "Are you sure you want to delete '$selectedUser'?"
+                )
+                .setPositiveButton("DELETE") { _, _ ->
+
+                    val updatedUsers = users.toMutableSet()
+                    updatedUsers.remove(selectedUser)
+
+                    prefs.edit()
+                        .putStringSet("users", updatedUsers)
+                        .apply()
+
+                    Toast.makeText(
+                        this,
+                        "User deleted",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+                .setNegativeButton("CANCEL", null)
+                .show()
+        }
+        .setNegativeButton("CLOSE", null)
+        .show()
+    }
 
     // =============================================================
     // ADMIN MENU
