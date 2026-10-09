@@ -2259,10 +2259,6 @@ android.util.Log.d(
     "MarketLevels",
     "$symbol | Support: $supportPrice | Resistance: $resistancePrice"
 )
-// Record recent prices for support and resistance.
-val history = indexPriceHistory.getOrPut(symbol) {
-    mutableListOf()
-}
 
 history.add(quote)
 
