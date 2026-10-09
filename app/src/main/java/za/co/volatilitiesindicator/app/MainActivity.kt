@@ -479,8 +479,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             header
         )
     }
-
-    // =============================================================
+        // =============================================================
     // PLATFORM SELECTOR
     // =============================================================
 
@@ -686,7 +685,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         )
     }
 
-        // =============================================================
+    // =============================================================
     // AUTO TRADE
     // =============================================================
 
@@ -832,8 +831,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             card
         )
     }
-
-    // =============================================================
+        // =============================================================
     // ACCOUNT CARD
     // =============================================================
 
@@ -888,9 +886,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             TextView(this).apply {
 
                 text =
-                    if (
-                        connected
-                    ) {
+                    if (connected) {
                         "● CONNECTED"
                     } else {
                         "● DISCONNECTED"
@@ -905,9 +901,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 )
 
                 setTextColor(
-                    if (
-                        connected
-                    ) {
+                    if (connected) {
                         GREEN
                     } else {
                         RED
@@ -941,14 +935,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             TextView(this).apply {
 
                 text =
-                    if (
-                        accountId.isNotEmpty()
-                    ) {
-
+                    if (accountId.isNotEmpty()) {
                         "ACCOUNT ID   $accountId"
-
                     } else {
-
                         "ACCOUNT ID   —"
                     }
 
@@ -968,14 +957,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             TextView(this).apply {
 
                 text =
-                    if (
-                        accountType.isNotEmpty()
-                    ) {
-
+                    if (accountType.isNotEmpty()) {
                         "TYPE          $accountType"
-
                     } else {
-
                         "TYPE          $executionMode"
                     }
 
@@ -996,9 +980,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
                 text =
                     "BALANCE       ${
-                        if (
-                            accountCurrency.isNotEmpty()
-                        ) {
+                        if (accountCurrency.isNotEmpty()) {
                             accountCurrency
                         } else {
                             ""
@@ -1035,17 +1017,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             Button(this).apply {
 
                 text =
-                    if (
-                        connected
-                    ) {
-
+                    if (connected) {
                         "DISCONNECT"
-
                     } else {
-
-                        if (
-                            executionMode == "REAL"
-                        ) {
+                        if (executionMode == "REAL") {
                             "CONNECT REAL"
                         } else {
                             "CONNECT DEMO"
@@ -1070,9 +1045,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 )
 
                 setBackgroundColor(
-                    if (
-                        connected
-                    ) {
+                    if (connected) {
                         RED
                     } else {
                         GREEN
@@ -1082,14 +1055,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         connectButton.setOnClickListener {
 
-            if (
-                connected
-            ) {
-
+            if (connected) {
                 disconnectDeriv()
-
             } else {
-
                 beginDerivConnection()
             }
         }
@@ -1121,9 +1089,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             "INDEX MONITOR"
         )
 
-        for (
-            index in indexes
-        ) {
+        for (index in indexes) {
 
             addIndexCard(
                 index
@@ -1256,9 +1222,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 "EXIT TRADE"
             )
 
-        for (
-            phase in phases
-        ) {
+        for (phase in phases) {
 
             val phaseView =
                 TextView(this).apply {
@@ -1618,9 +1582,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         refresh.setOnClickListener {
 
-            if (
-                connected
-            ) {
+            if (connected) {
 
                 derivApiClient.requestBalance()
 
@@ -1638,9 +1600,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         disconnect.setOnClickListener {
 
-            if (
-                connected
-            ) {
+            if (connected) {
 
                 disconnectDeriv()
 
@@ -1693,10 +1653,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private fun beginDerivConnection() {
 
         /*
-         * If a saved token exists for the selected mode,
-         * use it directly.
-         *
-         * Otherwise start OAuth.
+         * Use the saved token for the selected mode,
+         * if one exists. Otherwise, start OAuth login.
          */
 
         val tokenKey =
@@ -1706,11 +1664,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     ignoreCase = true
                 )
             ) {
-
                 "real_token"
-
             } else {
-
                 "demo_token"
             }
 
@@ -1720,9 +1675,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 ""
             ) ?: ""
 
-        if (
-            savedToken.isNotBlank()
-        ) {
+        if (savedToken.isNotBlank()) {
 
             connectWithToken(
                 savedToken
@@ -1740,17 +1693,17 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     private fun startDerivOAuth() {
 
+        // The website callback uses this prefix to identify
+        // Android OAuth requests.
         oauthState =
-            UUID.randomUUID().toString()
+            "android-" + UUID.randomUUID().toString()
 
         codeVerifier =
             generateCodeVerifier()
 
         /*
-         * Save the mode together with the PKCE values.
-         * This is important because after returning from
-         * the browser we must know whether the user selected
-         * DEMO or REAL.
+         * Save the OAuth state, PKCE verifier and selected mode.
+         * The callback must return the same state.
          */
 
         prefs.edit()
@@ -1828,15 +1781,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 intent
             )
 
-        } catch (
-            e: Exception
-        ) {
+        } catch (e: Exception) {
 
             Toast.makeText(
                 this,
-                "Unable to open Deriv login: ${
-                    e.message
-                }",
+                "Unable to open Deriv login: ${e.message}",
                 Toast.LENGTH_LONG
             ).show()
         }
@@ -1856,7 +1805,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         /*
          * The website callback must redirect into:
-         *
          * volatilitiesindicator://oauth-callback
          */
 
@@ -1864,7 +1812,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             data.scheme !=
             "volatilitiesindicator"
         ) {
-
             return
         }
 
@@ -1872,7 +1819,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             data.host !=
             "oauth-callback"
         ) {
-
             return
         }
 
@@ -1881,9 +1827,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 "error"
             )
 
-        if (
-            !error.isNullOrBlank()
-        ) {
+        if (!error.isNullOrBlank()) {
 
             Toast.makeText(
                 this,
@@ -1904,9 +1848,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 "state"
             )
 
-        if (
-            code.isNullOrBlank()
-        ) {
+        if (code.isNullOrBlank()) {
 
             Toast.makeText(
                 this,
@@ -1951,11 +1893,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     ignoreCase = true
                 )
             ) {
-
                 "REAL"
-
             } else {
-
                 "DEMO"
             }
 
@@ -1978,9 +1917,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 ""
             ) ?: ""
 
-        if (
-            verifier.isBlank()
-        ) {
+        if (verifier.isBlank()) {
 
             Toast.makeText(
                 this,
@@ -1998,8 +1935,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         val redirectUri =
             DerivApiClient.OAUTH_REDIRECT_URI
-
-        val requestBody =
+                val requestBody =
             FormBody.Builder()
                 .add(
                     "grant_type",
@@ -2054,8 +1990,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                         Toast.makeText(
                             this@MainActivity,
                             "OAuth connection failed: ${
-                                e.message
-                                    ?: "network error"
+                                e.message ?: "network error"
                             }",
                             Toast.LENGTH_LONG
                         ).show()
@@ -2072,9 +2007,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                             ?.string()
                             .orEmpty()
 
-                    if (
-                        !response.isSuccessful
-                    ) {
+                    if (!response.isSuccessful) {
 
                         runOnUiThread {
 
@@ -2106,9 +2039,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                                 ""
                             )
 
-                        if (
-                            accessToken.isBlank()
-                        ) {
+                        if (accessToken.isBlank()) {
 
                             runOnUiThread {
 
@@ -2122,11 +2053,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                             return
                         }
 
-                        /*
-                         * Save a separate token for the selected
-                         * execution mode.
-                         */
-
                         val tokenKey =
                             if (
                                 executionMode.equals(
@@ -2134,11 +2060,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                                     ignoreCase = true
                                 )
                             ) {
-
                                 "real_token"
-
                             } else {
-
                                 "demo_token"
                             }
 
@@ -2166,9 +2089,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                             )
                         }
 
-                    } catch (
-                        e: Exception
-                    ) {
+                    } catch (e: Exception) {
 
                         runOnUiThread {
 
@@ -2185,7 +2106,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             }
         )
     }
-        // =============================================================
+
+    // =============================================================
     // CONNECT USING ACCESS TOKEN
     // =============================================================
 
@@ -2193,9 +2115,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         token: String
     ) {
 
-        if (
-            token.isBlank()
-        ) {
+        if (token.isBlank()) {
 
             Toast.makeText(
                 this,
@@ -2214,24 +2134,16 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
 
         connected = false
-
         accountId = ""
-
         accountType = ""
-
         accountBalance = 0.0
-
         accountCurrency = ""
 
         rebuild()
 
         /*
-         * IMPORTANT:
-         * Do NOT call derivApiClient.connect(token).
-         *
-         * That compatibility method defaults to DEMO.
-         *
-         * The selected DEMO/REAL mode is passed explicitly.
+         * Pass the selected execution mode explicitly.
+         * Do not use a compatibility method that defaults to DEMO.
          */
 
         derivApiClient.connectWithAccessToken(
@@ -2279,7 +2191,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
             Toast.makeText(
                 this@MainActivity,
-                "Deriv ${executionMode} connected.",
+                "Deriv $executionMode connected.",
                 Toast.LENGTH_SHORT
             ).show()
         }
@@ -2319,11 +2231,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             connected = false
 
             accountId = ""
-
             accountType = ""
-
             accountBalance = 0.0
-
             accountCurrency = ""
 
             rebuild()
@@ -2362,13 +2271,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
 
         connected = false
-
         accountId = ""
-
         accountType = ""
-
         accountBalance = 0.0
-
         accountCurrency = ""
 
         rebuild()
@@ -2418,16 +2323,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             Toast.LENGTH_SHORT
         ).show()
     }
-
-    // =============================================================
+        // =============================================================
     // REBUILD SCREEN
     // =============================================================
 
     private fun rebuild() {
 
-        if (
-            !::rootLayout.isInitialized
-        ) {
+        if (!::rootLayout.isInitialized) {
             return
         }
 
@@ -2436,15 +2338,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         addHeader()
 
         /*
-         * PLATFORM selector appears only on ADMIN.
-         *
-         * USER therefore does NOT get the PLATFORM selector.
+         * The PLATFORM selector appears only on ADMIN.
+         * The USER dashboard does not display it.
          */
 
-        if (
-            currentPlatform == "ADMIN"
-        ) {
-
+        if (currentPlatform == "ADMIN") {
             addPlatformSelector()
         }
 
@@ -2454,10 +2352,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         addIndexMonitor()
 
-        if (
-            currentPlatform == "ADMIN"
-        ) {
-
+        if (currentPlatform == "ADMIN") {
             addAdminFeatures()
         }
 
@@ -2507,8 +2402,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     // CARD
     // =============================================================
 
-    private fun createCard():
-        LinearLayout {
+    private fun createCard(): LinearLayout {
 
         return LinearLayout(this).apply {
 
@@ -2559,14 +2453,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 false
 
             setTextColor(
-                if (
-                    selected
-                ) {
-
+                if (selected) {
                     BG
-
                 } else {
-
                     WHITE
                 }
             )
@@ -2577,14 +2466,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             )
 
             setBackgroundColor(
-                if (
-                    selected
-                ) {
-
+                if (selected) {
                     GREEN
-
                 } else {
-
                     CARD2
                 }
             )
@@ -2714,8 +2598,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     // PKCE - CODE VERIFIER
     // =============================================================
 
-    private fun generateCodeVerifier():
-        String {
+    private fun generateCodeVerifier(): String {
 
         val bytes =
             ByteArray(32)
@@ -2768,9 +2651,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         body: String
     ): String {
 
-        if (
-            body.isBlank()
-        ) {
+        if (body.isBlank()) {
 
             return "HTTP $code"
         }
@@ -2787,9 +2668,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     "error"
                 )
 
-            if (
-                error != null
-            ) {
+            if (error != null) {
 
                 val errorCode =
                     error.optString(
@@ -2830,9 +2709,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                         ""
                     )
 
-                if (
-                    message.isNotBlank()
-                ) {
+                if (message.isNotBlank()) {
 
                     message
 
@@ -2880,8 +2757,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 resources.displayMetrics.density
             ).toInt()
     }
-
-    // =============================================================
+        // =============================================================
     // ACTIVITY CLEANUP
     // =============================================================
 
@@ -2890,9 +2766,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         super.onDestroy()
 
         /*
-         * Do not deliberately disconnect simply because the
-         * screen is rebuilt. Only clean up when the Activity
-         * itself is actually destroyed.
+         * Clean up the Deriv connection when the Activity
+         * is actually destroyed.
+         *
+         * Rebuilding the screen must not deliberately
+         * disconnect the account.
          */
 
         try {
