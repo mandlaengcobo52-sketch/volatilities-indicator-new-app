@@ -2613,7 +2613,7 @@ override fun onCandles(
 
         try {
 
-            derivApiClient.disconnect()
+            derivApiClient.destroy()
 
         } catch (_: Exception) {
         }
@@ -3367,7 +3367,7 @@ stopCandleRefresh()
 
         try {
 
-            derivApiClient.disconnect()
+            derivApiClient.destroy()
 
         } catch (_: Exception) {
         }
