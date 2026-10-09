@@ -836,8 +836,7 @@ private val candleIndexes = listOf(
 
         return null
     }
-
-    /*
+      /*
      * Open the authenticated WebSocket returned by
      * Deriv's OTP endpoint.
      */
@@ -1145,57 +1144,76 @@ fun requestHistoricalCandles() {
 
                 try {
                     val json = JSONObject(text)
+
+                    val apiError = json.optJSONObject("error")
+                    if (apiError != null) {
+                        android.util.Log.e(
+                            "DerivCandles",
+                            "Deriv candle API error: ${apiError.optString("code")} - ${apiError.optString("message")}; response=$text"
+                        )
+                        return
+                    }
+
+                    val echoRequest = json.optJSONObject("echo_req")
+                    val symbol = echoRequest?.optString("ticks_history", "").orEmpty()
+                    if (symbol !in candleIndexes) {
+                        android.util.Log.d(
+                            "DerivCandles",
+                            "Ignoring non-candle response: $text"
+                        )
+                        return
+                    }
+
                     val candlesJson = json.optJSONArray("candles")
-    ?: return
+                    if (candlesJson == null) {
+                        android.util.Log.w(
+                            "DerivCandles",
+                            "$symbol response has no candles array: $text"
+                        )
+                        return
+                    }
 
-val echoRequest = json.optJSONObject("echo_req")
-val symbol = echoRequest?.optString("ticks_history", "")
-    ?: ""
+                    val candles = mutableListOf<Candle>()
+                    for (i in 0 until candlesJson.length()) {
+                        val item = candlesJson.optJSONObject(i) ?: continue
+                        val epoch = item.optLong("epoch", 0L)
+                        val open = item.optDouble("open", Double.NaN)
+                        val high = item.optDouble("high", Double.NaN)
+                        val low = item.optDouble("low", Double.NaN)
+                        val close = item.optDouble("close", Double.NaN)
 
-if (symbol !in candleIndexes) {
-    return
-}
+                        if (
+                            epoch > 0L &&
+                            open.isFinite() &&
+                            high.isFinite() &&
+                            low.isFinite() &&
+                            close.isFinite()
+                        ) {
+                            candles.add(
+                                Candle(
+                                    epoch = epoch,
+                                    open = open,
+                                    high = high,
+                                    low = low,
+                                    close = close
+                                )
+                            )
+                        }
+                    }
 
-val candles = mutableListOf<Candle>()
-
-for (i in 0 until candlesJson.length()) {
-
-    val item = candlesJson.optJSONObject(i)
-        ?: continue
-
-    val epoch = item.optLong("epoch", 0L)
-    val open = item.optDouble("open", Double.NaN)
-    val high = item.optDouble("high", Double.NaN)
-    val low = item.optDouble("low", Double.NaN)
-    val close = item.optDouble("close", Double.NaN)
-
-    if (
-        epoch > 0L &&
-        open.isFinite() &&
-        high.isFinite() &&
-        low.isFinite() &&
-        close.isFinite()
-    ) {
-        candles.add(
-            Candle(
-                epoch = epoch,
-                open = open,
-                high = high,
-                low = low,
-                close = close
-            )
-        )
-    }
-}
-
-if (candles.isNotEmpty()) {
-    callback.onCandles(symbol, candles)
-}
-
+                    if (candles.isNotEmpty()) {
+                        callback.onCandles(symbol, candles)
+                    } else {
+                        android.util.Log.w(
+                            "DerivCandles",
+                            "$symbol candle response contained zero valid candles: $text"
+                        )
+                    }
                 } catch (e: Exception) {
                     android.util.Log.e(
                         "DerivCandles",
-                        "Candle response error: ${e.message}"
+                        "Candle response parsing failed: ${e.message}; response=$text",
+                        e
                     )
                 }
             }
@@ -1578,7 +1596,6 @@ if (tick != null) {
                 TimeUnit.SECONDS
             )
     }
-
     /*
      * Stop the application heartbeat.
      */
