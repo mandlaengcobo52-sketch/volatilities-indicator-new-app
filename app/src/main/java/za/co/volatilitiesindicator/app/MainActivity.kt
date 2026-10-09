@@ -114,7 +114,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         "R_75",
         "R_100"
     )
+// =============================================================
+// LIVE INDEX PRICE STORAGE
+// =============================================================
+private val indexPrices = mutableMapOf<String, Double>()
 
+private val indexPriceViews =
+    mutableMapOf<String, TextView>()
     // =============================================================
     // INDEX COLOURS
     // =============================================================
@@ -1197,6 +1203,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     dp(4)
                 )
             }
+            indexPriceViews[index] = price
 
         card.addView(
             price
