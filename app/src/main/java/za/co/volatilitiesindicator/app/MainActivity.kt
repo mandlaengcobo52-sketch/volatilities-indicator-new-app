@@ -70,6 +70,22 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     private var autoTradeEnabled = false
 
+// =============================================================
+// NEW TRADING STRATEGY SETTINGS
+// =============================================================
+
+private val strategyStakePercent = 33.33
+private val strategyDurationHours = 72
+private val strategyTargetProfitPercent = 5.0
+private val strategyBarrierPercent = 5.0
+
+// Prevent duplicate active trades on the same index.
+private val activeStrategyTrades = mutableSetOf<String>()
+
+// Record the starting capital for the current trading day.
+private var dailyStartingCapital = 0.0
+private var dailyCapitalDate = ""
+
     // =============================================================
     // DERIV CONNECTION
     // =============================================================
@@ -269,7 +285,24 @@ addPlatformSelector()
     // =============================================================
     // HEADER
     // =============================================================
+// =============================================================
+// DAILY CAPITAL MANAGEMENT
+// =============================================================
 
+private fun updateDailyStartingCapital() {
+
+    val today = java.text.SimpleDateFormat(
+        "yyyy-MM-dd",
+        java.util.Locale.getDefault()
+    ).format(java.util.Date())
+
+    if (dailyCapitalDate != today) {
+
+        dailyStartingCapital = accountBalance
+
+        dailyCapitalDate = today
+    }
+}
     private fun addHeader() {
 
         val header =
