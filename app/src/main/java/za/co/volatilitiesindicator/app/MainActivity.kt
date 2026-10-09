@@ -1597,6 +1597,7 @@ indexTargetViews[index] = target
             card
         )
     }
+
     // =============================================================
     // ADMIN FEATURES
     // =============================================================
@@ -1606,8 +1607,7 @@ indexTargetViews[index] = target
         addSectionTitle(
             "ADMIN CONTROL"
         )
-
-        val card =
+          val card =
             createCard()
 
         val title =
@@ -2396,6 +2396,7 @@ indexTargetViews[index] = target
 
             this.accountType =
                 accountType
+
             connected = true
 
             derivApiClient.requestHistoricalCandles()
@@ -2434,7 +2435,7 @@ updateDailyStartingCapital()
                 } else {
                     ""
                 }
-            } ${
+                  } ${
                 String.format(
                     java.util.Locale.US,
                     "%.2f",
@@ -2613,7 +2614,7 @@ override fun onCandles(
 
         try {
 
-            derivApiClient.destroy()
+            derivApiClient.disconnect()
 
         } catch (_: Exception) {
         }
@@ -3199,6 +3200,7 @@ addBottomNavigation()
         SecureRandom().nextBytes(
             bytes
         )
+
         return Base64.encodeToString(
             bytes,
             Base64.URL_SAFE or
@@ -3367,7 +3369,7 @@ stopCandleRefresh()
 
         try {
 
-            derivApiClient.destroy()
+            derivApiClient.disconnect()
 
         } catch (_: Exception) {
         }
