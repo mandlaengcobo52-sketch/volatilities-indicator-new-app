@@ -2347,7 +2347,31 @@ priceView?.text = String.format(
         )
     }
 }
+// =============================================================
+// HISTORICAL CANDLE CALLBACK
+// =============================================================
 
+private val historicalCandles =
+    mutableMapOf<String, List<DerivApiClient.Candle>>()
+
+override fun onCandles(
+    symbol: String,
+    candles: List<DerivApiClient.Candle>
+) {
+    runOnUiThread {
+
+        if (symbol !in indexes || candles.isEmpty()) {
+            return@runOnUiThread
+        }
+
+        historicalCandles[symbol] = candles
+
+        android.util.Log.d(
+            "DerivCandles",
+            "$symbol received ${candles.size} historical candles"
+        )
+    }
+}
     // =============================================================
     // DERIV DISCONNECTED
     // =============================================================
