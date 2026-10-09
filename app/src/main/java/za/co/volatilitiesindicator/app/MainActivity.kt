@@ -2235,6 +2235,20 @@ override fun onTick(
     epoch: Long
 ) {
     runOnUiThread {
+        if (symbol !in indexes || !quote.isFinite()) {
+            return@runOnUiThread
+        }
+
+        indexPrices[symbol] = quote
+
+        val priceView = indexPriceViews[symbol]
+
+        priceView?.text = String.format(
+            java.util.Locale.US,
+            "CURRENT PRICE  %.5f",
+            quote
+        )
+
         android.util.Log.d(
             "DerivLiveTick",
             "$symbol price: $quote at $epoch"
