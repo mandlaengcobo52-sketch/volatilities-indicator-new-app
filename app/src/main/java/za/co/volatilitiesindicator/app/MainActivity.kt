@@ -433,7 +433,36 @@ addPlatformSelector()
         titleColumn.addView(
             subtitle
         )
+val profileLabel = TextView(this).apply {
 
+    text = if (currentPlatform == "ADMIN") {
+        "ADMIN PROFILE"
+    } else {
+        "USER PROFILE"
+    }
+
+    textSize = 10f
+
+    setTypeface(
+        null,
+        Typeface.BOLD
+    )
+
+    setTextColor(
+        if (currentPlatform == "ADMIN") RED else GREEN
+    )
+
+    setPadding(
+        0,
+        dp(4),
+        0,
+        0
+    )
+}
+
+titleColumn.addView(
+    profileLabel
+)
         titleBox.addView(
             titleColumn
         )
