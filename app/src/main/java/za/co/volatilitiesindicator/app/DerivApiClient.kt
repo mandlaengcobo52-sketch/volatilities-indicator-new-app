@@ -1081,6 +1081,10 @@ fun subscribeToLiveTicks() {
                 JSONObject(
                     text
                 )
+                android.util.Log.d(
+    "DerivLiveFeed",
+    "WebSocket response: $text"
+)
 // =============================================================
 // PROCESS LIVE TICK RESPONSES
 // =============================================================
