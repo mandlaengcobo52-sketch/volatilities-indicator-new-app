@@ -118,7 +118,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 // LIVE INDEX PRICE STORAGE
 // =============================================================
 private val indexPrices = mutableMapOf<String, Double>()
-
+private val indexPriceHistory =
+    mutableMapOf<String, MutableList<Double>>()
 private val indexPriceViews =
     mutableMapOf<String, TextView>()
     // =============================================================
