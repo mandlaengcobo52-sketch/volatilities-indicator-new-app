@@ -2219,6 +2219,21 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             rebuild()
         }
     }
+ // =============================================================
+// LIVE TICK CALLBACK
+// =============================================================
+override fun onTick(
+    symbol: String,
+    quote: Double,
+    epoch: Long
+) {
+    runOnUiThread {
+        android.util.Log.d(
+            "DerivLiveTick",
+            "$symbol price: $quote at $epoch"
+        )
+    }
+}
 
     // =============================================================
     // DERIV DISCONNECTED
