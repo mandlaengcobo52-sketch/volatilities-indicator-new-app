@@ -2227,7 +2227,9 @@ indexResistanceViews[index] = resistance
 
             connected = true
 
-            rebuild()
+derivApiClient.requestHistoricalCandles()
+
+rebuild()
 
             Toast.makeText(
                 this@MainActivity,
