@@ -6,6 +6,8 @@
 
     <application
         android:allowBackup="true"
+        android:icon="@drawable/volatilities_indicator_logo"
+        android:roundIcon="@drawable/volatilities_indicator_logo"
         android:label="Volatilities Indicator"
         android:supportsRtl="true"
         android:theme="@style/Theme.VolatilitiesIndicator"
