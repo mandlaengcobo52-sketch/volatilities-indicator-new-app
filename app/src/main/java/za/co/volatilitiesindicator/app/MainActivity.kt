@@ -147,9 +147,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 addAccountCard()
                 addIndexMonitor()
 
-                if (platform == "ADMIN") {
-                    addAdminPreview()
-                }
             }
                 }
 
