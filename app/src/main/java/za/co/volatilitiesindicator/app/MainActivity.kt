@@ -51,6 +51,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private lateinit var accountStatus: TextView
     private lateinit var accountIdView: TextView
     private lateinit var balanceView: TextView
+    private var connectButton: Button? = null
     private var connected = false
     private var accountId = ""
     private var accountType = ""
@@ -416,18 +417,27 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         val buttons = horizontalRow()
 
-        buttons.addView(
-            button(if (connected) "↗  DISCONNECT" else "↗  CONNECT", true) {
-                if (connected) disconnectDeriv() else beginDerivConnection()
-            },
-            weighted()
-        )
+        val accountActionButton = button(
+            if (connected) "↗  DISCONNECT" else "↗  CONNECT",
+            true
+        ) {
+            if (connected) disconnectDeriv() else beginDerivConnection()
+        }
+        connectButton = accountActionButton
+        buttons.addView(accountActionButton, weighted())
 
         buttons.addView(space(dp(8)))
 
         buttons.addView(
             button("⟳  REFRESH", false) {
-                if (connected) derivApiClient.refreshBalance() else toast("Connect to Deriv first.")
+                if (connected) {
+                    accountStatus.text = "●  REFRESHING BALANCE…"
+                    accountStatus.setTextColor(yellow)
+                    toast("Requesting latest Deriv balance…")
+                    derivApiClient.refreshBalance()
+                } else {
+                    toast("Connect to Deriv first.")
+                }
             },
             weighted()
         )
@@ -722,7 +732,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     white
                 }
             )
-
             background = shape(
                 if (active) green else panel2,
                 if (active) green else Color.rgb(40, 68, 72),
@@ -927,6 +936,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         try { derivApiClient.disconnect() } catch (_: Exception) {}
         connected = false; accountId = ""; accountType = ""; accountBalance = 0.0; accountCurrency = ""
         accountStatus.text = "●  NOT CONNECTED"; accountStatus.setTextColor(red)
+        connectButton?.text = "↗  CONNECT"
         accountIdView.text = "Account:  —"; balanceView.text = "Balance:  —"
         toast("Deriv disconnected.")
     }
@@ -938,6 +948,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         runOnUiThread {
             this.accountId = accountId; this.accountType = accountType; connected = true
             accountStatus.text = "●  CONNECTED — $executionMode"; accountStatus.setTextColor(green)
+            connectButton?.text = "↗  DISCONNECT"
             accountIdView.text = "Account:  $accountId"
 
             toast("Deriv $executionMode connected.")
@@ -948,6 +959,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             accountBalance = balance; accountCurrency = currency; connected = true
             balanceView.text = "Balance:  $currency ${String.format(java.util.Locale.US, "%.2f", balance)}"
             accountStatus.text = "●  CONNECTED — $executionMode"; accountStatus.setTextColor(green)
+            connectButton?.text = "↗  DISCONNECT"
         }
     }
     override fun onTick(symbol: String, quote: Double, epoch: Long) {
@@ -955,10 +967,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     override fun onError(message: String) {
-        runOnUiThread { accountStatus.text = "●  CONNECTION ERROR"; accountStatus.setTextColor(red); toast("Deriv: $message") }
+        runOnUiThread { accountStatus.text = "●  CONNECTION ERROR"; accountStatus.setTextColor(red); connectButton?.text = "↗  CONNECT"; toast("Deriv: $message") }
     }
     override fun onDisconnected() {
-        runOnUiThread { connected = false; accountStatus.text = "●  NOT CONNECTED"; accountStatus.setTextColor(red) }
+        runOnUiThread { connected = false; accountStatus.text = "●  NOT CONNECTED"; accountStatus.setTextColor(red); connectButton?.text = "↗  CONNECT" }
     }
 
     override fun onDestroy() {
@@ -966,5 +978,4 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         super.onDestroy()
     }
                             }
-                            
                             
