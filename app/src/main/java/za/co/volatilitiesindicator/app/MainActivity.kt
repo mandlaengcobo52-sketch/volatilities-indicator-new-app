@@ -846,53 +846,7 @@ val swingLow = pivots
                     else -> "NEUTRAL"
                 }
 
-                                val breakDirection = when {
-    latest.close > swingHigh -> "BULLISH"
-    latest.close < swingLow -> "BEARISH"
-    else -> "NONE"
-}
-
-val bos = when {
-    breakDirection == "BULLISH" &&
-        previousTrend == "BULLISH" ->
-        "BULLISH BOS"
-
-    breakDirection == "BEARISH" &&
-        previousTrend == "BEARISH" ->
-        "BEARISH BOS"
-
-    breakDirection == "BULLISH" &&
-        previousTrend == "BEARISH" ->
-        "NO BOS — POSSIBLE BULLISH CHOCH"
-
-    breakDirection == "BEARISH" &&
-        previousTrend == "BULLISH" ->
-        "NO BOS — POSSIBLE BEARISH CHOCH"
-
-    breakDirection == "BULLISH" ->
-        "BULLISH BREAK — TREND UNCONFIRMED"
-
-    breakDirection == "BEARISH" ->
-        "BEARISH BREAK — TREND UNCONFIRMED"
-
-    else ->
-        "NO CONFIRMED BOS"
-}
-
-val choch = when {
-    breakDirection == "BULLISH" &&
-        previousTrend == "BEARISH" ->
-        "BULLISH CHOCH / MSS"
-
-    breakDirection == "BEARISH" &&
-        previousTrend == "BULLISH" ->
-        "BEARISH CHOCH / MSS"
-
-    else ->
-        "NO CONFIRMED CHOCH / MSS"
-}
-
-val previousTrend = when {
+                                val previousTrend = when {
     lastTwoHighs.size < 2 ||
         lastTwoLows.size < 2 -> "UNCONFIRMED"
 
@@ -905,6 +859,36 @@ val previousTrend = when {
         "BEARISH"
 
     else -> "MIXED"
+}
+
+val breakDirection = when {
+    latest.close > swingHigh -> "BULLISH"
+    latest.close < swingLow -> "BEARISH"
+    else -> "NONE"
+}
+
+val bos = when {
+    breakDirection == "BULLISH" &&
+        previousTrend == "BULLISH" -> "BULLISH BOS"
+
+    breakDirection == "BEARISH" &&
+        previousTrend == "BEARISH" -> "BEARISH BOS"
+
+    breakDirection == "BULLISH" -> "BULLISH BREAK — TREND UNCONFIRMED"
+
+    breakDirection == "BEARISH" -> "BEARISH BREAK — TREND UNCONFIRMED"
+
+    else -> "NO CONFIRMED BOS"
+}
+
+val choch = when {
+    breakDirection == "BULLISH" &&
+        previousTrend == "BEARISH" -> "BULLISH CHOCH / MSS"
+
+    breakDirection == "BEARISH" &&
+        previousTrend == "BULLISH" -> "BEARISH CHOCH / MSS"
+
+    else -> "NO CONFIRMED CHOCH / MSS"
 }
 
 val choch = when {
