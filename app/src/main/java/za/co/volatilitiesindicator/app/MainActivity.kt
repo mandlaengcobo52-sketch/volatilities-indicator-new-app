@@ -448,15 +448,16 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             weighted()
         )
 
-        button("⟳  REFRESH", false) {
-    if (connected) {
-        accountStatus.text = "●  CONNECTED — $executionMode"
-        accountStatus.setTextColor(green)
-        toast("Deriv connection is active.")
-    } else {
-        toast("Connect to Deriv first.")
-    }
-},
+                buttons.addView(
+            button("⟳  REFRESH", false) {
+                if (connected) {
+                    accountStatus.text = "●  CONNECTED — $executionMode"
+                    accountStatus.setTextColor(green)
+                    toast("Deriv connection is active.")
+                } else {
+                    toast("Connect to Deriv first.")
+                }
+            },
             weighted()
         )
 
