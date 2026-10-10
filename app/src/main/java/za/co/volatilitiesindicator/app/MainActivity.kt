@@ -24,6 +24,9 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import android.util.Base64
+import java.security.MessageDigest
+import java.security.SecureRandom
 
 /** Volatilities Indicator Android app. */
 class MainActivity : Activity(), DerivApiClient.Callback {
@@ -424,7 +427,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         buttons.addView(
             button("⟳  REFRESH", false) {
-                if (connected) beginDerivConnection() else toast("Connect to Deriv first.")
+                if (connected) derivApiClient.refreshBalance() else toast("Connect to Deriv first.")
             },
             weighted()
         )
@@ -825,10 +828,28 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (token.isNotBlank()) connectWithToken(token) else startDerivOAuth()
     }
 
+    private fun createCodeVerifier(): String {
+        val bytes = ByteArray(32)
+        SecureRandom().nextBytes(bytes)
+        return Base64.encodeToString(
+            bytes,
+            Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
+        )
+    }
+
+    private fun createCodeChallenge(verifier: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(verifier.toByteArray(Charsets.US_ASCII))
+        return Base64.encodeToString(
+            digest,
+            Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
+        )
+    }
+
     private fun startDerivOAuth() {
         val state = "android-" + UUID.randomUUID().toString()
-        val verifier = DerivApiClient.createCodeVerifier()
-        val challenge = DerivApiClient.createCodeChallenge(verifier)
+        val verifier = createCodeVerifier()
+        val challenge = createCodeChallenge(verifier)
         prefs.edit().putString("oauth_state", state).putString("code_verifier", verifier)
             .putString("oauth_mode", executionMode).apply()
         val url = Uri.parse(DerivApiClient.OAUTH_AUTH_URL).buildUpon()
@@ -929,6 +950,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             accountStatus.text = "●  CONNECTED — $executionMode"; accountStatus.setTextColor(green)
         }
     }
+    override fun onTick(symbol: String, quote: Double, epoch: Long) {
+        // Live tick values are not displayed by the current shell UI.
+    }
+
     override fun onError(message: String) {
         runOnUiThread { accountStatus.text = "●  CONNECTION ERROR"; accountStatus.setTextColor(red); toast("Deriv: $message") }
     }
@@ -940,6 +965,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         try { derivApiClient.disconnect() } catch (_: Exception) {}
         super.onDestroy()
     }
-
                             }
+                            
                             
