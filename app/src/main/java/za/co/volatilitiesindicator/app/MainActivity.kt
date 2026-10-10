@@ -1124,3 +1124,4 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         try { derivApiClient.disconnect() } catch (_: Exception) {}
         super.onDestroy()
     }
+                            }
