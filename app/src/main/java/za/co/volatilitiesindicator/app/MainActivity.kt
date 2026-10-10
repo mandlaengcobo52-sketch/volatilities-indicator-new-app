@@ -679,6 +679,73 @@ page.addView(
     // =========================================================
     // MARKET STRUCTURE ANALYSIS — BOS / CHOCH
     // =========================================================
+        // =========================================================
+    // CONFIRMED SWING PIVOT DETECTOR
+    // =========================================================
+
+    private data class StructurePivot(
+        val index: Int,
+        val price: Double,
+        val isHigh: Boolean
+    )
+
+    private fun detectStructurePivots(
+        candles: List<DerivApiClient.Candle>,
+        leftBars: Int = 2,
+        rightBars: Int = 2
+    ): List<StructurePivot> {
+
+        if (candles.size < leftBars + rightBars + 1) {
+            return emptyList()
+        }
+
+        val pivots = mutableListOf<StructurePivot>()
+
+        for (i in leftBars until candles.size - rightBars) {
+
+            val candidate = candles[i]
+
+            val leftCandles = candles.subList(
+                i - leftBars,
+                i
+            )
+
+            val rightCandles = candles.subList(
+                i + 1,
+                i + rightBars + 1
+            )
+
+            val isSwingHigh =
+                leftCandles.all { candidate.high > it.high } &&
+                rightCandles.all { candidate.high > it.high }
+
+            val isSwingLow =
+                leftCandles.all { candidate.low < it.low } &&
+                rightCandles.all { candidate.low < it.low }
+
+            if (isSwingHigh) {
+                pivots.add(
+                    StructurePivot(
+                        index = i,
+                        price = candidate.high,
+                        isHigh = true
+                    )
+                )
+            }
+
+            if (isSwingLow) {
+                pivots.add(
+                    StructurePivot(
+                        index = i,
+                        price = candidate.low,
+                        isHigh = false
+                    )
+                )
+            }
+        }
+
+        return pivots.sortedBy { it.index }
+    }
 
     private fun addAdminMarketStructure() {
         val structureContent = LinearLayout(this).apply {
@@ -730,12 +797,18 @@ page.addView(
                 )
             } else {
                 val recent = candles.takeLast(30)
+val latest = recent.last()
+val previous = recent[recent.lastIndex - 1]
 
-                val structureCandles = recent.dropLast(1)
-val swingHigh = structureCandles.maxOf { it.high }
-val swingLow = structureCandles.minOf { it.low }
-                val latest = recent.last()
-                val previous = recent[recent.lastIndex - 1]
+val pivots = detectStructurePivots(recent.dropLast(1))
+
+val swingHigh = pivots
+    .lastOrNull { it.isHigh }
+    ?.price ?: recent.dropLast(1).maxOf { it.high }
+
+val swingLow = pivots
+    .lastOrNull { !it.isHigh }
+    ?.price ?: recent.dropLast(1).minOf { it.low }
 
                 val trend = when {
                     latest.close > previous.high -> "BULLISH"
