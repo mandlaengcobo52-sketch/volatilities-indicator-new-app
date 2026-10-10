@@ -187,7 +187,7 @@ private fun addRegistrationScreen() {
     label("Register your Volatilities Indicator account", 17f, white, true)
 
     registrationCard.addView(
-        label("Your account will remain pending until approved by an administrator.", 14, yellow, false)
+        label("Your account will remain pending until approved by an administrator.", 14f, yellow, false)
     )
 
     val nameInput = android.widget.EditText(this).apply {
