@@ -1488,9 +1488,7 @@ private fun calculateHistoricalMssOutcomes(
         var maxFavPrice = event.confirmation.close
 
         for (
-            k in (event.index + 1).coerceAtMost(candles.size)
-                ..end.coerceAtLeast(event.index + 1)
-        ) {
+            for (k in (event.index + 1)..end) {
             if (k !in candles.indices) continue
 
             val candle = candles[k]
