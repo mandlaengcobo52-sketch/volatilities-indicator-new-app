@@ -665,6 +665,7 @@ page.addView(
         addAdminMarketStructure() 
         addAdminSmcAnalysis()
         addAdminHistoricalMss()
+        addAdminDirectionStructuralTarget()
     }
     private fun updateMarketDataCard(symbol: String) {
         val state = marketData[symbol] ?: return
@@ -1750,6 +1751,231 @@ private fun addAdminHistoricalMss() {
     page.addView(
         addCollapsibleSection(
             "STEP 5 — HISTORICAL MSS / CHOCH BEHAVIOUR",
+            content,
+            false
+        ),
+        matchWrap()
+    )
+}
+// =========================================================
+// STEP 6 — DIRECTION & STRUCTURAL TARGET
+// =========================================================
+
+private fun addAdminDirectionStructuralTarget() {
+    val content = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+    }
+
+    content.addView(
+        label(
+            "Direction comes from the latest confirmed MSS. " +
+                "The structural target is the nearest valid, confirmed H1 swing pivot in that direction.",
+            12f,
+            muted,
+            false
+        )
+    )
+
+    marketSymbols.forEach { symbol ->
+        val candles = historicalCompletedCandles(
+            marketData[symbol]?.candles.orEmpty()
+        )
+
+        val indexCard = card()
+
+        indexCard.addView(
+            label(
+                "INDEX ${symbol.removePrefix("R_")}",
+                16f,
+                green,
+                true
+            )
+        )
+
+        if (candles.size < 30) {
+            indexCard.addView(
+                label(
+                    "STATUS: WAITING — Insufficient completed H1 candles",
+                    12f,
+                    yellow,
+                    true
+                )
+            )
+        } else {
+            val events = historicalMssEvents(candles)
+            val latestEvent = events.lastOrNull()
+
+            if (latestEvent == null) {
+                indexCard.addView(
+                    label(
+                        "STATUS: WAITING — No confirmed MSS available",
+                        12f,
+                        yellow,
+                        true
+                    )
+                )
+            } else {
+                val direction = latestEvent.direction
+                val confirmationIndex = latestEvent.index
+                val confirmationClose = latestEvent.confirmation.close
+                val brokenPivot = latestEvent.pivot.price
+
+                // Only use candles available at MSS confirmation.
+                val candlesAtConfirmation =
+                    candles.take(confirmationIndex + 1)
+
+                val pivots = historicalMssPivots(
+                    candlesAtConfirmation
+                ).first
+
+                // A bullish target must be a confirmed swing high
+                // above the confirmation close.
+                // A bearish target must be a confirmed swing low
+                // below the confirmation close.
+                val targetPivot = when (direction) {
+                    "BULLISH" -> pivots
+                        .filter {
+                            it.type == "HIGH" &&
+                                it.index < confirmationIndex &&
+                                it.price > confirmationClose
+                        }
+                        .maxByOrNull { it.price }
+
+                    "BEARISH" -> pivots
+                        .filter {
+                            it.type == "LOW" &&
+                                it.index < confirmationIndex &&
+                                it.price < confirmationClose
+                        }
+                        .minByOrNull { it.price }
+
+                    else -> null
+                }
+
+                indexCard.addView(
+                    label(
+                        "DIRECTION: ${if (direction == "BULLISH") "UP" else "DOWN"}",
+                        14f,
+                        if (direction == "BULLISH") green else red,
+                        true
+                    )
+                )
+
+                indexCard.addView(
+                    label(
+                        "CONFIRMED MSS: $direction",
+                        12f,
+                        if (direction == "BULLISH") green else red,
+                        true
+                    )
+                )
+
+                indexCard.addView(
+                    label(
+                        "CONFIRMATION TIME: ${
+                            formatMarketTime(latestEvent.confirmation.epoch)
+                        }",
+                        12f,
+                        white,
+                        false
+                    )
+                )
+
+                indexCard.addView(
+                    label(
+                        "BROKEN PIVOT: ${formatMarketPrice(brokenPivot)}",
+                        12f,
+                        white,
+                        false
+                    )
+                )
+
+                indexCard.addView(
+                    label(
+                        "CONFIRM CLOSE: ${formatMarketPrice(confirmationClose)}",
+                        12f,
+                        white,
+                        false
+                    )
+                )
+
+                if (targetPivot == null) {
+                    indexCard.addView(
+                        label(
+                            "STRUCTURAL TARGET: WAITING — No valid confirmed H1 pivot found",
+                            12f,
+                            yellow,
+                            true
+                        )
+                    )
+                } else {
+                    indexCard.addView(
+                        label(
+                            "STRUCTURAL TARGET: ${formatMarketPrice(targetPivot.price)}",
+                            14f,
+                            green,
+                            true
+                        )
+                    )
+
+                    indexCard.addView(
+                        label(
+                            "TARGET TYPE: ${targetPivot.type}",
+                            12f,
+                            white,
+                            false
+                        )
+                    )
+
+                    indexCard.addView(
+                        label(
+                            "TARGET PIVOT TIME: ${
+                                formatMarketTime(targetPivot.epoch)
+                            }",
+                            12f,
+                            muted,
+                            false
+                        )
+                    )
+
+                    val distance = kotlin.math.abs(
+                        targetPivot.price - confirmationClose
+                    )
+
+                    indexCard.addView(
+                        label(
+                            "DISTANCE TO TARGET: ${formatMarketPrice(distance)}",
+                            12f,
+                            white,
+                            false
+                        )
+                    )
+                }
+            }
+        }
+
+        content.addView(
+            indexCard,
+            matchWrap().apply {
+                topMargin = dp(5)
+                bottomMargin = dp(8)
+            }
+        )
+    }
+
+    content.addView(
+        label(
+            "STEP 6 identifies direction and structural target only. " +
+                "It does not qualify or execute trades.",
+            11f,
+            yellow,
+            false
+        )
+    )
+
+    page.addView(
+        addCollapsibleSection(
+            "STEP 6 — DIRECTION & STRUCTURAL TARGET",
             content,
             false
         ),
