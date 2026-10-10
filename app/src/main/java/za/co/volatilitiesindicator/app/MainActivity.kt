@@ -809,7 +809,35 @@ val swingHigh = pivots
 val swingLow = pivots
     .lastOrNull { !it.isHigh }
     ?.price ?: recent.dropLast(1).minOf { it.low }
+                val highPivots = pivots.filter { it.isHigh }
+                val lowPivots = pivots.filter { !it.isHigh }
 
+                val lastTwoHighs = highPivots.takeLast(2)
+                val lastTwoLows = lowPivots.takeLast(2)
+
+                val highStructure = if (lastTwoHighs.size == 2) {
+                    if (lastTwoHighs[1].price > lastTwoHighs[0].price) {
+                        "HH — Higher High"
+                    } else if (lastTwoHighs[1].price < lastTwoHighs[0].price) {
+                        "LH — Lower High"
+                    } else {
+                        "EQH — Equal High"
+                    }
+                } else {
+                    "WAITING — Need 2 swing highs"
+                }
+
+                val lowStructure = if (lastTwoLows.size == 2) {
+                    if (lastTwoLows[1].price > lastTwoLows[0].price) {
+                        "HL — Higher Low"
+                    } else if (lastTwoLows[1].price < lastTwoLows[0].price) {
+                        "LL — Lower Low"
+                    } else {
+                        "EQL — Equal Low"
+                    }
+                } else {
+                    "WAITING — Need 2 swing lows"
+                }
                 val trend = when {
                     latest.close > previous.high -> "BULLISH"
                     latest.close < previous.low -> "BEARISH"
@@ -862,6 +890,27 @@ val swingLow = pivots
                         12f,
                         white,
                         false
+                    )
+                )
+                                indexCard.addView(
+                    label(
+                        "SWING HIGH STRUCTURE: $highStructure",
+                        12f,
+                        if (highStructure.startsWith("HH")) green
+                        else if (highStructure.startsWith("LH")) red
+                        else yellow,
+                        true
+                    )
+                )
+
+                indexCard.addView(
+                    label(
+                        "SWING LOW STRUCTURE: $lowStructure",
+                        12f,
+                        if (lowStructure.startsWith("HL")) green
+                        else if (lowStructure.startsWith("LL")) red
+                        else yellow,
+                        true
                     )
                 )
 
