@@ -868,25 +868,45 @@ val breakDirection = when {
 }
 
 val bos = when {
+    previousTrend == "UNCONFIRMED" ->
+        "WAITING — INSUFFICIENT STRUCTURE"
+
+    previousTrend == "MIXED" ->
+        "WAITING — MIXED STRUCTURE"
+
     breakDirection == "BULLISH" &&
-        previousTrend == "BULLISH" -> "BULLISH BOS"
+        previousTrend == "BULLISH" ->
+        "BULLISH BOS"
 
     breakDirection == "BEARISH" &&
-        previousTrend == "BEARISH" -> "BEARISH BOS"
+        previousTrend == "BEARISH" ->
+        "BEARISH BOS"
 
-    breakDirection == "BULLISH" -> "BULLISH BREAK — TREND UNCONFIRMED"
+    breakDirection == "BULLISH" &&
+        previousTrend == "BEARISH" ->
+        "OPPOSITE BREAK — POSSIBLE BULLISH CHOCH"
 
-    breakDirection == "BEARISH" -> "BEARISH BREAK — TREND UNCONFIRMED"
+    breakDirection == "BEARISH" &&
+        previousTrend == "BULLISH" ->
+        "OPPOSITE BREAK — POSSIBLE BEARISH CHOCH"
 
     else -> "NO CONFIRMED BOS"
 }
 
 val choch = when {
+    previousTrend == "UNCONFIRMED" ->
+        "WAITING — PREVIOUS TREND UNCONFIRMED"
+
+    previousTrend == "MIXED" ->
+        "WAITING — STRUCTURE IS MIXED"
+
     breakDirection == "BULLISH" &&
-        previousTrend == "BEARISH" -> "BULLISH CHOCH / MSS"
+        previousTrend == "BEARISH" ->
+        "BULLISH CHOCH / MSS"
 
     breakDirection == "BEARISH" &&
-        previousTrend == "BULLISH" -> "BEARISH CHOCH / MSS"
+        previousTrend == "BULLISH" ->
+        "BEARISH CHOCH / MSS"
 
     else -> "NO CONFIRMED CHOCH / MSS"
 }
