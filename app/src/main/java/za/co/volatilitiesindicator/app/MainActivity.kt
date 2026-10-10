@@ -662,7 +662,8 @@ page.addView(
     ),
     matchWrap()
 )
-        addAdminMarketStructure()   
+        addAdminMarketStructure() 
+        addAdminSmcAnalysis()
     }
     private fun updateMarketDataCard(symbol: String) {
         val state = marketData[symbol] ?: return
@@ -1024,7 +1025,234 @@ val choch = when {
             matchWrap()
         )
     }
-    
+    // =========================================================
+// SMART MONEY CONCEPTS (SMC) ANALYSIS ENGINE
+// =========================================================
+
+private fun addAdminSmcAnalysis() {
+    val smcContent = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+    }
+
+    smcContent.addView(
+        label(
+            "SMART MONEY CONCEPTS — H1",
+            16f,
+            green,
+            true
+        )
+    )
+
+    smcContent.addView(
+        label(
+            "Order Blocks • FVG • Liquidity • Sweeps • Retests • Momentum",
+            12f,
+            muted,
+            false
+        )
+    )
+
+    marketSymbols.forEach { symbol ->
+        val candles = marketData[symbol]?.candles.orEmpty()
+        val indexCard = card()
+
+        indexCard.addView(
+            label(
+                "INDEX ${symbol.removePrefix("R_")}",
+                15f,
+                green,
+                true
+            )
+        )
+
+        if (candles.size < 10) {
+            indexCard.addView(
+                label(
+                    "WAITING — Insufficient H1 candles",
+                    12f,
+                    yellow,
+                    false
+                )
+            )
+        } else {
+            val recent = candles.takeLast(30)
+            val latest = recent.last()
+            val previous = recent[recent.lastIndex - 1]
+            val older = recent[recent.lastIndex - 2]
+
+            // Fair Value Gap: three-candle imbalance.
+            val bullishFvg =
+                older.high < latest.low
+
+            val bearishFvg =
+                older.low > latest.high
+
+            val fvg = when {
+                bullishFvg -> "BULLISH FVG"
+                bearishFvg -> "BEARISH FVG"
+                else -> "NO CURRENT FVG"
+            }
+
+            // Liquidity levels from preceding candles.
+            val preceding = recent.dropLast(1)
+            val liquidityHigh = preceding.maxOf { it.high }
+            val liquidityLow = preceding.minOf { it.low }
+
+            val liquiditySweep = when {
+                latest.high > liquidityHigh &&
+                    latest.close < liquidityHigh ->
+                    "BUY-SIDE LIQUIDITY SWEPT"
+
+                latest.low < liquidityLow &&
+                    latest.close > liquidityLow ->
+                    "SELL-SIDE LIQUIDITY SWEPT"
+
+                else -> "NO CONFIRMED LIQUIDITY SWEEP"
+            }
+
+            // Retest of a previous candle's high or low.
+            val retest = when {
+                latest.low <= previous.high &&
+                    latest.close > previous.high ->
+                    "POTENTIAL BULLISH RETEST"
+
+                latest.high >= previous.low &&
+                    latest.close < previous.low ->
+                    "POTENTIAL BEARISH RETEST"
+
+                else -> "NO RETEST IDENTIFIED"
+            }
+
+            // Short-term candle momentum.
+            val momentum = when {
+                latest.close > latest.open &&
+                    latest.close > previous.close ->
+                    "BULLISH MOMENTUM"
+
+                latest.close < latest.open &&
+                    latest.close < previous.close ->
+                    "BEARISH MOMENTUM"
+
+                else -> "NEUTRAL MOMENTUM"
+            }
+
+            // Preliminary order-block candidate.
+            val orderBlock = when {
+                previous.close < previous.open &&
+                    latest.close > previous.high ->
+                    "POTENTIAL BULLISH ORDER BLOCK"
+
+                previous.close > previous.open &&
+                    latest.close < previous.low ->
+                    "POTENTIAL BEARISH ORDER BLOCK"
+
+                else -> "NO ORDER BLOCK CONFIRMED"
+            }
+
+            indexCard.addView(
+                label(
+                    "ORDER BLOCK: $orderBlock",
+                    12f,
+                    white,
+                    true
+                )
+            )
+
+            indexCard.addView(
+                label(
+                    "FAIR VALUE GAP: $fvg",
+                    12f,
+                    if (bullishFvg) green
+                    else if (bearishFvg) red
+                    else yellow,
+                    true
+                )
+            )
+
+            indexCard.addView(
+                label(
+                    "LIQUIDITY HIGH: ${formatMarketPrice(liquidityHigh)}",
+                    12f,
+                    green,
+                    false
+                )
+            )
+
+            indexCard.addView(
+                label(
+                    "LIQUIDITY LOW: ${formatMarketPrice(liquidityLow)}",
+                    12f,
+                    red,
+                    false
+                )
+            )
+
+            indexCard.addView(
+                label(
+                    "LIQUIDITY SWEEP: $liquiditySweep",
+                    12f,
+                    white,
+                    false
+                )
+            )
+
+            indexCard.addView(
+                label(
+                    "RETEST: $retest",
+                    12f,
+                    white,
+                    false
+                )
+            )
+
+            indexCard.addView(
+                label(
+                    "MOMENTUM: $momentum",
+                    12f,
+                    if (momentum.startsWith("BULLISH")) green
+                    else if (momentum.startsWith("BEARISH")) red
+                    else yellow,
+                    true
+                )
+            )
+
+            indexCard.addView(
+                label(
+                    "LAST CLOSE: ${formatMarketPrice(latest.close)}",
+                    12f,
+                    white,
+                    false
+                )
+            )
+        }
+
+        smcContent.addView(
+            indexCard,
+            matchWrap().apply {
+                bottomMargin = dp(8)
+                topMargin = dp(5)
+            }
+        )
+    }
+
+    smcContent.addView(
+        label(
+            "SMC results are preliminary candle-based candidates, not verified institutional order flow or trade instructions.",
+            11f,
+            yellow,
+            false
+        )
+    )
+
+    page.addView(
+        addCollapsibleSection(
+            "ANALYSIS — SMART MONEY CONCEPTS",
+            smcContent,
+            false
+        ),
+        matchWrap()
+    )
+}
     private fun formatMarketPrice(price: Double?): String =
         price?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
 
