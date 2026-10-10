@@ -860,23 +860,40 @@ val swingLow = pivots
                     else -> "NEUTRAL"
                 }
 
-                val bos = when {
-                    latest.close > swingHigh -> "BULLISH BOS"
-                    latest.close < swingLow -> "BEARISH BOS"
-                    else -> "NO CONFIRMED BOS"
-                }
+                val breakDirection = when {
+    latest.close > swingHigh -> "BULLISH"
+    latest.close < swingLow -> "BEARISH"
+    else -> "NONE"
+}
 
-                val choch = when {
-                    previousTrend == "BEARISH" &&
-                        latest.close > swingHigh ->
-                        "BULLISH CHOCH / MSS"
+val bos = when {
+    breakDirection == "BULLISH" &&
+        previousTrend == "BULLISH" ->
+        "BULLISH BOS"
 
-                    previousTrend == "BULLISH" &&
-                        latest.close < swingLow ->
-                        "BEARISH CHOCH / MSS"
+    breakDirection == "BEARISH" &&
+        previousTrend == "BEARISH" ->
+        "BEARISH BOS"
 
-                    else -> "NO CONFIRMED CHOCH / MSS"
-                }
+    breakDirection == "NONE" ->
+        "NO CONFIRMED BOS"
+
+    else ->
+        "NO BOS — OPPOSITE STRUCTURE BREAK"
+}
+
+val choch = when {
+    breakDirection == "BULLISH" &&
+        previousTrend == "BEARISH" ->
+        "BULLISH CHOCH / MSS"
+
+    breakDirection == "BEARISH" &&
+        previousTrend == "BULLISH" ->
+        "BEARISH CHOCH / MSS"
+
+    else ->
+        "NO CONFIRMED CHOCH / MSS"
+}
 
                 indexCard.addView(
                     label(
