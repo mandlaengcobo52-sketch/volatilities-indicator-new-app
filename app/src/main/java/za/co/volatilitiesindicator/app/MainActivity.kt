@@ -662,10 +662,11 @@ page.addView(
     ),
     matchWrap()
 )
-        addAdminMarketStructure() 
-        addAdminSmcAnalysis()
-        addAdminHistoricalMss()
-        addAdminDirectionStructuralTarget()
+        addAdminMarketStructure()
+addAdminSmcAnalysis()
+addAdminHistoricalMss()
+addAdminDirectionStructuralTarget()
+addAdminQualification()
     }
     private fun updateMarketDataCard(symbol: String) {
         val state = marketData[symbol] ?: return
@@ -1976,6 +1977,273 @@ private fun addAdminDirectionStructuralTarget() {
     page.addView(
         addCollapsibleSection(
             "STEP 6 — DIRECTION & STRUCTURAL TARGET",
+            content,
+            false
+        ),
+        matchWrap()
+    )
+}
+// =========================================================
+// ANALYSIS — QUALIFICATION ENGINE
+// =========================================================
+
+private fun addAdminQualification() {
+
+    val content = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+    }
+
+    content.addView(
+        label(
+            "QUALIFICATION — H1",
+            16f,
+            green,
+            true
+        )
+    )
+
+    content.addView(
+        label(
+            "Checks confirmed MSS direction, valid structural target, and historical MSS evidence in the same direction.",
+            12f,
+            muted,
+            false
+        )
+    )
+
+    marketSymbols.forEach { symbol ->
+
+        val candles = historicalCompletedCandles(
+            marketData[symbol]?.candles.orEmpty()
+        )
+
+        val indexCard = card()
+
+        indexCard.addView(
+            label(
+                "INDEX ${symbol.removePrefix("R_")}",
+                16f,
+                green,
+                true
+            )
+        )
+
+        if (candles.size < 30) {
+
+            indexCard.addView(
+                label(
+                    "STATUS: WAITING",
+                    14f,
+                    yellow,
+                    true
+                )
+            )
+
+            indexCard.addView(
+                label(
+                    "Insufficient completed H1 candles.",
+                    12f,
+                    muted,
+                    false
+                )
+            )
+
+        } else {
+
+            val events = historicalMssEvents(candles)
+            val latestEvent = events.lastOrNull()
+
+            if (latestEvent == null) {
+
+                indexCard.addView(
+                    label(
+                        "STATUS: WAITING",
+                        14f,
+                        yellow,
+                        true
+                    )
+                )
+
+                indexCard.addView(
+                    label(
+                        "No confirmed MSS event is available.",
+                        12f,
+                        muted,
+                        false
+                    )
+                )
+
+            } else {
+
+                val direction = latestEvent.direction
+                val confirmationIndex = latestEvent.index
+                val confirmationClose =
+                    latestEvent.confirmation.close
+
+                // Find structural pivots available at confirmation.
+                val candlesAtConfirmation =
+                    candles.take(confirmationIndex + 1)
+
+                val pivots = historicalMssPivots(
+                    candlesAtConfirmation
+                ).first
+
+                // Find a valid target in the MSS direction.
+                val targetPivot = when (direction) {
+
+                    "BULLISH" -> pivots
+                        .filter {
+                            it.type == "HIGH" &&
+                                it.index < confirmationIndex &&
+                                it.price > confirmationClose
+                        }
+                        .maxByOrNull { it.price }
+
+                    "BEARISH" -> pivots
+                        .filter {
+                            it.type == "LOW" &&
+                                it.index < confirmationIndex &&
+                                it.price < confirmationClose
+                        }
+                        .minByOrNull { it.price }
+
+                    else -> null
+                }
+
+                // Use earlier completed MSS events as historical evidence.
+                val historicalEvents = events
+                    .filter {
+                        it.confirmation.epoch !=
+                            latestEvent.confirmation.epoch
+                    }
+                    .takeLast(20)
+
+                val sameDirectionCount =
+                    historicalEvents.count {
+                        it.direction == direction
+                    }
+
+                val directionConfirmed =
+                    direction == "BULLISH" ||
+                    direction == "BEARISH"
+
+                val targetValid = targetPivot != null
+
+                val historicalConfirmed =
+                    sameDirectionCount > 0
+
+                val qualified =
+                    directionConfirmed &&
+                    targetValid &&
+                    historicalConfirmed
+
+                indexCard.addView(
+                    label(
+                        "DIRECTION: ${
+                            if (direction == "BULLISH") "UP"
+                            else "DOWN"
+                        }",
+                        13f,
+                        if (direction == "BULLISH") green else red,
+                        true
+                    )
+                )
+
+                indexCard.addView(
+                    label(
+                        "MSS CONFIRMATION: ${
+                            if (directionConfirmed) "CONFIRMED"
+                            else "WAITING"
+                        }",
+                        12f,
+                        if (directionConfirmed) green else yellow,
+                        false
+                    )
+                )
+
+                indexCard.addView(
+                    label(
+                        "STRUCTURAL TARGET: ${
+                            targetPivot?.let {
+                                formatMarketPrice(it.price)
+                            } ?: "WAITING — NO VALID TARGET"
+                        }",
+                        13f,
+                        if (targetValid) green else yellow,
+                        true
+                    )
+                )
+
+                indexCard.addView(
+                    label(
+                        "SAME-DIRECTION HISTORICAL MSS: $sameDirectionCount",
+                        12f,
+                        if (historicalConfirmed) green else yellow,
+                        false
+                    )
+                )
+
+                indexCard.addView(
+                    label(
+                        "HISTORICAL EVIDENCE: ${
+                            if (historicalConfirmed) "PRESENT"
+                            else "WAITING — NO MATCH"
+                        }",
+                        12f,
+                        if (historicalConfirmed) green else yellow,
+                        false
+                    )
+                )
+
+                indexCard.addView(
+                    label(
+                        if (qualified) {
+                            "QUALIFIED FOR NEXT DECISION STAGE"
+                        } else {
+                            "NOT QUALIFIED — WAITING"
+                        },
+                        15f,
+                        if (qualified) green else yellow,
+                        true
+                    )
+                )
+
+                indexCard.addView(
+                    label(
+                        if (qualified) {
+                            "All qualification requirements are present. No contract is opened here."
+                        } else {
+                            "All three requirements must be satisfied before this index can proceed."
+                        },
+                        12f,
+                        muted,
+                        false
+                    )
+                )
+            }
+        }
+
+        content.addView(
+            indexCard,
+            matchWrap().apply {
+                topMargin = dp(5)
+                bottomMargin = dp(8)
+            }
+        )
+    }
+
+    content.addView(
+        label(
+            "Qualification does not execute trades. It only determines whether an index may proceed to the next decision stage.",
+            11f,
+            yellow,
+            false
+        )
+    )
+
+    page.addView(
+        addCollapsibleSection(
+            "ANALYSIS — QUALIFICATION",
             content,
             false
         ),
