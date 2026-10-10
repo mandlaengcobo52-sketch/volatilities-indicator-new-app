@@ -538,10 +538,26 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 LinearLayout.LayoutParams(0, -2, 1f)
             )
 
-            row.addView(
-                label("WAITING", 12f, yellow, true),
-                LinearLayout.LayoutParams(dp(76), -2)
-            )
+            val indexState = marketData[name]
+
+val statusText = when {
+    indexState == null -> "WAITING"
+    indexState.status == "ERROR" -> "ERROR"
+    indexState.candles.isNotEmpty() -> "READY"
+    indexState.price != null -> "LOADING"
+    else -> "WAITING"
+}
+
+val statusColor = when (statusText) {
+    "READY" -> green
+    "ERROR" -> red
+    else -> yellow
+}
+
+row.addView(
+    label(statusText, 12f, statusColor, true),
+    LinearLayout.LayoutParams(dp(76), -2)
+)
 
             row.addView(
                 label("›", 26f, white, false)
