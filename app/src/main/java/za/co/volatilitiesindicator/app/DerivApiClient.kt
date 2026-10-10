@@ -1273,14 +1273,16 @@ fun requestHistoricalCandles() {
                 t: Throwable,
                 response: Response?
             ) {
-                val status = response?.code
-                val detail = buildString {
-                    append(t.message ?: "network error")
-                    if (status != null) append(" (HTTP $status)")
+                val httpStatus = response?.code
+                val detail = when {
+                    httpStatus != null -> "HTTP $httpStatus ${response.message}"
+                    !t.message.isNullOrBlank() -> t.message!!
+                    else -> "network error"
                 }
                 android.util.Log.e(
                     "DerivCandles",
-                    "Historical candle connection failed: $detail"
+                    "Historical candle WebSocket failed: $detail",
+                    t
                 )
                 marketDataSocket = null
                 candleRequestSymbols.clear()
@@ -1353,7 +1355,6 @@ fun refreshHistoricalCandles() {
 // =============================================================
 // PROCESS LIVE TICK RESPONSES
 // =============================================================
-
 val tick = json.optJSONObject("tick")
 
 if (tick != null) {
@@ -1788,7 +1789,7 @@ if (tick != null) {
 
         } catch (
             _: Exception
-                ) {
+        ) {
 
             "HTTP $statusCode"
         }
