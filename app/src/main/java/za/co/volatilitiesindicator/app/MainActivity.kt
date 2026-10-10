@@ -891,19 +891,6 @@ val choch = when {
     else -> "NO CONFIRMED CHOCH / MSS"
 }
 
-val choch = when {
-    breakDirection == "BULLISH" &&
-        previousTrend == "BEARISH" ->
-        "BULLISH CHOCH / MSS"
-
-    breakDirection == "BEARISH" &&
-        previousTrend == "BULLISH" ->
-        "BEARISH CHOCH / MSS"
-
-    else ->
-        "NO CONFIRMED CHOCH / MSS"
-}
-
                 indexCard.addView(
                     label(
                         "TREND: $trend",
