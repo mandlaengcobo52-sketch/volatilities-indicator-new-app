@@ -140,12 +140,30 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             "Trade" -> {
                 addTradeScreen()
             }
-
+"Register" -> {
+    addRegistrationScreen()
+    page.addView(
+        button("BACK TO HOME", false) {
+            selectedTab = "Home"
+            render()
+        },
+        matchWrap()
+    )
+}
             else -> {
                 addPlatformSelector()
                 addExecutionSelector()
                 addAccountCard()
                 addIndexMonitor()
+                                if (platform == "USER") {
+                    page.addView(
+                        button("CREATE ACCOUNT", true) {
+                            selectedTab = "Register"
+                            render()
+                        },
+                        matchWrap()
+                    )
+                                }
 
             }
                 }
@@ -156,6 +174,183 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     // =========================================================
     // HEADER: EXISTING LOGO AND NOTIFICATION BELL
     // =========================================================
+    // ==========================================
+// CREATE ACCOUNT — VOLATILITIES INDICATOR
+// ==========================================
+
+private fun addRegistrationScreen() {
+    page.addView(sectionTitle("CREATE ACCOUNT"))
+
+    val registrationCard = card()
+    registrationCard.orientation = LinearLayout.VERTICAL
+
+    registrationCard.addView(
+        label("Register your Volatilities Indicator account", 17, white, true)
+    )
+
+    registrationCard.addView(
+        label("Your account will remain pending until approved by an administrator.", 14, yellow, false)
+    )
+
+    val nameInput = android.widget.EditText(this).apply {
+        hint = "Name"
+        setSingleLine(true)
+        setTextColor(white)
+        setHintTextColor(muted)
+        setPadding(dp(12), dp(12), dp(12), dp(12))
+        setBackgroundTintList(
+            android.content.res.ColorStateList.valueOf(green)
+        )
+    }
+    registrationCard.addView(nameInput)
+
+    val surnameInput = android.widget.EditText(this).apply {
+        hint = "Surname"
+        setSingleLine(true)
+        setTextColor(white)
+        setHintTextColor(muted)
+        setPadding(dp(12), dp(12), dp(12), dp(12))
+        setBackgroundTintList(
+            android.content.res.ColorStateList.valueOf(green)
+        )
+    }
+    registrationCard.addView(surnameInput)
+
+    val emailInput = android.widget.EditText(this).apply {
+        hint = "Email address"
+        inputType = android.text.InputType.TYPE_CLASS_TEXT or
+            android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+        setSingleLine(true)
+        setTextColor(white)
+        setHintTextColor(muted)
+        setPadding(dp(12), dp(12), dp(12), dp(12))
+        setBackgroundTintList(
+            android.content.res.ColorStateList.valueOf(green)
+        )
+    }
+    registrationCard.addView(emailInput)
+
+    val phoneInput = android.widget.EditText(this).apply {
+        hint = "Contact number"
+        inputType = android.text.InputType.TYPE_CLASS_PHONE
+        setSingleLine(true)
+        setTextColor(white)
+        setHintTextColor(muted)
+        setPadding(dp(12), dp(12), dp(12), dp(12))
+        setBackgroundTintList(
+            android.content.res.ColorStateList.valueOf(green)
+        )
+    }
+    registrationCard.addView(phoneInput)
+
+    fun addPasswordField(title: String): android.widget.LinearLayout {
+        val row = android.widget.LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+        }
+
+        val input = android.widget.EditText(this).apply {
+            hint = title
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setSingleLine(true)
+            setTextColor(white)
+            setHintTextColor(muted)
+            setPadding(dp(12), dp(12), dp(8), dp(12))
+            setBackgroundTintList(
+                android.content.res.ColorStateList.valueOf(green)
+            )
+            layoutParams = LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
+            )
+        }
+
+        val eyeButton = android.widget.TextView(this).apply {
+            text = "SHOW"
+            textSize = 13f
+            setTextColor(green)
+            gravity = android.view.Gravity.CENTER
+            setPadding(dp(10), dp(12), dp(10), dp(12))
+        }
+
+        var visible = false
+
+        eyeButton.setOnClickListener {
+            val cursorPosition = input.selectionStart
+            visible = !visible
+
+            input.inputType = if (visible) {
+                android.text.InputType.TYPE_CLASS_TEXT or
+                    android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+            } else {
+                android.text.InputType.TYPE_CLASS_TEXT or
+                    android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            }
+
+            eyeButton.text = if (visible) "HIDE" else "SHOW"
+
+            if (cursorPosition >= 0) {
+                input.setSelection(
+                    cursorPosition.coerceAtMost(input.text.length)
+                )
+            }
+        }
+
+        row.addView(input)
+        row.addView(eyeButton)
+
+        row.tag = input
+        registrationCard.addView(row)
+
+        return row
+    }
+
+    val passwordRow = addPasswordField("Password")
+    val confirmPasswordRow = addPasswordField("Confirm password")
+
+    registrationCard.addView(
+        button("CREATE ACCOUNT", true) {
+            val name = nameInput.text.toString().trim()
+            val surname = surnameInput.text.toString().trim()
+            val email = emailInput.text.toString().trim()
+            val phone = phoneInput.text.toString().trim()
+
+            val password = (passwordRow.tag as android.widget.EditText)
+                .text.toString()
+
+            val confirmPassword =
+                (confirmPasswordRow.tag as android.widget.EditText)
+                    .text.toString()
+
+            when {
+                name.isBlank() ->
+                    toast("Enter your name.")
+
+                surname.isBlank() ->
+                    toast("Enter your surname.")
+
+                email.isBlank() ->
+                    toast("Enter your email address.")
+
+                phone.isBlank() ->
+                    toast("Enter your contact number.")
+
+                password.length < 8 ->
+                    toast("Password must contain at least 8 characters.")
+
+                password != confirmPassword ->
+                    toast("Passwords do not match.")
+
+                else ->
+                    toast("Registration form validated. Account submission is not connected yet.")
+            }
+        }
+    )
+
+    page.addView(registrationCard)
+}
 
     private fun addHeader() {
         val row = LinearLayout(this).apply {
