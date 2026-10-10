@@ -852,16 +852,36 @@ val swingLow = pivots
     else -> "NO CONFIRMED BOS"
                 }
 
+                                val previousTrend = when {
+                    lastTwoHighs.size >= 2 &&
+                        lastTwoLows.size >= 2 &&
+                        lastTwoHighs[1].price > lastTwoHighs[0].price &&
+                        lastTwoLows[1].price > lastTwoLows[0].price -> "BULLISH"
+
+                    lastTwoHighs.size >= 2 &&
+                        lastTwoLows.size >= 2 &&
+                        lastTwoHighs[1].price < lastTwoHighs[0].price &&
+                        lastTwoLows[1].price < lastTwoLows[0].price -> "BEARISH"
+
+                    else -> "NEUTRAL"
+                }
+
+                val bos = when {
+                    latest.close > swingHigh -> "BULLISH BOS"
+                    latest.close < swingLow -> "BEARISH BOS"
+                    else -> "NO CONFIRMED BOS"
+                }
+
                 val choch = when {
-    previous.close < previous.open &&
-        latest.close > swingHigh ->
-        "POSSIBLE BULLISH CHOCH"
+                    previousTrend == "BEARISH" &&
+                        latest.close > swingHigh ->
+                        "BULLISH CHOCH / MSS"
 
-    previous.close > previous.open &&
-        latest.close < swingLow ->
-        "POSSIBLE BEARISH CHOCH"
+                    previousTrend == "BULLISH" &&
+                        latest.close < swingLow ->
+                        "BEARISH CHOCH / MSS"
 
-    else -> "NO CONFIRMED CHOCH"
+                    else -> "NO CONFIRMED CHOCH / MSS"
                 }
 
                 indexCard.addView(
