@@ -731,8 +731,9 @@ page.addView(
             } else {
                 val recent = candles.takeLast(30)
 
-                val swingHigh = recent.maxOf { it.high }
-                val swingLow = recent.minOf { it.low }
+                val structureCandles = recent.dropLast(1)
+val swingHigh = structureCandles.maxOf { it.high }
+val swingLow = structureCandles.minOf { it.low }
                 val latest = recent.last()
                 val previous = recent[recent.lastIndex - 1]
 
@@ -745,21 +746,21 @@ page.addView(
                 }
 
                 val bos = when {
-                    latest.close > swingHigh -> "BULLISH BOS"
-                    latest.close < swingLow -> "BEARISH BOS"
-                    else -> "NO CONFIRMED BOS"
+    latest.close > swingHigh -> "BULLISH BOS"
+    latest.close < swingLow -> "BEARISH BOS"
+    else -> "NO CONFIRMED BOS"
                 }
 
                 val choch = when {
-                    previous.close < previous.open &&
-                        latest.close > previous.high ->
-                        "POSSIBLE BULLISH CHOCH"
+    previous.close < previous.open &&
+        latest.close > swingHigh ->
+        "POSSIBLE BULLISH CHOCH"
 
-                    previous.close > previous.open &&
-                        latest.close < previous.low ->
-                        "POSSIBLE BEARISH CHOCH"
+    previous.close > previous.open &&
+        latest.close < swingLow ->
+        "POSSIBLE BEARISH CHOCH"
 
-                    else -> "NO CONFIRMED CHOCH"
+    else -> "NO CONFIRMED CHOCH"
                 }
 
                 indexCard.addView(
