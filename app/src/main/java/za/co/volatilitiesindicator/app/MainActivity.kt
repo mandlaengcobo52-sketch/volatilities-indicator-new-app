@@ -151,7 +151,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     )
 }
 "Account" -> {
-    addAccountCard()
+    addUserProfileScreen()
     page.addView(
         button("BACK TO HOME", false) {
             selectedTab = "Home"
@@ -162,11 +162,14 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 }
 
 "Logout" -> {
-    selectedTab = "Register"
+    selectedTab = "Login"
     drawerOpen = false
     render()
 }
-            else -> {
+            "Login" -> {
+    addLoginScreen()
+            }
+                    else -> {
                 addPlatformSelector()
                 addExecutionSelector()
                 addAccountCard()
@@ -187,10 +190,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         addBottomNavigation(outer)
     }
 
-    // =========================================================
-    // HEADER: EXISTING LOGO AND NOTIFICATION BELL
-    // =========================================================
-    // ==========================================
+// =========================================================
+// HEADER: EXISTING LOGO AND NOTIFICATION BELL
+// =========================================================
+// ==========================================
 // CREATE ACCOUNT — VOLATILITIES INDICATOR
 // ==========================================
 
@@ -216,6 +219,7 @@ private fun addRegistrationScreen() {
             android.content.res.ColorStateList.valueOf(green)
         )
     }
+    
     registrationCard.addView(nameInput)
 
     val surnameInput = android.widget.EditText(this).apply {
@@ -365,7 +369,139 @@ private fun addRegistrationScreen() {
 
     page.addView(registrationCard)
 }
+// SIGN IN — VOLATILITIES INDICATOR
+private fun addLoginScreen() {
+    page.addView(sectionTitle("SIGN IN"))
 
+    val loginCard = card()
+    loginCard.orientation = LinearLayout.VERTICAL
+
+    loginCard.addView(
+        label("Welcome back", 20f, green, true)
+    )
+
+    loginCard.addView(
+        label(
+            "Sign in to your Volatilities Indicator account.",
+            14f,
+            muted,
+            false
+        )
+    )
+
+    val emailInput = android.widget.EditText(this).apply {
+        hint = "Email address"
+        inputType = android.text.InputType.TYPE_CLASS_TEXT or
+            android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+        setSingleLine(true)
+        setTextColor(white)
+        setHintTextColor(muted)
+        setPadding(dp(12), dp(12), dp(12), dp(12))
+        setBackgroundTintList(
+            android.content.res.ColorStateList.valueOf(green)
+        )
+    }
+
+    loginCard.addView(emailInput)
+
+    val passwordInput = android.widget.EditText(this).apply {
+        hint = "Password"
+        inputType = android.text.InputType.TYPE_CLASS_TEXT or
+            android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        setSingleLine(true)
+        setTextColor(white)
+        setHintTextColor(muted)
+        setPadding(dp(12), dp(12), dp(12), dp(12))
+        setBackgroundTintList(
+            android.content.res.ColorStateList.valueOf(green)
+        )
+    }
+
+    loginCard.addView(passwordInput)
+
+    loginCard.addView(
+        button("SIGN IN", true) {
+            val email = emailInput.text.toString().trim()
+            val password = passwordInput.text.toString()
+
+            when {
+                email.isBlank() ->
+                    toast("Enter your email address.")
+
+                password.isBlank() ->
+                    toast("Enter your password.")
+
+                else ->
+                    toast(
+                        "Sign-in service is not connected yet."
+                    )
+            }
+        },
+        matchWrap().apply {
+            topMargin = dp(12)
+        }
+    )
+
+    loginCard.addView(
+        button("CREATE ACCOUNT", false) {
+            selectedTab = "Register"
+            drawerOpen = false
+            render()
+        },
+        matchWrap().apply {
+            topMargin = dp(8)
+        }
+    )
+
+    page.addView(
+        loginCard,
+        matchWrap()
+    )
+}
+private fun addUserProfileScreen() {
+    val profileCard = card()
+    profileCard.orientation = LinearLayout.VERTICAL
+    profileCard.setPadding(dp(20), dp(20), dp(20), dp(20))
+
+    profileCard.addView(
+        label("MY PROFILE", 22f, Color.WHITE)
+    )
+
+    profileCard.addView(
+        label("Personal Account", 15f, Color.LTGRAY)
+    )
+
+    profileCard.addView(
+        label("Name: Not available", 15f, Color.WHITE)
+    )
+
+    profileCard.addView(
+        label("Email: Not available", 15f, Color.WHITE)
+    )
+
+    profileCard.addView(
+        label("Account Status: Pending approval", 15f, Color.YELLOW)
+    )
+
+    profileCard.addView(
+        label("Subscription Plan: Not assigned", 15f, Color.WHITE)
+    )
+
+    page.addView(
+        profileCard,
+        LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        )
+    )
+
+    page.addView(
+        button("BACK TO HOME", false) {
+            selectedTab = "Home"
+            render()
+        }
+    )
+}
     private fun addHeader() {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
