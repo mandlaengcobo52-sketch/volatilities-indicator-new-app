@@ -697,7 +697,6 @@ private val candleIndexes = listOf(
                         }
 
                         try {
-
                             val json =
                                 JSONObject(
                                     body
@@ -1134,6 +1133,16 @@ fun requestHistoricalCandles() {
 
                     webSocket.send(message.toString())
                 }
+
+                // Subscribe to public live prices on the same market-data socket.
+                for (symbol in candleIndexes) {
+                    val tickRequest = JSONObject().apply {
+                        put("ticks", symbol)
+                        put("subscribe", 1)
+                        put("req_id", marketDataRequestId++)
+                    }
+                    webSocket.send(tickRequest.toString())
+                }
             }
 
             override fun onMessage(
@@ -1151,6 +1160,17 @@ fun requestHistoricalCandles() {
                             "Deriv candle API error: ${apiError.optString("code")} - ${apiError.optString("message")}; response=$text"
                         )
                         return
+                    }
+
+                    // Public market-data socket also streams tick updates.
+                    val tick = json.optJSONObject("tick")
+                    if (tick != null) {
+                        val tickSymbol = tick.optString("symbol", "")
+                        val quote = tick.optDouble("quote", Double.NaN)
+                        val epoch = tick.optLong("epoch", 0L)
+                        if (tickSymbol in candleIndexes && quote.isFinite()) {
+                            callback.onTick(tickSymbol, quote, epoch)
+                        }
                     }
 
                     val echoRequest = json.optJSONObject("echo_req")
@@ -2143,4 +2163,5 @@ if (tick != null) {
         }
     }
 }
+
     
