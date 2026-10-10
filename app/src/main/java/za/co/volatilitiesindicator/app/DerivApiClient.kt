@@ -617,7 +617,7 @@ private val candleIndexes = listOf(
             "$OTP_URL/$selectedAccountId/otp"
         val request =
             Request.Builder()
-              .url(
+                .url(
                     url
                 )
                 .addHeader(
@@ -1245,6 +1245,7 @@ fun requestHistoricalCandles() {
                             )
                         }
                     }
+
                     if (candles.isNotEmpty()) {
                         candleRequestSymbols.remove(requestId)
                         callback.onCandles(symbol, candles.sortedBy { it.epoch })
@@ -1272,17 +1273,21 @@ fun requestHistoricalCandles() {
                 t: Throwable,
                 response: Response?
             ) {
+                val status = response?.code
+                val detail = buildString {
+                    append(t.message ?: "network error")
+                    if (status != null) append(" (HTTP $status)")
+                }
                 android.util.Log.e(
                     "DerivCandles",
-                    "Historical candle connection failed: ${t.message}"
+                    "Historical candle connection failed: $detail"
                 )
                 marketDataSocket = null
-                val message = t.message ?: "Market-data WebSocket failed"
                 candleRequestSymbols.clear()
                 for (symbol in candleIndexes) {
                     callback.onMarketDataError(
                         symbol,
-                        "Historical data connection failed: $message"
+                        "Historical data connection failed: $detail"
                     )
                 }
             }
@@ -1783,7 +1788,7 @@ if (tick != null) {
 
         } catch (
             _: Exception
-        ) {
+                ) {
 
             "HTTP $statusCode"
         }
@@ -1915,13 +1920,6 @@ if (tick != null) {
         cancelReconnect()
 
         stopHeartbeat()
-
-        try {
-            marketDataSocket?.close(1000, "Manual disconnect")
-        } catch (_: Exception) {
-        }
-        marketDataSocket = null
-        candleRequestSymbols.clear()
 
         try {
 
@@ -2151,13 +2149,6 @@ if (tick != null) {
         stopHeartbeat()
 
         try {
-            marketDataSocket?.close(1000, "Client destroyed")
-        } catch (_: Exception) {
-        }
-        marketDataSocket = null
-        candleRequestSymbols.clear()
-
-        try {
 
             webSocket
                 ?.close(
@@ -2209,7 +2200,8 @@ if (tick != null) {
                 .dispatcher
                 .executorService
                 .shutdown()
-                } catch (
+
+        } catch (
             _: Exception
         ) {
         }
