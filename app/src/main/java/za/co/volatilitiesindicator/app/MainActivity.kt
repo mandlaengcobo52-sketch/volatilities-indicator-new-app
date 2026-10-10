@@ -1486,8 +1486,6 @@ private fun calculateHistoricalMssOutcomes(
         var maxFav = 0.0
         var maxAdv = 0.0
         var maxFavPrice = event.confirmation.close
-
-        for (
             for (k in (event.index + 1)..end) {
             if (k !in candles.indices) continue
 
