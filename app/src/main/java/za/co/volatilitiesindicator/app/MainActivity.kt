@@ -585,7 +585,10 @@ row.addView(
     }
 
     private fun addAdminMarketData() {
-        page.addView(sectionTitle("ANALYSIS — MARKET DATA"))
+
+    val marketSectionContent = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+    }
         val intro = card()
         intro.addView(label("NEW STRUCTURE ENGINE", 17f, green, true))
         intro.addView(label("Live Deriv prices and completed H1 historical candles for all five synthetic indexes.", 13f, muted, false))
@@ -602,7 +605,10 @@ row.addView(
             derivApiClient.refreshHistoricalCandles()
             toast("Market data refresh requested.")
         }, matchWrap().apply { topMargin = dp(10) })
-        page.addView(intro, matchWrap().apply { bottomMargin = dp(10) })
+        marketSectionContent.addView(
+    intro,
+    matchWrap().apply { bottomMargin = dp(10) }
+)
 
         marketDataViews.clear()
         marketSymbols.forEach { symbol ->
@@ -629,14 +635,33 @@ row.addView(
             val messageView = label(state.message, 11f, muted, false)
             indexCard.addView(messageView, matchWrap().apply { topMargin = dp(7) })
             marketDataViews[symbol] = mapOf("status" to statusView, "price" to priceView, "candles" to candlesView, "time" to timeView, "message" to messageView)
-            page.addView(indexCard, matchWrap().apply { bottomMargin = dp(8) })
+            marketSectionContent.addView(
+    indexCard,
+    matchWrap().apply { bottomMargin = dp(8) }
+)
         }
         if (!marketDataStarted) {
             marketDataStarted = true
             derivApiClient.requestHistoricalCandles()
         }
         marketSymbols.forEach { updateMarketDataCard(it) }
-        page.addView(label("Source: Deriv public market-data WebSocket • H1 candles • 1,000 candles per index", 10f, muted, false))
+        marketSectionContent.addView(
+    label(
+        "Source: Deriv public market-data WebSocket • H1 candles • 1,000 candles per index",
+        10f,
+        muted,
+        false
+    )
+)
+
+page.addView(
+    addCollapsibleSection(
+        "ANALYSIS — MARKET DATA",
+        marketSectionContent,
+        false
+    ),
+    matchWrap()
+)
     }
     private fun updateMarketDataCard(symbol: String) {
         val state = marketData[symbol] ?: return
