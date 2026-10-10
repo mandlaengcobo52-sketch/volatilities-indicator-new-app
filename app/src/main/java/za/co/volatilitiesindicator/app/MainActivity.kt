@@ -662,6 +662,7 @@ page.addView(
     ),
     matchWrap()
 )
+        addAdminMarketStructure()   
     }
     private fun updateMarketDataCard(symbol: String) {
         val state = marketData[symbol] ?: return
@@ -675,7 +676,179 @@ page.addView(
         views["time"]?.text = "LAST CANDLE\n${formatMarketTime(state.lastCandleEpoch)}"
         views["message"]?.text = state.message
     }
+    // =========================================================
+    // MARKET STRUCTURE ANALYSIS — BOS / CHOCH
+    // =========================================================
 
+    private fun addAdminMarketStructure() {
+        val structureContent = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        structureContent.addView(
+            label(
+                "H1 MARKET STRUCTURE",
+                16f,
+                green,
+                true
+            )
+        )
+
+        structureContent.addView(
+            label(
+                "Swing structure, Break of Structure (BOS), " +
+                    "Change of Character (CHOCH), and trend direction.",
+                12f,
+                muted,
+                false
+            )
+        )
+
+        marketSymbols.forEach { symbol ->
+            val state = marketData[symbol]
+            val candles = state?.candles.orEmpty()
+
+            val indexCard = card()
+
+            indexCard.addView(
+                label(
+                    "INDEX ${symbol.removePrefix("R_")}",
+                    15f,
+                    green,
+                    true
+                )
+            )
+
+            if (candles.size < 10) {
+                indexCard.addView(
+                    label(
+                        "WAITING — Insufficient historical candles.",
+                        12f,
+                        yellow,
+                        false
+                    )
+                )
+            } else {
+                val recent = candles.takeLast(30)
+
+                val swingHigh = recent.maxOf { it.high }
+                val swingLow = recent.minOf { it.low }
+                val latest = recent.last()
+                val previous = recent[recent.lastIndex - 1]
+
+                val trend = when {
+                    latest.close > previous.high -> "BULLISH"
+                    latest.close < previous.low -> "BEARISH"
+                    latest.close > latest.open -> "BULLISH CANDLE"
+                    latest.close < latest.open -> "BEARISH CANDLE"
+                    else -> "NEUTRAL"
+                }
+
+                val bos = when {
+                    latest.close > swingHigh -> "BULLISH BOS"
+                    latest.close < swingLow -> "BEARISH BOS"
+                    else -> "NO CONFIRMED BOS"
+                }
+
+                val choch = when {
+                    previous.close < previous.open &&
+                        latest.close > previous.high ->
+                        "POSSIBLE BULLISH CHOCH"
+
+                    previous.close > previous.open &&
+                        latest.close < previous.low ->
+                        "POSSIBLE BEARISH CHOCH"
+
+                    else -> "NO CONFIRMED CHOCH"
+                }
+
+                indexCard.addView(
+                    label(
+                        "TREND: $trend",
+                        13f,
+                        if (trend.startsWith("BULLISH")) green
+                        else if (trend.startsWith("BEARISH")) red
+                        else yellow,
+                        true
+                    )
+                )
+
+                indexCard.addView(
+                    label(
+                        "STRUCTURE: $bos",
+                        12f,
+                        white,
+                        true
+                    )
+                )
+
+                indexCard.addView(
+                    label(
+                        "CHARACTER: $choch",
+                        12f,
+                        white,
+                        false
+                    )
+                )
+
+                indexCard.addView(
+                    label(
+                        "SWING HIGH: ${formatMarketPrice(swingHigh)}",
+                        12f,
+                        green,
+                        false
+                    )
+                )
+
+                indexCard.addView(
+                    label(
+                        "SWING LOW: ${formatMarketPrice(swingLow)}",
+                        12f,
+                        red,
+                        false
+                    )
+                )
+
+                indexCard.addView(
+                    label(
+                        "LAST CLOSE: ${formatMarketPrice(latest.close)}",
+                        12f,
+                        white,
+                        false
+                    )
+                )
+            }
+
+            structureContent.addView(
+                indexCard,
+                matchWrap().apply {
+                    bottomMargin = dp(8)
+                    topMargin = dp(5)
+                }
+            )
+        }
+
+        structureContent.addView(
+            label(
+                "Note: This is preliminary rule-based analysis. " +
+                    "BOS and CHOCH require validated swing-point detection " +
+                    "before being used as trading signals.",
+                11f,
+                yellow,
+                false
+            )
+        )
+
+        page.addView(
+            addCollapsibleSection(
+                "ANALYSIS — MARKET STRUCTURE",
+                structureContent,
+                false
+            ),
+            matchWrap()
+        )
+    }
+    
     private fun formatMarketPrice(price: Double?): String =
         price?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
 
