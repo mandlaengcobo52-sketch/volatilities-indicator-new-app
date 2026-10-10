@@ -597,8 +597,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             listOf(priceView, candlesView, timeView).forEachIndexed { index, view ->
                 view.setPadding(dp(7), dp(9), dp(5), dp(9))
                 view.background = shape(Color.rgb(5, 16, 10), Color.rgb(0, 65, 32), 9, 1)
-                stats.addView(view,
-                                if (index > 0) leftMargin = dp(5)
+                stats.addView(view, LinearLayout.LayoutParams(0, dp(82), 1f).apply {
+                    if (index > 0) leftMargin = dp(5)
                 })
             }
             indexCard.addView(stats, matchWrap().apply { topMargin = dp(8) })
@@ -614,7 +614,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         marketSymbols.forEach { updateMarketDataCard(it) }
         page.addView(label("Source: Deriv public market-data WebSocket • H1 candles • 1,000 candles per index", 10f, muted, false))
     }
-
     private fun updateMarketDataCard(symbol: String) {
         val state = marketData[symbol] ?: return
         val views = marketDataViews[symbol] ?: return
@@ -1125,5 +1124,3 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         try { derivApiClient.disconnect() } catch (_: Exception) {}
         super.onDestroy()
     }
-
-                            }
