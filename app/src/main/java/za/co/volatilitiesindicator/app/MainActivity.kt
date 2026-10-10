@@ -24,9 +24,6 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
-import android.util.Base64
-import java.security.MessageDigest
-import java.security.SecureRandom
 
 /** Volatilities Indicator Android app. */
 class MainActivity : Activity(), DerivApiClient.Callback {
@@ -51,7 +48,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private lateinit var accountStatus: TextView
     private lateinit var accountIdView: TextView
     private lateinit var balanceView: TextView
-    private var connectButton: Button? = null
     private var connected = false
     private var accountId = ""
     private var accountType = ""
@@ -60,6 +56,19 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val derivApiClient by lazy { DerivApiClient(this) }
     private val httpClient = OkHttpClient()
     private val prefs by lazy { getSharedPreferences("deriv_oauth", MODE_PRIVATE) }
+
+    private data class MarketIndexState(
+        var price: Double? = null,
+        var candles: List<DerivApiClient.Candle> = emptyList(),
+        var lastCandleEpoch: Long = 0L,
+        var status: String = "WAITING",
+        var message: String = "Waiting for Deriv market data..."
+    )
+
+    private val marketSymbols = listOf("R_10", "R_25", "R_50", "R_75", "R_100")
+    private val marketData = marketSymbols.associateWith { MarketIndexState() }.toMutableMap()
+    private val marketDataViews = mutableMapOf<String, Map<String, TextView>>()
+    private var marketDataStarted = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -116,13 +125,21 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             addDrawer()
         }
 
-        addPlatformSelector()
-        addExecutionSelector()
-        addAccountCard()
-        addIndexMonitor()
+        if (selectedTab == "Analysis") {
+            if (platform == "ADMIN") {
+                addAdminMarketData()
+            } else {
+                addAdminOnlyNotice()
+            }
+        } else {
+            addPlatformSelector()
+            addExecutionSelector()
+            addAccountCard()
+            addIndexMonitor()
 
-        if (platform == "ADMIN") {
-            addAdminPreview()
+            if (platform == "ADMIN") {
+                addAdminPreview()
+            }
         }
 
         addBottomNavigation(outer)
@@ -417,27 +434,18 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         val buttons = horizontalRow()
 
-        val accountActionButton = button(
-            if (connected) "↗  DISCONNECT" else "↗  CONNECT",
-            true
-        ) {
-            if (connected) disconnectDeriv() else beginDerivConnection()
-        }
-        connectButton = accountActionButton
-        buttons.addView(accountActionButton, weighted())
+        buttons.addView(
+            button(if (connected) "↗  DISCONNECT" else "↗  CONNECT", true) {
+                if (connected) disconnectDeriv() else beginDerivConnection()
+            },
+            weighted()
+        )
 
         buttons.addView(space(dp(8)))
 
         buttons.addView(
             button("⟳  REFRESH", false) {
-                if (connected) {
-                    accountStatus.text = "●  REFRESHING BALANCE…"
-                    accountStatus.setTextColor(yellow)
-                    toast("Requesting latest Deriv balance…")
-                    derivApiClient.refreshBalance()
-                } else {
-                    toast("Connect to Deriv first.")
-                }
+                if (connected) beginDerivConnection() else toast("Connect to Deriv first.")
             },
             weighted()
         )
@@ -538,10 +546,100 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     // =========================================================
-    // ADMIN PREVIEW
+    // ADMIN-ONLY ANALYSIS — LIVE MARKET DATA
     // =========================================================
 
-    private fun addAdminPreview() {
+    private fun addAdminOnlyNotice() {
+        page.addView(sectionTitle("ANALYSIS"))
+        val notice = card()
+        notice.addView(label("ADMIN ACCESS ONLY", 16f, yellow, true))
+        notice.addView(label("Market data and historical candles are available only in the Admin platform.", 13f, muted, false))
+        page.addView(notice, matchWrap())
+    }
+
+    private fun addAdminMarketData() {
+        page.addView(sectionTitle("ANALYSIS — MARKET DATA"))
+        val intro = card()
+        intro.addView(label("NEW STRUCTURE ENGINE", 17f, green, true))
+        intro.addView(label("Live Deriv prices and completed H1 historical candles for all five synthetic indexes.", 13f, muted, false))
+        intro.addView(label("H1 timeframe • 1,000 candles per index", 12f, white, true))
+        intro.addView(button("⟳  REFRESH MARKET DATA", true) {
+            marketSymbols.forEach { symbol ->
+                marketData[symbol]?.apply {
+                    status = "LOADING"
+                    message = "Refreshing live price and H1 candles..."
+                }
+                updateMarketDataCard(symbol)
+            }
+            marketDataStarted = true
+            derivApiClient.requestHistoricalCandles()
+            derivApiClient.refreshHistoricalCandles()
+            toast("Market data refresh requested.")
+        }, matchWrap().apply { topMargin = dp(10) })
+        page.addView(intro, matchWrap().apply { bottomMargin = dp(10) })
+
+        marketDataViews.clear()
+        marketSymbols.forEach { symbol ->
+            val state = marketData[symbol] ?: MarketIndexState()
+            val indexCard = card()
+            val top = horizontalRow()
+            top.addView(label("Index ${symbol.removePrefix("R_")}", 16f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
+            val statusView = label(state.status, 11f, if (state.status == "READY") green else yellow, true)
+            top.addView(statusView)
+            indexCard.addView(top)
+
+            val stats = horizontalRow().apply { gravity = Gravity.TOP }
+            val priceView = label("CURRENT PRICE\n${formatMarketPrice(state.price)}", 12f, white, true)
+            val candlesView = label("HISTORICAL CANDLES\n${state.candles.size}", 12f, white, true)
+            val timeView = label("LAST CANDLE\n${formatMarketTime(state.lastCandleEpoch)}", 12f, white, true)
+            listOf(priceView, candlesView, timeView).forEachIndexed { index, view ->
+                view.setPadding(dp(7), dp(9), dp(5), dp(9))
+                view.background = shape(Color.rgb(5, 16, 10), Color.rgb(0, 65, 32), 9, 1)
+                stats.addView(view, LinearLayout.LayoutParams(0, dp(82), 1f).apply {
+                    if (index > 0) leftMargin = dp(5)
+                })
+            }
+            indexCard.addView(stats, matchWrap().apply { topMargin = dp(8) })
+            val messageView = label(state.message, 11f, muted, false)
+            indexCard.addView(messageView, matchWrap().apply { topMargin = dp(7) })
+            marketDataViews[symbol] = mapOf("status" to statusView, "price" to priceView, "candles" to candlesView, "time" to timeView, "message" to messageView)
+            page.addView(indexCard, matchWrap().apply { bottomMargin = dp(8) })
+        }
+
+        if (!marketDataStarted) {
+            marketDataStarted = true
+            derivApiClient.requestHistoricalCandles()
+        }
+        marketSymbols.forEach { updateMarketDataCard(it) }
+        page.addView(label("Source: Deriv public market-data WebSocket • H1 candles • 1,000 candles per index", 10f, muted, false))
+    }
+
+    private fun updateMarketDataCard(symbol: String) {
+        val state = marketData[symbol] ?: return
+        val views = marketDataViews[symbol] ?: return
+        views["status"]?.apply {
+            text = state.status
+            setTextColor(if (state.status == "READY") green else if (state.status == "ERROR") red else yellow)
+        }
+        views["price"]?.text = "CURRENT PRICE\n${formatMarketPrice(state.price)}"
+        views["candles"]?.text = "HISTORICAL CANDLES\n${state.candles.size}"
+        views["time"]?.text = "LAST CANDLE\n${formatMarketTime(state.lastCandleEpoch)}"
+        views["message"]?.text = state.message
+    }
+
+    private fun formatMarketPrice(price: Double?): String =
+        price?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
+
+    private fun formatMarketTime(epoch: Long): String {
+        if (epoch <= 0L) return "—"
+        return java.text.SimpleDateFormat("yyyy/MM/dd, HH:mm:ss", java.util.Locale("en", "ZA"))
+            .format(java.util.Date(epoch * 1000L))
+    }
+
+    // =========================================================
+    // ADMIN PREVIEW
+    // =========================================================
+private fun addAdminPreview() {
         page.addView(sectionTitle("ADMINISTRATION"))
 
         val card = card()
@@ -732,6 +830,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     white
                 }
             )
+
             background = shape(
                 if (active) green else panel2,
                 if (active) green else Color.rgb(40, 68, 72),
@@ -837,28 +936,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (token.isNotBlank()) connectWithToken(token) else startDerivOAuth()
     }
 
-    private fun createCodeVerifier(): String {
-        val bytes = ByteArray(32)
-        SecureRandom().nextBytes(bytes)
-        return Base64.encodeToString(
-            bytes,
-            Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
-        )
-    }
-
-    private fun createCodeChallenge(verifier: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-            .digest(verifier.toByteArray(Charsets.US_ASCII))
-        return Base64.encodeToString(
-            digest,
-            Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
-        )
-    }
-
     private fun startDerivOAuth() {
         val state = "android-" + UUID.randomUUID().toString()
-        val verifier = createCodeVerifier()
-        val challenge = createCodeChallenge(verifier)
+        val verifier = DerivApiClient.createCodeVerifier()
+        val challenge = DerivApiClient.createCodeChallenge(verifier)
         prefs.edit().putString("oauth_state", state).putString("code_verifier", verifier)
             .putString("oauth_mode", executionMode).apply()
         val url = Uri.parse(DerivApiClient.OAUTH_AUTH_URL).buildUpon()
@@ -936,7 +1017,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         try { derivApiClient.disconnect() } catch (_: Exception) {}
         connected = false; accountId = ""; accountType = ""; accountBalance = 0.0; accountCurrency = ""
         accountStatus.text = "●  NOT CONNECTED"; accountStatus.setTextColor(red)
-        connectButton?.text = "↗  CONNECT"
         accountIdView.text = "Account:  —"; balanceView.text = "Balance:  —"
         toast("Deriv disconnected.")
     }
@@ -948,7 +1028,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         runOnUiThread {
             this.accountId = accountId; this.accountType = accountType; connected = true
             accountStatus.text = "●  CONNECTED — $executionMode"; accountStatus.setTextColor(green)
-            connectButton?.text = "↗  DISCONNECT"
             accountIdView.text = "Account:  $accountId"
 
             toast("Deriv $executionMode connected.")
@@ -959,23 +1038,66 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             accountBalance = balance; accountCurrency = currency; connected = true
             balanceView.text = "Balance:  $currency ${String.format(java.util.Locale.US, "%.2f", balance)}"
             accountStatus.text = "●  CONNECTED — $executionMode"; accountStatus.setTextColor(green)
-            connectButton?.text = "↗  DISCONNECT"
         }
     }
     override fun onTick(symbol: String, quote: Double, epoch: Long) {
-        // Live tick values are not displayed by the current shell UI.
+        if (symbol !in marketSymbols || !quote.isFinite()) return
+        runOnUiThread {
+            val state = marketData[symbol] ?: return@runOnUiThread
+            state.price = quote
+            if (state.candles.isNotEmpty()) {
+                state.status = "READY"
+                state.message = "LIVE — price updating from Deriv."
+            } else {
+                state.status = "LOADING"
+                state.message = "Live price received; loading H1 historical candles..."
+            }
+            updateMarketDataCard(symbol)
+        }
+    }
+
+    override fun onCandles(symbol: String, candles: List<DerivApiClient.Candle>) {
+        if (symbol !in marketSymbols) return
+        runOnUiThread {
+            val state = marketData[symbol] ?: return@runOnUiThread
+            state.candles = candles.sortedBy { it.epoch }
+            state.lastCandleEpoch = state.candles.lastOrNull()?.epoch ?: 0L
+            state.status = if (state.candles.isNotEmpty()) "READY" else "WAITING"
+            state.message = if (state.candles.isNotEmpty()) {
+                "LIVE — price updating from Deriv."
+            } else {
+                "Waiting for historical candles from Deriv..."
+            }
+            updateMarketDataCard(symbol)
+        }
     }
 
     override fun onError(message: String) {
-        runOnUiThread { accountStatus.text = "●  CONNECTION ERROR"; accountStatus.setTextColor(red); connectButton?.text = "↗  CONNECT"; toast("Deriv: $message") }
+        runOnUiThread {
+            accountStatus.text = "●  CONNECTION ERROR"
+            accountStatus.setTextColor(red)
+            marketSymbols.forEach { symbol ->
+                val state = marketData[symbol] ?: return@forEach
+                if (state.candles.isEmpty() && state.price == null) {
+                    state.status = "ERROR"
+                    state.message = message
+                    updateMarketDataCard(symbol)
+                }
+            }
+            toast("Deriv: $message")
+        }
     }
     override fun onDisconnected() {
-        runOnUiThread { connected = false; accountStatus.text = "●  NOT CONNECTED"; accountStatus.setTextColor(red); connectButton?.text = "↗  CONNECT" }
+        runOnUiThread { connected = false; accountStatus.text = "●  NOT CONNECTED"; accountStatus.setTextColor(red) }
     }
 
     override fun onDestroy() {
         try { derivApiClient.disconnect() } catch (_: Exception) {}
         super.onDestroy()
     }
+
                             }
+
                             
+    
+     
