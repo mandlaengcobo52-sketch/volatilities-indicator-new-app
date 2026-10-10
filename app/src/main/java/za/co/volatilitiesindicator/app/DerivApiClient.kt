@@ -598,6 +598,7 @@ private val candleIndexes = listOf(
     private fun requestWebSocketOtp(
         selectedAccountId: String
     ) {
+
         val token =
             accessToken
 
@@ -614,7 +615,6 @@ private val candleIndexes = listOf(
 
         val url =
             "$OTP_URL/$selectedAccountId/otp"
-
         val request =
             Request.Builder()
                 .url(
@@ -1202,6 +1202,7 @@ fun requestHistoricalCandles() {
                         )
                         return
                     }
+
                     val candlesJson = json.optJSONArray("candles")
                         ?: json.optJSONObject("history")?.optJSONArray("candles")
 
@@ -1226,8 +1227,7 @@ fun requestHistoricalCandles() {
                         val high = item.optDouble("high", Double.NaN)
                         val low = item.optDouble("low", Double.NaN)
                         val close = item.optDouble("close", Double.NaN)
-
-                        if (
+                           if (
                             epoch > 0L &&
                             open.isFinite() &&
                             high.isFinite() &&
@@ -1278,6 +1278,10 @@ fun requestHistoricalCandles() {
                     "Historical candle connection failed: ${t.message}"
                 )
                 marketDataSocket = null
+                val message = t.message ?: "Market-data WebSocket failed"
+                for (symbol in candleIndexes) {
+                    callback.onMarketDataError(symbol, message)
+                }
                 candleRequestSymbols.clear()
                 for (symbol in candleIndexes) {
                     callback.onMarketDataError(
@@ -1824,6 +1828,7 @@ if (tick != null) {
                     if (
                         manuallyDisconnected
                     ) {
+
                         return@schedule
                     }
 
@@ -2201,3 +2206,5 @@ if (tick != null) {
         }
     }
 }
+                        
+        
