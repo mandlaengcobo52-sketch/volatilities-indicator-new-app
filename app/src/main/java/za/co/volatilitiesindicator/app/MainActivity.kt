@@ -399,11 +399,15 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         )
 
         accountStatus = label(
-            "●  NOT CONNECTED",
-            14f,
-            red,
-            true
-        )
+    if (connected) {
+        "●  CONNECTED — $executionMode"
+    } else {
+        "●  NOT CONNECTED"
+    },
+    14f,
+    if (connected) green else red,
+    true
+)
 
         val statusLine = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -444,12 +448,15 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             weighted()
         )
 
-        buttons.addView(space(dp(8)))
-
-        buttons.addView(
-            button("⟳  REFRESH", false) {
-                if (connected) beginDerivConnection() else toast("Connect to Deriv first.")
-            },
+        button("⟳  REFRESH", false) {
+    if (connected) {
+        accountStatus.text = "●  CONNECTED — $executionMode"
+        accountStatus.setTextColor(green)
+        toast("Deriv connection is active.")
+    } else {
+        toast("Connect to Deriv first.")
+    }
+},
             weighted()
         )
 
