@@ -128,22 +128,30 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             addDrawer()
         }
 
-        if (selectedTab == "Analysis") {
-            if (platform == "ADMIN") {
-                addAdminMarketData()
-            } else {
-                addAdminOnlyNotice()
+                when (selectedTab) {
+            "Analysis" -> {
+                if (platform == "ADMIN") {
+                    addAdminMarketData()
+                } else {
+                    addAdminOnlyNotice()
+                }
             }
-        } else {
-            addPlatformSelector()
-            addExecutionSelector()
-            addAccountCard()
-            addIndexMonitor()
 
-            if (platform == "ADMIN") {
-                addAdminPreview()
+            "Trade" -> {
+                addTradeScreen()
             }
-        }
+
+            else -> {
+                addPlatformSelector()
+                addExecutionSelector()
+                addAccountCard()
+                addIndexMonitor()
+
+                if (platform == "ADMIN") {
+                    addAdminPreview()
+                }
+            }
+                }
 
         addBottomNavigation(outer)
     }
@@ -2248,6 +2256,227 @@ private fun addAdminQualification() {
             false
         ),
         matchWrap()
+    )
+}
+// =========================================================
+// TRADE SCREEN
+// =========================================================
+
+// Always starts OFF. This UI switch does not execute trades.
+private var autoTradeEnabled = false
+
+private fun addTradeScreen() {
+    page.addView(sectionTitle("TRADE CONTROL"))
+
+    // Account and connection status
+    val accountCard = card()
+
+    accountCard.addView(
+        label("EXECUTION ACCOUNT", 14f, green, true)
+    )
+
+    accountCard.addView(
+        label("Mode: $executionMode", 13f, white, true)
+    )
+
+    accountCard.addView(
+        label(
+            if (connected) {
+                "Connection: CONNECTED"
+            } else {
+                "Connection: NOT CONNECTED"
+            },
+            12f,
+            if (connected) green else red,
+            true
+        )
+    )
+
+    accountCard.addView(
+        label(
+            if (accountId.isNotBlank()) {
+                "Account ID: $accountId"
+            } else {
+                "Account ID: —"
+            },
+            12f,
+            muted,
+            false
+        )
+    )
+
+    page.addView(
+        accountCard,
+        matchWrap().apply {
+            bottomMargin = dp(10)
+        }
+    )
+
+    // Auto Trade control
+    page.addView(sectionTitle("AUTO TRADE"))
+
+    val autoTradeCard = card()
+
+    autoTradeCard.addView(
+        label(
+            if (autoTradeEnabled) {
+                "AUTO TRADE: ARMED — EXECUTION NOT CONNECTED"
+            } else {
+                "AUTO TRADE: OFF"
+            },
+            15f,
+            if (autoTradeEnabled) yellow else red,
+            true
+        )
+    )
+
+    autoTradeCard.addView(
+        label(
+            "Automatic execution is not connected yet. " +
+                "Turning this switch ON will not open trades.",
+            12f,
+            muted,
+            false
+        )
+    )
+
+    autoTradeCard.addView(
+        button(
+            if (autoTradeEnabled) {
+                "DISARM AUTO TRADE"
+            } else {
+                "ARM AUTO TRADE"
+            },
+            autoTradeEnabled
+        ) {
+            autoTradeEnabled = !autoTradeEnabled
+            render()
+        },
+        matchWrap().apply {
+            topMargin = dp(8)
+        }
+    )
+
+    page.addView(
+        autoTradeCard,
+        matchWrap().apply {
+            bottomMargin = dp(10)
+        }
+    )
+
+    // Running Trades
+    page.addView(sectionTitle("RUNNING TRADES"))
+
+    val runningCard = card()
+
+    runningCard.addView(
+        label(
+            "OPEN CONTRACT DETAILS",
+            13f,
+            green,
+            true
+        )
+    )
+
+    listOf(
+        "Index",
+        "Direction",
+        "Execution time",
+        "Time remaining",
+        "Profit / Loss",
+        "Barrier",
+        "Potential payment",
+        "Stake",
+        "Close trade"
+    ).forEach { field ->
+        runningCard.addView(
+            label(
+                "$field: —",
+                12f,
+                white,
+                false
+            )
+        )
+    }
+
+    runningCard.addView(
+        label(
+            "No confirmed running-contract records are available in this screen yet.",
+            12f,
+            yellow,
+            false
+        ).apply {
+            setPadding(0, dp(8), 0, 0)
+        }
+    )
+
+    page.addView(
+        runningCard,
+        matchWrap().apply {
+            bottomMargin = dp(10)
+        }
+    )
+
+    // Trading History
+    page.addView(sectionTitle("TRADING HISTORY"))
+
+    val historyCard = card()
+
+    historyCard.addView(
+        label(
+            "ACCOUNT MODE: $executionMode",
+            13f,
+            green,
+            true
+        )
+    )
+
+    historyCard.addView(
+        label(
+            "History is displayed for the selected account mode only.",
+            12f,
+            muted,
+            false
+        )
+    )
+
+    listOf(
+        "Index",
+        "Direction",
+        "Execution time",
+        "Closing time",
+        "Stake",
+        "Barrier",
+        "Final payment",
+        "Final Profit / Loss",
+        "Status"
+    ).forEach { field ->
+        historyCard.addView(
+            label(
+                "$field: —",
+                12f,
+                white,
+                false
+            )
+        )
+    }
+
+    historyCard.addView(
+        label(
+            "No confirmed completed-contract records are available in this screen yet.",
+            12f,
+            yellow,
+            false
+        ).apply {
+            setPadding(0, dp(8), 0, 0)
+        }
+    )
+
+    page.addView(
+        historyCard,
+        matchWrap().apply {
+            bottomMargin = dp(10)
+        }
     )
 }
     private fun formatMarketPrice(price: Double?): String =
