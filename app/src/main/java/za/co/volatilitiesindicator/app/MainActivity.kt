@@ -846,12 +846,6 @@ val swingLow = pivots
                     else -> "NEUTRAL"
                 }
 
-                val bos = when {
-    latest.close > swingHigh -> "BULLISH BOS"
-    latest.close < swingLow -> "BEARISH BOS"
-    else -> "NO CONFIRMED BOS"
-                }
-
                                 val previousTrend = when {
                     lastTwoHighs.size >= 2 &&
                         lastTwoLows.size >= 2 &&
