@@ -184,9 +184,7 @@ private fun addRegistrationScreen() {
     val registrationCard = card()
     registrationCard.orientation = LinearLayout.VERTICAL
 
-    registrationCard.addView(
-        label("Register your Volatilities Indicator account", 17, white, true)
-    )
+    label("Register your Volatilities Indicator account", 17f, white, true)
 
     registrationCard.addView(
         label("Your account will remain pending until approved by an administrator.", 14, yellow, false)
