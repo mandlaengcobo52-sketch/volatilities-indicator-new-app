@@ -816,39 +816,45 @@ val swingLow = pivots
                 val lastTwoLows = lowPivots.takeLast(2)
 
                 val highStructure = if (lastTwoHighs.size == 2) {
-                    if (lastTwoHighs[1].price > lastTwoHighs[0].price) {
-                        "HH — Higher High"
-                    } else if (lastTwoHighs[1].price < lastTwoHighs[0].price) {
-                        "LH — Lower High"
-                    } else {
-                        "EQH — Equal High"
-                    }
-                } else {
-                    "WAITING — Need 2 swing highs"
-                }
+    when {
+        lastTwoHighs[1].price > lastTwoHighs[0].price ->
+            "HH — Higher High"
 
-                val lowStructure = if (lastTwoLows.size == 2) {
-                    if (lastTwoLows[1].price > lastTwoLows[0].price) {
-                        "HL — Higher Low"
-                    } else if (lastTwoLows[1].price < lastTwoLows[0].price) {
-                        "LL — Lower Low"
-                    } else {
-                        "EQL — Equal Low"
-                    }
-                } else {
-                    "WAITING — Need 2 swing lows"
-                }
-                val trend = when {
-                    latest.close > previous.high -> "BULLISH"
-                    latest.close < previous.low -> "BEARISH"
-                    latest.close > latest.open -> "BULLISH CANDLE"
-                    latest.close < latest.open -> "BEARISH CANDLE"
-                    else -> "NEUTRAL"
-                }
+        lastTwoHighs[1].price < lastTwoHighs[0].price ->
+            "LH — Lower High"
 
-                                val previousTrend = when {
+        else -> "EQH — Equal High"
+    }
+} else {
+    "WAITING — Need 2 swing highs"
+}
+
+val lowStructure = if (lastTwoLows.size == 2) {
+    when {
+        lastTwoLows[1].price > lastTwoLows[0].price ->
+            "HL — Higher Low"
+
+        lastTwoLows[1].price < lastTwoLows[0].price ->
+            "LL — Lower Low"
+
+        else -> "EQL — Equal Low"
+    }
+} else {
+    "WAITING — Need 2 swing lows"
+}
+
+val trend = when {
+    latest.close > previous.high -> "BULLISH"
+    latest.close < previous.low -> "BEARISH"
+    latest.close > latest.open -> "BULLISH CANDLE"
+    latest.close < latest.open -> "BEARISH CANDLE"
+    else -> "NEUTRAL"
+}
+
+val previousTrend = when {
     lastTwoHighs.size < 2 ||
-        lastTwoLows.size < 2 -> "UNCONFIRMED"
+        lastTwoLows.size < 2 ->
+        "UNCONFIRMED"
 
     lastTwoHighs[1].price > lastTwoHighs[0].price &&
         lastTwoLows[1].price > lastTwoLows[0].price ->
