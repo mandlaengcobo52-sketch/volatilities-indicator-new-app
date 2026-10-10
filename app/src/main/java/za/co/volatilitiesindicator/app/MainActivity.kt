@@ -664,6 +664,7 @@ page.addView(
 )
         addAdminMarketStructure() 
         addAdminSmcAnalysis()
+        addAdminHistoricalMss()
     }
     private fun updateMarketDataCard(symbol: String) {
         val state = marketData[symbol] ?: return
@@ -1248,6 +1249,512 @@ private fun addAdminSmcAnalysis() {
         addCollapsibleSection(
             "ANALYSIS — SMART MONEY CONCEPTS",
             smcContent,
+            false
+        ),
+        matchWrap()
+    )
+}
+// =========================================================
+// STEP 5 — HISTORICAL MSS / CHOCH BEHAVIOUR
+// Ported from WebTrader index.php
+// =========================================================
+
+private data class HistoricalMssPivot(
+    val type: String,
+    val index: Int,
+    val epoch: Long,
+    val price: Double,
+    var label: String = "SWING"
+)
+
+private data class HistoricalMssEvent(
+    val direction: String,
+    val pivot: HistoricalMssPivot,
+    val confirmation: DerivApiClient.Candle,
+    val index: Int,
+    var maxFav: Double = 0.0,
+    var maxAdv: Double = 0.0,
+    var maxFavPrice: Double = 0.0,
+    var endedByOpposite: Boolean = false
+)
+
+private fun historicalCompletedCandles(
+    source: List<DerivApiClient.Candle>
+): List<DerivApiClient.Candle> {
+    val sorted = source
+        .filter {
+            it.epoch > 0L &&
+            it.open.isFinite() &&
+            it.high.isFinite() &&
+            it.low.isFinite() &&
+            it.close.isFinite()
+        }
+        .sortedBy { it.epoch }
+
+    val now = System.currentTimeMillis() / 1000L
+
+    val completed = sorted.filter {
+        now - it.epoch >= 3600L
+    }
+
+    return if (completed.size >= 2) {
+        completed
+    } else {
+        sorted.dropLast(1)
+    }
+}
+
+private fun historicalMssPivots(
+    candles: List<DerivApiClient.Candle>
+): Triple<
+    List<HistoricalMssPivot>,
+    List<HistoricalMssPivot>,
+    List<HistoricalMssPivot>
+> {
+    val raw = mutableListOf<HistoricalMssPivot>()
+
+    for (i in 2 until candles.size - 2) {
+        val candle = candles[i]
+
+        val left = candles.subList(i - 2, i)
+        val right = candles.subList(i + 1, i + 3)
+
+        val swingHigh =
+            left.all { candle.high > it.high } &&
+            right.all { candle.high >= it.high }
+
+        val swingLow =
+            left.all { candle.low < it.low } &&
+            right.all { candle.low <= it.low }
+
+        if (swingHigh) {
+            raw.add(
+                HistoricalMssPivot(
+                    "HIGH",
+                    i,
+                    candle.epoch,
+                    candle.high
+                )
+            )
+        }
+
+        if (swingLow) {
+            raw.add(
+                HistoricalMssPivot(
+                    "LOW",
+                    i,
+                    candle.epoch,
+                    candle.low
+                )
+            )
+        }
+    }
+
+    raw.sortBy { it.index }
+
+    val swings = mutableListOf<HistoricalMssPivot>()
+
+    raw.forEach { pivot ->
+        val last = swings.lastOrNull()
+
+        if (last == null) {
+            swings.add(pivot)
+        } else if (last.type == pivot.type) {
+            if (
+                pivot.type == "HIGH" &&
+                pivot.price > last.price
+            ) {
+                swings[swings.lastIndex] = pivot
+            }
+
+            if (
+                pivot.type == "LOW" &&
+                pivot.price < last.price
+            ) {
+                swings[swings.lastIndex] = pivot
+            }
+        } else {
+            swings.add(pivot)
+        }
+    }
+
+    val highs = swings.filter { it.type == "HIGH" }
+    val lows = swings.filter { it.type == "LOW" }
+
+    highs.forEachIndexed { i, pivot ->
+        pivot.label = when {
+            i == 0 -> "SWING"
+            pivot.price > highs[i - 1].price -> "HH"
+            else -> "LH"
+        }
+    }
+
+    lows.forEachIndexed { i, pivot ->
+        pivot.label = when {
+            i == 0 -> "SWING"
+            pivot.price > lows[i - 1].price -> "HL"
+            else -> "LL"
+        }
+    }
+
+    return Triple(swings, highs, lows)
+}
+
+private fun historicalMssEvents(
+    candles: List<DerivApiClient.Candle>
+): List<HistoricalMssEvent> {
+    if (candles.size < 30) return emptyList()
+
+    val (_, highs, lows) = historicalMssPivots(candles)
+
+    val events = mutableListOf<HistoricalMssEvent>()
+    val used = mutableSetOf<String>()
+
+    for (i in candles.indices) {
+        val eligibleHighs = highs.filter {
+            it.index <= i - 2
+        }
+
+        val eligibleLows = lows.filter {
+            it.index <= i - 2
+        }
+
+        val lowerHigh = eligibleHighs
+            .lastOrNull { it.label == "LH" }
+
+        val higherLow = eligibleLows
+            .lastOrNull { it.label == "HL" }
+
+        val candle = candles[i]
+
+        if (
+            lowerHigh != null &&
+            candle.epoch > lowerHigh.epoch &&
+            candle.close > lowerHigh.price
+        ) {
+            val key = "B:${lowerHigh.epoch}"
+
+            if (used.add(key)) {
+                events.add(
+                    HistoricalMssEvent(
+                        "BULLISH",
+                        lowerHigh,
+                        candle,
+                        i
+                    )
+                )
+            }
+        } else if (
+            higherLow != null &&
+            candle.epoch > higherLow.epoch &&
+            candle.close < higherLow.price
+        ) {
+            val key = "S:${higherLow.epoch}"
+
+            if (used.add(key)) {
+                events.add(
+                    HistoricalMssEvent(
+                        "BEARISH",
+                        higherLow,
+                        candle,
+                        i
+                    )
+                )
+            }
+        }
+    }
+
+    return events
+}
+
+private fun calculateHistoricalMssOutcomes(
+    candles: List<DerivApiClient.Candle>,
+    events: List<HistoricalMssEvent>
+): List<HistoricalMssEvent> {
+
+    events.forEachIndexed { eventIndex, event ->
+        var end = candles.lastIndex
+
+        for (j in eventIndex + 1 until events.size) {
+            if (events[j].direction != event.direction) {
+                end = events[j].index
+                event.endedByOpposite = true
+                break
+            }
+        }
+
+        var maxFav = 0.0
+        var maxAdv = 0.0
+        var maxFavPrice = event.confirmation.close
+
+        for (
+            k in (event.index + 1).coerceAtMost(candles.size)
+                ..end.coerceAtLeast(event.index + 1)
+        ) {
+            if (k !in candles.indices) continue
+
+            val candle = candles[k]
+
+            if (event.direction == "BULLISH") {
+                val favourable =
+                    candle.high - event.confirmation.close
+
+                val adverse =
+                    event.confirmation.close - candle.low
+
+                if (favourable > maxFav) {
+                    maxFav = favourable
+                    maxFavPrice = candle.high
+                }
+
+                if (adverse > maxAdv) {
+                    maxAdv = adverse
+                }
+            } else {
+                val favourable =
+                    event.confirmation.close - candle.low
+
+                val adverse =
+                    candle.high - event.confirmation.close
+
+                if (favourable > maxFav) {
+                    maxFav = favourable
+                    maxFavPrice = candle.low
+                }
+
+                if (adverse > maxAdv) {
+                    maxAdv = adverse
+                }
+            }
+        }
+
+        event.maxFav = maxFav
+        event.maxAdv = maxAdv
+        event.maxFavPrice = maxFavPrice
+    }
+
+    return events
+}
+
+private fun addAdminHistoricalMss() {
+    val content = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+    }
+
+    content.addView(
+        label(
+            "Historical MSS events reconstructed from completed H1 candles.",
+            12f,
+            muted,
+            false
+        )
+    )
+
+    marketSymbols.forEach { symbol ->
+        val candles = historicalCompletedCandles(
+            marketData[symbol]?.candles.orEmpty()
+        )
+
+        val indexCard = card()
+
+        indexCard.addView(
+            label(
+                "INDEX ${symbol.removePrefix("R_")}",
+                15f,
+                green,
+                true
+            )
+        )
+
+        if (candles.size < 30) {
+            indexCard.addView(
+                label(
+                    "WAITING — Need at least 30 completed H1 candles.",
+                    12f,
+                    yellow,
+                    false
+                )
+            )
+        } else {
+            val allEvents = calculateHistoricalMssOutcomes(
+                candles,
+                historicalMssEvents(candles)
+            )
+
+            // Exclude the latest event when its confirmation
+            // candle is the latest completed candle.
+            val latestEpoch = candles.last().epoch
+
+            val historical = allEvents
+                .filter { it.confirmation.epoch != latestEpoch }
+                .takeLast(20)
+
+            val bullish = historical.count {
+                it.direction == "BULLISH"
+            }
+
+            val bearish = historical.count {
+                it.direction == "BEARISH"
+            }
+
+            val avgFav = historical
+                .takeIf { it.isNotEmpty() }
+                ?.map { it.maxFav }
+                ?.average()
+
+            val avgAdv = historical
+                .takeIf { it.isNotEmpty() }
+                ?.map { it.maxAdv }
+                ?.average()
+
+            val continuation = historical
+                .takeIf { it.isNotEmpty() }
+                ?.count { it.maxFav > 0.0 }
+                ?.toDouble()
+                ?.div(historical.size)
+                ?.times(100.0)
+
+            indexCard.addView(
+                label(
+                    "HISTORICAL MSS: ${historical.size}",
+                    12f,
+                    white,
+                    true
+                )
+            )
+
+            indexCard.addView(
+                label(
+                    "BULLISH / BEARISH: $bullish / $bearish",
+                    12f,
+                    white,
+                    true
+                )
+            )
+
+            indexCard.addView(
+                label(
+                    "CONTINUATION: ${
+                        continuation?.let {
+                            String.format(
+                                java.util.Locale.US,
+                                "%.1f%%",
+                                it
+                            )
+                        } ?: "—"
+                    }",
+                    12f,
+                    green,
+                    true
+                )
+            )
+
+            indexCard.addView(
+                label(
+                    "AVG FAVOURABLE MOVE: ${
+                        avgFav?.let { formatMarketPrice(it) } ?: "—"
+                    }",
+                    12f,
+                    white,
+                    false
+                )
+            )
+
+            indexCard.addView(
+                label(
+                    "AVG ADVERSE MOVE: ${
+                        avgAdv?.let { formatMarketPrice(it) } ?: "—"
+                    }",
+                    12f,
+                    white,
+                    false
+                )
+            )
+
+            historical.takeLast(6).reversed().forEach { event ->
+                indexCard.addView(
+                    label(
+                        "${event.direction} MSS — ${
+                            formatMarketTime(event.confirmation.epoch)
+                        }",
+                        12f,
+                        if (event.direction == "BULLISH") green else red,
+                        true
+                    )
+                )
+
+                indexCard.addView(
+                    label(
+                        "BROKEN PIVOT: ${
+                            formatMarketPrice(event.pivot.price)
+                        }",
+                        11f,
+                        white,
+                        false
+                    )
+                )
+
+                indexCard.addView(
+                    label(
+                        "CONFIRM CLOSE: ${
+                            formatMarketPrice(event.confirmation.close)
+                        }",
+                        11f,
+                        white,
+                        false
+                    )
+                )
+
+                indexCard.addView(
+                    label(
+                        "FAVOURABLE: ${
+                            formatMarketPrice(event.maxFav)
+                        } | ADVERSE: ${
+                            formatMarketPrice(event.maxAdv)
+                        }",
+                        11f,
+                        muted,
+                        false
+                    )
+                )
+
+                indexCard.addView(
+                    label(
+                        "FAVOURABLE EXTREME: ${
+                            formatMarketPrice(event.maxFavPrice)
+                        } | OPPOSITE MSS: ${
+                            if (event.endedByOpposite) "YES" else "NOT YET"
+                        }",
+                        11f,
+                        white,
+                        false
+                    )
+                )
+            }
+        }
+
+        content.addView(
+            indexCard,
+            matchWrap().apply {
+                topMargin = dp(5)
+                bottomMargin = dp(8)
+            }
+        )
+    }
+
+    content.addView(
+        label(
+            "Historical behaviour is descriptive only. It does not approve or execute trades.",
+            11f,
+            yellow,
+            false
+        )
+    )
+
+    page.addView(
+        addCollapsibleSection(
+            "STEP 5 — HISTORICAL MSS / CHOCH BEHAVIOUR",
+            content,
             false
         ),
         matchWrap()
