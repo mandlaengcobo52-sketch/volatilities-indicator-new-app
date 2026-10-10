@@ -598,7 +598,7 @@ private val candleIndexes = listOf(
     private fun requestWebSocketOtp(
         selectedAccountId: String
     ) {
-val token =
+        val token =
             accessToken
 
         if (
@@ -1202,7 +1202,6 @@ fun requestHistoricalCandles() {
                         )
                         return
                     }
-
                     val candlesJson = json.optJSONArray("candles")
                         ?: json.optJSONObject("history")?.optJSONArray("candles")
 
@@ -1217,7 +1216,7 @@ fun requestHistoricalCandles() {
                                 ?: "Deriv returned no H1 candles for $symbol."
                         )
                         return
-                        }
+                    }
 
                     val candles = mutableListOf<Candle>()
                     for (i in 0 until candlesJson.length()) {
@@ -1825,7 +1824,6 @@ if (tick != null) {
                     if (
                         manuallyDisconnected
                     ) {
-
                         return@schedule
                     }
 
@@ -1842,6 +1840,7 @@ if (tick != null) {
 
                         return@schedule
                     }
+
                     connectWithAccessToken(
                         token,
                         accountType
