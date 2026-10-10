@@ -150,6 +150,22 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         matchWrap()
     )
 }
+"Account" -> {
+    addAccountCard()
+    page.addView(
+        button("BACK TO HOME", false) {
+            selectedTab = "Home"
+            render()
+        },
+        matchWrap()
+    )
+}
+
+"Logout" -> {
+    selectedTab = "Register"
+    drawerOpen = false
+    render()
+}
             else -> {
                 addPlatformSelector()
                 addExecutionSelector()
