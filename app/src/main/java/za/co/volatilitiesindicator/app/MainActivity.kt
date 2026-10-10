@@ -875,11 +875,22 @@ val bos = when {
         previousTrend == "BEARISH" ->
         "BEARISH BOS"
 
-    breakDirection == "NONE" ->
-        "NO CONFIRMED BOS"
+    breakDirection == "BULLISH" &&
+        previousTrend == "BEARISH" ->
+        "NO BOS — POSSIBLE BULLISH CHOCH"
+
+    breakDirection == "BEARISH" &&
+        previousTrend == "BULLISH" ->
+        "NO BOS — POSSIBLE BEARISH CHOCH"
+
+    breakDirection == "BULLISH" ->
+        "BULLISH BREAK — TREND UNCONFIRMED"
+
+    breakDirection == "BEARISH" ->
+        "BEARISH BREAK — TREND UNCONFIRMED"
 
     else ->
-        "NO BOS — OPPOSITE STRUCTURE BREAK"
+        "NO CONFIRMED BOS"
 }
 
 val choch = when {
