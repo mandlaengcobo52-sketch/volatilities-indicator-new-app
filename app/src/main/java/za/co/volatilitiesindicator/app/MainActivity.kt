@@ -1148,4 +1148,71 @@ row.addView(
         try { derivApiClient.disconnect() } catch (_: Exception) {}
         super.onDestroy()
     }
+    // =========================================================
+// COLLAPSIBLE SECTION HELPER — ADDITIVE FEATURE
+// =========================================================
+
+private fun addCollapsibleSection(
+    title: String,
+    content: View,
+    initiallyExpanded: Boolean = false
+): LinearLayout {
+
+    val container = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        background = shape(panel, greenDark, 14, 1)
+        setPadding(dp(8), dp(8), dp(8), dp(8))
+    }
+
+    val header = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(8), dp(10), dp(8), dp(10))
+        isClickable = true
+        isFocusable = true
+    }
+
+    val titleView = label(title, 16f, green, true)
+
+    header.addView(
+        titleView,
+        LinearLayout.LayoutParams(0, -2, 1f)
+    )
+
+    val arrow = label(
+        if (initiallyExpanded) "▼" else "▶",
+        16f,
+        green,
+        true
+    )
+
+    header.addView(arrow)
+
+    val contentContainer = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        visibility = if (initiallyExpanded) View.VISIBLE else View.GONE
+    }
+
+    contentContainer.addView(content)
+
+    header.setOnClickListener {
+        val expand = contentContainer.visibility != View.VISIBLE
+
+        contentContainer.visibility =
+            if (expand) View.VISIBLE else View.GONE
+
+        arrow.text = if (expand) "▼" else "▶"
+    }
+
+    container.addView(header)
+
+    container.addView(
+        contentContainer,
+        matchWrap().apply {
+            topMargin = dp(8)
+        }
+    )
+
+    return container
+}
                             }
