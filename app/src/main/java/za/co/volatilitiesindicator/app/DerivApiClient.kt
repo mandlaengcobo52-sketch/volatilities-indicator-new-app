@@ -51,6 +51,10 @@ class DerivApiClient(
             // Optional callback for historical candle data.
         }
 
+        fun onMarketDataError(symbol: String, message: String) {
+            // Optional callback for public market-data errors.
+        }
+
         fun onError(message: String)
 
         fun onDisconnected()
@@ -218,6 +222,7 @@ class DerivApiClient(
     private var marketDataSocket: WebSocket? = null
 
 private var marketDataRequestId = 1000
+private val candleRequestSymbols = java.util.concurrent.ConcurrentHashMap<Int, String>()
 
 private val candleIndexes = listOf(
     "R_10",
@@ -593,8 +598,7 @@ private val candleIndexes = listOf(
     private fun requestWebSocketOtp(
         selectedAccountId: String
     ) {
-
-        val token =
+val token =
             accessToken
 
         if (
@@ -1121,6 +1125,7 @@ fun requestHistoricalCandles() {
                 for (symbol in candleIndexes) {
 
                     val requestId = marketDataRequestId++
+                    candleRequestSymbols[requestId] = symbol
 
                     val message = JSONObject().apply {
                         put("ticks_history", symbol)
@@ -1155,10 +1160,20 @@ fun requestHistoricalCandles() {
 
                     val apiError = json.optJSONObject("error")
                     if (apiError != null) {
+                        val failedReqId = json.optInt("req_id", -1)
+                        val failedSymbol = json.optJSONObject("echo_req")
+                            ?.optString("ticks_history", "")
+                            ?.takeIf { it in candleIndexes }
+                            ?: candleRequestSymbols.remove(failedReqId)
+                            ?: ""
+                        val errorMessage = apiError.optString("message", "Deriv market-data request failed.")
                         android.util.Log.e(
                             "DerivCandles",
-                            "Deriv candle API error: ${apiError.optString("code")} - ${apiError.optString("message")}; response=$text"
+                            "Deriv candle API error: ${apiError.optString("code")} - $errorMessage; response=$text"
                         )
+                        if (failedSymbol in candleIndexes) {
+                            callback.onMarketDataError(failedSymbol, errorMessage)
+                        }
                         return
                     }
 
@@ -1174,23 +1189,35 @@ fun requestHistoricalCandles() {
                     }
 
                     val echoRequest = json.optJSONObject("echo_req")
-                    val symbol = echoRequest?.optString("ticks_history", "").orEmpty()
+                    val requestId = json.optInt("req_id", -1)
+                    val symbol = echoRequest?.optString("ticks_history", "")
+                        ?.takeIf { it in candleIndexes }
+                        ?: candleRequestSymbols.remove(requestId)
+                        ?: ""
+
                     if (symbol !in candleIndexes) {
                         android.util.Log.d(
                             "DerivCandles",
-                            "Ignoring non-candle response: $text"
+                            "Ignoring response without candle symbol (req_id=$requestId): $text"
                         )
                         return
                     }
 
                     val candlesJson = json.optJSONArray("candles")
+                        ?: json.optJSONObject("history")?.optJSONArray("candles")
+
                     if (candlesJson == null) {
                         android.util.Log.w(
                             "DerivCandles",
                             "$symbol response has no candles array: $text"
                         )
+                        callback.onMarketDataError(
+                            symbol,
+                            json.optJSONObject("error")?.optString("message")
+                                ?: "Deriv returned no H1 candles for $symbol."
+                        )
                         return
-                    }
+                        }
 
                     val candles = mutableListOf<Candle>()
                     for (i in 0 until candlesJson.length()) {
@@ -1221,11 +1248,16 @@ fun requestHistoricalCandles() {
                     }
 
                     if (candles.isNotEmpty()) {
-                        callback.onCandles(symbol, candles)
+                        candleRequestSymbols.remove(requestId)
+                        callback.onCandles(symbol, candles.sortedBy { it.epoch })
                     } else {
                         android.util.Log.w(
                             "DerivCandles",
                             "$symbol candle response contained zero valid candles: $text"
+                        )
+                        callback.onMarketDataError(
+                            symbol,
+                            "Deriv returned a candle response, but no valid candles could be read."
                         )
                     }
                 } catch (e: Exception) {
@@ -1247,6 +1279,13 @@ fun requestHistoricalCandles() {
                     "Historical candle connection failed: ${t.message}"
                 )
                 marketDataSocket = null
+                candleRequestSymbols.clear()
+                for (symbol in candleIndexes) {
+                    callback.onMarketDataError(
+                        symbol,
+                        "Historical data connection failed: ${t.message ?: "network error"}"
+                    )
+                }
             }
         }
     )
@@ -1267,6 +1306,7 @@ fun refreshHistoricalCandles() {
     for (symbol in candleIndexes) {
 
         val requestId = marketDataRequestId++
+        candleRequestSymbols[requestId] = symbol
 
         val message = JSONObject().apply {
             put("ticks_history", symbol)
@@ -1802,7 +1842,6 @@ if (tick != null) {
 
                         return@schedule
                     }
-
                     connectWithAccessToken(
                         token,
                         accountType
@@ -2163,5 +2202,3 @@ if (tick != null) {
         }
     }
 }
-
-    
