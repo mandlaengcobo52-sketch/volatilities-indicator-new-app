@@ -459,29 +459,31 @@ private fun addLoginScreen() {
     )
 }
 private fun addUserProfileScreen(page: LinearLayout) {
+    page.addView(sectionTitle("MY PROFILE"))
+
     val profileCard = card()
     profileCard.orientation = LinearLayout.VERTICAL
     profileCard.setPadding(dp(20), dp(20), dp(20), dp(20))
 
     profileCard.addView(
-        label("MY PROFILE", 22f, Color.WHITE)
+        label("Personal Account", 17f, green, true)
     )
 
     profileCard.addView(
-        label("Personal Account", 15f, Color.LTGRAY)
+        label("Name: Not available", 15f, white, false)
     )
 
     profileCard.addView(
-        label("Name: Not available", 15f, Color.WHITE, false)
+        label("Email: Not available", 15f, white, false)
+    )
 
     profileCard.addView(
-        label("Email: Not available", 15f, Color.WHITE, false)
+        label("Account Status: Pending approval", 15f, yellow, true)
+    )
 
     profileCard.addView(
-        label("Account Status: Pending approval", 15f, Color.YELLOW, false)
-
-    profileCard.addView(
-        label("Subscription Plan: Not assigned", 15f, Color.WHITE, false)
+        label("Subscription Plan: Not assigned", 15f, white, false)
+    )
 
     page.addView(
         profileCard,
