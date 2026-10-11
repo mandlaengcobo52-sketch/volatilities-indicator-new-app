@@ -90,6 +90,7 @@ private var drawerOpen = false
     private val marketSymbols = listOf("R_10", "R_25", "R_50", "R_75", "R_100")
     private val marketData = marketSymbols.associateWith { MarketIndexState() }.toMutableMap()
     private val marketDataViews = mutableMapOf<String, Map<String, TextView>>()
+    private val indexMonitorStatusViews = mutableMapOf<String, TextView>()
     private var marketDataStarted = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -917,7 +918,16 @@ private fun addHeader() {
                 LinearLayout.LayoutParams(0, -2, 1f)
             )
 
-            val indexState = marketData[name]
+            val statusView = label("WAITING", 12f, yellow, true)
+
+indexMonitorStatusViews[name] = statusView
+
+row.addView(
+    statusView,
+    LinearLayout.LayoutParams(dp(76), -2)
+)
+
+updateIndexMonitorStatus(name)
 
 val statusText = when {
     indexState == null -> "WAITING"
@@ -1046,6 +1056,28 @@ addAdminSmcAnalysis()
 addAdminHistoricalMss()
 addAdminDirectionStructuralTarget()
 addAdminQualification()
+    }
+    private fun updateIndexMonitorStatus(symbol: String) {
+    val state = marketData[symbol] ?: return
+    val statusView = indexMonitorStatusViews[symbol] ?: return
+
+    val status = when {
+        !connected -> "DISCONNECTED"
+        state.status == "ERROR" -> "ERROR"
+        state.candles.isNotEmpty() && state.price != null -> "READY"
+        state.price != null -> "LOADING"
+        else -> "WAITING"
+    }
+
+    statusView.text = status
+    statusView.setTextColor(
+        when (status) {
+            "READY" -> green
+            "ERROR", "DISCONNECTED" -> red
+            "LOADING" -> cyan
+            else -> yellow
+        }
+    )
     }
     private fun updateMarketDataCard(symbol: String) {
         val state = marketData[symbol] ?: return
@@ -3267,22 +3299,29 @@ private fun addTradeScreen() {
         runOnUiThread { accountStatus.text = "●  CONNECTING TO DERIV"; accountStatus.setTextColor(yellow) }
     }
     override fun onConnected(accountId: String, accountType: String) {
-        runOnUiThread {
-            this.accountId = accountId
-this.accountType = accountType
-connected = true
+    runOnUiThread {
+        this.accountId = accountId
+        this.accountType = accountType
+        connected = true
 
-accountStatus.text = "●  CONNECTED — $executionMode"
-accountStatus.setTextColor(green)
+        marketDataStarted = true
 
-accountIdView.text = "Account:  $accountId"
+        marketSymbols.forEach { symbol ->
+            marketData[symbol]?.apply {
+                if (candles.isEmpty()) {
+                    status = "LOADING"
+                    message = "Loading market data automatically..."
+                }
+            }
+        }
 
-marketSymbols.forEach { symbol ->
-    marketData[symbol]?.apply {
-        status = "LOADING"
-        message = "Loading market data automatically..."
+        render()
+
+        derivApiClient.requestHistoricalCandles()
+
+        toast("Deriv $executionMode connected. Live prices and historical analysis started.")
     }
-}
+    }
 
 derivApiClient.requestHistoricalCandles()
 
