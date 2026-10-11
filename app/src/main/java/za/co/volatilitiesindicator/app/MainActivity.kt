@@ -459,30 +459,33 @@ private fun addLoginScreen() {
     )
 }
 private fun addUserProfileScreen(page: LinearLayout) {
-    page.addView(sectionTitle("MY PROFILE"))
-
     val profileCard = card()
+
     profileCard.orientation = LinearLayout.VERTICAL
     profileCard.setPadding(dp(20), dp(20), dp(20), dp(20))
 
     profileCard.addView(
-        label("Personal Account", 17f, green, true)
+        label("MY PROFILE", 22f, Color.WHITE, true)
     )
 
     profileCard.addView(
-        label("Name: Not available", 15f, white, false)
+        label("Personal Account", 15f, Color.LTGRAY, false)
     )
 
     profileCard.addView(
-        label("Email: Not available", 15f, white, false)
+        label("Name: Not available", 15f, Color.WHITE, false)
     )
 
     profileCard.addView(
-        label("Account Status: Pending approval", 15f, yellow, true)
+        label("Email: Not available", 15f, Color.WHITE, false)
     )
 
     profileCard.addView(
-        label("Subscription Plan: Not assigned", 15f, white, false)
+        label("Account Status: Pending approval", 15f, Color.YELLOW, false)
+    )
+
+    profileCard.addView(
+        label("Subscription Plan: Not assigned", 15f, Color.WHITE, false)
     )
 
     page.addView(
@@ -492,13 +495,15 @@ private fun addUserProfileScreen(page: LinearLayout) {
             LinearLayout.LayoutParams.WRAP_CONTENT
         )
     )
+
+    page.addView(
+        button("BACK TO HOME", false) {
+            selectedTab = "Home"
+            render()
+        },
+        matchWrap()
+    )
 }
-    private fun addHeader() {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(4), 0, dp(12))
-        }
 
         val menu = label("☰", 28f, white, true).apply {
             gravity = Gravity.CENTER
