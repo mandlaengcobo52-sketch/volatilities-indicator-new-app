@@ -3405,15 +3405,10 @@ private fun MainActivity.addCollapsibleSection(
 
     header.addView(arrow)
 
-    val contentContainer = LinearLayout(this).apply {
+        val contentContainer = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        visibility = if (initiallyExpanded) {
-            View.VISIBLE
-        } else {
-            View.GONE
+        visibility = if (initiallyExpanded) View.VISIBLE else View.GONE
         }
-    }
-
     contentContainer.addView(
         content,
         LinearLayout.LayoutParams(
