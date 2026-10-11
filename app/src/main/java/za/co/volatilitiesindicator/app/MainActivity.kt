@@ -1215,13 +1215,21 @@ addAdminQualification()
                 )
             } else {
                 val recent = candles.takeLast(30)
-                val latest = recent.last()
-                val previous = recent[recent.lastIndex - 1]
-                // Same strict 2-left/2-right confirmed-pivot rule used by the
-                // historical MSS engine.
-                val pivots = detectStructurePivots(recent, leftBars = 2, rightBars = 2)
-                val highPivots = pivots.filter { it.isHigh }
-                val lowPivots = pivots.filter { !it.isHigh }
+val latest = recent.last()
+val previous = recent[recent.lastIndex - 1]
+
+val pivots = detectStructurePivots(recent)
+
+val swingHigh = pivots
+    .lastOrNull { it.isHigh }
+    ?.price ?: recent.dropLast(1).maxOf { it.high }
+
+val swingLow = pivots
+    .lastOrNull { !it.isHigh }
+    ?.price ?: recent.dropLast(1).minOf { it.low }
+
+val highPivots = pivots.filter { it.isHigh }
+val lowPivots = pivots.filter { !it.isHigh }
                 val lastTwoHighs = highPivots.takeLast(2)
                 val lastTwoLows = lowPivots.takeLast(2)
                 val swingHigh = highPivots.lastOrNull()?.price
