@@ -472,20 +472,16 @@ private fun addUserProfileScreen() {
     )
 
     profileCard.addView(
-        label("Name: Not available", 15f, Color.WHITE)
-    )
+        label("Name: Not available", 15f, Color.WHITE, false)
 
     profileCard.addView(
-        label("Email: Not available", 15f, Color.WHITE)
-    )
+        label("Email: Not available", 15f, Color.WHITE, false)
 
     profileCard.addView(
-        label("Account Status: Pending approval", 15f, Color.YELLOW)
-    )
+        label("Account Status: Pending approval", 15f, Color.YELLOW, false)
 
     profileCard.addView(
-        label("Subscription Plan: Not assigned", 15f, Color.WHITE)
-    )
+        label("Subscription Plan: Not assigned", 15f, Color.WHITE, false)
 
     page.addView(
         profileCard,
