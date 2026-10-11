@@ -1903,7 +1903,17 @@ if (tick != null) {
 
         webSocket =
             null
+try {
+    marketDataSocket?.close(1000, "Manual disconnect")
+} catch (_: Exception) {
+}
 
+marketDataSocket = null
+
+marketDataTimeout?.cancel(false)
+marketDataTimeout = null
+
+candleRequestSymbols.clear()
         connected =
             false
 
