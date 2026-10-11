@@ -3247,16 +3247,6 @@ marketSymbols.forEach { symbol ->
 }
 
 derivApiClient.requestHistoricalCandles()
-            marketDataStarted = true
-
-marketSymbols.forEach { symbol ->
-    marketData[symbol]?.apply {
-        status = "LOADING"
-        message = "Loading market data automatically..."
-    }
-}
-
-derivApiClient.requestHistoricalCandles()
 
             toast("Deriv $executionMode connected.")
         }
