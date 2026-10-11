@@ -3338,7 +3338,8 @@ private fun addCollapsibleSection(
         isFocusable = true
     }
 
-    val titleView = TextView(this@MainActivity).apply {
+    val titleView = TextView(this@MainActivity)
+titleView.apply {
         text = title
         textSize = 16f
         setTextColor(android.graphics.Color.rgb(0, 200, 100))
@@ -3350,7 +3351,8 @@ private fun addCollapsibleSection(
         LinearLayout.LayoutParams(0, -2, 1f)
     )
 
-    val arrow = TextView(this@MainActivity).apply {
+    val arrow = TextView(this@MainActivity)
+arrow.apply {
         text = if (initiallyExpanded) "▼" else "▶"
         textSize = 16f
         setTextColor(android.graphics.Color.rgb(0, 200, 100))
@@ -3358,7 +3360,8 @@ private fun addCollapsibleSection(
 
     header.addView(arrow)
 
-    val contentContainer = LinearLayout(this@MainActivity).apply {
+    val container = LinearLayout(this)
+container.apply {
         orientation = LinearLayout.VERTICAL
         visibility = if (initiallyExpanded) View.VISIBLE else View.GONE
     }
