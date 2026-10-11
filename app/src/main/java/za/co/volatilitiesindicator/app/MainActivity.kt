@@ -42,10 +42,29 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val red = Color.rgb(255, 65, 75)
     private val cyan = Color.rgb(0, 225, 235)
 
-    private var platform = "USER"
-    private var executionMode = "DEMO"
-    private var selectedTab = "Home"
-    private var drawerOpen = false
+    private val appPrefs by lazy {
+    getSharedPreferences("volatilities_app_settings", MODE_PRIVATE)
+}
+
+private var platform = "USER"
+    set(value) {
+        field = value
+        appPrefs.edit().putString("platform", value).apply()
+    }
+
+private var executionMode = "DEMO"
+    set(value) {
+        field = value
+        appPrefs.edit().putString("executionMode", value).apply()
+    }
+
+private var selectedTab = "Home"
+    set(value) {
+        field = value
+        appPrefs.edit().putString("selectedTab", value).apply()
+    }
+
+private var drawerOpen = false
 
     private lateinit var page: LinearLayout
     private lateinit var accountStatus: TextView
@@ -77,15 +96,24 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         super.onCreate(savedInstanceState)
 
         window.statusBarColor = bg
-        window.navigationBarColor = bg
-        window.decorView.systemUiVisibility = 0
+window.navigationBarColor = bg
+window.decorView.systemUiVisibility = 0
 
-        render()
-        handleOAuthCallback(intent)
-        if (prefs.getString(if (executionMode == "REAL") "real_token" else "demo_token", "").orEmpty().isNotBlank()) {
-            accountStatus.text = "●  TOKEN SAVED — TAP CONNECT"
-            accountStatus.setTextColor(yellow)
-        }
+platform = appPrefs.getString("platform", "USER") ?: "USER"
+executionMode = appPrefs.getString("executionMode", "DEMO") ?: "DEMO"
+selectedTab = appPrefs.getString("selectedTab", "Home") ?: "Home"
+
+render()
+handleOAuthCallback(intent)
+
+val savedToken = prefs.getString(
+    if (executionMode == "REAL") "real_token" else "demo_token",
+    ""
+).orEmpty()
+
+if (savedToken.isNotBlank() && intent?.data?.host != "oauth-callback") {
+    connectWithToken(savedToken)
+}
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -3246,9 +3274,10 @@ marketSymbols.forEach { symbol ->
     }
 }
 
+derivApiClient.subscribeToLiveTicks()
 derivApiClient.requestHistoricalCandles()
 
-            toast("Deriv $executionMode connected.")
+            toast("Deriv $executionMode connected. Live prices and historical analysis started.")
         }
     }
     override fun onBalance(balance: Double, currency: String) {
