@@ -3238,6 +3238,16 @@ private fun addTradeScreen() {
             this.accountId = accountId; this.accountType = accountType; connected = true
             accountStatus.text = "●  CONNECTED — $executionMode"; accountStatus.setTextColor(green)
             accountIdView.text = "Account:  $accountId"
+            marketDataStarted = true
+
+marketSymbols.forEach { symbol ->
+    marketData[symbol]?.apply {
+        status = "LOADING"
+        message = "Loading market data automatically..."
+    }
+}
+
+derivApiClient.requestHistoricalCandles()
 
             toast("Deriv $executionMode connected.")
         }
