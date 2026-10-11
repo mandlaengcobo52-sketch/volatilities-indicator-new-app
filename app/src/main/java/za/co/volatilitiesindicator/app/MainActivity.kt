@@ -3327,10 +3327,6 @@ private fun addTradeScreen() {
     }
     }
 
-derivApiClient.requestHistoricalCandles()
-
-            toast("Deriv $executionMode connected. Live prices and historical analysis started.")
-        }
     }
     override fun onBalance(balance: Double, currency: String) {
         runOnUiThread {
@@ -3486,7 +3482,7 @@ private fun MainActivity.addCollapsibleSection(
             LinearLayout.LayoutParams.MATCH_PARENT,
             LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply {
-            topMargin = dp(8)
+            topMargin = px(8)
         }
     )
 
