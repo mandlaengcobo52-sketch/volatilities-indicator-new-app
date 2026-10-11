@@ -697,7 +697,6 @@ private fun addHeader() {
 
     private fun addPlatformSelector() {
         page.addView(sectionTitle("PLATFORM"))
-
         val row = horizontalRow()
 
         row.addView(
@@ -1190,7 +1189,9 @@ addAdminQualification()
 
         marketSymbols.forEach { symbol ->
             val state = marketData[symbol]
-            val candles = state?.candles.orEmpty()
+            // Red Flag 1: use completed H1 candles consistently; do not let
+            // the still-forming candle alter swing, BOS, or CHOCH/MSS results.
+            val candles = historicalCompletedCandles(state?.candles.orEmpty())
 
             val indexCard = card()
 
@@ -1214,123 +1215,87 @@ addAdminQualification()
                 )
             } else {
                 val recent = candles.takeLast(30)
-val recent = candles.takeLast(30)
-val latest = recent.last()
-val previous = recent[recent.lastIndex - 1]
-val swingHigh = pivots
-    .lastOrNull { it.isHigh }
-    ?.price ?: recent.dropLast(1).maxOf { it.high }
-
-val swingLow = pivots
-    .lastOrNull { !it.isHigh }
-    ?.price ?: recent.dropLast(1).minOf { it.low }
+                val latest = recent.last()
+                val previous = recent[recent.lastIndex - 1]
+                // Same strict 2-left/2-right confirmed-pivot rule used by the
+                // historical MSS engine.
+                val pivots = detectStructurePivots(recent, leftBars = 2, rightBars = 2)
                 val highPivots = pivots.filter { it.isHigh }
                 val lowPivots = pivots.filter { !it.isHigh }
-
                 val lastTwoHighs = highPivots.takeLast(2)
                 val lastTwoLows = lowPivots.takeLast(2)
+                val swingHigh = highPivots.lastOrNull()?.price
+                val swingLow = lowPivots.lastOrNull()?.price
 
                 val highStructure = if (lastTwoHighs.size == 2) {
-    when {
-        lastTwoHighs[1].price > lastTwoHighs[0].price ->
-            "HH — Higher High"
+                    when {
+                        lastTwoHighs[1].price > lastTwoHighs[0].price -> "HH — Higher High"
+                        lastTwoHighs[1].price < lastTwoHighs[0].price -> "LH — Lower High"
+                        else -> "EQH — Equal High"
+                    }
+                } else "WAITING — Need 2 swing highs"
 
-        lastTwoHighs[1].price < lastTwoHighs[0].price ->
-            "LH — Lower High"
+                val lowStructure = if (lastTwoLows.size == 2) {
+                    when {
+                        lastTwoLows[1].price > lastTwoLows[0].price -> "HL — Higher Low"
+                        lastTwoLows[1].price < lastTwoLows[0].price -> "LL — Lower Low"
+                        else -> "EQL — Equal Low"
+                    }
+                } else "WAITING — Need 2 swing lows"
 
-        else -> "EQH — Equal High"
-    }
-} else {
-    "WAITING — Need 2 swing highs"
-}
+                val trend = when {
+                    latest.close > previous.high -> "BULLISH"
+                    latest.close < previous.low -> "BEARISH"
+                    latest.close > latest.open -> "BULLISH CANDLE"
+                    latest.close < latest.open -> "BEARISH CANDLE"
+                    else -> "NEUTRAL"
+                }
 
-val lowStructure = if (lastTwoLows.size == 2) {
-    when {
-        lastTwoLows[1].price > lastTwoLows[0].price ->
-            "HL — Higher Low"
+                val previousTrend = when {
+                    lastTwoHighs.size < 2 || lastTwoLows.size < 2 -> "UNCONFIRMED"
+                    lastTwoHighs[1].price > lastTwoHighs[0].price &&
+                        lastTwoLows[1].price > lastTwoLows[0].price -> "BULLISH"
+                    lastTwoHighs[1].price < lastTwoHighs[0].price &&
+                        lastTwoLows[1].price < lastTwoLows[0].price -> "BEARISH"
+                    else -> "MIXED"
+                }
 
-        lastTwoLows[1].price < lastTwoLows[0].price ->
-            "LL — Lower Low"
+                // Red Flag 1 rule: reversal MSS must break the latest valid
+                // LH in a bearish structure, or the latest valid HL in a
+                // bullish structure. Continuation BOS breaks the latest swing
+                // extreme in the direction of the established structure.
+                val latestLowerHigh = lastTwoHighs.lastOrNull()
+                    ?.takeIf { lastTwoHighs.size == 2 && lastTwoHighs[1].price < lastTwoHighs[0].price }
+                    ?.price
+                val latestHigherLow = lastTwoLows.lastOrNull()
+                    ?.takeIf { lastTwoLows.size == 2 && lastTwoLows[1].price > lastTwoLows[0].price }
+                    ?.price
 
-        else -> "EQL — Equal Low"
-    }
-} else {
-    "WAITING — Need 2 swing lows"
-}
+                val breakDirection = when {
+                    previousTrend == "BEARISH" && latestLowerHigh != null && latest.close > latestLowerHigh -> "BULLISH"
+                    previousTrend == "BULLISH" && latestHigherLow != null && latest.close < latestHigherLow -> "BEARISH"
+                    previousTrend == "BULLISH" && swingHigh != null && latest.close > swingHigh -> "BULLISH"
+                    previousTrend == "BEARISH" && swingLow != null && latest.close < swingLow -> "BEARISH"
+                    else -> "NONE"
+                }
 
-val trend = when {
-    latest.close > previous.high -> "BULLISH"
-    latest.close < previous.low -> "BEARISH"
-    latest.close > latest.open -> "BULLISH CANDLE"
-    latest.close < latest.open -> "BEARISH CANDLE"
-    else -> "NEUTRAL"
-}
+                val bos = when {
+                    previousTrend == "UNCONFIRMED" -> "WAITING — INSUFFICIENT STRUCTURE"
+                    previousTrend == "MIXED" -> "WAITING — MIXED STRUCTURE"
+                    breakDirection == "BULLISH" && previousTrend == "BULLISH" -> "BULLISH BOS"
+                    breakDirection == "BEARISH" && previousTrend == "BEARISH" -> "BEARISH BOS"
+                    breakDirection == "BULLISH" && previousTrend == "BEARISH" -> "OPPOSITE BREAK — POSSIBLE BULLISH CHOCH"
+                    breakDirection == "BEARISH" && previousTrend == "BULLISH" -> "OPPOSITE BREAK — POSSIBLE BEARISH CHOCH"
+                    else -> "NO CONFIRMED BOS"
+                }
 
-val previousTrend = when {
-    lastTwoHighs.size < 2 ||
-        lastTwoLows.size < 2 ->
-        "UNCONFIRMED"
-
-    lastTwoHighs[1].price > lastTwoHighs[0].price &&
-        lastTwoLows[1].price > lastTwoLows[0].price ->
-        "BULLISH"
-
-    lastTwoHighs[1].price < lastTwoHighs[0].price &&
-        lastTwoLows[1].price < lastTwoLows[0].price ->
-        "BEARISH"
-
-    else -> "MIXED"
-}
-
-val breakDirection = when {
-    latest.close > swingHigh -> "BULLISH"
-    latest.close < swingLow -> "BEARISH"
-    else -> "NONE"
-}
-
-val bos = when {
-    previousTrend == "UNCONFIRMED" ->
-        "WAITING — INSUFFICIENT STRUCTURE"
-
-    previousTrend == "MIXED" ->
-        "WAITING — MIXED STRUCTURE"
-
-    breakDirection == "BULLISH" &&
-        previousTrend == "BULLISH" ->
-        "BULLISH BOS"
-
-    breakDirection == "BEARISH" &&
-        previousTrend == "BEARISH" ->
-        "BEARISH BOS"
-
-    breakDirection == "BULLISH" &&
-        previousTrend == "BEARISH" ->
-        "OPPOSITE BREAK — POSSIBLE BULLISH CHOCH"
-
-    breakDirection == "BEARISH" &&
-        previousTrend == "BULLISH" ->
-        "OPPOSITE BREAK — POSSIBLE BEARISH CHOCH"
-
-    else -> "NO CONFIRMED BOS"
-}
-
-val choch = when {
-    previousTrend == "UNCONFIRMED" ->
-        "WAITING — PREVIOUS TREND UNCONFIRMED"
-
-    previousTrend == "MIXED" ->
-        "WAITING — STRUCTURE IS MIXED"
-
-    breakDirection == "BULLISH" &&
-        previousTrend == "BEARISH" ->
-        "BULLISH CHOCH / MSS"
-
-    breakDirection == "BEARISH" &&
-        previousTrend == "BULLISH" ->
-        "BEARISH CHOCH / MSS"
-
-    else -> "NO CONFIRMED CHOCH / MSS"
-}
+                val choch = when {
+                    previousTrend == "UNCONFIRMED" -> "WAITING — PREVIOUS TREND UNCONFIRMED"
+                    previousTrend == "MIXED" -> "WAITING — STRUCTURE IS MIXED"
+                    breakDirection == "BULLISH" && previousTrend == "BEARISH" -> "BULLISH CHOCH / MSS"
+                    breakDirection == "BEARISH" && previousTrend == "BULLISH" -> "BEARISH CHOCH / MSS"
+                    else -> "NO CONFIRMED CHOCH / MSS"
+                }
 
                 indexCard.addView(
                     label(
@@ -1384,7 +1349,7 @@ val choch = when {
 
                 indexCard.addView(
                     label(
-                        "SWING HIGH: ${formatMarketPrice(swingHigh)}",
+                        "SWING HIGH: ${swingHigh?.let { formatMarketPrice(it) } ?: "WAITING — NO CONFIRMED SWING"}",
                         12f,
                         green,
                         false
@@ -1393,7 +1358,7 @@ val choch = when {
 
                 indexCard.addView(
                     label(
-                        "SWING LOW: ${formatMarketPrice(swingLow)}",
+                        "SWING LOW: ${swingLow?.let { formatMarketPrice(it) } ?: "WAITING — NO CONFIRMED SWING"}",
                         12f,
                         red,
                         false
@@ -1609,7 +1574,6 @@ private fun addAdminSmcAnalysis() {
                     false
                 )
             )
-
             indexCard.addView(
                 label(
                     "RETEST: $retest",
@@ -1833,12 +1797,13 @@ val (_, highs, lows) = historicalMssPivots(knownCandles)
             it.index <= i - 2
         }
 
-                val lowerHigh = eligibleHighs
-            .lastOrNull()
+                // A level is valid only when the latest confirmed swing of that type
+        // is itself a LH/HL. Do not reuse an older LH/HL after a newer swing
+        // has invalidated that structure.
+        val lowerHigh = eligibleHighs.lastOrNull()
             ?.takeIf { it.label == "LH" }
 
-        val higherLow = eligibleLows
-            .lastOrNull()
+        val higherLow = eligibleLows.lastOrNull()
             ?.takeIf { it.label == "HL" }
 
         val candle = candles[i]
@@ -2061,7 +2026,6 @@ private fun addAdminHistoricalMss() {
                     true
                 )
             )
-
             indexCard.addView(
                 label(
                     "AVG FAVOURABLE MOVE: ${
@@ -2551,7 +2515,6 @@ private fun addAdminQualification() {
                     directionConfirmed &&
                     targetValid &&
                     historicalConfirmed
-
                 indexCard.addView(
                     label(
                         "DIRECTION: ${
@@ -3129,7 +3092,6 @@ private fun addTradeScreen() {
                 dp(10),
                 dp(10)
             )
-
             background = shape(
                 panel,
                 Color.rgb(0, 100, 48),
