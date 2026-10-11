@@ -490,13 +490,6 @@ private fun addUserProfileScreen(page: LinearLayout) {
             LinearLayout.LayoutParams.WRAP_CONTENT
         )
     )
-
-    page.addView(
-        button("BACK TO HOME", false) {
-            selectedTab = "Home"
-            render()
-        }
-    )
 }
     private fun addHeader() {
         val row = LinearLayout(this).apply {
