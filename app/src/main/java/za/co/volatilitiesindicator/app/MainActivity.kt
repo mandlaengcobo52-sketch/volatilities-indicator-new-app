@@ -151,7 +151,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     )
 }
 "Account" -> {
-    addUserProfileScreen()
+        addUserProfileScreen(page)
     page.addView(
         button("BACK TO HOME", false) {
             selectedTab = "Home"
@@ -458,7 +458,7 @@ private fun addLoginScreen() {
         matchWrap()
     )
 }
-private fun addUserProfileScreen() {
+private fun addUserProfileScreen(page: LinearLayout) {
     val profileCard = card()
     profileCard.orientation = LinearLayout.VERTICAL
     profileCard.setPadding(dp(20), dp(20), dp(20), dp(20))
