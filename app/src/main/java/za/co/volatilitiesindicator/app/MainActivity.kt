@@ -3268,9 +3268,14 @@ private fun addTradeScreen() {
     }
     override fun onConnected(accountId: String, accountType: String) {
         runOnUiThread {
-            this.accountId = accountId; this.accountType = accountType; connected = true
-            accountStatus.text = "●  CONNECTED — $executionMode"; accountStatus.setTextColor(green)
-            marketDataStarted = true
+            this.accountId = accountId
+this.accountType = accountType
+connected = true
+
+accountStatus.text = "●  CONNECTED — $executionMode"
+accountStatus.setTextColor(green)
+
+accountIdView.text = "Account:  $accountId"
 
 marketSymbols.forEach { symbol ->
     marketData[symbol]?.apply {
@@ -3279,7 +3284,6 @@ marketSymbols.forEach { symbol ->
     }
 }
 
-derivApiClient.subscribeToLiveTicks()
 derivApiClient.requestHistoricalCandles()
 
             toast("Deriv $executionMode connected. Live prices and historical analysis started.")
@@ -3336,8 +3340,10 @@ derivApiClient.requestHistoricalCandles()
 
     override fun onError(message: String) {
         runOnUiThread {
-            accountStatus.text = "●  CONNECTION ERROR"
-            accountStatus.setTextColor(red)
+            if (!connected) {
+    accountStatus.text = "●  CONNECTION ERROR"
+    accountStatus.setTextColor(red)
+            }
             marketSymbols.forEach { symbol ->
                 val state = marketData[symbol] ?: return@forEach
                 if (state.candles.isEmpty() && state.price == null) {
