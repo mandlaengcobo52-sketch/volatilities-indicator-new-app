@@ -1817,12 +1817,14 @@ private fun historicalMssEvents(
 ): List<HistoricalMssEvent> {
     if (candles.size < 30) return emptyList()
 
-    val (_, highs, lows) = historicalMssPivots(candles)
-
     val events = mutableListOf<HistoricalMssEvent>()
     val used = mutableSetOf<String>()
 
     for (i in candles.indices) {
+
+        val knownCandles = candles.take(i + 1)
+
+val (_, highs, lows) = historicalMssPivots(knownCandles)
         val eligibleHighs = highs.filter {
             it.index <= i - 2
         }
