@@ -1688,7 +1688,10 @@ private data class HistoricalMssEvent(
     var maxFav: Double = 0.0,
     var maxAdv: Double = 0.0,
     var maxFavPrice: Double = 0.0,
-    var endedByOpposite: Boolean = false
+    var endedByOpposite: Boolean = false,
+    var targetPrice: Double? = null,
+    var targetReached: Boolean = false,
+    var targetOutcomeKnown: Boolean = false
 )
 
 private fun historicalCompletedCandles(
@@ -1710,11 +1713,7 @@ private fun historicalCompletedCandles(
         now - it.epoch >= 3600L
     }
 
-    return if (completed.size >= 2) {
-        completed
-    } else {
-        sorted.dropLast(1)
-    }
+        return completed
 }
 
 private fun historicalMssPivots(
@@ -1732,13 +1731,13 @@ private fun historicalMssPivots(
         val left = candles.subList(i - 2, i)
         val right = candles.subList(i + 1, i + 3)
 
-        val swingHigh =
+                val swingHigh =
             left.all { candle.high > it.high } &&
-            right.all { candle.high >= it.high }
+            right.all { candle.high > it.high }
 
         val swingLow =
             left.all { candle.low < it.low } &&
-            right.all { candle.low <= it.low }
+            right.all { candle.low < it.low }
 
         if (swingHigh) {
             raw.add(
@@ -1832,11 +1831,13 @@ private fun historicalMssEvents(
             it.index <= i - 2
         }
 
-        val lowerHigh = eligibleHighs
-            .lastOrNull { it.label == "LH" }
+                val lowerHigh = eligibleHighs
+            .lastOrNull()
+            ?.takeIf { it.label == "LH" }
 
         val higherLow = eligibleLows
-            .lastOrNull { it.label == "HL" }
+            .lastOrNull()
+            ?.takeIf { it.label == "HL" }
 
         val candle = candles[i]
 
@@ -1886,6 +1887,7 @@ private fun calculateHistoricalMssOutcomes(
 ): List<HistoricalMssEvent> {
 
     events.forEachIndexed { eventIndex, event ->
+        event.endedByOpposite = false
         var end = candles.lastIndex
 
         for (j in eventIndex + 1 until events.size) {
