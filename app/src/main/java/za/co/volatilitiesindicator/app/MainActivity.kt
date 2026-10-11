@@ -3317,8 +3317,7 @@ private fun addTradeScreen() {
     // =========================================================
 // COLLAPSIBLE SECTION HELPER — ADDITIVE FEATURE
 // =========================================================
-
-private fun addCollapsibleSection(
+private fun MainActivity.addCollapsibleSection(
     title: String,
     content: View,
     initiallyExpanded: Boolean = false
@@ -3401,4 +3400,3 @@ private fun addCollapsibleSection(
 
     return section
 }
-                            }
