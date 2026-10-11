@@ -3328,7 +3328,6 @@ private fun addTradeScreen() {
                 toast("Deriv $executionMode connected. Live prices and historical analysis started.")
     }
     }
-                            }
     override fun onBalance(balance: Double, currency: String) {
         runOnUiThread {
             accountBalance = balance; accountCurrency = currency; connected = true
