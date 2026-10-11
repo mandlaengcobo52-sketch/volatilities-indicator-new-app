@@ -3327,7 +3327,6 @@ private fun addTradeScreen() {
     }
     }
 
-    }
     override fun onBalance(balance: Double, currency: String) {
         runOnUiThread {
             accountBalance = balance; accountCurrency = currency; connected = true
