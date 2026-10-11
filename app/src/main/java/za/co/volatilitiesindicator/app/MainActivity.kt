@@ -929,6 +929,8 @@ row.addView(
 
 updateIndexMonitorStatus(name)
 
+val indexState = marketData[name]
+
 val statusText = when {
     indexState == null -> "WAITING"
     indexState.status == "ERROR" -> "ERROR"
