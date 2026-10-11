@@ -1214,11 +1214,9 @@ addAdminQualification()
                 )
             } else {
                 val recent = candles.takeLast(30)
+val recent = candles.takeLast(30)
 val latest = recent.last()
 val previous = recent[recent.lastIndex - 1]
-
-val pivots = detectStructurePivots(recent.dropLast(1))
-
 val swingHigh = pivots
     .lastOrNull { it.isHigh }
     ?.price ?: recent.dropLast(1).maxOf { it.high }
