@@ -532,7 +532,12 @@ private fun addUserProfileScreen(page: LinearLayout) {
         matchWrap()
     )
 }
-
+private fun addHeader() {
+    val row = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(2), dp(4), dp(2), dp(4))
+    }
         val menu = label("☰", 28f, white, true).apply {
             gravity = Gravity.CENTER
 
