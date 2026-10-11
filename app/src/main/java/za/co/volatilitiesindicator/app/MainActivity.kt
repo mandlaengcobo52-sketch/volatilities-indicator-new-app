@@ -3484,7 +3484,7 @@ private fun MainActivity.addCollapsibleSection(
         ).apply {
             topMargin = px(8)
         }
-    )
+        }
 
     return section
 }
