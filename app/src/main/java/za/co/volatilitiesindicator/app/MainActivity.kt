@@ -3410,17 +3410,17 @@ private fun MainActivity.addCollapsibleSection(
     content: View,
     initiallyExpanded: Boolean = false
 ): LinearLayout {
-
+    fun px(value: Int): Int = (value * resources.displayMetrics.density).toInt()
     val section = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         setBackgroundColor(android.graphics.Color.rgb(35, 45, 55))
-        setPadding(dp(8), dp(8), dp(8), dp(8))
+        setPadding(px(8), px(8), px(8), px(8))
     }
 
     val header = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        setPadding(dp(8), dp(10), dp(8), dp(10))
+        setPadding(px(8), px(8), px(8), px(8))
         isClickable = true
         isFocusable = true
     }
@@ -3488,4 +3488,3 @@ private fun MainActivity.addCollapsibleSection(
 
     return section
 }
-                            }
