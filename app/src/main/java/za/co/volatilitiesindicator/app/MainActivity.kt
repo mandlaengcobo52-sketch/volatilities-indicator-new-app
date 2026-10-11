@@ -3324,13 +3324,13 @@ private fun addCollapsibleSection(
     initiallyExpanded: Boolean = false
 ): LinearLayout {
 
-    val container = LinearLayout(this@MainActivity).apply {
+    val section = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         setBackgroundColor(android.graphics.Color.rgb(35, 45, 55))
         setPadding(dp(8), dp(8), dp(8), dp(8))
     }
 
-    val header = LinearLayout(this@MainActivity).apply {
+    val header = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         setPadding(dp(8), dp(10), dp(8), dp(10))
@@ -3338,8 +3338,7 @@ private fun addCollapsibleSection(
         isFocusable = true
     }
 
-    val titleView = TextView(this@MainActivity)
-titleView.apply {
+    val titleView = TextView(this).apply {
         text = title
         textSize = 16f
         setTextColor(android.graphics.Color.rgb(0, 200, 100))
@@ -3351,8 +3350,7 @@ titleView.apply {
         LinearLayout.LayoutParams(0, -2, 1f)
     )
 
-    val arrow = TextView(this@MainActivity)
-arrow.apply {
+    val arrow = TextView(this).apply {
         text = if (initiallyExpanded) "▼" else "▶"
         textSize = 16f
         setTextColor(android.graphics.Color.rgb(0, 200, 100))
@@ -3360,26 +3358,38 @@ arrow.apply {
 
     header.addView(arrow)
 
-    val container = LinearLayout(this)
-container.apply {
+    val contentContainer = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        visibility = if (initiallyExpanded) View.VISIBLE else View.GONE
+        visibility = if (initiallyExpanded) {
+            View.VISIBLE
+        } else {
+            View.GONE
+        }
     }
 
-    contentContainer.addView(content)
+    contentContainer.addView(
+        content,
+        LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        )
+    )
 
     header.setOnClickListener {
         val expand = contentContainer.visibility != View.VISIBLE
 
-        contentContainer.visibility =
-            if (expand) View.VISIBLE else View.GONE
+        contentContainer.visibility = if (expand) {
+            View.VISIBLE
+        } else {
+            View.GONE
+        }
 
         arrow.text = if (expand) "▼" else "▶"
     }
 
-    container.addView(header)
+    section.addView(header)
 
-    container.addView(
+    section.addView(
         contentContainer,
         LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
@@ -3389,5 +3399,5 @@ container.apply {
         }
     )
 
-    return container
+    return section
 }
