@@ -3324,13 +3324,13 @@ private fun addCollapsibleSection(
     initiallyExpanded: Boolean = false
 ): LinearLayout {
 
-    val container = LinearLayout(this).apply {
+    val container = LinearLayout(this@MainActivity).apply {
         orientation = LinearLayout.VERTICAL
-        background = shape(panel, greenDark, 14, 1)
+        setBackgroundColor(android.graphics.Color.rgb(35, 45, 55))
         setPadding(dp(8), dp(8), dp(8), dp(8))
     }
 
-    val header = LinearLayout(this).apply {
+    val header = LinearLayout(this@MainActivity).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         setPadding(dp(8), dp(10), dp(8), dp(10))
@@ -3338,23 +3338,27 @@ private fun addCollapsibleSection(
         isFocusable = true
     }
 
-    val titleView = label(title, 16f, green, true)
+    val titleView = TextView(this@MainActivity).apply {
+        text = title
+        textSize = 16f
+        setTextColor(android.graphics.Color.rgb(0, 200, 100))
+        setTypeface(null, android.graphics.Typeface.BOLD)
+    }
 
     header.addView(
         titleView,
         LinearLayout.LayoutParams(0, -2, 1f)
     )
 
-    val arrow = label(
-        if (initiallyExpanded) "▼" else "▶",
-        16f,
-        green,
-        true
-    )
+    val arrow = TextView(this@MainActivity).apply {
+        text = if (initiallyExpanded) "▼" else "▶"
+        textSize = 16f
+        setTextColor(android.graphics.Color.rgb(0, 200, 100))
+    }
 
     header.addView(arrow)
 
-    val contentContainer = LinearLayout(this).apply {
+    val contentContainer = LinearLayout(this@MainActivity).apply {
         orientation = LinearLayout.VERTICAL
         visibility = if (initiallyExpanded) View.VISIBLE else View.GONE
     }
@@ -3374,11 +3378,13 @@ private fun addCollapsibleSection(
 
     container.addView(
         contentContainer,
-        matchWrap().apply {
+        LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
             topMargin = dp(8)
         }
     )
 
     return container
 }
-                            }
