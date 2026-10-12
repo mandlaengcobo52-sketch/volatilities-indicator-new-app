@@ -1484,29 +1484,6 @@ private fun addTradeScreen() {
         toast("Deriv $executionMode connected.")
     }
     }
-    runOnUiThread {
-        this.accountId = accountId
-        this.accountType = accountType
-        connected = true
-
-        marketDataStarted = true
-
-        marketSymbols.forEach { symbol ->
-            marketData[symbol]?.apply {
-                if (candles.isEmpty()) {
-                    status = "LOADING"
-                    message = "Loading market data automatically..."
-                }
-            }
-        }
-
-        render()
-
-        derivApiClient.requestHistoricalCandles()
-
-                toast("Deriv $executionMode connected. Live prices and historical analysis started.")
-    }
-    }
     override fun onBalance(balance: Double, currency: String) {
         runOnUiThread {
             accountBalance = balance; accountCurrency = currency; connected = true
