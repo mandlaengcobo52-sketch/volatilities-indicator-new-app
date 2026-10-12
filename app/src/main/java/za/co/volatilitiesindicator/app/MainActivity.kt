@@ -79,20 +79,6 @@ private var drawerOpen = false
     private val httpClient = OkHttpClient()
     private val prefs by lazy { getSharedPreferences("deriv_oauth", MODE_PRIVATE) }
 
-    private data class MarketIndexState(
-        var price: Double? = null,
-        var candles: List<DerivApiClient.Candle> = emptyList(),
-        var lastCandleEpoch: Long = 0L,
-        var status: String = "WAITING",
-        var message: String = "Waiting for Deriv market data..."
-    )
-
-    private val marketSymbols = listOf("R_10", "R_25", "R_50", "R_75", "R_100")
-    private val marketData = marketSymbols.associateWith { MarketIndexState() }.toMutableMap()
-    private val marketDataViews = mutableMapOf<String, Map<String, TextView>>()
-    private val indexMonitorStatusViews = mutableMapOf<String, TextView>()
-    private var marketDataStarted = false
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -200,7 +186,6 @@ if (savedToken.isNotBlank() && intent?.data?.host != "oauth-callback") {
                 addPlatformSelector()
                 addExecutionSelector()
                 addAccountCard()
-                addIndexMonitor()
                                 if (platform == "USER") {
                     page.addView(
                         button("CREATE ACCOUNT", true) {
@@ -1495,6 +1480,14 @@ private fun addTradeScreen() {
         this.accountId = accountId
         this.accountType = accountType
         connected = true
+        render()
+        toast("Deriv $executionMode connected.")
+    }
+    }
+    runOnUiThread {
+        this.accountId = accountId
+        this.accountType = accountType
+        connected = true
 
         marketDataStarted = true
 
@@ -1522,63 +1515,25 @@ private fun addTradeScreen() {
         }
     }
     override fun onTick(symbol: String, quote: Double, epoch: Long) {
-        if (symbol !in marketSymbols || !quote.isFinite()) return
-        runOnUiThread {
-            val state = marketData[symbol] ?: return@runOnUiThread
-            state.price = quote
-            if (state.candles.isNotEmpty()) {
-                state.status = "READY"
-                state.message = "LIVE — price updating from Deriv."
-            } else {
-                state.status = "LOADING"
-                state.message = "Live price received; loading H1 historical candles..."
-            }
-            updateMarketDataCard(symbol)
-        }
-    }
+}
 
-    override fun onCandles(symbol: String, candles: List<DerivApiClient.Candle>) {
-        if (symbol !in marketSymbols) return
-        runOnUiThread {
-            val state = marketData[symbol] ?: return@runOnUiThread
-            state.candles = candles.sortedBy { it.epoch }
-            state.lastCandleEpoch = state.candles.lastOrNull()?.epoch ?: 0L
-            state.status = if (state.candles.isNotEmpty()) "READY" else "WAITING"
-            state.message = if (state.candles.isNotEmpty()) {
-                "LIVE — price updating from Deriv."
-            } else {
-                "Waiting for historical candles from Deriv..."
-            }
-            updateMarketDataCard(symbol)
-        }
-    }
+override fun onCandles(
+    symbol: String,
+    candles: List<DerivApiClient.Candle>
+) {
+}
 
-    override fun onMarketDataError(symbol: String, message: String) {
-        if (symbol !in marketSymbols) return
-        runOnUiThread {
-            val state = marketData[symbol] ?: return@runOnUiThread
-            state.status = "ERROR"
-            state.message = message
-            updateMarketDataCard(symbol)
-        }
-    }
+override fun onMarketDataError(symbol: String, message: String) {
+}
 
     override fun onError(message: String) {
-        runOnUiThread {
-            if (!connected) {
-    accountStatus.text = "●  CONNECTION ERROR"
-    accountStatus.setTextColor(red)
-            }
-            marketSymbols.forEach { symbol ->
-                val state = marketData[symbol] ?: return@forEach
-                if (state.candles.isEmpty() && state.price == null) {
-                    state.status = "ERROR"
-                    state.message = message
-                    updateMarketDataCard(symbol)
-                }
-            }
-            toast("Deriv: $message")
+    runOnUiThread {
+        if (!connected) {
+            accountStatus.text = "●  CONNECTION ERROR"
+            accountStatus.setTextColor(red)
         }
+        toast("Deriv: $message")
+    }
     }
     override fun onDisconnected() {
         runOnUiThread { connected = false; accountStatus.text = "●  NOT CONNECTED"; accountStatus.setTextColor(red) }
