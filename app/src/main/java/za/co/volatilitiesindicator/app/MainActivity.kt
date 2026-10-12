@@ -1059,7 +1059,6 @@ private fun addTradeScreen() {
             bottomMargin = dp(10)
         }
     )
-}
     private fun formatMarketPrice(price: Double?): String =
         price?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
 
