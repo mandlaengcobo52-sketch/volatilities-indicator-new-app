@@ -157,14 +157,12 @@ if (savedToken.isNotBlank() && intent?.data?.host != "oauth-callback") {
             addDrawer()
         }
 
-                when (selectedTab) {
-            "Analysis" -> {
-                if (platform == "ADMIN") {
-                    addAdminMarketData()
-                } else {
-                    addAdminOnlyNotice()
+                "Analysis" -> {
+    page.addView(
+        sectionTitle("ANALYSIS — NEW MODULE PENDING"),
+        matchWrap()
+    )
                 }
-            }
 
             "Trade" -> {
                 addTradeScreen()
