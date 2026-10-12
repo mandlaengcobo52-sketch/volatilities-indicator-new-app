@@ -730,24 +730,25 @@ private fun addHeader() {
         page.addView(sectionTitle("EXECUTION MODE"))
 
         val row = horizontalRow()
-
         row.addView(
-            button("⌁  DEMO", executionMode == "DEMO") {
-                executionMode = "DEMO"
-                render()
-            },
-            weighted()
-        )
-
+    button("⌁  DEMO", executionMode == "DEMO") {
+        executionMode = "DEMO"
+        render()
+        beginDerivConnection()
+    },
+    weighted()
+)
+        
         row.addView(space(dp(8)))
 
         row.addView(
-            button("▥  REAL", executionMode == "REAL") {
-                executionMode = "REAL"
-                render()
-            },
-            weighted()
-        )
+    button("▥  REAL", executionMode == "REAL") {
+        executionMode = "REAL"
+        render()
+        beginDerivConnection()
+    },
+    weighted()
+)
 
         page.addView(row)
     }
