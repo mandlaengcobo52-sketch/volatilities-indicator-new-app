@@ -1520,3 +1520,4 @@ override fun onMarketDataError(symbol: String, message: String) {
         try { derivApiClient.disconnect() } catch (_: Exception) {}
         super.onDestroy()
     }
+                            }
