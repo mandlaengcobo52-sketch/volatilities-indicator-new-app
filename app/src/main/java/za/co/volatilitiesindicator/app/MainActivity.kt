@@ -203,15 +203,6 @@ when (selectedTab) {
                             matchWrap()
                         )
 
-                        page.addView(
-                            button("CREATE ACCOUNT", true) {
-                                selectedTab = "Register"
-                                render()
-                            },
-                            matchWrap()
-                        )
-                    }
-
                     // Show Deriv registration only when disconnected.
                     if (!connected) {
                         page.addView(
