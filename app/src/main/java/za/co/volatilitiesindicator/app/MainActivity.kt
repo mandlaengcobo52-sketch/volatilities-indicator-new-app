@@ -379,26 +379,47 @@ private fun addLoginScreen() {
                     signIn.isEnabled = true
                     signIn.text = "SIGN IN"
                     if (ok) {
-                        authToken = result.optString("token", "")
-                        authPrefs.edit().putString("mobile_auth_token", authToken).apply()
-                        currentProfile = result.optJSONObject("user")
-                        if (ok) {
+    // Disconnect any previous user's Deriv session.
+    try {
+        derivApiClient.disconnect()
+    } catch (_: Exception) {
+    }
+
+    // Clear the previous user's account information.
+    connected = false
+    accountId = ""
+    accountType = ""
+    accountBalance = 0.0
+    accountCurrency = ""
+
+    // Clear the previous user's profile before loading the new one.
     authToken = result.optString("token", "")
-    authPrefs.edit().putString("mobile_auth_token", authToken).apply()
+    currentProfile = null
+    profileLoading = false
+    adminUsers = null
+    adminUsersLoading = false
+
+    // Save the new user's login session.
+    authPrefs.edit()
+        .putString("mobile_auth_token", authToken)
+        .apply()
+
+    // Load the identity and role of the newly authenticated user.
     currentProfile = result.optJSONObject("user")
 
     val role = currentProfile?.optString("role", "user") ?: "user"
-    platform = if (role.equals("admin", ignoreCase = true)) "ADMIN" else "USER"
+    platform = if (role.equals("admin", ignoreCase = true)) {
+        "ADMIN"
+    } else {
+        "USER"
+    }
 
     selectedTab = "Account"
     drawerOpen = false
     render()
+    refreshProfile(showMessage = false)
     toast("Login successful.")
-                        }
-                        selectedTab = "Account"
-                        drawerOpen = false
-                        render()
-                        toast("Login successful.")
+                    }
                     } else {
                         toast(result.optString("message", "Unable to sign in."))
                     }
