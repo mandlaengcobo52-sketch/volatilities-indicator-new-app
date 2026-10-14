@@ -10,6 +10,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import org.json.JSONObject
+import org.json.JSONArray
 import java.io.IOException
 import java.util.UUID
 import android.graphics.Color
@@ -83,6 +84,8 @@ private var drawerOpen = false
     private var authToken: String = ""
     private var currentProfile: JSONObject? = null
     private var profileLoading: Boolean = false
+    private var adminUsers: JSONArray? = null
+    private var adminUsersLoading: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -173,6 +176,7 @@ when (selectedTab) {
 "Account" -> {
     addUserProfileScreen(page)
 }
+"User Accounts" -> addAdminUsersScreen()
 
 "Logout" -> {
     performPlatformLogout()
@@ -484,7 +488,6 @@ private fun performPlatformLogout() {
 private fun addHeader() {
     val row = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
         setPadding(dp(2), dp(4), dp(2), dp(4))
     }
         val menu = label("☰", 28f, white, true).apply {
@@ -887,7 +890,7 @@ private fun addTradeScreen() {
             12f,
             muted,
             false
-        )
+            )
     )
 
     autoTradeCard.addView(
@@ -1036,6 +1039,105 @@ private fun addTradeScreen() {
         if (epoch <= 0L) return "—"
         return java.text.SimpleDateFormat("yyyy/MM/dd, HH:mm:ss", java.util.Locale("en", "ZA"))
             .format(java.util.Date(epoch * 1000L))
+    }
+
+    // =========================================================
+    // ADMIN USER APPROVAL — server verifies administrator role
+    // =========================================================
+    private fun addAdminUsersScreen() {
+        page.addView(sectionTitle("USER APPROVALS"))
+        val profile = currentProfile
+        if (authToken.isBlank()) {
+            page.addView(label("Sign in with the administrator account to manage registrations.", 14f, yellow, false))
+            page.addView(button("SIGN IN", true) { selectedTab = "Login"; render() }, matchWrap())
+            return
+        }
+        if (profile == null) {
+            page.addView(label("Loading your account role…", 14f, yellow, false))
+            if (!profileLoading) refreshProfile(showMessage = false)
+            return
+        }
+        if (!profile.optString("role", "user").equals("admin", ignoreCase = true)) {
+            page.addView(label("Access denied. Only an administrator can approve registrations.", 14f, red, false))
+            page.addView(button("BACK TO HOME", false) { selectedTab = "Home"; render() }, matchWrap())
+            return
+        }
+
+        page.addView(label("New registrations remain pending until you approve them here.", 13f, muted, false))
+        page.addView(
+            button(if (adminUsersLoading) "LOADING USERS…" else "REFRESH PENDING USERS", false) {
+                loadAdminUsers()
+            },
+            matchWrap().apply { topMargin = dp(8); bottomMargin = dp(8) }
+        )
+
+        val users = adminUsers
+        if (adminUsersLoading && users == null) {
+            page.addView(label("Loading registrations…", 14f, yellow, false))
+            return
+        }
+        if (users == null) {
+            page.addView(label("Tap REFRESH PENDING USERS to load registrations.", 14f, muted, false))
+            return
+        }
+        var pendingCount = 0
+        for (i in 0 until users.length()) {
+            val user = users.optJSONObject(i) ?: continue
+            if (!user.optString("status", "pending").equals("pending", ignoreCase = true)) continue
+            pendingCount++
+            val userCard = card().apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(12), dp(12), dp(12), dp(12))
+            }
+            userCard.addView(label(user.optString("full_name", "Name not supplied"), 16f, white, true))
+            userCard.addView(label(user.optString("email", ""), 13f, muted, false))
+            userCard.addView(label("Contact: " + user.optString("phone", "Not supplied"), 13f, muted, false))
+            userCard.addView(label("Status: PENDING", 14f, yellow, true))
+            userCard.addView(
+                button("APPROVE USER", true) {
+                    val id = user.optString("id", "")
+                    if (id.isBlank()) {
+                        toast("This user record has no ID. Please manage it in WebTrader.")
+                    } else {
+                        authRequest("admin_approve_user", mapOf("user_id" to id)) { ok, result ->
+                            if (ok) {
+                                toast(result.optString("message", "User approved."))
+                                loadAdminUsers()
+                            } else {
+                                toast(result.optString("message", "Unable to approve this user."))
+                            }
+                        }
+                    }
+                },
+                matchWrap().apply { topMargin = dp(8) }
+            )
+            page.addView(userCard, matchWrap().apply { topMargin = dp(8) })
+        }
+        if (pendingCount == 0) {
+            page.addView(label("There are no pending registrations.", 14f, green, false))
+        }
+    }
+
+    private fun loadAdminUsers() {
+        if (authToken.isBlank()) {
+            toast("Sign in with the administrator account first.")
+            return
+        }
+        if (adminUsersLoading) return
+        adminUsersLoading = true
+        adminUsers = null
+        render()
+        authRequest("admin_users") { ok, result ->
+            adminUsersLoading = false
+            if (ok) {
+                adminUsers = result.optJSONArray("users") ?: JSONArray()
+                if (selectedTab == "User Accounts") render()
+            } else {
+                adminUsers = null
+                if (selectedTab == "User Accounts") render()
+                toast(result.optString("message", "Unable to load users."))
+            }
+        }
     }
 
     // =========================================================
