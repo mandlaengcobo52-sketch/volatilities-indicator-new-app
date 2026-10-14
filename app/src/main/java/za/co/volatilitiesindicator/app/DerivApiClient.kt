@@ -2101,6 +2101,12 @@ candleRequestSymbols.clear()
 
     send(request)
      }
+         fun requestOpenTrades() {
+        val request = JSONObject()
+            .put("portfolio", 1)
+
+        send(request)
+         }
     fun refreshBalance() {
 
         if (
