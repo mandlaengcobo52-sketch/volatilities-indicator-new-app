@@ -1978,3 +1978,4 @@ private fun addTradeScreen() {
             accountStatus.setTextColor(red)
         }
     }
+                            }
