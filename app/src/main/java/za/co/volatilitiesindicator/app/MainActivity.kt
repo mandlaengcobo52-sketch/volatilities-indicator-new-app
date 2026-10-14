@@ -233,12 +233,12 @@ when (selectedTab) {
             },
             matchWrap()
         )
-    }
                                 }
                 }
+        }
 
         addBottomNavigation(outer)
-    }
+}
 
 // =========================================================
 // HEADER: EXISTING LOGO AND NOTIFICATION BELL
