@@ -793,7 +793,7 @@ private fun addHeader() {
                     toast("Connect to Deriv first.")
                 }
             },
-            weighted()
+                    weighted()
         )
 
         card.addView(
@@ -997,7 +997,7 @@ private fun addTradeScreen() {
         "Index",
         "Direction",
         "Execution time",
-         "Closing time",
+        "Closing time",
         "Stake",
         "Barrier",
         "Final payment",
@@ -1100,6 +1100,67 @@ private fun addTradeScreen() {
             }
             userCard.addView(label("Status: $userStatus", 14f, statusColor, true))
 
+            // User-management actions are handled by the server against the shared users.json.
+            val userId = user.optString("id", "")
+            if (userId.isNotBlank()) {
+                userCard.addView(
+                    button("EDIT USER", false) { showEditUserDialog(user) },
+                    matchWrap().apply { topMargin = dp(7) }
+                )
+                if (userStatus == "SUSPENDED") {
+                    userCard.addView(
+                        button("REACTIVATE USER", true) {
+                            android.app.AlertDialog.Builder(this@MainActivity)
+                                .setTitle("Reactivate user")
+                                .setMessage("Allow this user to log in again?")
+                                .setNegativeButton("CANCEL", null)
+                                .setPositiveButton("REACTIVATE") { _, _ ->
+                                    authRequest("admin_reactivate_user", mapOf("user_id" to userId)) { ok, result ->
+                                        toast(result.optString("message", if (ok) "User reactivated." else "Unable to reactivate user."))
+                                        if (ok) loadAdminUsers()
+                                    }
+                                }.show()
+                        },
+                        matchWrap().apply { topMargin = dp(6) }
+                    )
+                } else if (userStatus == "APPROVED") {
+                    userCard.addView(
+                        button("SUSPEND USER", false) {
+                            android.app.AlertDialog.Builder(this@MainActivity)
+                                .setTitle("Suspend user")
+                                .setMessage("This user will no longer be able to log in. Continue?")
+                                .setNegativeButton("CANCEL", null)
+                                .setPositiveButton("SUSPEND") { _, _ ->
+                                    authRequest("admin_suspend_user", mapOf("user_id" to userId)) { ok, result ->
+                                        toast(result.optString("message", if (ok) "User suspended." else "Unable to suspend user."))
+                                        if (ok) loadAdminUsers()
+                                    }
+                                }.show()
+                        },
+                        matchWrap().apply { topMargin = dp(6) }
+                    )
+                }
+                if (!user.optString("role", "user").equals("admin", ignoreCase = true)) {
+                    userCard.addView(
+                        button("DELETE USER", false) {
+                            android.app.AlertDialog.Builder(this@MainActivity)
+                                .setTitle("Delete user")
+                                .setMessage("Permanently delete ${user.optString("full_name", "this user")} from user management? This cannot be undone.")
+                                .setNegativeButton("CANCEL", null)
+                                .setPositiveButton("DELETE") { _, _ ->
+                                    authRequest("admin_delete_user", mapOf("user_id" to userId)) { ok, result ->
+                                        toast(result.optString("message", if (ok) "User deleted." else "Unable to delete user."))
+                                        if (ok) loadAdminUsers()
+                                    }
+                                }.show()
+                        },
+                        matchWrap().apply { topMargin = dp(6) }
+                    )
+                }
+            } else {
+                userCard.addView(label("This record has no user ID; it cannot be edited, suspended, or deleted from the app.", 12f, yellow, false))
+            }
+
             if (userStatus == "PENDING") {
                 userCard.addView(
                     button("APPROVE USER", true) {
@@ -1125,6 +1186,86 @@ private fun addTradeScreen() {
         if (pendingCount == 0) {
             page.addView(label("There are no pending registrations.", 14f, green, false))
         }
+    }
+
+    private fun showEditUserDialog(user: JSONObject) {
+        val firstName = android.widget.EditText(this).apply {
+            hint = "First name"
+            setSingleLine(true)
+            setText(user.optString("first_name", user.optString("full_name", "").substringBefore(" ")))
+        }
+        val surname = android.widget.EditText(this).apply {
+            hint = "Surname"
+            setSingleLine(true)
+            setText(user.optString("surname", user.optString("full_name", "").substringAfter(" ", "")))
+            }
+        val email = android.widget.EditText(this).apply {
+            hint = "Email address"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+            setSingleLine(true)
+            setText(user.optString("email", ""))
+        }
+        val phone = android.widget.EditText(this).apply {
+            hint = "Contact number"
+            inputType = android.text.InputType.TYPE_CLASS_PHONE
+            setSingleLine(true)
+            setText(user.optString("phone", ""))
+        }
+        val password = android.widget.EditText(this).apply {
+            hint = "New password (leave blank to keep current password)"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setSingleLine(true)
+        }
+        val fields = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(4))
+            addView(firstName)
+            addView(surname)
+            addView(email)
+            addView(phone)
+            addView(password)
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Edit user details")
+            .setView(fields)
+            .setNegativeButton("CANCEL", null)
+            .setPositiveButton("SAVE", null)
+            .create().apply {
+                setOnShowListener {
+                    getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                        val id = user.optString("id", "")
+                        val first = firstName.text.toString().trim()
+                        val last = surname.text.toString().trim()
+                        val mail = email.text.toString().trim()
+                        val contact = phone.text.toString().trim()
+                        val newPassword = password.text.toString()
+                        if (first.isBlank() || last.isBlank() || mail.isBlank() || contact.length < 7) {
+                            toast("Enter name, surname, email and a valid contact number.")
+                            return@setOnClickListener
+                        }
+                        val values = mutableMapOf(
+                            "user_id" to id,
+                            "first_name" to first,
+                            "surname" to last,
+                            "email" to mail,
+                            "phone" to contact
+                        )
+                        if (newPassword.isNotEmpty()) {
+                            if (newPassword.length < 8) {
+                                toast("A new password must contain at least 8 characters.")
+                                return@setOnClickListener
+                            }
+                            values["password"] = newPassword
+                        }
+                        authRequest("admin_edit_user", values) { ok, result ->
+                            toast(result.optString("message", if (ok) "User details updated." else "Unable to update user."))
+                            if (ok) loadAdminUsers()
+                        }
+                        dismiss()
+                    }
+                }
+                show()
+            }
     }
 
     private fun loadAdminUsers() {
@@ -1596,5 +1737,4 @@ override fun onMarketDataError(symbol: String, message: String) {
         runOnUiThread { connected = false; accountStatus.text = "●  NOT CONNECTED"; accountStatus.setTextColor(red) }
     }
 
-                            }
-                            
+}
