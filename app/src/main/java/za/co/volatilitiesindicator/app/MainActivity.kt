@@ -1736,6 +1736,8 @@ private fun addTradeScreen() {
     runOnUiThread {
         this.accountId = accountId
         this.accountType = accountType
+                derivApiClient.requestOpenTrades()
+        derivApiClient.requestTradeHistory()
         connected = true
         render()
         toast("Deriv $executionMode connected.")
