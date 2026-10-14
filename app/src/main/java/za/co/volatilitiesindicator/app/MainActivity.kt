@@ -202,6 +202,7 @@ when (selectedTab) {
                             },
                             matchWrap()
                         )
+                    }
 
                     // Show Deriv registration only when disconnected.
                     if (!connected) {
