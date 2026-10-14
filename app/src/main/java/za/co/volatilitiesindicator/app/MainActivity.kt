@@ -651,30 +651,37 @@ private fun addHeader() {
     // =========================================================
 
     private fun addPlatformSelector() {
-        page.addView(sectionTitle("PLATFORM"))
-        val row = horizontalRow()
+    // Only an authenticated administrator may see this section.
+    if (!isAdminAuthenticated()) {
+        platform = "USER"
+        return
+    }
 
-        row.addView(
-            button("♟  USER", platform == "USER") {
-                platform = "USER"
-                drawerOpen = false
-                render()
-            },
-            weighted()
-        )
+    page.addView(sectionTitle("PLATFORM"))
 
-        row.addView(space(dp(8)))
+    val row = horizontalRow()
 
-        row.addView(
-            button("♟♟  ADMIN", platform == "ADMIN") {
-                platform = "ADMIN"
-                drawerOpen = false
-                render()
-            },
-            weighted()
-        )
+    row.addView(
+        button("♟ USER", platform == "USER") {
+            platform = "USER"
+            drawerOpen = false
+            render()
+        },
+        weighted()
+    )
 
-        page.addView(row)
+    row.addView(space(dp(8)))
+
+    row.addView(
+        button("♟♟ ADMIN", platform == "ADMIN") {
+            platform = "ADMIN"
+            drawerOpen = false
+            render()
+        },
+        weighted()
+    )
+
+    page.addView(row)
     }
 
     // =========================================================
