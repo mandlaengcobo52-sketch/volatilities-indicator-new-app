@@ -1083,8 +1083,9 @@ private fun addTradeScreen() {
         var pendingCount = 0
         for (i in 0 until users.length()) {
             val user = users.optJSONObject(i) ?: continue
-            if (!user.optString("status", "pending").equals("pending", ignoreCase = true)) continue
-            pendingCount++
+            if (user.optString("status", "pending").equals("pending", ignoreCase = true)) {
+    pendingCount++
+            }
             val userCard = card().apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(12), dp(12), dp(12), dp(12))
@@ -1093,8 +1094,13 @@ private fun addTradeScreen() {
             userCard.addView(label(user.optString("email", ""), 13f, muted, false))
             userCard.addView(label("Contact: " + user.optString("phone", "Not supplied"), 13f, muted, false))
             userCard.addView(label("Status: PENDING", 14f, yellow, true))
-            userCard.addView(
-                button("APPROVE USER", true) {
+            val userStatus = user.optString("status", "pending").uppercase()
+val statusColor = when (userStatus) {
+    "APPROVED" -> green
+    "SUSPENDED" -> red
+    else -> yellow
+}
+userCard.addView(label("Status: $userStatus", 14f, statusColor, true))
                     val id = user.optString("id", "")
                     if (id.isBlank()) {
                         toast("This user record has no ID. Please manage it in WebTrader.")
