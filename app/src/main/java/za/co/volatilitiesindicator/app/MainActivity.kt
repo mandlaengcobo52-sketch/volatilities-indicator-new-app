@@ -1752,7 +1752,14 @@ private fun addTradeScreen() {
     }
     override fun onTick(symbol: String, quote: Double, epoch: Long) {
 }
-
+    override fun onTradeData(json: JSONObject) {
+        runOnUiThread {
+            android.util.Log.d(
+                "DerivTradeData",
+                "Trade response: $json"
+            )
+        }
+    }
 override fun onCandles(
     symbol: String,
     candles: List<DerivApiClient.Candle>
