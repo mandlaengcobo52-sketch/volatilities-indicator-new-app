@@ -494,31 +494,46 @@ private fun refreshProfile(showMessage: Boolean) {
         render()
         return
     }
+
     if (profileLoading) return
+
     profileLoading = true
+
     authRequest("profile") { ok, result ->
         profileLoading = false
+
         if (ok) {
-    currentProfile = result.optJSONObject("user")
+            currentProfile = result.optJSONObject("user")
 
-    if (selectedTab == "Account" || selectedTab == "Home") {
-        render()
-    }
+            if (selectedTab == "Account" || selectedTab == "Home") {
+                render()
+            }
 
-    if (showMessage) {
-        toast("Profile updated.")
-    }
-        }
+            if (showMessage) {
+                toast("Profile updated.")
+            }
+        } else {
             authToken = ""
             currentProfile = null
-            authPrefs.edit().remove("mobile_auth_token").apply()
+
+            authPrefs.edit()
+                .remove("mobile_auth_token")
+                .apply()
+
             selectedTab = "Login"
+            drawerOpen = false
+
             render()
-            toast(result.optString("message", "Please sign in again."))
+
+            toast(
+                result.optString(
+                    "message",
+                    "Please sign in again."
+                )
+            )
         }
     }
 }
-
 private fun performPlatformLogout() {
     val token = authToken
     authToken = ""
