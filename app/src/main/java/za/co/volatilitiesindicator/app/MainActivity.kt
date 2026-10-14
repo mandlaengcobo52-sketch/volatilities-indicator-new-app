@@ -101,7 +101,7 @@ authToken = authPrefs.getString("mobile_auth_token", "").orEmpty()
 
 render()
 handleOAuthCallback(intent)
-if (authToken.isNotBlank()) refreshProfile(showMessage = false)
+if (authToken.isNotBlank()) refreshProfile(showMessage = false) }
 
 
 
@@ -1957,4 +1957,3 @@ private fun addTradeScreen() {
             accountStatus.setTextColor(red)
         }
     }
-                            }
