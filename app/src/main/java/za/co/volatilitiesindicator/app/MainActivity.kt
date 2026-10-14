@@ -390,6 +390,8 @@ private fun addLoginScreen() {
                         authToken = result.optString("token", "")
                         authPrefs.edit().putString("mobile_auth_token", authToken).apply()
                         currentProfile = result.optJSONObject("user")
+                        val role = currentProfile?.optString("role", "user") ?: "user"
+platform = if (role.equals("admin", ignoreCase = true)) "ADMIN" else "USER"
                         selectedTab = "Account"
                         drawerOpen = false
                         render()
