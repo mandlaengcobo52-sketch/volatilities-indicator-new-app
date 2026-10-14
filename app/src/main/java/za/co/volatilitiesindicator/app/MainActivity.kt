@@ -237,35 +237,6 @@ when (selectedTab) {
             }
 }
 
-    // Show Deriv registration only when no Deriv account
-    // is currently connected.
-    if (!connected) {
-        page.addView(
-            button("CREATE DERIV ACCOUNT", true) {
-                try {
-                    val derivSignupUrl =
-                        Uri.parse("https://deriv.com/signup/")
-
-                    startActivity(
-                        Intent(
-                            Intent.ACTION_VIEW,
-                            derivSignupUrl
-                        )
-                    )
-                } catch (e: Exception) {
-                    toast(
-                        "Unable to open Deriv registration. " +
-                            "Please try again."
-                    )
-                }
-            },
-            matchWrap()
-        )
-    }
-                                }
-                }
-}
-
         addBottomNavigation(outer)
     }
 
