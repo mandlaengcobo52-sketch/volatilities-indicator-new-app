@@ -189,25 +189,52 @@ when (selectedTab) {
                 addExecutionSelector()
                 addAccountCard()
                                 if (platform == "USER") {
-                    if (authToken.isBlank()) {
-                        page.addView(
-                            button("SIGN IN", false) {
-                                selectedTab = "Login"
-                                render()
-                            },
-                            matchWrap()
-                        )
-                    }
-                    page.addView(
-                        button("CREATE ACCOUNT", true) {
-                            selectedTab = "Register"
-                            render()
-                        },
-                        matchWrap()
-                    )
-                                }
 
-            }
+    // Show sign-in only when the user is not authenticated.
+    if (authToken.isBlank()) {
+        page.addView(
+            button("SIGN IN", false) {
+                selectedTab = "Login"
+                render()
+            },
+            matchWrap()
+        )
+
+        page.addView(
+            button("CREATE ACCOUNT", true) {
+                selectedTab = "Register"
+                render()
+            },
+            matchWrap()
+        )
+    }
+
+    // Show Deriv registration only when no Deriv account
+    // is currently connected.
+    if (!connected) {
+        page.addView(
+            button("CREATE DERIV ACCOUNT", true) {
+                try {
+                    val derivSignupUrl =
+                        Uri.parse("https://deriv.com/signup/")
+
+                    startActivity(
+                        Intent(
+                            Intent.ACTION_VIEW,
+                            derivSignupUrl
+                        )
+                    )
+                } catch (e: Exception) {
+                    toast(
+                        "Unable to open Deriv registration. " +
+                            "Please try again."
+                    )
+                }
+            },
+            matchWrap()
+        )
+    }
+                                }
                 }
 
         addBottomNavigation(outer)
