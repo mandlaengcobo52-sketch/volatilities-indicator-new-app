@@ -272,6 +272,7 @@ when (selectedTab) {
     }
                                 }
                 }
+}
 
         addBottomNavigation(outer)
     }
