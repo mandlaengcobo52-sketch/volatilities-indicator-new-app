@@ -79,7 +79,7 @@ private var drawerOpen = false
     private val httpClient = OkHttpClient()
     private val prefs by lazy { getSharedPreferences("deriv_oauth", MODE_PRIVATE) }
     private val authPrefs by lazy { getSharedPreferences("vi_platform_auth", MODE_PRIVATE) }
-    private val authEndpoint = "https://esindicator.org.za/mobile-auth.php"
+    private val authEndpoint = "https://volatilitiesindicator.org.za/mobile-auth.php"
     private var authToken: String = ""
     private var currentProfile: JSONObject? = null
     private var profileLoading: Boolean = false
