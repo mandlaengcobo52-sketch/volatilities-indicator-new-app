@@ -78,6 +78,11 @@ private var drawerOpen = false
     private val derivApiClient by lazy { DerivApiClient(this) }
     private val httpClient = OkHttpClient()
     private val prefs by lazy { getSharedPreferences("deriv_oauth", MODE_PRIVATE) }
+    private val authPrefs by lazy { getSharedPreferences("vi_platform_auth", MODE_PRIVATE) }
+    private val authEndpoint = "https://esindicator.org.za/mobile-auth.php"
+    private var authToken: String = ""
+    private var currentProfile: JSONObject? = null
+    private var profileLoading: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -89,9 +94,11 @@ window.decorView.systemUiVisibility = 0
 platform = appPrefs.getString("platform", "USER") ?: "USER"
 executionMode = appPrefs.getString("executionMode", "DEMO") ?: "DEMO"
 selectedTab = appPrefs.getString("selectedTab", "Home") ?: "Home"
+authToken = authPrefs.getString("mobile_auth_token", "").orEmpty()
 
 render()
 handleOAuthCallback(intent)
+if (authToken.isNotBlank()) refreshProfile(showMessage = false)
 
 val savedToken = prefs.getString(
     if (executionMode == "REAL") "real_token" else "demo_token",
@@ -164,20 +171,11 @@ when (selectedTab) {
     )
 }
 "Account" -> {
-        addUserProfileScreen(page)
-    page.addView(
-        button("BACK TO HOME", false) {
-            selectedTab = "Home"
-            render()
-        },
-        matchWrap()
-    )
+    addUserProfileScreen(page)
 }
 
 "Logout" -> {
-    selectedTab = "Login"
-    drawerOpen = false
-    render()
+    performPlatformLogout()
 }
             "Login" -> {
     addLoginScreen()
@@ -187,6 +185,15 @@ when (selectedTab) {
                 addExecutionSelector()
                 addAccountCard()
                                 if (platform == "USER") {
+                    if (authToken.isBlank()) {
+                        page.addView(
+                            button("SIGN IN", false) {
+                                selectedTab = "Login"
+                                render()
+                            },
+                            matchWrap()
+                        )
+                    }
                     page.addView(
                         button("CREATE ACCOUNT", true) {
                             selectedTab = "Register"
@@ -212,310 +219,268 @@ when (selectedTab) {
 private fun addRegistrationScreen() {
     page.addView(sectionTitle("CREATE ACCOUNT"))
 
-    val registrationCard = card()
-    registrationCard.orientation = LinearLayout.VERTICAL
+    val registrationCard = card().apply { orientation = LinearLayout.VERTICAL }
+    registrationCard.addView(label("Register your Volatilities Indicator account", 17f, white, true))
+    registrationCard.addView(label("Your application will remain pending until an administrator approves it.", 14f, yellow, false))
 
-    label("Register your Volatilities Indicator account", 17f, white, true)
-
-    registrationCard.addView(
-        label("Your account will remain pending until approved by an administrator.", 14f, yellow, false)
-    )
-
-    val nameInput = android.widget.EditText(this).apply {
-        hint = "Name"
-        setSingleLine(true)
-        setTextColor(white)
-        setHintTextColor(muted)
-        setPadding(dp(12), dp(12), dp(12), dp(12))
-        setBackgroundTintList(
-            android.content.res.ColorStateList.valueOf(green)
-        )
-    }
-    
-    registrationCard.addView(nameInput)
-
-    val surnameInput = android.widget.EditText(this).apply {
-        hint = "Surname"
-        setSingleLine(true)
-        setTextColor(white)
-        setHintTextColor(muted)
-        setPadding(dp(12), dp(12), dp(12), dp(12))
-        setBackgroundTintList(
-            android.content.res.ColorStateList.valueOf(green)
-        )
-    }
-    registrationCard.addView(surnameInput)
-
-    val emailInput = android.widget.EditText(this).apply {
-        hint = "Email address"
-        inputType = android.text.InputType.TYPE_CLASS_TEXT or
-            android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
-        setSingleLine(true)
-        setTextColor(white)
-        setHintTextColor(muted)
-        setPadding(dp(12), dp(12), dp(12), dp(12))
-        setBackgroundTintList(
-            android.content.res.ColorStateList.valueOf(green)
-        )
-    }
-    registrationCard.addView(emailInput)
-
-    val phoneInput = android.widget.EditText(this).apply {
-        hint = "Contact number"
-        inputType = android.text.InputType.TYPE_CLASS_PHONE
-        setSingleLine(true)
-        setTextColor(white)
-        setHintTextColor(muted)
-        setPadding(dp(12), dp(12), dp(12), dp(12))
-        setBackgroundTintList(
-            android.content.res.ColorStateList.valueOf(green)
-        )
-    }
-    registrationCard.addView(phoneInput)
-
-    fun addPasswordField(title: String): android.widget.LinearLayout {
-        val row = android.widget.LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.CENTER_VERTICAL
-        }
-
-        val input = android.widget.EditText(this).apply {
-            hint = title
-            inputType = android.text.InputType.TYPE_CLASS_TEXT or
-                android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+    fun textInput(hintText: String, inputType: Int = android.text.InputType.TYPE_CLASS_TEXT): android.widget.EditText {
+        return android.widget.EditText(this).apply {
+            hint = hintText
+            this.inputType = inputType
             setSingleLine(true)
             setTextColor(white)
             setHintTextColor(muted)
-            setPadding(dp(12), dp(12), dp(8), dp(12))
-            setBackgroundTintList(
-                android.content.res.ColorStateList.valueOf(green)
-            )
-            layoutParams = LinearLayout.LayoutParams(
-                0,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                1f
-            )
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setBackgroundTintList(android.content.res.ColorStateList.valueOf(green))
         }
+    }
 
-        val eyeButton = android.widget.TextView(this).apply {
-            text = "SHOW"
-            textSize = 13f
-            setTextColor(green)
-            gravity = android.view.Gravity.CENTER
-            setPadding(dp(10), dp(12), dp(10), dp(12))
+    val nameInput = textInput("Name")
+    val surnameInput = textInput("Surname")
+    val emailInput = textInput("Email address", android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS)
+    val phoneInput = textInput("Contact number", android.text.InputType.TYPE_CLASS_PHONE)
+    registrationCard.addView(nameInput)
+    registrationCard.addView(surnameInput)
+    registrationCard.addView(emailInput)
+    registrationCard.addView(phoneInput)
+
+    fun addPasswordField(title: String): Pair<LinearLayout, android.widget.EditText> {
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val input = textInput(title, android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD).apply {
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
-
+        val eyeButton = button("SHOW", false)
         var visible = false
-
         eyeButton.setOnClickListener {
             val cursorPosition = input.selectionStart
             visible = !visible
-
-            input.inputType = if (visible) {
-                android.text.InputType.TYPE_CLASS_TEXT or
-                    android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
-            } else {
-                android.text.InputType.TYPE_CLASS_TEXT or
-                    android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
-            }
-
+            input.inputType = if (visible) android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD else android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
             eyeButton.text = if (visible) "HIDE" else "SHOW"
-
-            if (cursorPosition >= 0) {
-                input.setSelection(
-                    cursorPosition.coerceAtMost(input.text.length)
-                )
-            }
+            if (cursorPosition >= 0) input.setSelection(cursorPosition.coerceAtMost(input.text.length))
         }
-
         row.addView(input)
-        row.addView(eyeButton)
-
-        row.tag = input
+        row.addView(eyeButton, LinearLayout.LayoutParams(dp(76), dp(48)))
         registrationCard.addView(row)
-
-        return row
+        return Pair(row, input)
     }
 
-    val passwordRow = addPasswordField("Password")
-    val confirmPasswordRow = addPasswordField("Confirm password")
-
-    registrationCard.addView(
-        button("CREATE ACCOUNT", true) {
-            val name = nameInput.text.toString().trim()
-            val surname = surnameInput.text.toString().trim()
-            val email = emailInput.text.toString().trim()
-            val phone = phoneInput.text.toString().trim()
-
-            val password = (passwordRow.tag as android.widget.EditText)
-                .text.toString()
-
-            val confirmPassword =
-                (confirmPasswordRow.tag as android.widget.EditText)
-                    .text.toString()
-
-            when {
-                name.isBlank() ->
-                    toast("Enter your name.")
-
-                surname.isBlank() ->
-                    toast("Enter your surname.")
-
-                email.isBlank() ->
-                    toast("Enter your email address.")
-
-                phone.isBlank() ->
-                    toast("Enter your contact number.")
-
-                password.length < 8 ->
-                    toast("Password must contain at least 8 characters.")
-
-                password != confirmPassword ->
-                    toast("Passwords do not match.")
-
-                else ->
-                    toast("Registration form validated. Account submission is not connected yet.")
+    val (_, passwordInput) = addPasswordField("Password")
+    val (_, confirmPasswordInput) = addPasswordField("Confirm password")
+    val submit = button("CREATE ACCOUNT", true)
+    submit.setOnClickListener {
+        val name = nameInput.text.toString().trim()
+        val surname = surnameInput.text.toString().trim()
+        val email = emailInput.text.toString().trim()
+        val phone = phoneInput.text.toString().trim()
+        val password = passwordInput.text.toString()
+        val confirmPassword = confirmPasswordInput.text.toString()
+        when {
+            name.isBlank() -> toast("Enter your name.")
+            surname.isBlank() -> toast("Enter your surname.")
+            email.isBlank() || !android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches() -> toast("Enter a valid email address.")
+            phone.trim().length < 7 -> toast("Enter a valid contact number.")
+            password.length < 8 -> toast("Password must contain at least 8 characters.")
+            password != confirmPassword -> toast("Passwords do not match.")
+            else -> {
+                submit.isEnabled = false
+                submit.text = "SUBMITTING APPLICATION…"
+                authRequest("register", mapOf(
+                    "first_name" to name,
+                    "surname" to surname,
+                    "email" to email,
+                    "phone" to phone,
+                    "password" to password,
+                    "password_confirm" to confirmPassword
+                ), token = "") { ok, result ->
+                    submit.isEnabled = true
+                    submit.text = "CREATE ACCOUNT"
+                    if (ok) {
+                        val message = result.optString("message", "Application submitted. Await administrator approval.")
+                        val token = result.optString("token", "")
+                        if (token.isNotBlank()) {
+                            authToken = token
+                            authPrefs.edit().putString("mobile_auth_token", token).apply()
+                            currentProfile = result.optJSONObject("user")
+                            selectedTab = "Account"
+                        } else {
+                            selectedTab = "Login"
+                        }
+                        drawerOpen = false
+                        render()
+                        toast(message)
+                    } else {
+                        toast(result.optString("message", "Registration failed. Please try again."))
+                    }
+                }
             }
         }
-    )
-
-    page.addView(registrationCard)
+    }
+    registrationCard.addView(submit, matchWrap().apply { topMargin = dp(12) })
+    page.addView(registrationCard, matchWrap())
 }
-// SIGN IN — VOLATILITIES INDICATOR
+
+// SIGN IN — uses the same user records and approval status as WebTrader.
 private fun addLoginScreen() {
     page.addView(sectionTitle("SIGN IN"))
-
-    val loginCard = card()
-    loginCard.orientation = LinearLayout.VERTICAL
-
-    loginCard.addView(
-        label("Welcome back", 20f, green, true)
-    )
-
-    loginCard.addView(
-        label(
-            "Sign in to your Volatilities Indicator account.",
-            14f,
-            muted,
-            false
-        )
-    )
+    val loginCard = card().apply { orientation = LinearLayout.VERTICAL }
+    loginCard.addView(label("Welcome back", 20f, green, true))
+    loginCard.addView(label("Sign in with the email address and password used for your Volatilities Indicator account.", 14f, muted, false))
 
     val emailInput = android.widget.EditText(this).apply {
         hint = "Email address"
-        inputType = android.text.InputType.TYPE_CLASS_TEXT or
-            android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
-        setSingleLine(true)
-        setTextColor(white)
-        setHintTextColor(muted)
+        inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+        setSingleLine(true); setTextColor(white); setHintTextColor(muted)
         setPadding(dp(12), dp(12), dp(12), dp(12))
-        setBackgroundTintList(
-            android.content.res.ColorStateList.valueOf(green)
-        )
+        setBackgroundTintList(android.content.res.ColorStateList.valueOf(green))
     }
-
-    loginCard.addView(emailInput)
-
     val passwordInput = android.widget.EditText(this).apply {
         hint = "Password"
-        inputType = android.text.InputType.TYPE_CLASS_TEXT or
-            android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
-        setSingleLine(true)
-        setTextColor(white)
-        setHintTextColor(muted)
+        inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        setSingleLine(true); setTextColor(white); setHintTextColor(muted)
         setPadding(dp(12), dp(12), dp(12), dp(12))
-        setBackgroundTintList(
-            android.content.res.ColorStateList.valueOf(green)
-        )
+        setBackgroundTintList(android.content.res.ColorStateList.valueOf(green))
     }
-
+    loginCard.addView(emailInput)
     loginCard.addView(passwordInput)
-
-    loginCard.addView(
-        button("SIGN IN", true) {
-            val email = emailInput.text.toString().trim()
-            val password = passwordInput.text.toString()
-
-            when {
-                email.isBlank() ->
-                    toast("Enter your email address.")
-
-                password.isBlank() ->
-                    toast("Enter your password.")
-
-                else ->
-                    toast(
-                        "Sign-in service is not connected yet."
-                    )
+    val signIn = button("SIGN IN", true)
+    signIn.setOnClickListener {
+        val email = emailInput.text.toString().trim()
+        val password = passwordInput.text.toString()
+        when {
+            email.isBlank() || !android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches() -> toast("Enter a valid email address.")
+            password.isBlank() -> toast("Enter your password.")
+            else -> {
+                signIn.isEnabled = false
+                signIn.text = "SIGNING IN…"
+                authRequest("login", mapOf("email" to email, "password" to password), token = "") { ok, result ->
+                    signIn.isEnabled = true
+                    signIn.text = "SIGN IN"
+                    if (ok) {
+                        authToken = result.optString("token", "")
+                        authPrefs.edit().putString("mobile_auth_token", authToken).apply()
+                        currentProfile = result.optJSONObject("user")
+                        selectedTab = "Account"
+                        drawerOpen = false
+                        render()
+                        toast("Login successful.")
+                    } else {
+                        toast(result.optString("message", "Unable to sign in."))
+                    }
+                }
             }
-        },
-        matchWrap().apply {
-            topMargin = dp(12)
         }
-    )
-
-    loginCard.addView(
-        button("CREATE ACCOUNT", false) {
-            selectedTab = "Register"
-            drawerOpen = false
-            render()
-        },
-        matchWrap().apply {
-            topMargin = dp(8)
-        }
-    )
-
-    page.addView(
-        loginCard,
-        matchWrap()
-    )
+    }
+    loginCard.addView(signIn, matchWrap().apply { topMargin = dp(12) })
+    loginCard.addView(button("CREATE ACCOUNT", false) {
+        selectedTab = "Register"; drawerOpen = false; render()
+    }, matchWrap().apply { topMargin = dp(8) })
+    page.addView(loginCard, matchWrap())
 }
+
 private fun addUserProfileScreen(page: LinearLayout) {
-    val profileCard = card()
-
-    profileCard.orientation = LinearLayout.VERTICAL
-    profileCard.setPadding(dp(20), dp(20), dp(20), dp(20))
-
-    profileCard.addView(
-        label("MY PROFILE", 22f, Color.WHITE, true)
-    )
-
-    profileCard.addView(
-        label("Personal Account", 15f, Color.LTGRAY, false)
-    )
-
-    profileCard.addView(
-        label("Name: Not available", 15f, Color.WHITE, false)
-    )
-
-    profileCard.addView(
-        label("Email: Not available", 15f, Color.WHITE, false)
-    )
-
-    profileCard.addView(
-        label("Account Status: Pending approval", 15f, Color.YELLOW, false)
-    )
-
-    profileCard.addView(
-        label("Subscription Plan: Not assigned", 15f, Color.WHITE, false)
-    )
-
-    page.addView(
-        profileCard,
-        LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT
-        )
-    )
-
-    page.addView(
-        button("BACK TO HOME", false) {
-            selectedTab = "Home"
-            render()
-        },
-        matchWrap()
-    )
+    val profileCard = card().apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(20), dp(20), dp(20)) }
+    profileCard.addView(label("MY PROFILE", 22f, green, true))
+    if (authToken.isBlank()) {
+        profileCard.addView(label("Sign in to view your account profile.", 15f, muted, false))
+        profileCard.addView(button("SIGN IN", true) { selectedTab = "Login"; render() }, matchWrap())
+        profileCard.addView(button("CREATE ACCOUNT", false) { selectedTab = "Register"; render() }, matchWrap())
+    } else if (currentProfile == null) {
+        profileCard.addView(label(if (profileLoading) "Loading your profile…" else "Your profile has not loaded yet.", 15f, yellow, false))
+        profileCard.addView(button("LOAD PROFILE", true) { refreshProfile(showMessage = true) }, matchWrap())
+    } else {
+        val u = currentProfile!!
+        fun profileField(title: String, value: String) {
+            profileCard.addView(label(title.uppercase(), 12f, green, true))
+            profileCard.addView(label(value.ifBlank { "Not assigned" }, 16f, yellow, false))
+        }
+        val fullName = u.optString("full_name", "")
+        val firstName = u.optString("first_name", fullName.substringBefore(" "))
+        val surname = u.optString("surname", fullName.substringAfter(" ", ""))
+        profileField("Name", firstName)
+        profileField("Surname", surname)
+        profileField("Email address", u.optString("email", ""))
+        profileField("Contact number", u.optString("phone", ""))
+        val risk = u.optString("risk_profile", "")
+        val riskPercent = u.optInt("risk_percent", 0)
+        val riskText = if (risk.isBlank() || risk == "null") "Not assigned" else "${risk.replaceFirstChar { it.uppercase() }} risk${if (riskPercent > 0) " — $riskPercent% stake" else ""}"
+        profileField("Assigned risk plan", riskText)
+        profileField("Start date", u.optString("start_date", "").takeUnless { it == "null" }.orEmpty())
+        profileField("Expiry date", u.optString("expiry_date", "").takeUnless { it == "null" }.orEmpty())
+        val status = u.optString("status", "approved").uppercase()
+        profileField("Account status", status)
+        profileCard.addView(button("REFRESH PROFILE", false) { refreshProfile(showMessage = true) }, matchWrap().apply { topMargin = dp(8) })
+        profileCard.addView(button("LOG OUT", true) { performPlatformLogout() }, matchWrap().apply { topMargin = dp(8) })
+    }
+    page.addView(profileCard, matchWrap())
 }
+
+private fun authRequest(
+    action: String,
+    fields: Map<String, String> = emptyMap(),
+    token: String = authToken,
+    callback: (Boolean, JSONObject) -> Unit
+) {
+    val form = FormBody.Builder().add("action", action).apply {
+        fields.forEach { (key, value) -> add(key, value) }
+    }.build()
+    val requestBuilder = Request.Builder()
+        .url(authEndpoint)
+        .post(form)
+        .header("Accept", "application/json")
+        .header("X-VI-Mobile-App", "1")
+    if (token.isNotBlank()) requestBuilder.header("Authorization", "Bearer $token")
+    httpClient.newCall(requestBuilder.build()).enqueue(object : Callback {
+        override fun onFailure(call: Call, e: IOException) {
+            runOnUiThread { callback(false, JSONObject().put("message", "Cannot reach the registration service. Check your internet connection and try again.")) }
+        }
+        override fun onResponse(call: Call, response: Response) {
+            val raw = response.body?.string().orEmpty()
+            val result = try { JSONObject(raw) } catch (_: Exception) { JSONObject().put("message", "The server returned an invalid response. Please contact the administrator.") }
+            val ok = response.isSuccessful && result.optBoolean("ok", false)
+            response.close()
+            runOnUiThread { callback(ok, result) }
+        }
+    })
+}
+
+private fun refreshProfile(showMessage: Boolean) {
+    if (authToken.isBlank()) {
+        currentProfile = null
+        selectedTab = "Login"
+        render()
+        return
+    }
+    if (profileLoading) return
+    profileLoading = true
+    authRequest("profile") { ok, result ->
+        profileLoading = false
+        if (ok) {
+            currentProfile = result.optJSONObject("user")
+            if (selectedTab == "Account") render()
+            if (showMessage) toast("Profile updated.")
+        } else {
+            authToken = ""
+            currentProfile = null
+            authPrefs.edit().remove("mobile_auth_token").apply()
+            selectedTab = "Login"
+            render()
+            toast(result.optString("message", "Please sign in again."))
+        }
+    }
+}
+
+private fun performPlatformLogout() {
+    val token = authToken
+    authToken = ""
+    currentProfile = null
+    authPrefs.edit().remove("mobile_auth_token").apply()
+    selectedTab = "Login"
+    drawerOpen = false
+    render()
+    if (token.isNotBlank()) authRequest("logout", token = token) { _, _ -> }
+    toast("You have been signed out.")
+}
+
 private fun addHeader() {
     val row = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
@@ -653,9 +618,13 @@ private fun addHeader() {
             b.gravity = Gravity.START or Gravity.CENTER_VERTICAL
 
             b.setOnClickListener {
-                drawerOpen = false
-                selectedTab = item
-                render()
+                if (item == "Logout") {
+                    performPlatformLogout()
+                } else {
+                    drawerOpen = false
+                    selectedTab = item
+                    render()
+                }
             }
 
             card.addView(
@@ -927,7 +896,7 @@ private fun addTradeScreen() {
                 "DISARM AUTO TRADE"
             } else {
                 "ARM AUTO TRADE"
-            },
+                },
             autoTradeEnabled
         ) {
             autoTradeEnabled = !autoTradeEnabled
