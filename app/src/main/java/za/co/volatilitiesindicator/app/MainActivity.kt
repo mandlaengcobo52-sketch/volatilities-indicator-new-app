@@ -1950,7 +1950,7 @@ private fun addTradeScreen() {
         }
     }
 
-    override fun onDisconnected() {
+        override fun onDisconnected() {
         runOnUiThread {
             connected = false
             accountStatus.text = "●  NOT CONNECTED"
