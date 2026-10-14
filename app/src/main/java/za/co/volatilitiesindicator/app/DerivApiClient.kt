@@ -2092,6 +2092,15 @@ candleRequestSymbols.clear()
     /*
      * Request a fresh balance manually.
      */
+     fun requestTradeHistory() {
+    val request = JSONObject()
+        .put("profit_table", 1)
+        .put("limit", 50)
+        .put("sort", "DESC")
+        .put("description", 1)
+
+    send(request)
+     }
     fun refreshBalance() {
 
         if (
