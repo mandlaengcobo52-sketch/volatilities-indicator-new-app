@@ -103,15 +103,7 @@ render()
 handleOAuthCallback(intent)
 if (authToken.isNotBlank()) refreshProfile(showMessage = false)
 
-val savedToken = prefs.getString(
-    if (executionMode == "REAL") "real_token" else "demo_token",
-    ""
-).orEmpty()
 
-if (savedToken.isNotBlank() && intent?.data?.host != "oauth-callback") {
-    connectWithToken(savedToken)
-}
-    }
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
@@ -536,16 +528,57 @@ private fun refreshProfile(showMessage: Boolean) {
 }
 private fun performPlatformLogout() {
     val token = authToken
+
+    // Disconnect the previous user's Deriv session.
+    try {
+        derivApiClient.disconnect()
+    } catch (_: Exception) {
+    }
+
+    // Clear account information from memory.
+    connected = false
+    accountId = ""
+    accountType = ""
+    accountBalance = 0.0
+    accountCurrency = ""
+
+    // Clear the platform login session.
     authToken = ""
     currentProfile = null
-    authPrefs.edit().remove("mobile_auth_token").apply()
+    profileLoading = false
+
+    authPrefs.edit()
+        .remove("mobile_auth_token")
+        .apply()
+
+    // Return to the ordinary user login screen.
+    platform = "USER"
     selectedTab = "Login"
     drawerOpen = false
+
+    // Clear account details displayed on the screen.
+    if (::accountStatus.isInitialized) {
+        accountStatus.text = "●  NOT CONNECTED"
+        accountStatus.setTextColor(red)
+    }
+
+    if (::accountIdView.isInitialized) {
+        accountIdView.text = "Account:  —"
+    }
+
+    if (::balanceView.isInitialized) {
+        balanceView.text = "Balance:  —"
+    }
+
     render()
-    if (token.isNotBlank()) authRequest("logout", token = token) { _, _ -> }
+
+    // Invalidate the platform session on the server.
+    if (token.isNotBlank()) {
+        authRequest("logout", token = token) { _, _ -> }
+    }
+
     toast("You have been signed out.")
 }
-
 private fun addHeader() {
     val row = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
@@ -1662,9 +1695,23 @@ private fun addTradeScreen() {
     // DERIV OAUTH CONNECTION (existing OAuth + PKCE flow)
     // =========================================================
     private fun beginDerivConnection() {
-        val key = if (executionMode == "REAL") "real_token" else "demo_token"
-        val token = prefs.getString(key, "").orEmpty()
-        if (token.isNotBlank()) connectWithToken(token) else startDerivOAuth()
+    val userId = currentProfile?.optString("id", "").orEmpty()
+
+    if (authToken.isBlank() || userId.isBlank()) {
+        toast("Please sign in before connecting your Deriv account.")
+        selectedTab = "Login"
+        render()
+        return
+    }
+
+    val key = "user_${userId}_${executionMode.lowercase()}_token"
+    val token = prefs.getString(key, "").orEmpty()
+
+    if (token.isNotBlank()) {
+        connectWithToken(token)
+    } else {
+        startDerivOAuth()
+    }
     }
 
     private fun createCodeVerifier(): String {
@@ -1686,21 +1733,41 @@ private fun addTradeScreen() {
     }
 
     private fun startDerivOAuth() {
-        val state = "android-" + UUID.randomUUID().toString()
-        val verifier = createCodeVerifier()
-        val challenge = createCodeChallenge(verifier)
-        prefs.edit().putString("oauth_state", state).putString("code_verifier", verifier)
-            .putString("oauth_mode", executionMode).apply()
-        val url = Uri.parse(DerivApiClient.OAUTH_AUTH_URL).buildUpon()
-            .appendQueryParameter("response_type", "code")
-            .appendQueryParameter("client_id", DerivApiClient.clientId(executionMode))
-            .appendQueryParameter("redirect_uri", DerivApiClient.OAUTH_REDIRECT_URI)
-            .appendQueryParameter("scope", DerivApiClient.OAUTH_SCOPE)
-            .appendQueryParameter("state", state)
-            .appendQueryParameter("code_challenge", challenge)
-            .appendQueryParameter("code_challenge_method", "S256").build()
-        try { startActivity(Intent(Intent.ACTION_VIEW, url)) }
-        catch (e: Exception) { toast("Unable to open Deriv login: ${e.message}") }
+    val userId = currentProfile?.optString("id", "").orEmpty()
+
+    if (authToken.isBlank() || userId.isBlank()) {
+        toast("Please sign in before connecting your Deriv account.")
+        selectedTab = "Login"
+        render()
+        return
+    }
+
+    val state = "android-" + UUID.randomUUID().toString()
+    val verifier = createCodeVerifier()
+    val challenge = createCodeChallenge(verifier)
+
+    prefs.edit()
+        .putString("oauth_state", state)
+        .putString("code_verifier", verifier)
+        .putString("oauth_mode", executionMode)
+        .putString("oauth_user_id", userId)
+        .apply()
+
+    val url = Uri.parse(DerivApiClient.OAUTH_AUTH_URL).buildUpon()
+        .appendQueryParameter("response_type", "code")
+        .appendQueryParameter("client_id", DerivApiClient.clientId(executionMode))
+        .appendQueryParameter("redirect_uri", DerivApiClient.OAUTH_REDIRECT_URI)
+        .appendQueryParameter("scope", DerivApiClient.OAUTH_SCOPE)
+        .appendQueryParameter("state", state)
+        .appendQueryParameter("code_challenge", challenge)
+        .appendQueryParameter("code_challenge_method", "S256")
+        .build()
+
+    try {
+        startActivity(Intent(Intent.ACTION_VIEW, url))
+    } catch (e: Exception) {
+        toast("Unable to open Deriv login: ${e.message}")
+    }
     }
 
     private fun handleOAuthCallback(intent: Intent?) {
@@ -1719,34 +1786,96 @@ private fun addTradeScreen() {
     }
 
     private fun exchangeOAuthCode(code: String) {
-        val verifier = prefs.getString("code_verifier", "").orEmpty()
-        if (verifier.isBlank()) { toast("OAuth verifier is missing."); return }
-        val body = FormBody.Builder().add("grant_type", "authorization_code").add("code", code)
-            .add("client_id", DerivApiClient.clientId(executionMode))
-            .add("redirect_uri", DerivApiClient.OAUTH_REDIRECT_URI)
-            .add("code_verifier", verifier).build()
-        val request = Request.Builder().url(DerivApiClient.OAUTH_TOKEN_URL).post(body).build()
-        httpClient.newCall(request).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
-                runOnUiThread { toast("OAuth connection failed: ${e.message ?: "network error"}") }
+    val verifier = prefs.getString("code_verifier", "").orEmpty()
+    val oauthUserId = prefs.getString("oauth_user_id", "").orEmpty()
+    val oauthMode = prefs.getString("oauth_mode", executionMode).orEmpty()
+
+    val activeUserId = currentProfile?.optString("id", "").orEmpty()
+
+    if (verifier.isBlank()) {
+        toast("OAuth verifier is missing.")
+        return
+    }
+
+    if (authToken.isBlank() || oauthUserId.isBlank() || oauthUserId != activeUserId) {
+        toast("Your login session changed. Please sign in again before connecting Deriv.")
+        return
+    }
+
+    val body = FormBody.Builder()
+        .add("grant_type", "authorization_code")
+        .add("code", code)
+        .add("client_id", DerivApiClient.clientId(oauthMode))
+        .add("redirect_uri", DerivApiClient.OAUTH_REDIRECT_URI)
+        .add("code_verifier", verifier)
+        .build()
+
+    val request = Request.Builder()
+        .url(DerivApiClient.OAUTH_TOKEN_URL)
+        .post(body)
+        .build()
+
+    httpClient.newCall(request).enqueue(object : Callback {
+        override fun onFailure(call: Call, e: IOException) {
+            runOnUiThread {
+                toast("OAuth connection failed: ${e.message ?: "network error"}")
             }
-            override fun onResponse(call: Call, response: Response) {
-                val text = response.body?.string().orEmpty()
-                if (!response.isSuccessful) {
-                    runOnUiThread { toast("OAuth failed (HTTP ${response.code}): ${oauthError(text)}") }
+        }
+
+        override fun onResponse(call: Call, response: Response) {
+            val text = response.body?.string().orEmpty()
+
+            if (!response.isSuccessful) {
+                runOnUiThread {
+                    toast("OAuth failed (HTTP ${response.code}): ${oauthError(text)}")
+                }
+                return
+            }
+
+            try {
+                val token = JSONObject(text).optString("access_token", "")
+
+                if (token.isBlank()) {
+                    runOnUiThread {
+                        toast("Deriv did not return an access token.")
+                    }
                     return
                 }
-                try {
-                    val token = JSONObject(text).optString("access_token", "")
-                    if (token.isBlank()) { runOnUiThread { toast("Deriv did not return an access token.") }; return }
-                    val key = if (executionMode == "REAL") "real_token" else "demo_token"
-                    prefs.edit().putString(key, token).remove("oauth_state").remove("code_verifier").apply()
-                    runOnUiThread { connectWithToken(token) }
-                } catch (e: Exception) {
-                    runOnUiThread { toast("Invalid Deriv OAuth response: ${e.message}") }
+
+                runOnUiThread {
+                    val currentUserId =
+                        currentProfile?.optString("id", "").orEmpty()
+
+                    if (authToken.isBlank() ||
+                        currentUserId.isBlank() ||
+                        currentUserId != oauthUserId
+                    ) {
+                        toast("Your login session changed. Please sign in again.")
+                        return@runOnUiThread
+                    }
+
+                    val key =
+                        "user_${oauthUserId}_${oauthMode.lowercase()}_token"
+
+                    prefs.edit()
+                        .putString(key, token)
+                        .remove("oauth_state")
+                        .remove("code_verifier")
+                        .remove("oauth_user_id")
+                        .apply()
+
+                    executionMode =
+                        if (oauthMode.equals("REAL", true)) "REAL" else "DEMO"
+
+                    connectWithToken(token)
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    toast("Invalid Deriv OAuth response: ${e.message}")
                 }
             }
-        })
+        }
+    })
     }
 
     private fun oauthError(body: String): String = try {
