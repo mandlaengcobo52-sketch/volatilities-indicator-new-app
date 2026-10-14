@@ -499,10 +499,16 @@ private fun refreshProfile(showMessage: Boolean) {
     authRequest("profile") { ok, result ->
         profileLoading = false
         if (ok) {
-            currentProfile = result.optJSONObject("user")
-            if (selectedTab == "Account") render()
-            if (showMessage) toast("Profile updated.")
-        } else {
+    currentProfile = result.optJSONObject("user")
+
+    if (selectedTab == "Account" || selectedTab == "Home") {
+        render()
+    }
+
+    if (showMessage) {
+        toast("Profile updated.")
+    }
+        }
             authToken = ""
             currentProfile = null
             authPrefs.edit().remove("mobile_auth_token").apply()
@@ -691,12 +697,22 @@ private fun addHeader() {
     // =========================================================
 
     private fun addPlatformSelector() {
-    // Only an authenticated administrator may see this section.
-        if (platform != "ADMIN") {
-        platform = "USER"
-        return
-        }
 
+    // Determine administrator access from the authenticated profile.
+    val isAuthenticatedAdmin =
+        authToken.isNotBlank() &&
+        currentProfile?.optString("role", "")
+            ?.equals("admin", ignoreCase = true) == true
+
+    // Hide the selector from ordinary users.
+    if (!isAuthenticatedAdmin) {
+        if (platform != "USER") {
+            platform = "USER"
+        }
+        return
+    }
+
+    // Keep the selector visible for administrators in BOTH modes.
     page.addView(sectionTitle("PLATFORM"))
 
     val row = horizontalRow()
@@ -723,7 +739,6 @@ private fun addHeader() {
 
     page.addView(row)
     }
-
     // =========================================================
     // EXECUTION MODE SELECTOR
     // =========================================================
