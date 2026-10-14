@@ -652,10 +652,10 @@ private fun addHeader() {
 
     private fun addPlatformSelector() {
     // Only an authenticated administrator may see this section.
-    if (!isAdminAuthenticated()) {
+        if (platform != "ADMIN") {
         platform = "USER"
         return
-    }
+        }
 
     page.addView(sectionTitle("PLATFORM"))
 
