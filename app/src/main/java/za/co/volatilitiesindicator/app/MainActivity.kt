@@ -236,7 +236,7 @@ when (selectedTab) {
                                 }
                 }
         }
-
+}
         addBottomNavigation(outer)
 }
 
