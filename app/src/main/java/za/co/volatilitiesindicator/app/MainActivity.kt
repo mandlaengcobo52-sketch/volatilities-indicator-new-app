@@ -1592,9 +1592,4 @@ override fun onMarketDataError(symbol: String, message: String) {
     override fun onDisconnected() {
         runOnUiThread { connected = false; accountStatus.text = "●  NOT CONNECTED"; accountStatus.setTextColor(red) }
     }
-
-    override fun onDestroy() {
-        try { derivApiClient.disconnect() } catch (_: Exception) {}
-        super.onDestroy()
-    }
                             }
