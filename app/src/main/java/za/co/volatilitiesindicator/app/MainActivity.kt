@@ -1753,12 +1753,27 @@ private fun addTradeScreen() {
     override fun onTick(symbol: String, quote: Double, epoch: Long) {
 }
     override fun onTradeData(json: JSONObject) {
-        runOnUiThread {
-            android.util.Log.d(
-                "DerivTradeData",
-                "Trade response: $json"
-            )
+    runOnUiThread {
+        val messageType = json.optString("msg_type", "")
+
+        when (messageType) {
+            "portfolio" -> {
+                openTradesResponse = json
+            }
+
+            "proposal_open_contract" -> {
+                openContractResponse = json
+            }
+
+            "profit_table" -> {
+                tradeHistoryResponse = json
+            }
         }
+
+        if (selectedTab == "Trade") {
+            render()
+        }
+    }
     }
 override fun onCandles(
     symbol: String,
