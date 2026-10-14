@@ -568,7 +568,9 @@ private fun performPlatformLogout() {
     currentProfile = null
     profileLoading = false
 
-    authPrefs.edit().clear().apply()
+    authPrefs.edit()
+    .remove("mobile_auth_token")
+    .apply()
 
     // Return to the ordinary user login screen.
     platform = "USER"
