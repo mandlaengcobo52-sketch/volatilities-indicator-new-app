@@ -738,10 +738,12 @@ private fun addHeader() {
 
         row.addView(
     button("▥  REAL", executionMode == "REAL") {
+    if (executionMode != "REAL") {
         executionMode = "REAL"
         render()
         beginDerivConnection()
-    },
+    }
+},
     weighted()
 )
 
