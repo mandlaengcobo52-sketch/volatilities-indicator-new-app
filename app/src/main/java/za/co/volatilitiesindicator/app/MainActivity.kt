@@ -1786,17 +1786,21 @@ override fun onCandles(
 override fun onMarketDataError(symbol: String, message: String) {
 }
 
-    override fun onError(message: String) {
-    runOnUiThread {
-        if (!connected) {
-            accountStatus.text = "●  CONNECTION ERROR"
-            accountStatus.setTextColor(red)
+        override fun onError(message: String) {
+        runOnUiThread {
+            if (!connected) {
+                accountStatus.text = "●  CONNECTION ERROR"
+                accountStatus.setTextColor(red)
+            }
+            toast("Deriv: $message")
         }
-        toast("Deriv: $message")
-    }
-    }
-    override fun onDisconnected() {
-        runOnUiThread { connected = false; accountStatus.text = "●  NOT CONNECTED"; accountStatus.setTextColor(red) }
     }
 
-}
+    override fun onDisconnected() {
+        runOnUiThread {
+            connected = false
+            accountStatus.text = "●  NOT CONNECTED"
+            accountStatus.setTextColor(red)
+        }
+    }
+                            }
