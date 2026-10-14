@@ -1341,6 +1341,15 @@ if (tick != null) {
         )
     }
 }
+            val tradeMessageType = json.optString("msg_type", "")
+
+            if (
+                tradeMessageType == "portfolio" ||
+                tradeMessageType == "profit_table" ||
+                tradeMessageType == "proposal_open_contract"
+            ) {
+                callback.onTradeData(json)
+            }
             /*
              * Deriv WebSocket error.
              */
