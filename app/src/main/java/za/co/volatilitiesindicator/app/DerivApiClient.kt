@@ -56,6 +56,10 @@ class DerivApiClient(
         }
 
         fun onError(message: String)
+        
+                fun onTradeData(json: JSONObject) {
+            // Optional callback for open trades and trade history.
+                }
 
         fun onDisconnected()
     }
