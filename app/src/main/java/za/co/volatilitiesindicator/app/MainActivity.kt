@@ -1899,7 +1899,7 @@ private fun addTradeScreen() {
         toast("Deriv disconnected.")
     }
 
-        override fun onConnecting(message: String) {
+            override fun onConnecting(message: String) {
         runOnUiThread {
             accountStatus.text = "●  CONNECTING TO DERIV"
             accountStatus.setTextColor(yellow)
@@ -1957,3 +1957,4 @@ private fun addTradeScreen() {
             accountStatus.setTextColor(red)
         }
     }
+                            }
