@@ -86,6 +86,9 @@ private var drawerOpen = false
     private var profileLoading: Boolean = false
     private var adminUsers: JSONArray? = null
     private var adminUsersLoading: Boolean = false
+    private var openTradesResponse: JSONObject? = null
+    private var openContractResponse: JSONObject? = null
+    private var tradeHistoryResponse: JSONObject? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
