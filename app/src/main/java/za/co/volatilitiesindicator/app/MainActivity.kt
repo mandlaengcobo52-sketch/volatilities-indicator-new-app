@@ -188,62 +188,54 @@ when (selectedTab) {
                 addPlatformSelector()
                 addExecutionSelector()
                 addAccountCard()
-                                if (platform == "USER") {
+                                                if (platform == "USER") {
 
-    // Show sign-in only when the user is not authenticated.
-    if (authToken.isBlank()) {
-        page.addView(
-            button("SIGN IN", false) {
-                selectedTab = "Login"
-                render()
-            },
-            matchWrap()
-        )
-
-        page.addView(
-            button("CREATE ACCOUNT", true) {
-                selectedTab = "Register"
-                render()
-            },
-            matchWrap()
-        )
-    }
-
-    // Show Deriv registration only when no Deriv account
-    // is currently connected.
-    if (!connected) {
-        page.addView(
-            button("CREATE DERIV ACCOUNT", true) {
-                try {
-                    val derivSignupUrl =
-                        Uri.parse("https://deriv.com/signup/")
-
-                    startActivity(
-                        Intent(
-                            Intent.ACTION_VIEW,
-                            derivSignupUrl
+                    // Show sign-in and registration only when logged out.
+                    if (authToken.isBlank()) {
+                        page.addView(
+                            button("SIGN IN", false) {
+                                selectedTab = "Login"
+                                render()
+                            },
+                            matchWrap()
                         )
-                    )
-                } catch (e: Exception) {
-                    toast(
-                        "Unable to open Deriv registration. " +
-                            "Please try again."
-                    )
-                }
-            },
-            matchWrap()
-        )
-    }
-                                }
 
-        page.addView(
-            button("CREATE ACCOUNT", true) {
-                selectedTab = "Register"
-                render()
-            },
-            matchWrap()
-        )
-    }
+                        page.addView(
+                            button("CREATE ACCOUNT", true) {
+                                selectedTab = "Register"
+                                render()
+                            },
+                            matchWrap()
+                        )
+                    }
+
+                    // Show Deriv registration only when disconnected.
+                    if (!connected) {
+                        page.addView(
+                            button("CREATE DERIV ACCOUNT", true) {
+                                try {
+                                    val derivSignupUrl =
+                                        Uri.parse("https://deriv.com/signup/")
+
+                                    startActivity(
+                                        Intent(
+                                            Intent.ACTION_VIEW,
+                                            derivSignupUrl
+                                        )
+                                    )
+                                } catch (e: Exception) {
+                                    toast(
+                                        "Unable to open Deriv registration. " +
+                                            "Please try again."
+                                    )
+                                }
+                            },
+                            matchWrap()
+                        )
+                    }
+                }
+            }
+}
 
     // Show Deriv registration only when no Deriv account
     // is currently connected.
