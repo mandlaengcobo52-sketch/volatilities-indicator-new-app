@@ -1899,38 +1899,48 @@ private fun addTradeScreen() {
         toast("Deriv disconnected.")
     }
 
-    override fun onConnecting(message: String) {
-        runOnUiThread { accountStatus.text = "●  CONNECTING TO DERIV"; accountStatus.setTextColor(yellow) }
-    }
-    override fun onConnected(accountId: String, accountType: String) {
-    runOnUiThread {
-        this.accountId = accountId
-        this.accountType = accountType
-        connected = true
-        render()
-        toast("Deriv $executionMode connected.")
-    }
-    }
-    override fun onBalance(balance: Double, currency: String) {
+        override fun onConnecting(message: String) {
         runOnUiThread {
-            accountBalance = balance; accountCurrency = currency; connected = true
-            balanceView.text = "Balance:  $currency ${String.format(java.util.Locale.US, "%.2f", balance)}"
-            accountStatus.text = "●  CONNECTED — $executionMode"; accountStatus.setTextColor(green)
+            accountStatus.text = "●  CONNECTING TO DERIV"
+            accountStatus.setTextColor(yellow)
         }
     }
+
+    override fun onConnected(accountId: String, accountType: String) {
+        runOnUiThread {
+            this.accountId = accountId
+            this.accountType = accountType
+            connected = true
+            render()
+            toast("Deriv $executionMode connected.")
+        }
+    }
+
+    override fun onBalance(balance: Double, currency: String) {
+        runOnUiThread {
+            accountBalance = balance
+            accountCurrency = currency
+            connected = true
+            balanceView.text =
+                "Balance: $currency ${String.format(java.util.Locale.US, "%.2f", balance)}"
+            accountStatus.text = "●  CONNECTED — $executionMode"
+            accountStatus.setTextColor(green)
+        }
+    }
+
     override fun onTick(symbol: String, quote: Double, epoch: Long) {
-}
+    }
 
-override fun onCandles(
-    symbol: String,
-    candles: List<DerivApiClient.Candle>
-) {
-}
+    override fun onCandles(
+        symbol: String,
+        candles: List<DerivApiClient.Candle>
+    ) {
+    }
 
-override fun onMarketDataError(symbol: String, message: String) {
-}
+    override fun onMarketDataError(symbol: String, message: String) {
+    }
 
-        override fun onError(message: String) {
+    override fun onError(message: String) {
         runOnUiThread {
             if (!connected) {
                 accountStatus.text = "●  CONNECTION ERROR"
