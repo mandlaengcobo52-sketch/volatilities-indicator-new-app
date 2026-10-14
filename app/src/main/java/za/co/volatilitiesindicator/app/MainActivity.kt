@@ -1717,11 +1717,19 @@ private fun addTradeScreen() {
     } catch (_: Exception) { body.take(180) }
 
     private fun connectWithToken(token: String) {
-        if (token.isBlank()) { toast("Deriv access token is empty."); return }
-        try { derivApiClient.disconnect() } catch (_: Exception) {}
-        connected = false; accountId = ""; accountType = ""; accountBalance = 0.0; accountCurrency = ""
-        render()
-        derivApiClient.connectWithAccessToken(token, executionMode)
+    if (token.isBlank()) {
+        toast("Deriv access token is empty.")
+        return
+    }
+
+    connected = false
+    accountId = ""
+    accountType = ""
+    accountBalance = 0.0
+    accountCurrency = ""
+
+    render()
+    derivApiClient.connectWithAccessToken(token, executionMode)
     }
 
     private fun disconnectDeriv() {
