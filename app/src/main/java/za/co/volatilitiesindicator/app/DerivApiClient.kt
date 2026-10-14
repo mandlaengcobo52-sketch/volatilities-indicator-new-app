@@ -2115,10 +2115,21 @@ candleRequestSymbols.clear()
     send(request)
      }
          fun requestOpenTrades() {
-        val request = JSONObject()
-            .put("portfolio", 1)
+    if (!connected) {
+        callback.onError("Cannot request open trades: Deriv is not connected.")
+        return
+    }
 
-        send(request)
+    val request = JSONObject()
+        .put("portfolio", 1)
+
+    send(request)
+
+    val liveRequest = JSONObject()
+        .put("proposal_open_contract", 1)
+        .put("subscribe", 1)
+
+    send(liveRequest)
          }
     fun refreshBalance() {
 
