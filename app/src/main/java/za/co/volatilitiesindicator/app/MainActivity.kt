@@ -388,7 +388,6 @@ private fun addRegistrationScreen() {
     registrationCard.addView(submit, matchWrap().apply { topMargin = dp(12) })
     page.addView(registrationCard, matchWrap())
 }
-
 // SIGN IN — uses the same user records and approval status as WebTrader.
 private fun addLoginScreen() {
     page.addView(sectionTitle("SIGN IN"))
@@ -752,6 +751,7 @@ private fun addHeader() {
 
     page.addView(row)
     }
+
     // =========================================================
     // EXECUTION MODE SELECTOR
     // =========================================================
@@ -788,7 +788,6 @@ private fun addHeader() {
     // =========================================================
     // DERIV ACCOUNT CARD — VISUAL PLACEHOLDER ONLY
     // =========================================================
-
     private fun addAccountCard() {
         val card = card()
 
@@ -889,222 +888,104 @@ private fun addHeader() {
 // TRADE SCREEN
 // =========================================================
 
-// Always starts OFF. This UI switch does not execute trades.
+// Trade preferences persist across app restarts.
 private var autoTradeEnabled = false
+    get() = appPrefs.getBoolean("autoTradeEnabled", false)
+    set(value) { field = value; appPrefs.edit().putBoolean("autoTradeEnabled", value).apply() }
+
+private fun jsonObjects(root: JSONObject?, key: String): List<JSONObject> {
+    if (root == null) return emptyList()
+    val direct = root.optJSONArray(key) ?: root.optJSONObject("echo_req")?.optJSONArray(key)
+    if (direct != null) return (0 until direct.length()).mapNotNull { direct.optJSONObject(it) }
+    val data = root.optJSONObject("proposal_open_contract")
+    return if (data != null) listOf(data) else emptyList()
+}
+
+private fun tradeValue(obj: JSONObject, vararg keys: String): String {
+    for (key in keys) {
+        if (obj.has(key) && !obj.isNull(key)) {
+            val value = obj.opt(key)
+            if (value != null && value.toString().isNotBlank() && value.toString() != "0.0") return value.toString()
+        }
+    }
+    return "—"
+}
+
+private fun tradeDate(epoch: Long): String = if (epoch > 0) {
+    java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(epoch * 1000L))
+} else "—"
 
 private fun addTradeScreen() {
     page.addView(sectionTitle("TRADE CONTROL"))
-
-    // Account and connection status
     val accountCard = card()
+    accountCard.addView(label("EXECUTION ACCOUNT", 14f, green, true))
+    accountCard.addView(label("Mode: $executionMode", 13f, white, true))
+    accountCard.addView(label("Connection: ${if (connected) "CONNECTED" else "NOT CONNECTED"}", 12f, if (connected) green else red, true))
+    accountCard.addView(label("Account ID: ${accountId.ifBlank { "—" }}", 12f, muted, false))
+    accountCard.addView(button("REFRESH RUNNING TRADES & HISTORY", false) {
+        if (connected) { derivApiClient.requestOpenTrades(); derivApiClient.requestTradeHistory() } else toast("Connect to Deriv first.")
+    }, matchWrap().apply { topMargin = dp(8) })
+    page.addView(accountCard, matchWrap().apply { bottomMargin = dp(10) })
 
-    accountCard.addView(
-        label("EXECUTION ACCOUNT", 14f, green, true)
-    )
-
-    accountCard.addView(
-        label("Mode: $executionMode", 13f, white, true)
-    )
-
-    accountCard.addView(
-        label(
-            if (connected) {
-                "Connection: CONNECTED"
-            } else {
-                "Connection: NOT CONNECTED"
-            },
-            12f,
-            if (connected) green else red,
-            true
-        )
-    )
-
-    accountCard.addView(
-        label(
-            if (accountId.isNotBlank()) {
-                "Account ID: $accountId"
-            } else {
-                "Account ID: —"
-            },
-            12f,
-            muted,
-            false
-        )
-    )
-
-    page.addView(
-        accountCard,
-        matchWrap().apply {
-            bottomMargin = dp(10)
-        }
-    )
-
-    // Auto Trade control
     page.addView(sectionTitle("AUTO TRADE"))
+    val autoCard = card()
+    autoCard.addView(label(if (autoTradeEnabled) "AUTO TRADE: ON" else "AUTO TRADE: OFF", 15f, if (autoTradeEnabled) green else red, true))
+    autoCard.addView(label("Rules: 20% of the South African day-start capital (fixed for 24 hours) • 5-day duration • 15% profit target • 1.5% eligibility threshold • one running contract per index • assigned risk-plan limit.", 12f, white, false))
+    autoCard.addView(label("Safety status: automatic order execution is not enabled in this build until the Android signal-to-contract execution path is connected and verified. This switch records your preference only; it will not place orders yet.", 12f, yellow, false).apply { setPadding(0, dp(8), 0, 0) })
+    autoCard.addView(button(if (autoTradeEnabled) "TURN AUTO TRADE OFF" else "TURN AUTO TRADE ON", autoTradeEnabled) {
+        autoTradeEnabled = !autoTradeEnabled
+        render()
+        toast(if (autoTradeEnabled) "Auto Trade preference saved. Orders are not executed in this build." else "Auto Trade turned off.")
+    }, matchWrap().apply { topMargin = dp(8) })
+    page.addView(autoCard, matchWrap().apply { bottomMargin = dp(10) })
 
-    val autoTradeCard = card()
-
-    autoTradeCard.addView(
-        label(
-            if (autoTradeEnabled) {
-                "AUTO TRADE: ARMED — EXECUTION NOT CONNECTED"
-            } else {
-                "AUTO TRADE: OFF"
-            },
-            15f,
-            if (autoTradeEnabled) yellow else red,
-            true
-        )
-    )
-
-    autoTradeCard.addView(
-        label(
-            "Automatic execution is not connected yet. " +
-                "Turning this switch ON will not open trades.",
-            12f,
-            muted,
-            false
-            )
-    )
-
-    autoTradeCard.addView(
-        button(
-            if (autoTradeEnabled) {
-                "DISARM AUTO TRADE"
-            } else {
-                "ARM AUTO TRADE"
-                },
-            autoTradeEnabled
-        ) {
-            autoTradeEnabled = !autoTradeEnabled
-            render()
-        },
-        matchWrap().apply {
-            topMargin = dp(8)
-        }
-    )
-
-    page.addView(
-        autoTradeCard,
-        matchWrap().apply {
-            bottomMargin = dp(10)
-        }
-    )
-
-    // Running Trades
     page.addView(sectionTitle("RUNNING TRADES"))
-
     val runningCard = card()
-
-    runningCard.addView(
-        label(
-            "OPEN CONTRACT DETAILS",
-            13f,
-            green,
-            true
-        )
-    )
-
-    listOf(
-        "Index",
-        "Direction",
-        "Execution time",
-        "Time remaining",
-        "Profit / Loss",
-        "Barrier",
-        "Potential payment",
-        "Stake",
-        "Close trade"
-    ).forEach { field ->
-        runningCard.addView(
-            label(
-                "$field: —",
-                12f,
-                white,
-                false
-            )
-        )
+    val portfolio = openTradesResponse?.optJSONObject("portfolio")
+    val openArray = portfolio?.optJSONArray("contracts")
+        ?: openTradesResponse?.optJSONArray("contracts")
+        ?: openTradesResponse?.optJSONObject("portfolio")?.optJSONArray("contracts")
+    val openItems = if (openArray != null) (0 until openArray.length()).mapNotNull { openArray.optJSONObject(it) } else emptyList()
+    val liveContract = openContractResponse?.optJSONObject("proposal_open_contract")
+    val runningItems = (openItems + listOfNotNull(liveContract)).distinctBy { tradeValue(it, "contract_id") }.filter { tradeValue(it, "is_sold", "is_expired") != "1" }
+    if (runningItems.isEmpty()) {
+        runningCard.addView(label("No running contracts returned by Deriv for this account.", 12f, yellow, false))
+    } else runningItems.forEach { t ->
+        runningCard.addView(label("${tradeValue(t, "underlying", "symbol", "display_name")} • ${tradeValue(t, "contract_type", "contract_type_name")}", 14f, green, true))
+        runningCard.addView(label("Direction: ${tradeValue(t, "contract_type", "longcode")}", 12f, white, false))
+        runningCard.addView(label("Execution time: ${tradeDate(t.optLong("date_start", t.optLong("purchase_time", 0L)))}", 12f, white, false))
+        runningCard.addView(label("Time remaining: ${tradeValue(t, "time_remaining", "seconds_to_expiry")}", 12f, white, false))
+        runningCard.addView(label("P/L: ${tradeValue(t, "profit", "profit_loss")}", 12f, white, false))
+        runningCard.addView(label("Barrier: ${tradeValue(t, "barrier", "barrier1")}", 12f, white, false))
+        runningCard.addView(label("Potential payment: ${tradeValue(t, "payout", "bid_price")}", 12f, white, false))
+        runningCard.addView(label("Stake: ${tradeValue(t, "buy_price", "purchase_price", "amount")}", 12f, white, false))
+        runningCard.addView(label("Contract ID: ${tradeValue(t, "contract_id")}", 11f, muted, false))
+        runningCard.addView(space(dp(8)))
     }
+    page.addView(runningCard, matchWrap().apply { bottomMargin = dp(10) })
 
-    runningCard.addView(
-        label(
-            "No confirmed running-contract records are available in this screen yet.",
-            12f,
-            yellow,
-            false
-        ).apply {
-            setPadding(0, dp(8), 0, 0)
-        }
-    )
-
-    page.addView(
-        runningCard,
-        matchWrap().apply {
-            bottomMargin = dp(10)
-        }
-    )
-
-    // Trading History
-    page.addView(sectionTitle("TRADING HISTORY"))
-
+    page.addView(sectionTitle("TRADE HISTORY"))
     val historyCard = card()
-
-    historyCard.addView(
-        label(
-            "ACCOUNT MODE: $executionMode",
-            13f,
-            green,
-            true
-        )
-    )
-
-    historyCard.addView(
-        label(
-            "History is displayed for the selected account mode only.",
-            12f,
-            muted,
-            false
-        )
-    )
-
-    listOf(
-        "Index",
-        "Direction",
-        "Execution time",
-        "Closing time",
-        "Stake",
-        "Barrier",
-        "Final payment",
-        "Final Profit / Loss",
-        "Status"
-    ).forEach { field ->
-        historyCard.addView(
-            label(
-                "$field: —",
-                12f,
-                white,
-                false
-            )
-        )
+    historyCard.addView(label("ACCOUNT MODE: $executionMode", 13f, green, true))
+    val profitTable = tradeHistoryResponse?.optJSONObject("profit_table")
+    val historyArray = profitTable?.optJSONArray("transactions") ?: tradeHistoryResponse?.optJSONArray("transactions")
+    val historyItems = if (historyArray != null) (0 until historyArray.length()).mapNotNull { historyArray.optJSONObject(it) } else emptyList()
+    if (historyItems.isEmpty()) {
+        historyCard.addView(label("Deriv has not returned any closed-contract records for this account yet. Use Refresh to request the latest records.", 12f, yellow, false))
+    } else historyItems.forEach { t ->
+        historyCard.addView(label("${tradeValue(t, "underlying", "symbol", "shortcode", "contract_type")}", 14f, green, true))
+        historyCard.addView(label("Direction / contract: ${tradeValue(t, "contract_type", "longcode", "shortcode")}", 12f, white, false))
+        historyCard.addView(label("Execution time: ${tradeDate(t.optLong("purchase_time", t.optLong("date_start", 0L)))}", 12f, white, false))
+        historyCard.addView(label("Closing time: ${tradeDate(t.optLong("sell_time", t.optLong("date_expiry", 0L)))}", 12f, white, false))
+        historyCard.addView(label("Stake: ${tradeValue(t, "buy_price", "purchase_price", "amount")}", 12f, white, false))
+        historyCard.addView(label("Barrier: ${tradeValue(t, "barrier", "barrier1")}", 12f, white, false))
+        historyCard.addView(label("Final payment: ${tradeValue(t, "sell_price", "payout")}", 12f, white, false))
+        historyCard.addView(label("Final P/L: ${tradeValue(t, "profit", "profit_loss")}", 12f, white, false))
+        historyCard.addView(label("Status: ${tradeValue(t, "status", "sell_type", "is_expired")}", 12f, white, false))
+        historyCard.addView(label("Contract ID: ${tradeValue(t, "contract_id", "transaction_id")}", 11f, muted, false))
+        historyCard.addView(space(dp(8)))
     }
-
-    historyCard.addView(
-        label(
-            "No confirmed completed-contract records are available in this screen yet.",
-            12f,
-            yellow,
-            false
-        ).apply {
-            setPadding(0, dp(8), 0, 0)
-        }
-    )
-
-    page.addView(
-        historyCard,
-        matchWrap().apply {
-            bottomMargin = dp(10)
-        }
-    )
+    page.addView(historyCard, matchWrap().apply { bottomMargin = dp(10) })
 }
 // =========================================================
 // WEBTRADER-PARITY ANALYSIS CORE
@@ -1817,6 +1698,7 @@ private fun addTargetFilterAnalysis() {
             },
             matchWrap().apply { topMargin = dp(8); bottomMargin = dp(8) }
         )
+
         val users = adminUsers
         if (adminUsersLoading && users == null) {
             page.addView(label("Loading registrations…", 14f, yellow, false))
@@ -2183,6 +2065,7 @@ private fun addTargetFilterAnalysis() {
             )
         }
     }
+
     private fun label(
         text: String,
         size: Float,
