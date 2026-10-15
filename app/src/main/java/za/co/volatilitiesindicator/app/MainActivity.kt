@@ -1210,7 +1210,6 @@ private fun analysisMssEvents(candles: List<DerivApiClient.Candle>): List<Analys
     }
     return events
 }
-
 private fun analysisLatestMss(candles: List<DerivApiClient.Candle>): AnalysisMssEvent? =
     analysisMssEvents(candles).lastOrNull()
 
@@ -1474,6 +1473,91 @@ private fun addMssChochBehaviourAnalysis() {
 // =========================================================
 // ANALYSIS — DIRECTION & STRUCTURAL TARGET
 // =========================================================
+private fun addDirectionStructuralTargetAnalysis() {
+    val header = card().apply { orientation = LinearLayout.VERTICAL }
+    val row = horizontalRow()
+    row.addView(
+        label("Analysis - Direction and Structural Target", 17f, green, true),
+        LinearLayout.LayoutParams(0, -2, 1f)
+    )
+    row.addView(
+        button(if (directionStructuralTargetExpanded) "▼ OPEN" else "▶ CLOSED", directionStructuralTargetExpanded) {
+            directionStructuralTargetExpanded = !directionStructuralTargetExpanded
+            render()
+        },
+        LinearLayout.LayoutParams(-2, dp(48))
+    )
+    header.addView(row)
+    page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
+    if (!qualificationExpanded) return
+
+    page.addView(
+        label(
+            "Qualification checks the same index for a confirmed MSS/CHOCH, a valid structural target in the confirmed direction, and available historical MSS behaviour for that direction. It reports evidence only and does not execute a trade.",
+            12f, muted, false
+        ).apply { setPadding(dp(12), dp(10), dp(12), dp(10)) }
+    )
+
+    marketDataIndexes.forEach { symbol ->
+        val candles = analysisCompletedCandles(symbol)
+        val current = marketDataPrices[symbol] ?: candles.lastOrNull()?.close
+        val event = if (candles.size >= 20) analysisLatestMss(candles) else null
+        val direction = when (event?.direction) {
+            "BULLISH" -> "UP"
+            "BEARISH" -> "DOWN"
+            else -> ""
+        }
+        val target = if (event != null && current != null && direction.isNotBlank()) {
+            analysisStructuralTarget(candles, current, direction, event.confirmation.epoch)
+        } else null
+        val history = if (candles.size >= 30) {
+            val outcomes = analysisHistoricalOutcomes(candles)
+            outcomes.filter {
+                it.direction == event?.direction &&
+                    (event == null || it.confirmation.epoch != event.confirmation.epoch)
+            }.takeLast(20)
+        } else emptyList()
+
+        val hasConfirmedEvent = event != null
+        val hasTarget = target != null && current != null &&
+            ((direction == "UP" && target.price > current) ||
+             (direction == "DOWN" && target.price < current))
+        val hasHistory = history.isNotEmpty()
+        val qualified = hasConfirmedEvent && hasTarget && hasHistory
+
+        val qualificationCard = card().apply { orientation = LinearLayout.VERTICAL }
+        qualificationCard.addView(label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true))
+        val priceView = label("CURRENT PRICE: ${formatMarketPrice(current)}", 14f, blue, true)
+        registerCurrentPriceView(symbol, "qualification", priceView)
+        qualificationCard.addView(priceView)
+        qualificationCard.addView(
+            label(
+                "QUALIFICATION: ${if (qualified) "QUALIFIED" else "WAITING"}",
+                14f, if (qualified) green else yellow, true
+            )
+        )
+        qualificationCard.addView(
+            label(
+                "MSS / CHOCH CONFIRMED: ${if (hasConfirmedEvent) "PASS — ${event!!.state}" else "WAIT"}",
+                12f, if (hasConfirmedEvent) green else yellow, true
+            )
+        )
+        qualificationCard.addView(
+            label(
+                "STRUCTURAL TARGET: ${if (hasTarget) "PASS — ${formatMarketPrice(target?.price)}" else "WAIT — NO VALID TARGET"}",
+                12f, if (hasTarget) green else yellow, true
+            )
+        )
+        qualificationCard.addView(
+            label(
+                "HISTORICAL DIRECTION SAMPLE: ${if (hasHistory) "PASS — ${history.size} event(s)" else "WAIT — NO HISTORICAL SAMPLE"}",
+                12f, if (hasHistory) green else yellow, true
+            )
+        )
+        page.addView(qualificationCard, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
+    }
+}
+
 private fun addTargetFilterAnalysis() {
     val header = card().apply { orientation = LinearLayout.VERTICAL }
     val row = horizontalRow()
@@ -1776,8 +1860,7 @@ private fun addTargetFilterAnalysis() {
                 toast(result.optString("message", "Unable to load users."))
             }
         }
-        }
-
+    }
     // =========================================================
     // ADMIN PREVIEW
     // =========================================================
