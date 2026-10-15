@@ -114,6 +114,7 @@ private var marketStructureExpanded = true
 private var mssChochExpanded = true
 private var marketDataExpanded = true
 private var mssChochBehaviourExpanded = true
+private var directionStructuralTargetExpanded = true
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -799,7 +800,6 @@ private fun addHeader() {
                 true
             )
         )
-
         accountStatus = label(
     if (connected) {
         "●  CONNECTED — $executionMode"
@@ -1099,1320 +1099,415 @@ private fun addTradeScreen() {
     )
 }
 // =========================================================
+// WEBTRADER-PARITY ANALYSIS CORE
+// =========================================================
+private data class AnalysisPivot(
+    val type: String,
+    val price: Double,
+    val epoch: Long,
+    val index: Int,
+    val confirmedEpoch: Long,
+    var label: String = ""
+)
+
+private data class AnalysisMssEvent(
+    val state: String,
+    val direction: String,
+    val broken: AnalysisPivot,
+    val confirmation: DerivApiClient.Candle
+)
+
+private data class AnalysisHistoricalOutcome(
+    val direction: String,
+    val pivot: AnalysisPivot,
+    val confirmation: DerivApiClient.Candle,
+    val index: Int,
+    val maxFav: Double,
+    val maxFavPrice: Double,
+    val maxFavEpoch: Long,
+    val maxAdv: Double,
+    val maxAdvPrice: Double,
+    val maxAdvEpoch: Long,
+    val endedByOpposite: Boolean
+)
+
+/* Matches WebTrader mssCompleted()/csCompleted(): sort valid H1 candles,
+   remove the live candle using the same one-hour age test, and use the
+   last-candle fallback only when fewer than two candles pass that test. */
+private fun analysisCompletedCandles(symbol: String): List<DerivApiClient.Candle> {
+    val all = marketDataCandles[symbol].orEmpty()
+        .filter { candle ->
+            listOf(candle.epoch.toDouble(), candle.open, candle.high, candle.low, candle.close).all { it.isFinite() }
+        }
+        .sortedBy { it.epoch }
+    if (all.size < 2) return all
+    val now = System.currentTimeMillis() / 1000L
+    val completed = all.filter { now - it.epoch >= 3600L }
+    return if (completed.size >= 2) completed else all.dropLast(1)
+}
+
+/* L=2/R=2 pivots and same-type collapse match WebTrader. Left comparisons
+   are strict; right comparisons permit equality, exactly as mssDetect(). */
+private fun analysisPivots(candles: List<DerivApiClient.Candle>): List<AnalysisPivot> {
+    val raw = mutableListOf<AnalysisPivot>()
+    fun swingHigh(i: Int): Boolean {
+        for (k in 1..2) if (candles[i].high <= candles[i-k].high) return false
+        for (k in 1..2) if (candles[i].high < candles[i+k].high) return false
+        return true
+    }
+    fun swingLow(i: Int): Boolean {
+        for (k in 1..2) if (candles[i].low >= candles[i-k].low) return false
+        for (k in 1..2) if (candles[i].low > candles[i+k].low) return false
+        return true
+    }
+    for (i in 2 until candles.size - 2) {
+        if (swingHigh(i)) raw.add(AnalysisPivot("HIGH", candles[i].high, candles[i].epoch, i, candles[i+2].epoch))
+        if (swingLow(i)) raw.add(AnalysisPivot("LOW", candles[i].low, candles[i].epoch, i, candles[i+2].epoch))
+    }
+    val collapsed = mutableListOf<AnalysisPivot>()
+    raw.sortedBy { it.index }.forEach { pivot ->
+        val last = collapsed.lastOrNull()
+        if (last == null) collapsed.add(pivot)
+        else if (last.type == pivot.type) {
+            val moreExtreme = if (pivot.type == "HIGH") pivot.price > last.price else pivot.price < last.price
+            if (moreExtreme) collapsed[collapsed.lastIndex] = pivot
+        } else collapsed.add(pivot)
+    }
+    val highs = collapsed.filter { it.type == "HIGH" }
+    val lows = collapsed.filter { it.type == "LOW" }
+    highs.forEachIndexed { i, pivot -> pivot.label = if (i > 0 && pivot.price > highs[i-1].price) "HH" else "LH" }
+    lows.forEachIndexed { i, pivot -> pivot.label = if (i > 0 && pivot.price > lows[i-1].price) "HL" else "LL" }
+    return collapsed
+}
+
+private fun analysisMssEvents(candles: List<DerivApiClient.Candle>): List<AnalysisMssEvent> {
+    if (candles.size < 20) return emptyList()
+    val pivots = analysisPivots(candles)
+    val highs = pivots.filter { it.type == "HIGH" }
+    val lows = pivots.filter { it.type == "LOW" }
+    val brokenHighs = mutableSetOf<Int>()
+    val brokenLows = mutableSetOf<Int>()
+    val events = mutableListOf<AnalysisMssEvent>()
+    for (j in candles.indices) {
+        val candle = candles[j]
+        val priorLH = highs.lastOrNull { it.label == "LH" && it.index < j }
+        val priorHL = lows.lastOrNull { it.label == "HL" && it.index < j }
+        if (priorLH != null && candle.close > priorLH.price && brokenHighs.add(priorLH.index)) {
+            events.add(AnalysisMssEvent("BULLISH MSS", "BULLISH", priorLH, candle))
+        }
+        if (priorHL != null && candle.close < priorHL.price && brokenLows.add(priorHL.index)) {
+            events.add(AnalysisMssEvent("BEARISH MSS", "BEARISH", priorHL, candle))
+            }
+    }
+    return events
+}
+
+private fun analysisLatestMss(candles: List<DerivApiClient.Candle>): AnalysisMssEvent? =
+    analysisMssEvents(candles).lastOrNull()
+
+/* Historical Step 5 events only become eligible once the pivot's two
+   right-side confirmation candles have completed, as in WebTrader h5Events. */
+private fun analysisHistoricalOutcomes(candles: List<DerivApiClient.Candle>): List<AnalysisHistoricalOutcome> {
+    if (candles.size < 30) return emptyList()
+    val pivots = analysisPivots(candles)
+    val highs = pivots.filter { it.type == "HIGH" }
+    val lows = pivots.filter { it.type == "LOW" }
+    // WebTrader Step 3/5 labels the first pivot of each type SWING; only
+    // subsequent pivots are HH/LH or HL/LL. Keep this separate from Step 4's
+    // mssDetect classification, where the first high is LH and first low LL.
+    highs.forEachIndexed { i, pivot -> pivot.label = if (i == 0) "SWING" else if (pivot.price > highs[i-1].price) "HH" else "LH" }
+    lows.forEachIndexed { i, pivot -> pivot.label = if (i == 0) "SWING" else if (pivot.price > lows[i-1].price) "HL" else "LL" }
+    val events = mutableListOf<AnalysisMssEvent>()
+    val used = mutableSetOf<String>()
+    for (i in candles.indices) {
+        val eligibleHighs = highs.filter { it.index <= i - 2 }
+        val eligibleLows = lows.filter { it.index <= i - 2 }
+        val lh = eligibleHighs.lastOrNull { it.label == "LH" }
+        val hl = eligibleLows.lastOrNull { it.label == "HL" }
+        val c = candles[i]
+        if (lh != null && c.epoch > lh.epoch && c.close > lh.price) {
+            if (used.add("B:${lh.epoch}")) events.add(AnalysisMssEvent("BULLISH MSS", "BULLISH", lh, c))
+        } else if (hl != null && c.epoch > hl.epoch && c.close < hl.price) {
+            if (used.add("S:${hl.epoch}")) events.add(AnalysisMssEvent("BEARISH MSS", "BEARISH", hl, c))
+        }
+    }
+    return events.mapIndexed { idx, event ->
+        var end = candles.lastIndex
+        for (next in idx + 1 until events.size) {
+            if (events[next].direction != event.direction) { end = events[next].confirmation.let { c -> candles.indexOfFirst { it.epoch == c.epoch } }; break }
+        }
+        val start = (event.confirmation.let { c -> candles.indexOfFirst { it.epoch == c.epoch } } + 1).coerceAtLeast(0)
+        var maxFav = 0.0; var maxAdv = 0.0
+        var favPrice = event.confirmation.close; var advPrice = event.confirmation.close
+        var favEpoch = event.confirmation.epoch; var advEpoch = event.confirmation.epoch
+        if (start <= end && start < candles.size) for (k in start..end) {
+            val c = candles[k]
+            val fav = if (event.direction == "BULLISH") c.high - event.confirmation.close else event.confirmation.close - c.low
+            val adv = if (event.direction == "BULLISH") event.confirmation.close - c.low else c.high - event.confirmation.close
+            if (fav > maxFav) { maxFav = fav; favPrice = if (event.direction == "BULLISH") c.high else c.low; favEpoch = c.epoch }
+            if (adv > maxAdv) { maxAdv = adv; advPrice = if (event.direction == "BULLISH") c.low else c.high; advEpoch = c.epoch }
+        }
+        AnalysisHistoricalOutcome(event.direction, event.broken, event.confirmation,
+            candles.indexOfFirst { it.epoch == event.confirmation.epoch }, maxFav, favPrice, favEpoch,
+            maxAdv, advPrice, advEpoch, end < candles.lastIndex)
+    }
+}
+
+private fun analysisStructuralTarget(
+    candles: List<DerivApiClient.Candle>, currentPrice: Double, direction: String, confirmationEpoch: Long
+): AnalysisPivot? {
+    val pivots = analysisPivots(candles)
+    val eligible = pivots.filter { pivot ->
+        if (pivot.confirmedEpoch > confirmationEpoch) return@filter false
+        candles.none { candle ->
+            candle.epoch > pivot.confirmedEpoch && candle.epoch <= confirmationEpoch &&
+                ((pivot.type == "HIGH" && candle.close > pivot.price) ||
+                 (pivot.type == "LOW" && candle.close < pivot.price))
+        }
+    }
+    return when (direction) {
+        "UP" -> eligible.filter { it.type == "HIGH" && it.price > currentPrice }
+            .sortedWith(compareBy<AnalysisPivot> { it.price }.thenByDescending { it.epoch }).firstOrNull()
+        "DOWN" -> eligible.filter { it.type == "LOW" && it.price < currentPrice }
+            .sortedWith(compareByDescending<AnalysisPivot> { it.price }.thenByDescending { it.epoch }).firstOrNull()
+        else -> null
+    }
+}
+
+// =========================================================
 // ANALYSIS — MARKET DATA
 // =========================================================
 private fun addMarketDataAnalysis() {
-        if (!marketDataRequested) {
+    if (!marketDataRequested) {
         marketDataRequested = true
         derivApiClient.requestHistoricalCandles()
-        }
-    page.addView(sectionTitle("ANALYSIS : MARKET DATA"))
-
-    page.addView(
-        label(
-            "Live market prices and completed H1 historical candles",
-            13f,
-            muted,
-            false
-        )
-    )
-
-    page.addView(
-        label(
-            "TIMEFRAME: H1  |  HISTORICAL CANDLES: 1000 PER INDEX",
-            12f,
-            green,
-            true
-        )
-    )
-
-    marketDataIndexes.forEach { symbol ->
-        val marketCard = card().apply {
-            orientation = LinearLayout.VERTICAL
-        }
-
-        marketCard.addView(
-            label(symbol, 18f, green, true)
-        )
-
-        val priceView = label(
-    "CURRENT PRICE: ${formatMarketPrice(marketDataPrices[symbol])}",
-    14f,
-    white,
-    false
-)
-
-marketDataPriceViews[symbol] = priceView
-marketCard.addView(priceView)
-
-        val candles = marketDataCandles[symbol].orEmpty()
-
-        marketCard.addView(
-            label(
-                "HISTORICAL CANDLES: ${candles.size}",
-                13f,
-                white,
-                false
-            )
-        )
-
-        marketCard.addView(
-            label(
-                "LAST CANDLE: ${
-                    if (candles.isNotEmpty()) {
-                        formatMarketTime(candles.last().epoch)
-                    } else {
-                        "WAITING FOR DATA"
-                    }
-                }",
-                12f,
-                muted,
-                false
-            )
-        )
-
-        val error = marketDataErrors[symbol]
-
-        marketCard.addView(
-            label(
-                if (error != null) {
-                    "STATUS: ERROR — $error"
-                } else if (candles.isNotEmpty()) {
-                    "STATUS: READY"
-                } else {
-                    "STATUS: WAITING"
-                },
-                12f,
-                if (error != null) red
-                else if (candles.isNotEmpty()) green
-                else yellow,
-                true
-            )
-        )
-
-        page.addView(
-            marketCard,
-            matchWrap().apply {
-                topMargin = dp(8)
-            }
-        )
     }
-
-    page.addView(
-        label(
-            "Data source: Deriv market data | H1 candles | 1000 candles per index",
-            11f,
-            muted,
-            false
-        )
-    )
+    val header = card().apply { orientation = LinearLayout.VERTICAL }
+    val row = horizontalRow()
+    row.addView(label("STEP 1 — MARKET DATA", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
+    row.addView(button(if (marketDataExpanded) "▼ OPEN" else "▶ CLOSED", marketDataExpanded) {
+        marketDataExpanded = !marketDataExpanded; render()
+    }, LinearLayout.LayoutParams(-2, dp(48)))
+    header.addView(row)
+    page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
+    if (!marketDataExpanded) return
+    page.addView(label("Live market prices and historical H1 candles from the existing Deriv market-data connection.", 13f, muted, false))
+    page.addView(label("TIMEFRAME: H1  |  HISTORICAL CANDLES: 1000 PER INDEX", 12f, green, true))
+    marketDataIndexes.forEach { symbol ->
+        val marketCard = card().apply { orientation = LinearLayout.VERTICAL }
+        marketCard.addView(label("Index ${symbol.removePrefix("R_")}", 18f, green, true))
+        val priceView = label("CURRENT PRICE: ${formatMarketPrice(marketDataPrices[symbol])}", 14f, white, false)
+        marketDataPriceViews[symbol] = priceView
+        marketCard.addView(priceView)
+        val candles = marketDataCandles[symbol].orEmpty().sortedBy { it.epoch }
+        val completed = analysisCompletedCandles(symbol)
+        marketCard.addView(label("HISTORICAL CANDLES: ${candles.size}", 13f, white, false))
+        marketCard.addView(label("COMPLETED H1 CANDLES: ${completed.size}", 12f, muted, false))
+        marketCard.addView(label("LAST CANDLE: ${candles.lastOrNull()?.let { formatMarketTime(it.epoch) } ?: "WAITING FOR DATA"}", 12f, muted, false))
+        val error = marketDataErrors[symbol]
+        val ready = candles.isNotEmpty() && error == null
+        marketCard.addView(label(
+            if (error != null) "STATUS: ERROR — $error" else if (ready) "STATUS: READY" else "STATUS: WAITING",
+            12f, if (error != null) red else if (ready) green else yellow, true
+        ))
+        page.addView(marketCard, matchWrap().apply { topMargin = dp(8) })
+    }
+    page.addView(label("Data source: Deriv market data | H1 candles | 1000 candles per index", 11f, muted, false))
 }
 // =========================================================
 // ANALYSIS — MARKET STRUCTURE
 // =========================================================
 
 private fun addMarketStructureAnalysis() {
-
-    val headerCard = card().apply {
-        orientation = LinearLayout.VERTICAL
-    }
-
-    headerCard.addView(
-        label(
-            "ANALYSIS - MARKET STRUCTURE",
-            17f,
-            green,
-            true
-        )
-    )
-
-    headerCard.addView(
-        button(
-            if (marketStructureExpanded) "CLOSE" else "OPEN",
-            marketStructureExpanded
-        ) {
-            marketStructureExpanded = !marketStructureExpanded
-            render()
-        },
-        matchWrap().apply {
-            topMargin = dp(8)
-        }
-    )
-
-    page.addView(
-        headerCard,
-        matchWrap().apply {
-            bottomMargin = dp(8)
-        }
-    )
-
+    val header = card().apply { orientation = LinearLayout.VERTICAL }
+    val row = horizontalRow()
+    row.addView(label("STEP 3 — CURRENT MARKET STRUCTURE", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
+    row.addView(button(if (marketStructureExpanded) "▼ OPEN" else "▶ CLOSED", marketStructureExpanded) {
+        marketStructureExpanded = !marketStructureExpanded; render()
+    }, LinearLayout.LayoutParams(-2, dp(48)))
+    header.addView(row)
+    page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
     if (!marketStructureExpanded) return
-
-    page.addView(
-        label(
-            "STRUCTURAL ANALYSIS RULES",
-            14f,
-            green,
-            true
-        )
-    )
-
-    page.addView(
-        label(
-            "Timeframe: H1. Only completed candles are analysed. " +
-                "A swing requires two candles on its left and two on its right. " +
-                "Structural pivots alternate between highs and lows. " +
-                "Consecutive pivots of the same type retain the more extreme price. " +
-                "Maximum structural pivots: 40. MSS and CHOCH are not confirmed in this module.",
-            12f,
-            muted,
-            false
-        )
-    )
-
-    data class StructurePivot(
-        val type: String,
-        val price: Double,
-        val epoch: Long,
-        val candleIndex: Int,
-        var classification: String = ""
-    )
-
+    page.addView(label("HH, HL, LH and LL are structural observations only. H1 pivots use two candles on each side; consecutive same-type pivots retain the more extreme price. MSS/CHOCH is confirmed in Step 4, not here.", 12f, muted, false).apply { setPadding(dp(12), dp(10), dp(12), dp(10)) })
     marketDataIndexes.forEach { symbol ->
-
-        val structureCard = card().apply {
-            orientation = LinearLayout.VERTICAL
-        }
-
-        structureCard.addView(
-            label(
-                symbol,
-                18f,
-                green,
-                true
-            )
-        )
-        val allCandles = marketDataCandles[symbol]
-            .orEmpty()
-            .sortedBy { it.epoch }
-
-        // Exclude the current, unfinished H1 candle.
-        val nowEpoch = System.currentTimeMillis() / 1000L
-
-        val completedCandles = allCandles.filter {
-            it.epoch + 3600L <= nowEpoch
-        }
-
-        val structurePriceView = label(
-    "CURRENT PRICE: ${formatMarketPrice(marketDataPrices[symbol])}",
-    14f,
-    white,
-    false
-)
-
-marketDataPriceViews["STRUCTURE_$symbol"] = structurePriceView
-structureCard.addView(structurePriceView)
-
-        structureCard.addView(
-            label(
-                "COMPLETED H1 CANDLES: ${completedCandles.size}",
-                12f,
-                muted,
-                false
-            )
-        )
-
-        val pivots = mutableListOf<StructurePivot>()
-
-        // Confirm swings with two candles on either side.
-        if (completedCandles.size >= 5) {
-
-            for (i in 2 until completedCandles.size - 2) {
-
-                val current = completedCandles[i]
-
-                val left = completedCandles.subList(i - 2, i)
-                val right = completedCandles.subList(i + 1, i + 3)
-
-                val isSwingHigh =
-                    left.all { current.high > it.high } &&
-                    right.all { current.high > it.high }
-
-                val isSwingLow =
-                    left.all { current.low < it.low } &&
-                    right.all { current.low < it.low }
-
-                // If one candle qualifies as both, skip it because
-                // the pivot direction would be ambiguous.
-                if (isSwingHigh == isSwingLow) continue
-
-                val candidate = if (isSwingHigh) {
-                    StructurePivot(
-                        type = "HIGH",
-                        price = current.high,
-                        epoch = current.epoch,
-                        candleIndex = i
-                    )
+        val candles = analysisCompletedCandles(symbol)
+        val structureCard = card().apply { orientation = LinearLayout.VERTICAL }
+        structureCard.addView(label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true))
+        structureCard.addView(label("CURRENT PRICE: ${formatMarketPrice(marketDataPrices[symbol])}", 14f, white, false))
+        structureCard.addView(label("COMPLETED H1: ${candles.size}", 12f, muted, false))
+        if (candles.size < 20) {
+            structureCard.addView(label("STATUS: WAITING FOR SUFFICIENT COMPLETED H1 HISTORY", 12f, yellow, true))
+        } else {
+            val pivots = analysisPivots(candles)
+            val highs = pivots.filter { it.type == "HIGH" }
+            val lows = pivots.filter { it.type == "LOW" }
+            val last = pivots.takeLast(2)
+            val leg = if (last.size == 2 && last[0].type == "LOW" && last[1].type == "HIGH") "BULLISH LEG"
+                else if (last.size == 2 && last[0].type == "HIGH" && last[1].type == "LOW") "BEARISH LEG" else "UNCLEAR"
+            structureCard.addView(label("STRUCTURAL PIVOTS: ${pivots.size}", 12f, white, false))
+            structureCard.addView(label("CURRENT STRUCTURAL LEG: $leg", 13f, if (leg == "BULLISH LEG") green else if (leg == "BEARISH LEG") red else yellow, true))
+            if (last.size == 2) structureCard.addView(label("LEG: ${last[0].type} ${formatMarketPrice(last[0].price)} (${formatMarketTime(last[0].epoch)}) → ${last[1].type} ${formatMarketPrice(last[1].price)} (${formatMarketTime(last[1].epoch)})", 12f, white, false))
+            structureCard.addView(label("LATEST STRUCTURAL PIVOTS", 13f, green, true))
+            pivots.takeLast(10).forEach { pivot ->
+                val sequence = if (pivot.type == "HIGH") highs else lows
+                val pivotIndex = sequence.indexOfFirst { it.index == pivot.index }
+                val structureLabel = if (pivotIndex <= 0) "SWING" else if (pivot.type == "HIGH") {
+                    if (pivot.price > sequence[pivotIndex - 1].price) "HH" else "LH"
                 } else {
-                    StructurePivot(
-                        type = "LOW",
-                        price = current.low,
-                        epoch = current.epoch,
-                        candleIndex = i
-                    )
+                    if (pivot.price > sequence[pivotIndex - 1].price) "HL" else "LL"
                 }
-
-                val previous = pivots.lastOrNull()
-
-                if (previous == null) {
-
-                    pivots.add(candidate)
-
-                } else if (previous.type == candidate.type) {
-
-                    // Keep the more extreme consecutive pivot.
-                    val moreExtreme =
-                        if (candidate.type == "HIGH") {
-                            candidate.price > previous.price
-                        } else {
-                            candidate.price < previous.price
-                        }
-
-                    if (moreExtreme) {
-                        pivots[pivots.lastIndex] = candidate
-                    }
-
-                } else {
-
-                    pivots.add(candidate)
-                }
+                structureCard.addView(label("$structureLabel  |  ${pivot.type} ${formatMarketPrice(pivot.price)}  |  ${formatMarketTime(pivot.epoch)}", 12f, white, false))
             }
+            structureCard.addView(label("HIGH STRUCTURE: ${highs.takeLast(4).joinToString("  |  ") { "${it.label} ${formatMarketPrice(it.price)}" }.ifBlank { "WAITING" }}", 12f, muted, false))
+            structureCard.addView(label("LOW STRUCTURE: ${lows.takeLast(4).joinToString("  |  ") { "${it.label} ${formatMarketPrice(it.price)}" }.ifBlank { "WAITING" }}", 12f, muted, false))
         }
-
-        // Retain no more than 40 structural pivots.
-        val retainedPivots = pivots
-            .takeLast(40)
-            .toMutableList()
-
-        var previousHigh: StructurePivot? = null
-        var previousLow: StructurePivot? = null
-
-        retainedPivots.forEach { pivot ->
-
-            if (pivot.type == "HIGH") {
-
-                val previous = previousHigh
-
-                pivot.classification = when {
-                    previous == null -> "INITIAL HIGH"
-                    pivot.price > previous.price -> "HH"
-                    pivot.price < previous.price -> "LH"
-                    else -> "EQUAL HIGH"
-                    }
-
-                previousHigh = pivot
-
-            } else {
-
-                val previous = previousLow
-
-                pivot.classification = when {
-                    previous == null -> "INITIAL LOW"
-                    pivot.price > previous.price -> "HL"
-                    pivot.price < previous.price -> "LL"
-                    else -> "EQUAL LOW"
-                }
-
-                previousLow = pivot
-            }
-        }
-
-        structureCard.addView(
-            label(
-                "STRUCTURAL PIVOTS: ${retainedPivots.size}",
-                12f,
-                white,
-                false
-            )
-        )
-
-        val highs = retainedPivots.filter {
-            it.type == "HIGH"
-        }
-
-        val lows = retainedPivots.filter {
-            it.type == "LOW"
-        }
-
-        fun pivotDescription(pivot: StructurePivot?): String {
-            if (pivot == null) return "Not established"
-
-            return "${pivot.classification} | " +
-                "${formatMarketPrice(pivot.price)} | " +
-                formatMarketTime(pivot.epoch)
-        }
-
-        structureCard.addView(
-            label(
-                "LATEST HIGH: ${pivotDescription(highs.lastOrNull())}",
-                12f,
-                white,
-                false
-            )
-        )
-
-        structureCard.addView(
-            label(
-                "LATEST LOW: ${pivotDescription(lows.lastOrNull())}",
-                12f,
-                white,
-                false
-            )
-        )
-
-        val latestPivot = retainedPivots.lastOrNull()
-        val previousPivot = retainedPivots
-            .getOrNull(retainedPivots.lastIndex - 1)
-
-        val structuralLeg = when {
-            latestPivot == null || previousPivot == null ->
-                "NOT ESTABLISHED"
-
-            previousPivot.type == "LOW" &&
-                latestPivot.type == "HIGH" ->
-                "BULLISH LEG"
-
-            previousPivot.type == "HIGH" &&
-                latestPivot.type == "LOW" ->
-                "BEARISH LEG"
-
-            else -> "NOT ESTABLISHED"
-        }
-
-        structureCard.addView(
-            label(
-                "LATEST STRUCTURAL LEG: $structuralLeg",
-                13f,
-                when (structuralLeg) {
-                    "BULLISH LEG" -> green
-                    "BEARISH LEG" -> red
-                    else -> yellow
-                },
-                true
-            )
-        )
-
-        structureCard.addView(
-            label(
-                "LATEST PIVOT: ${pivotDescription(latestPivot)}",
-                12f,
-                white,
-                false
-            )
-        )
-
-        structureCard.addView(
-            label(
-                "HIGH STRUCTURE OBSERVATIONS",
-                13f,
-                green,
-                true
-            )
-        )
-
-        highs.takeLast(4).asReversed().forEach { pivot ->
-
-            structureCard.addView(
-                label(
-                    "${pivot.classification}: " +
-                        "${formatMarketPrice(pivot.price)} | " +
-                        formatMarketTime(pivot.epoch),
-                    12f,
-                    white,
-                    false
-                )
-            )
-        }
-
-        structureCard.addView(
-            label(
-                "LOW STRUCTURE OBSERVATIONS",
-                13f,
-                red,
-                true
-            )
-        )
-
-        lows.takeLast(4).asReversed().forEach { pivot ->
-
-            structureCard.addView(
-                label(
-                    "${pivot.classification}: " +
-                        "${formatMarketPrice(pivot.price)} | " +
-                        formatMarketTime(pivot.epoch),
-                    12f,
-                    white,
-                    false
-                )
-            )
-        }
-
-        structureCard.addView(
-            label(
-                if (completedCandles.size < 5) {
-                    "STATUS: WAITING FOR SUFFICIENT COMPLETED H1 CANDLES"
-                } else if (retainedPivots.isEmpty()) {
-                    "STATUS: NO CONFIRMED STRUCTURAL PIVOTS"
-                } else {
-                    "STATUS: STRUCTURE CALCULATED — MSS/CHOCH NOT CONFIRMED"
-                },
-                11f,
-                if (retainedPivots.isEmpty()) yellow else green,
-                true
-            )
-        )
-
-        page.addView(
-            structureCard,
-            matchWrap().apply {
-                topMargin = dp(8)
-                bottomMargin = dp(8)
-            }
-        )
+        page.addView(structureCard, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
     }
 }
 // =========================================================
 // ANALYSIS — MSS / CHOCH CONFIRMATION
 // =========================================================
 private fun addMssChochAnalysis() {
-    val headerCard = card().apply {
-        orientation = LinearLayout.VERTICAL
-    }
-
-    val headerRow = horizontalRow()
-    headerRow.addView(
-        label("ANALYSIS - MSS/CHOCH", 17f, green, true),
-        LinearLayout.LayoutParams(0, -2, 1f)
-    )
-    headerRow.addView(
-        button(if (mssChochExpanded) "▼ OPEN" else "▶ CLOSED", mssChochExpanded) {
-            mssChochExpanded = !mssChochExpanded
-            render()
-        },
-        LinearLayout.LayoutParams(-2, dp(48))
-    )
-    headerCard.addView(headerRow)
-    page.addView(headerCard, matchWrap().apply { bottomMargin = dp(8) })
-
+    val header = card().apply { orientation = LinearLayout.VERTICAL }
+    val row = horizontalRow()
+    row.addView(label("STEP 4 — MSS / CHOCH", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
+    row.addView(button(if (mssChochExpanded) "▼ OPEN" else "▶ CLOSED", mssChochExpanded) {
+        mssChochExpanded = !mssChochExpanded; render()
+    }, LinearLayout.LayoutParams(-2, dp(48)))
+    header.addView(row)
+    page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
     if (!mssChochExpanded) return
-
-    page.addView(
-        label(
-            "The engine waits for a confirmed structural break. A live price touch is not enough; " +
-                "the break must be confirmed by a completed H1 candle close beyond the relevant structural pivot.",
-            13f, muted, false
-        ).apply { setPadding(dp(12), dp(12), dp(12), dp(12)) },
-        matchWrap().apply { bottomMargin = dp(8) }
-    )
-
-    data class MssPivot(
-        val type: String,
-        val price: Double,
-        val epoch: Long,
-        val candleIndex: Int
-    )
-
+    page.addView(label("A bullish MSS requires a completed H1 close above a prior LH; a bearish MSS requires a completed H1 close below a prior HL. A pivot can generate only one event. The most recent confirmed event remains active until replaced by a newer event; a live price touch is not confirmation.", 12f, muted, false).apply { setPadding(dp(12), dp(10), dp(12), dp(10)) })
     marketDataIndexes.forEach { symbol ->
-        val eventCard = card().apply { orientation = LinearLayout.VERTICAL }
-        val headingRow = horizontalRow()
-        headingRow.addView(
-            label("Index ${symbol.removePrefix("R_")}", 18f, green, true),
-            LinearLayout.LayoutParams(0, -2, 1f)
-        )
-
-        val allCandles = marketDataCandles[symbol].orEmpty().sortedBy { it.epoch }
-        val nowEpoch = System.currentTimeMillis() / 1000L
-        val completedCandles = allCandles.filter { it.epoch + 3600L <= nowEpoch }
-        val pivots = mutableListOf<MssPivot>()
-
-        if (completedCandles.size >= 5) {
-            for (i in 2 until completedCandles.size - 2) {
-                val current = completedCandles[i]
-                val left = completedCandles.subList(i - 2, i)
-                val right = completedCandles.subList(i + 1, i + 3)
-                val isSwingHigh = left.all { current.high > it.high } &&
-                    right.all { current.high > it.high }
-                val isSwingLow = left.all { current.low < it.low } &&
-                    right.all { current.low < it.low }
-                if (isSwingHigh == isSwingLow) continue
-
-                val candidate = if (isSwingHigh) {
-                    MssPivot("HIGH", current.high, current.epoch, i)
-                } else {
-                    MssPivot("LOW", current.low, current.epoch, i)
-                }
-                val previous = pivots.lastOrNull()
-                if (previous == null) {
-                    pivots.add(candidate)
-                } else if (previous.type == candidate.type) {
-                    val moreExtreme = if (candidate.type == "HIGH") {
-                        candidate.price > previous.price
-                    } else {
-                        candidate.price < previous.price
-                    }
-                    if (moreExtreme) pivots[pivots.lastIndex] = candidate
-                } else {
-                    pivots.add(candidate)
-                }
+        val candles = analysisCompletedCandles(symbol)
+        val card = card().apply { orientation = LinearLayout.VERTICAL }
+        card.addView(label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true))
+        card.addView(label("CURRENT PRICE: ${formatMarketPrice(marketDataPrices[symbol])}", 14f, white, false))
+        if (candles.size < 20) {
+            card.addView(label("STATUS: WAITING FOR SUFFICIENT COMPLETED H1 HISTORY", 12f, yellow, true))
+        } else {
+            val pivots = analysisPivots(candles)
+            val latestLH = pivots.lastOrNull { it.type == "HIGH" && it.label == "LH" }
+            val latestHL = pivots.lastOrNull { it.type == "LOW" && it.label == "HL" }
+            val event = analysisLatestMss(candles)
+            card.addView(label("STRUCTURAL EVENT: ${event?.state ?: "WAITING FOR MSS / CHOCH"}", 13f, if (event?.direction == "BULLISH") green else if (event?.direction == "BEARISH") red else yellow, true))
+            if (event != null) {
+                card.addView(label("DIRECTION: ${event.direction}", 13f, if (event.direction == "BULLISH") green else red, true))
+                card.addView(label("BROKEN PIVOT: ${event.broken.label} ${formatMarketPrice(event.broken.price)}", 12f, white, false))
+                card.addView(label("PIVOT TIME: ${formatMarketTime(event.broken.epoch)}", 12f, muted, false))
+                card.addView(label("CONFIRMATION CLOSE: ${formatMarketPrice(event.confirmation.close)}", 12f, white, false))
+                card.addView(label("CONFIRMED AT: ${formatMarketTime(event.confirmation.epoch + 3600L)}", 12f, muted, false))
+                card.addView(label("STATUS: CONFIRMED — PERSISTENT UNTIL A NEWER EVENT", 12f, green, true))
+            } else {
+                card.addView(label("LATEST LH: ${latestLH?.let { formatMarketPrice(it.price) + " | " + formatMarketTime(it.epoch) } ?: "NOT AVAILABLE"}", 12f, white, false))
+                card.addView(label("LATEST HL: ${latestHL?.let { formatMarketPrice(it.price) + " | " + formatMarketTime(it.epoch) } ?: "NOT AVAILABLE"}", 12f, white, false))
+                card.addView(label("STATUS: WAITING FOR A COMPLETED H1 CLOSE BEYOND THE RELEVANT PIVOT", 12f, yellow, true))
             }
         }
-
-        val latestPivot = pivots.lastOrNull()
-        val previousPivot = pivots.getOrNull(pivots.lastIndex - 1)
-        var eventDirection: String? = null
-        var brokenPivot: MssPivot? = null
-        var confirmationCandle: DerivApiClient.Candle? = null
-
-        // A bullish MSS requires a close above the latest confirmed HIGH
-        // while the most recent structural leg is bearish (HIGH -> LOW).
-        // A bearish MSS requires a close below the latest confirmed LOW
-        // while the most recent structural leg is bullish (LOW -> HIGH).
-        if (latestPivot != null && previousPivot != null) {
-            if (previousPivot.type == "HIGH" && latestPivot.type == "LOW") {
-                val target = pivots.lastOrNull { it.type == "HIGH" && it.candleIndex < latestPivot.candleIndex }
-                if (target != null) {
-                    val breakCandle = completedCandles.firstOrNull {
-                        it.epoch > latestPivot.epoch && it.close > target.price
-                    }
-                    if (breakCandle != null) {
-                        eventDirection = "BULLISH MSS"
-                        brokenPivot = target
-                        confirmationCandle = breakCandle
-                    }
-                }
-            } else if (previousPivot.type == "LOW" && latestPivot.type == "HIGH") {
-                val target = pivots.lastOrNull { it.type == "LOW" && it.candleIndex < latestPivot.candleIndex }
-                if (target != null) {
-                    val breakCandle = completedCandles.firstOrNull {
-                        it.epoch > latestPivot.epoch && it.close < target.price
-                    }
-                    if (breakCandle != null) {
-                        eventDirection = "BEARISH MSS"
-                        brokenPivot = target
-                        confirmationCandle = breakCandle
-                    }
-                }
-            }
-        }
-
-        val confirmed = eventDirection != null && brokenPivot != null && confirmationCandle != null
-        headingRow.addView(
-            label(if (confirmed) "CONFIRMED" else "WAITING", 12f, if (confirmed) green else yellow, true)
-        )
-        eventCard.addView(headingRow)
-
-        val detailsRow = horizontalRow().apply { gravity = Gravity.TOP }
-        fun addDetail(title: String, value: String, weight: Float) {
-            val detail = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(9), dp(10), dp(9), dp(10))
-                background = shape(bg, Color.rgb(12, 55, 34), 12, 1)
-                addView(label(title, 11f, muted, true))
-                addView(label(value, 14f, white, true).apply {
-                    setPadding(0, dp(8), 0, dp(4))
-                })
-            }
-            detailsRow.addView(detail, LinearLayout.LayoutParams(0, -1, weight).apply {
-                rightMargin = dp(5)
-            })
-        }
-
-        addDetail("STRUCTURAL EVENT", eventDirection ?: "NO CONFIRMED MSS", 1f)
-        addDetail(
-            "BROKEN PIVOT",
-            if (brokenPivot != null) "${formatMarketPrice(brokenPivot.price)}\n${formatMarketTime(brokenPivot.epoch)}"
-            else if (latestPivot != null) "Awaiting close beyond pivot\n${formatMarketPrice(latestPivot.price)}"
-            else "Not established",
-            1.25f
-        )
-        addDetail(
-            "CONFIRMATION CLOSE",
-            if (confirmationCandle != null) "${formatMarketPrice(confirmationCandle.close)}\n${formatMarketTime(confirmationCandle.epoch + 3600L)}"
-            else "Awaiting completed H1 close",
-            1.25f
-        )
-        eventCard.addView(detailsRow, matchWrap().apply { topMargin = dp(8) })
-        eventCard.addView(
-            label(
-                if (confirmed) "Structural event confirmed. Historical behaviour is the next stage; no trade qualification or execution is performed here."
-                else "No qualifying structural break is confirmed yet. A live price touch is not enough; wait for a completed H1 candle close beyond the relevant pivot.",
-                12f, muted, false
-            ).apply { setPadding(0, dp(8), 0, dp(2)) }
-        )
-        page.addView(eventCard, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
+        page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
     }
 }
 // =========================================================
 // ANALYSIS — MSS / CHOCH BEHAVIOUR
 // =========================================================
 private fun addMssChochBehaviourAnalysis() {
-    val headerCard = card().apply {
-        orientation = LinearLayout.VERTICAL
-    }
-
-    val headerRow = horizontalRow()
-
-    headerRow.addView(
-        label("ANALYSIS - MSS/CHOCH BEHAVIOUR", 17f, green, true),
-        LinearLayout.LayoutParams(0, -2, 1f)
-    )
-
-    headerRow.addView(
-        button(
-            if (mssChochBehaviourExpanded) "▼ OPEN" else "▶ CLOSED",
-            mssChochBehaviourExpanded
-        ) {
-            mssChochBehaviourExpanded = !mssChochBehaviourExpanded
-            render()
-        },
-        LinearLayout.LayoutParams(-2, dp(48))
-    )
-
-    headerCard.addView(headerRow)
-    page.addView(
-        headerCard,
-        matchWrap().apply { bottomMargin = dp(8) }
-    )
-
+    val header = card().apply { orientation = LinearLayout.VERTICAL }
+    val row = horizontalRow()
+    row.addView(label("STEP 5 — HISTORICAL MSS / CHOCH BEHAVIOUR", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
+    row.addView(button(if (mssChochBehaviourExpanded) "▼ OPEN" else "▶ CLOSED", mssChochBehaviourExpanded) {
+        mssChochBehaviourExpanded = !mssChochBehaviourExpanded; render()
+    }, LinearLayout.LayoutParams(-2, dp(48)))
+    header.addView(row)
+    page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
     if (!mssChochBehaviourExpanded) return
-
-    page.addView(
-        label(
-            "HISTORICAL BEHAVIOUR RULES: H1 completed candles only. " +
-                "After a confirmed MSS, the engine examines subsequent candles " +
-                "to measure directional continuation, pullback and whether price " +
-                "returns to the broken structural level. This section does not " +
-                "qualify or execute trades.",
-            12f,
-            muted,
-            false
-        ).apply {
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-        },
-        matchWrap().apply { bottomMargin = dp(8) }
-    )
-
+    page.addView(label("Uses the same completed-H1 MSS event rules. The latest current event is excluded from historical samples. The last 20 historical events are measured until an opposite MSS or the end of loaded history. Continuation is the percentage with favourable movement greater than zero; averages are directional favourable/adverse extremes.", 12f, muted, false).apply { setPadding(dp(12), dp(10), dp(12), dp(10)) })
     marketDataIndexes.forEach { symbol ->
-        val behaviourCard = card().apply {
-            orientation = LinearLayout.VERTICAL
-        }
-        behaviourCard.addView(
-            label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true)
-        )
-
-        val allCandles = marketDataCandles[symbol]
-            .orEmpty()
-            .sortedBy { it.epoch }
-
-        val nowEpoch = System.currentTimeMillis() / 1000L
-
-        val candles = allCandles.filter {
-            it.epoch + 3600L <= nowEpoch
-        }
-
-        if (candles.size < 5) {
-            behaviourCard.addView(
-                label(
-                    "STATUS: WAITING FOR COMPLETED H1 CANDLES",
-                    12f,
-                    yellow,
-                    true
-                )
-            )
-            page.addView(
-                behaviourCard,
-                matchWrap().apply {
-                    topMargin = dp(6)
-                    bottomMargin = dp(6)
-                }
-            )
-            return@forEach
-        }
-
-        data class BehaviourPivot(
-            val type: String,
-            val price: Double,
-            val epoch: Long,
-            val candleIndex: Int
-        )
-
-        val pivots = mutableListOf<BehaviourPivot>()
-
-        for (i in 2 until candles.size - 2) {
-            val current = candles[i]
-            val left = candles.subList(i - 2, i)
-            val right = candles.subList(i + 1, i + 3)
-
-            val swingHigh =
-                left.all { current.high > it.high } &&
-                    right.all { current.high > it.high }
-
-            val swingLow =
-                left.all { current.low < it.low } &&
-                    right.all { current.low < it.low }
-
-            if (swingHigh == swingLow) continue
-
-            val candidate = if (swingHigh) {
-                BehaviourPivot("HIGH", current.high, current.epoch, i)
-            } else {
-                BehaviourPivot("LOW", current.low, current.epoch, i)
-            }
-
-            val previous = pivots.lastOrNull()
-
-            if (previous == null) {
-                pivots.add(candidate)
-            } else if (previous.type == candidate.type) {
-                val moreExtreme = if (candidate.type == "HIGH") {
-                    candidate.price > previous.price
-                } else {
-                    candidate.price < previous.price
-                }
-
-                if (moreExtreme) {
-                    pivots[pivots.lastIndex] = candidate
-                }
-            } else {
-                pivots.add(candidate)
-            }
-        }
-
-        val latestPivot = pivots.lastOrNull()
-        val previousPivot = pivots.getOrNull(pivots.lastIndex - 1)
-
-        var direction: String? = null
-        var brokenPivot: BehaviourPivot? = null
-        var confirmationIndex = -1
-
-        if (latestPivot != null && previousPivot != null) {
-            if (
-                previousPivot.type == "HIGH" &&
-                latestPivot.type == "LOW"
-            ) {
-                val target = pivots.lastOrNull {
-                    it.type == "HIGH" &&
-                        it.candleIndex < latestPivot.candleIndex
-                }
-
-                if (target != null) {
-                    val breakIndex = candles.indices.firstOrNull { index ->
-                        candles[index].epoch > latestPivot.epoch &&
-                            candles[index].close > target.price
-                    }
-
-                    if (breakIndex != null) {
-                        direction = "BULLISH MSS"
-                        brokenPivot = target
-                        confirmationIndex = breakIndex
-                    }
-                }
-            } else if (
-                previousPivot.type == "LOW" &&
-                latestPivot.type == "HIGH"
-            ) {
-                val target = pivots.lastOrNull {
-                    it.type == "LOW" &&
-                        it.candleIndex < latestPivot.candleIndex
-                }
-
-                if (target != null) {
-                    val breakIndex = candles.indices.firstOrNull { index ->
-                        candles[index].epoch > latestPivot.epoch &&
-                            candles[index].close < target.price
-                    }
-
-                    if (breakIndex != null) {
-                        direction = "BEARISH MSS"
-                        brokenPivot = target
-                        confirmationIndex = breakIndex
-                    }
-                }
-            }
-        }
-
-        if (
-            direction == null ||
-            brokenPivot == null ||
-            confirmationIndex < 0
-        ) {
-            behaviourCard.addView(
-                label(
-                    "STRUCTURAL EVENT: NO CONFIRMED MSS",
-                    13f,
-                    yellow,
-                    true
-                )
-            )
-            behaviourCard.addView(
-                label(
-                    "Historical behaviour cannot be measured until a structural break is confirmed.",
-                    12f,
-                    muted,
-                    false
-                )
-            )
+        val candles = analysisCompletedCandles(symbol)
+        val card = card().apply { orientation = LinearLayout.VERTICAL }
+        card.addView(label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true))
+        if (candles.size < 30) {
+            card.addView(label("STATUS: WAITING FOR AT LEAST 30 COMPLETED H1 CANDLES", 12f, yellow, true))
         } else {
-            val confirmation = candles[confirmationIndex]
-            val laterCandles = candles.drop(confirmationIndex + 1)
-
-            val bullish = direction == "BULLISH MSS"
-
-            val continued = if (bullish) {
-                laterCandles.count { it.close > confirmation.close }
-            } else {
-                laterCandles.count { it.close < confirmation.close }
+            val allOutcomes = analysisHistoricalOutcomes(candles)
+            val currentEvent = analysisLatestMss(candles)
+            val history = allOutcomes.filterNot { currentEvent != null && it.confirmation.epoch == currentEvent.confirmation.epoch }.takeLast(20)
+            val direction = currentEvent?.direction
+            val sample = when (direction) {
+                "BULLISH" -> history.filter { it.direction == "BULLISH" }
+                "BEARISH" -> history.filter { it.direction == "BEARISH" }
+                else -> history
             }
-
-            val pulledBack = if (bullish) {
-                laterCandles.count { it.low < confirmation.close }
-            } else {
-                laterCandles.count { it.high > confirmation.close }
+            val continuation = if (sample.isEmpty()) null else sample.count { it.maxFav > 0.0 }.toDouble() / sample.size * 100.0
+            val avgFav = sample.takeIf { it.isNotEmpty() }?.map { it.maxFav }?.average()
+            val avgAdv = sample.takeIf { it.isNotEmpty() }?.map { it.maxAdv }?.average()
+            card.addView(label("CURRENT MSS: ${currentEvent?.state ?: "NO CONFIRMED EVENT"}", 13f, if (currentEvent?.direction == "BULLISH") green else if (currentEvent?.direction == "BEARISH") red else yellow, true))
+            card.addView(label("HISTORICAL SAMPLE: ${sample.size}  |  BULLISH / BEARISH EVENTS: ${history.count { it.direction == "BULLISH" }} / ${history.count { it.direction == "BEARISH" }}", 12f, white, false))
+            card.addView(label("EVENT SAMPLE: ${direction ?: "ALL HISTORICAL MSS"}", 12f, muted, false))
+            card.addView(label("HISTORICAL CONTINUATION: ${continuation?.let { String.format(java.util.Locale.US, "%.1f%%", it) } ?: "WAITING"}", 13f, if (continuation != null && continuation >= 50.0) green else yellow, true))
+            card.addView(label("AVERAGE FAVOURABLE MOVE: ${avgFav?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
+            card.addView(label("AVERAGE ADVERSE MOVE: ${avgAdv?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
+            if (sample.isEmpty()) card.addView(label("No historical events are available for the current direction.", 12f, yellow, false))
+            history.takeLast(6).asReversed().forEach { e ->
+                card.addView(label("${e.direction} MSS | ${formatMarketTime(e.confirmation.epoch)}", 13f, if (e.direction == "BULLISH") green else red, true))
+                card.addView(label("BROKEN PIVOT: ${formatMarketPrice(e.pivot.price)} | CONFIRM CLOSE: ${formatMarketPrice(e.confirmation.close)}", 12f, white, false))
+                card.addView(label("FAVOURABLE MOVE: ${formatMarketPrice(e.maxFav)} | ADVERSE MOVE: ${formatMarketPrice(e.maxAdv)}", 12f, white, false))
+                card.addView(label("FAVOURABLE EXTREME: ${formatMarketPrice(e.maxFavPrice)} | OPPOSITE MSS: ${if (e.endedByOpposite) "YES" else "NOT YET"}", 12f, muted, false))
             }
-
-            val retestedBrokenLevel = if (bullish) {
-                laterCandles.any { it.low <= brokenPivot.price }
-            } else {
-                laterCandles.any { it.high >= brokenPivot.price }
-            }
-
-            val favourableMove = if (bullish) {
-                laterCandles.maxOfOrNull { it.high }?.minus(confirmation.close)
-            } else {
-                laterCandles.minOfOrNull { it.low }?.let {
-                    confirmation.close - it
-                }
-            }
-
-            behaviourCard.addView(
-                label(
-                    "STRUCTURAL EVENT: $direction",
-                    13f,
-                    if (bullish) green else red,
-                    true
-                )
-            )
-
-            behaviourCard.addView(
-                label(
-                    "CONFIRMED AT: ${formatMarketTime(confirmation.epoch + 3600L)}",
-                    12f,
-                    white,
-                    false
-                )
-            )
-
-            behaviourCard.addView(
-                label(
-                    "BROKEN LEVEL: ${formatMarketPrice(brokenPivot.price)}",
-                    12f,
-                    white,
-                    false
-                )
-            )
-
-            behaviourCard.addView(
-                label(
-                    "SUBSEQUENT COMPLETED CANDLES: ${laterCandles.size}",
-                    12f,
-                    white,
-                    false
-                )
-            )
-
-            behaviourCard.addView(
-                label(
-                    "DIRECTIONAL CONTINUATION CLOSES: $continued",
-                    12f,
-                    green,
-                    true
-                )
-            )
-
-            behaviourCard.addView(
-                label(
-                    "PULLBACK CANDLES: $pulledBack",
-                    12f,
-                    yellow,
-                    true
-                )
-            )
-
-            behaviourCard.addView(
-                label(
-                    "BROKEN LEVEL RETESTED: ${if (retestedBrokenLevel) "YES" else "NO"}",
-                    12f,
-                    if (retestedBrokenLevel) yellow else green,
-                    true
-                )
-            )
-
-            behaviourCard.addView(
-                label(
-                    "MAXIMUM FAVOURABLE PRICE MOVEMENT: " +
-                        if (favourableMove != null) {
-                            formatMarketPrice(kotlin.math.abs(favourableMove))
-                        } else {
-                            "Not available"
-                        },
-                    12f,
-                    white,
-                    false
-                )
-            )
-
-            behaviourCard.addView(
-                label(
-                    if (laterCandles.isEmpty()) {
-                        "BEHAVIOUR STATUS: WAITING FOR SUBSEQUENT COMPLETED CANDLES"
-                    } else if (continued > 0) {
-                        "BEHAVIOUR STATUS: DIRECTIONAL CONTINUATION OBSERVED"
-                    } else {
-                        "BEHAVIOUR STATUS: NO DIRECTIONAL CONTINUATION CLOSE OBSERVED"
-                    },
-                    12f,
-                    if (laterCandles.isEmpty()) yellow
-                    else if (continued > 0) green
-                    else red,
-                    true
-                )
-            )
         }
-
-        page.addView(
-            behaviourCard,
-            matchWrap().apply {
-                topMargin = dp(6)
-                bottomMargin = dp(6)
-            }
-        )
+        page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
     }
 }
-    // =========================================================
-    // ANALYSIS — DIRECTION & STRUCTURAL TARGET
-    // =========================================================
 
-    private fun addDirectionStructuralTargetAnalysis() {
-
-        page.addView(
-            sectionTitle("ANALYSIS - DIRECTION & STRUCTURAL TARGET")
-        )
-
-        page.addView(
-            label(
-                "Direction requires a confirmed H1 Market Structure Shift. " +
-                    "Targets are based on confirmed structural pivots ahead of price.",
-                12f,
-                muted,
-                false
-            )
-        )
-
-        data class TargetPivot(
-            val type: String,
-            val price: Double,
-            val epoch: Long,
-            val candleIndex: Int
-        )
-
-        marketDataIndexes.forEach { symbol ->
-
-            val targetCard = card().apply {
-                orientation = LinearLayout.VERTICAL
-            }
-
-            targetCard.addView(
-                label(symbol, 18f, green, true)
-            )
-
-            val currentPrice = marketDataPrices[symbol]
-
-            targetCard.addView(
-                label(
-                    "CURRENT PRICE: ${formatMarketPrice(currentPrice)}",
-                    14f,
-                    white,
-                    true
-                )
-            )
-
-            val allCandles = marketDataCandles[symbol]
-                .orEmpty()
-                .sortedBy { it.epoch }
-
-            val nowEpoch = System.currentTimeMillis() / 1000L
-
-            val candles = allCandles.filter {
-                it.epoch + 3600L <= nowEpoch
-            }
-
-            val pivots = mutableListOf<TargetPivot>()
-
-            if (candles.size >= 5) {
-
-                for (i in 2 until candles.size - 2) {
-
-                    val current = candles[i]
-
-                    val left = candles.subList(i - 2, i)
-                    val right = candles.subList(i + 1, i + 3)
-
-                    val swingHigh =
-                        left.all { current.high > it.high } &&
-                            right.all { current.high > it.high }
-
-                    val swingLow =
-                        left.all { current.low < it.low } &&
-                            right.all { current.low < it.low }
-
-                    if (swingHigh == swingLow) continue
-
-                    val candidate = if (swingHigh) {
-                        TargetPivot(
-                            "HIGH",
-                            current.high,
-                            current.epoch,
-                            i
-                        )
-                    } else {
-                        TargetPivot(
-                            "LOW",
-                            current.low,
-                            current.epoch,
-                            i
-                        )
-                    }
-
-                    val previous = pivots.lastOrNull()
-
-                    if (previous == null) {
-
-                        pivots.add(candidate)
-
-                    } else if (previous.type == candidate.type) {
-
-                        val moreExtreme =
-                            if (candidate.type == "HIGH") {
-                                candidate.price > previous.price
-                            } else {
-                                candidate.price < previous.price
-                            }
-
-                        if (moreExtreme) {
-                            pivots[pivots.lastIndex] = candidate
-                        }
-
-                    } else {
-
-                        pivots.add(candidate)
-                    }
-                }
-            }
-
-            val latestPivot = pivots.lastOrNull()
-
-            val previousPivot = pivots.getOrNull(
-                pivots.lastIndex - 1
-            )
-
-            var direction: String? = null
-            var confirmationEpoch = 0L
-
-            if (
-                latestPivot != null &&
-                previousPivot != null &&
-                candles.isNotEmpty()
-            ) {
-
-                if (
-                    previousPivot.type == "HIGH" &&
-                    latestPivot.type == "LOW"
-                ) {
-
-                    val brokenHigh = pivots.lastOrNull {
-                        it.type == "HIGH" &&
-                            it.candleIndex < latestPivot.candleIndex
-                    }
-
-                    if (brokenHigh != null) {
-
-                        val confirmation = candles.firstOrNull {
-                            it.epoch > latestPivot.epoch &&
-                                it.close > brokenHigh.price
-                        }
-
-                        if (confirmation != null) {
-                            direction = "UP"
-                            confirmationEpoch =
-                                confirmation.epoch + 3600L
-                        }
-                    }
-
-                } else if (
-                    previousPivot.type == "LOW" &&
-                    latestPivot.type == "HIGH"
-                ) {
-
-                    val brokenLow = pivots.lastOrNull {
-                        it.type == "LOW" &&
-                            it.candleIndex < latestPivot.candleIndex
-                    }
-
-                    if (brokenLow != null) {
-
-                        val confirmation = candles.firstOrNull {
-                            it.epoch > latestPivot.epoch &&
-                                it.close < brokenLow.price
-                        }
-
-                        if (confirmation != null) {
-                            direction = "DOWN"
-                            confirmationEpoch =
-                                confirmation.epoch + 3600L
-                        }
-                    }
-                }
-            }
-
-            targetCard.addView(
-                label(
-                    "CONFIRMED DIRECTION: ${
-                        direction ?: "WAITING FOR MSS"
-                    }",
-                    14f,
-                    when (direction) {
-                        "UP" -> green
-                        "DOWN" -> red
-                        else -> yellow
-                    },
-                    true
-                )
-            )
-
-            targetCard.addView(
-                label(
-                    "MSS CONFIRMATION: ${
-                        if (confirmationEpoch > 0L) {
-                            formatMarketTime(confirmationEpoch)
-                        } else {
-                            "Not confirmed"
-                        }
-                    }",
-                    12f,
-                    white,
-                    false
-                )
-            )
-
-            val target = if (currentPrice != null && direction != null) {
-
-                if (direction == "UP") {
-                    pivots.lastOrNull {
-                        it.type == "HIGH" &&
-                            it.price > currentPrice
-                    }
-                } else {
-                    pivots.lastOrNull {
-                        it.type == "LOW" &&
-                            it.price < currentPrice
-                    }
-                }
-
+// =========================================================
+// ANALYSIS — DIRECTION & STRUCTURAL TARGET
+// =========================================================
+private fun addDirectionStructuralTargetAnalysis() {
+    val header = card().apply { orientation = LinearLayout.VERTICAL }
+    val row = horizontalRow()
+    row.addView(label("STEP 6 — DIRECTION & STRUCTURAL TARGET", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
+    row.addView(button(if (directionStructuralTargetExpanded) "▼ OPEN" else "▶ CLOSED", directionStructuralTargetExpanded) {
+        directionStructuralTargetExpanded = !directionStructuralTargetExpanded; render()
+    }, LinearLayout.LayoutParams(-2, dp(48)))
+    header.addView(row)
+    page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
+    if (!directionStructuralTargetExpanded) return
+    page.addView(label("Direction comes only from the persistent confirmed MSS. UP targets the nearest valid confirmed HIGH above live price; DOWN targets the nearest valid confirmed LOW below live price. Pivots must have been confirmed by the MSS confirmation candle and must not have been invalidated by a completed close through them. No ATR or average-movement target is invented.", 12f, muted, false).apply { setPadding(dp(12), dp(10), dp(12), dp(10)) })
+    marketDataIndexes.forEach { symbol ->
+        val candles = analysisCompletedCandles(symbol)
+        val card = card().apply { orientation = LinearLayout.VERTICAL }
+        card.addView(label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true))
+        if (candles.size < 30) {
+            card.addView(label("STATUS: WAITING FOR SUFFICIENT COMPLETED H1 HISTORY", 12f, yellow, true))
+        } else {
+            val event = analysisLatestMss(candles)
+            if (event == null) {
+                card.addView(label("DIRECTION: WAITING", 13f, yellow, true))
+                card.addView(label("STRUCTURAL TARGET: WAITING FOR A CONFIRMED MSS / CHOCH", 12f, yellow, false))
             } else {
-                null
+                val current = marketDataPrices[symbol] ?: candles.last().close
+                val direction = if (event.direction == "BULLISH") "UP" else "DOWN"
+                val target = analysisStructuralTarget(candles, current, direction, event.confirmation.epoch)
+                card.addView(label("DIRECTION: $direction", 15f, if (direction == "UP") green else red, true))
+                card.addView(label("STRUCTURAL EVENT: ${event.state}", 12f, white, false))
+                card.addView(label("CURRENT PRICE: ${formatMarketPrice(current)}", 13f, white, false))
+                card.addView(label("BROKEN PIVOT: ${formatMarketPrice(event.broken.price)} | ${formatMarketTime(event.broken.epoch)}", 12f, white, false))
+                card.addView(label("CONFIRMATION CLOSE: ${formatMarketPrice(event.confirmation.close)} | ${formatMarketTime(event.confirmation.epoch + 3600L)}", 12f, muted, false))
+                card.addView(label("STRUCTURAL TARGET: ${target?.let { formatMarketPrice(it.price) } ?: "WAITING"}", 15f, if (target != null) green else yellow, true))
+                card.addView(label("TARGET PIVOT: ${target?.let { "${it.type} | ${formatMarketTime(it.epoch)} | confirmed ${formatMarketTime(it.confirmedEpoch)}" } ?: "No valid confirmed structural pivot in the required direction."}", 12f, white, false))
+                val outcomes = analysisHistoricalOutcomes(candles)
+                    .filterNot { it.confirmation.epoch == event.confirmation.epoch }
+                    .takeLast(20)
+                    .filter { it.direction == event.direction }
+                val continuation = if (outcomes.isEmpty()) null else outcomes.count { it.maxFav > 0.0 }.toDouble() / outcomes.size * 100.0
+                card.addView(label("HISTORICAL SAMPLE: ${outcomes.size}", 12f, white, false))
+                card.addView(label("HISTORICAL CONTINUATION: ${continuation?.let { String.format(java.util.Locale.US, "%.1f%%", it) } ?: "WAITING"}", 12f, if (continuation != null) green else yellow, true))
+                card.addView(label("AVG FAVOURABLE MOVE: ${outcomes.takeIf { it.isNotEmpty() }?.map { it.maxFav }?.average()?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
+                card.addView(label("AVG ADVERSE MOVE: ${outcomes.takeIf { it.isNotEmpty() }?.map { it.maxAdv }?.average()?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
             }
-
-            val distance = if (
-                currentPrice != null &&
-                target != null
-            ) {
-                kotlin.math.abs(target.price - currentPrice)
-            } else {
-                null
-            }
-
-            val targetStatus = when {
-                currentPrice == null ->
-                    "WAITING FOR LIVE PRICE"
-
-                direction == null ->
-                    "WAITING FOR CONFIRMED DIRECTION"
-
-                target == null ->
-                    "NO STRUCTURAL TARGET AHEAD"
-
-                distance == null || distance <= 0.0 ->
-                    "INVALID TARGET"
-
-                else ->
-                    "VALID STRUCTURAL TARGET"
-            }
-
-            targetCard.addView(
-                label(
-                    "STRUCTURAL TARGET: ${
-                        formatMarketPrice(target?.price)
-                    }",
-                    15f,
-                    if (target != null) green else yellow,
-                    true
-                )
-            )
-
-            targetCard.addView(
-                label(
-                    "TARGET DISTANCE: ${
-                        distance?.let {
-                            formatMarketPrice(it)
-                        } ?: "—"
-                    }",
-                    13f,
-                    white,
-                    false
-                )
-            )
-
-            targetCard.addView(
-                label(
-                    "TARGET STATUS: $targetStatus",
-                    13f,
-                    if (targetStatus == "VALID STRUCTURAL TARGET") {
-                        green
-                    } else {
-                        yellow
-                    },
-                    true
-                )
-            )
-
-            targetCard.addView(
-                label(
-                    "STATUS: ANALYSIS ONLY — NO TRADE EXECUTION",
-                    11f,
-                    muted,
-                    false
-                )
-            )
-
-            page.addView(
-                targetCard,
-                matchWrap().apply {
-                    topMargin = dp(8)
-                    bottomMargin = dp(8)
-                }
-            )
         }
+        page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
     }
+}
     private fun formatMarketPrice(price: Double?): String =
         price?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
 
@@ -2779,7 +1874,6 @@ private fun addMssChochBehaviourAnalysis() {
                     true
                 )
             )
-
             item.addView(
                 label(
                     name,
@@ -3126,8 +2220,7 @@ private fun addMssChochBehaviourAnalysis() {
             "proposal_open_contract" -> {
                 openContractResponse = json
             }
-
-            "profit_table" -> {
+               "profit_table" -> {
                 tradeHistoryResponse = json
             }
         }
@@ -3173,4 +2266,4 @@ override fun onMarketDataError(
         runOnUiThread { connected = false; accountStatus.text = "●  NOT CONNECTED"; accountStatus.setTextColor(red) }
     }
 
-                            }
+                                   }
