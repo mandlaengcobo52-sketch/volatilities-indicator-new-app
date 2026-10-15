@@ -203,8 +203,8 @@ when (selectedTab) {
     addMssChochAnalysis()
     addMssChochBehaviourAnalysis()
     addDirectionStructuralTargetAnalysis()
+    addQualificationAnalysis()
     addTargetFilterAnalysis()
-                }
 
             "Trade" -> {
                 addTradeScreen()
@@ -1468,11 +1468,187 @@ private fun addMssChochBehaviourAnalysis() {
         page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
     }
 }
-
 // =========================================================
 // ANALYSIS — DIRECTION & STRUCTURAL TARGET
 // =========================================================
 private fun addDirectionStructuralTargetAnalysis() {
+    val header = card().apply {
+        orientation = LinearLayout.VERTICAL
+    }
+
+    val row = horizontalRow()
+
+    row.addView(
+        label("Analysis - Direction and Structural Target", 17f, green, true),
+        LinearLayout.LayoutParams(0, -2, 1f)
+    )
+
+    row.addView(
+        button(
+            if (directionStructuralTargetExpanded) "▼ OPEN" else "▶ CLOSED",
+            directionStructuralTargetExpanded
+        ) {
+            directionStructuralTargetExpanded =
+                !directionStructuralTargetExpanded
+            render()
+        },
+        LinearLayout.LayoutParams(-2, dp(48))
+    )
+
+    header.addView(row)
+    page.addView(header, matchWrap().apply {
+        bottomMargin = dp(8)
+    })
+
+    if (!directionStructuralTargetExpanded) return
+
+    page.addView(
+        label(
+            "Shows the confirmed MSS direction, structural target, " +
+                "current price and target distance.",
+            12f, muted, false
+        ).apply {
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+        }
+    )
+
+    marketDataIndexes.forEach { symbol ->
+        val candles = analysisCompletedCandles(symbol)
+        val current = marketDataPrices[symbol]
+            ?: candles.lastOrNull()?.close
+
+        val event = if (candles.size >= 20) {
+            analysisLatestMss(candles)
+        } else {
+            null
+        }
+
+        val direction = when (event?.direction) {
+            "BULLISH" -> "UP"
+            "BEARISH" -> "DOWN"
+            else -> ""
+        }
+
+        val target = if (
+            event != null &&
+            current != null &&
+            direction.isNotBlank()
+        ) {
+            analysisStructuralTarget(
+                candles,
+                current,
+                direction,
+                event.confirmation.epoch
+            )
+        } else {
+            null
+        }
+
+        val hasTarget = target != null &&
+            current != null &&
+            (
+                (direction == "UP" && target.price > current) ||
+                (direction == "DOWN" && target.price < current)
+            )
+
+        val distance = if (
+            hasTarget && current != null && current != 0.0
+        ) {
+            kotlin.math.abs(target!!.price - current) /
+                current * 100.0
+        } else {
+            null
+        }
+
+        val indexCard = card().apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        indexCard.addView(
+            label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true)
+        )
+
+        val priceView = label(
+            "CURRENT PRICE: ${formatMarketPrice(current)}",
+            14f, blue, true
+        )
+
+        registerCurrentPriceView(
+            symbol,
+            "direction-target",
+            priceView
+        )
+
+        indexCard.addView(priceView)
+
+        indexCard.addView(
+            label(
+                "MSS / CHOCH: ${event?.state ?: "WAITING"}",
+                13f,
+                when (direction) {
+                    "UP" -> green
+                    "DOWN" -> red
+                    else -> yellow
+                },
+                true
+            )
+        )
+
+        indexCard.addView(
+            label(
+                "DIRECTION: ${direction.ifBlank { "WAITING" }}",
+                13f,
+                when (direction) {
+                    "UP" -> green
+                    "DOWN" -> red
+                    else -> yellow
+                },
+                true
+            )
+        )
+
+        indexCard.addView(
+            label(
+                "STRUCTURAL TARGET: ${
+                    if (hasTarget) formatMarketPrice(target?.price)
+                    else "WAITING"
+                }",
+                13f,
+                if (hasTarget) green else yellow,
+                true
+            )
+        )
+
+        indexCard.addView(
+            label(
+                "TARGET DISTANCE: ${
+                    distance?.let {
+                        String.format(
+                            java.util.Locale.US,
+                            "%.3f%%",
+                            it
+                        )
+                    } ?: "—"
+                }",
+                12f, blue, false
+            )
+        )
+
+        page.addView(
+            indexCard,
+            matchWrap().apply {
+                topMargin = dp(6)
+                bottomMargin = dp(6)
+            }
+        )
+    }
+}
+
+// =========================================================
+// label("Analysis - Qualification", 17f, green, true)
+// =========================================================
+
+private fun addQualificationAnalysis() {
     val header = card().apply { orientation = LinearLayout.VERTICAL }
     val row = horizontalRow()
     row.addView(
@@ -1480,10 +1656,10 @@ private fun addDirectionStructuralTargetAnalysis() {
         LinearLayout.LayoutParams(0, -2, 1f)
     )
     row.addView(
-        button(if (directionStructuralTargetExpanded) "▼ OPEN" else "▶ CLOSED", directionStructuralTargetExpanded) {
-            directionStructuralTargetExpanded = !directionStructuralTargetExpanded
-            render()
-        },
+        button(if (qualificationExpanded) "▼ OPEN" else "▶ CLOSED", qualificationExpanded) {
+    qualificationExpanded = !qualificationExpanded
+    render()
+        }
         LinearLayout.LayoutParams(-2, dp(48))
     )
     header.addView(row)
