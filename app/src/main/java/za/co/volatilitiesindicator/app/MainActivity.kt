@@ -1084,6 +1084,10 @@ private fun addTradeScreen() {
 // ANALYSIS — MARKET DATA
 // =========================================================
 private fun addMarketDataAnalysis() {
+        if (!marketDataRequested) {
+        marketDataRequested = true
+        derivApiClient.requestHistoricalCandles()
+        }
     page.addView(sectionTitle("ANALYSIS : MARKET DATA"))
 
     page.addView(
@@ -1877,6 +1881,17 @@ private fun addMarketDataAnalysis() {
         }
     }
     override fun onTick(symbol: String, quote: Double, epoch: Long) {
+    runOnUiThread {
+        if (symbol in marketDataIndexes && quote.isFinite()) {
+            marketDataPrices[symbol] = quote
+            marketDataErrors.remove(symbol)
+
+            if (selectedTab == "Analysis") {
+                render()
+            }
+        }
+    }
+    }
 }
     override fun onTradeData(json: JSONObject) {
     runOnUiThread {
