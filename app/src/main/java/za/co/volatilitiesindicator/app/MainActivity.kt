@@ -1080,6 +1080,112 @@ private fun addTradeScreen() {
         }
     )
 }
+// =========================================================
+// ANALYSIS — MARKET DATA
+// =========================================================
+private fun addMarketDataAnalysis() {
+    page.addView(sectionTitle("ANALYSIS : MARKET DATA"))
+
+    page.addView(
+        label(
+            "Live market prices and completed H1 historical candles",
+            13f,
+            muted,
+            false
+        )
+    )
+
+    page.addView(
+        label(
+            "TIMEFRAME: H1  |  HISTORICAL CANDLES: 1000 PER INDEX",
+            12f,
+            green,
+            true
+        )
+    )
+
+    marketDataIndexes.forEach { symbol ->
+        val marketCard = card().apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        marketCard.addView(
+            label(symbol, 18f, green, true)
+        )
+
+        marketCard.addView(
+            label(
+                "CURRENT PRICE: ${
+                    formatMarketPrice(marketDataPrices[symbol])
+                }",
+                14f,
+                white,
+                false
+            )
+        )
+
+        val candles = marketDataCandles[symbol].orEmpty()
+
+        marketCard.addView(
+            label(
+                "HISTORICAL CANDLES: ${candles.size}",
+                13f,
+                white,
+                false
+            )
+        )
+
+        marketCard.addView(
+            label(
+                "LAST CANDLE: ${
+                    if (candles.isNotEmpty()) {
+                        formatMarketTime(candles.last().epoch)
+                    } else {
+                        "WAITING FOR DATA"
+                    }
+                }",
+                12f,
+                muted,
+                false
+            )
+        )
+
+        val error = marketDataErrors[symbol]
+
+        marketCard.addView(
+            label(
+                if (error != null) {
+                    "STATUS: ERROR — $error"
+                } else if (candles.isNotEmpty()) {
+                    "STATUS: READY"
+                } else {
+                    "STATUS: WAITING"
+                },
+                12f,
+                if (error != null) red
+                else if (candles.isNotEmpty()) green
+                else yellow,
+                true
+            )
+        )
+
+        page.addView(
+            marketCard,
+            matchWrap().apply {
+                topMargin = dp(8)
+            }
+        )
+    }
+
+    page.addView(
+        label(
+            "Data source: Deriv market data | H1 candles | 1000 candles per index",
+            11f,
+            muted,
+            false
+        )
+    )
+}
     private fun formatMarketPrice(price: Double?): String =
         price?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
 
