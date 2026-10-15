@@ -112,6 +112,7 @@ private val marketDataErrors =
 private var marketDataRequested = false
 private var marketStructureExpanded = true
 private var mssChochExpanded = true
+private var marketDataExpanded = true
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
