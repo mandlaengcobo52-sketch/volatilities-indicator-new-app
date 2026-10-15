@@ -193,6 +193,7 @@ when (selectedTab) {
     addMarketStructureAnalysis()
     addMssChochAnalysis()
     addMssChochBehaviourAnalysis()
+    addDirectionStructuralTargetAnalysis()
                 }
 
             "Trade" -> {
@@ -2097,6 +2098,321 @@ private fun addMssChochBehaviourAnalysis() {
         )
     }
 }
+    // =========================================================
+    // ANALYSIS — DIRECTION & STRUCTURAL TARGET
+    // =========================================================
+
+    private fun addDirectionStructuralTargetAnalysis() {
+
+        page.addView(
+            sectionTitle("ANALYSIS - DIRECTION & STRUCTURAL TARGET")
+        )
+
+        page.addView(
+            label(
+                "Direction requires a confirmed H1 Market Structure Shift. " +
+                    "Targets are based on confirmed structural pivots ahead of price.",
+                12f,
+                muted,
+                false
+            )
+        )
+
+        data class TargetPivot(
+            val type: String,
+            val price: Double,
+            val epoch: Long,
+            val candleIndex: Int
+        )
+
+        marketDataIndexes.forEach { symbol ->
+
+            val targetCard = card().apply {
+                orientation = LinearLayout.VERTICAL
+            }
+
+            targetCard.addView(
+                label(symbol, 18f, green, true)
+            )
+
+            val currentPrice = marketDataPrices[symbol]
+
+            targetCard.addView(
+                label(
+                    "CURRENT PRICE: ${formatMarketPrice(currentPrice)}",
+                    14f,
+                    white,
+                    true
+                )
+            )
+
+            val allCandles = marketDataCandles[symbol]
+                .orEmpty()
+                .sortedBy { it.epoch }
+
+            val nowEpoch = System.currentTimeMillis() / 1000L
+
+            val candles = allCandles.filter {
+                it.epoch + 3600L <= nowEpoch
+            }
+
+            val pivots = mutableListOf<TargetPivot>()
+
+            if (candles.size >= 5) {
+
+                for (i in 2 until candles.size - 2) {
+
+                    val current = candles[i]
+
+                    val left = candles.subList(i - 2, i)
+                    val right = candles.subList(i + 1, i + 3)
+
+                    val swingHigh =
+                        left.all { current.high > it.high } &&
+                            right.all { current.high > it.high }
+
+                    val swingLow =
+                        left.all { current.low < it.low } &&
+                            right.all { current.low < it.low }
+
+                    if (swingHigh == swingLow) continue
+
+                    val candidate = if (swingHigh) {
+                        TargetPivot(
+                            "HIGH",
+                            current.high,
+                            current.epoch,
+                            i
+                        )
+                    } else {
+                        TargetPivot(
+                            "LOW",
+                            current.low,
+                            current.epoch,
+                            i
+                        )
+                    }
+
+                    val previous = pivots.lastOrNull()
+
+                    if (previous == null) {
+
+                        pivots.add(candidate)
+
+                    } else if (previous.type == candidate.type) {
+
+                        val moreExtreme =
+                            if (candidate.type == "HIGH") {
+                                candidate.price > previous.price
+                            } else {
+                                candidate.price < previous.price
+                            }
+
+                        if (moreExtreme) {
+                            pivots[pivots.lastIndex] = candidate
+                        }
+
+                    } else {
+
+                        pivots.add(candidate)
+                    }
+                }
+            }
+
+            val latestPivot = pivots.lastOrNull()
+
+            val previousPivot = pivots.getOrNull(
+                pivots.lastIndex - 1
+            )
+
+            var direction: String? = null
+            var confirmationEpoch = 0L
+
+            if (
+                latestPivot != null &&
+                previousPivot != null &&
+                candles.isNotEmpty()
+            ) {
+
+                if (
+                    previousPivot.type == "HIGH" &&
+                    latestPivot.type == "LOW"
+                ) {
+
+                    val brokenHigh = pivots.lastOrNull {
+                        it.type == "HIGH" &&
+                            it.candleIndex < latestPivot.candleIndex
+                    }
+
+                    if (brokenHigh != null) {
+
+                        val confirmation = candles.firstOrNull {
+                            it.epoch > latestPivot.epoch &&
+                                it.close > brokenHigh.price
+                        }
+
+                        if (confirmation != null) {
+                            direction = "UP"
+                            confirmationEpoch =
+                                confirmation.epoch + 3600L
+                        }
+                    }
+
+                } else if (
+                    previousPivot.type == "LOW" &&
+                    latestPivot.type == "HIGH"
+                ) {
+
+                    val brokenLow = pivots.lastOrNull {
+                        it.type == "LOW" &&
+                            it.candleIndex < latestPivot.candleIndex
+                    }
+
+                    if (brokenLow != null) {
+
+                        val confirmation = candles.firstOrNull {
+                            it.epoch > latestPivot.epoch &&
+                                it.close < brokenLow.price
+                        }
+
+                        if (confirmation != null) {
+                            direction = "DOWN"
+                            confirmationEpoch =
+                                confirmation.epoch + 3600L
+                        }
+                    }
+                }
+            }
+
+            targetCard.addView(
+                label(
+                    "CONFIRMED DIRECTION: ${
+                        direction ?: "WAITING FOR MSS"
+                    }",
+                    14f,
+                    when (direction) {
+                        "UP" -> green
+                        "DOWN" -> red
+                        else -> yellow
+                    },
+                    true
+                )
+            )
+
+            targetCard.addView(
+                label(
+                    "MSS CONFIRMATION: ${
+                        if (confirmationEpoch > 0L) {
+                            formatMarketTime(confirmationEpoch)
+                        } else {
+                            "Not confirmed"
+                        }
+                    }",
+                    12f,
+                    white,
+                    false
+                )
+            )
+
+            val target = if (currentPrice != null && direction != null) {
+
+                if (direction == "UP") {
+                    pivots.lastOrNull {
+                        it.type == "HIGH" &&
+                            it.price > currentPrice
+                    }
+                } else {
+                    pivots.lastOrNull {
+                        it.type == "LOW" &&
+                            it.price < currentPrice
+                    }
+                }
+
+            } else {
+                null
+            }
+
+            val distance = if (
+                currentPrice != null &&
+                target != null
+            ) {
+                kotlin.math.abs(target.price - currentPrice)
+            } else {
+                null
+            }
+
+            val targetStatus = when {
+                currentPrice == null ->
+                    "WAITING FOR LIVE PRICE"
+
+                direction == null ->
+                    "WAITING FOR CONFIRMED DIRECTION"
+
+                target == null ->
+                    "NO STRUCTURAL TARGET AHEAD"
+
+                distance == null || distance <= 0.0 ->
+                    "INVALID TARGET"
+
+                else ->
+                    "VALID STRUCTURAL TARGET"
+            }
+
+            targetCard.addView(
+                label(
+                    "STRUCTURAL TARGET: ${
+                        formatMarketPrice(target?.price)
+                    }",
+                    15f,
+                    if (target != null) green else yellow,
+                    true
+                )
+            )
+
+            targetCard.addView(
+                label(
+                    "TARGET DISTANCE: ${
+                        distance?.let {
+                            formatMarketPrice(it)
+                        } ?: "—"
+                    }",
+                    13f,
+                    white,
+                    false
+                )
+            )
+
+            targetCard.addView(
+                label(
+                    "TARGET STATUS: $targetStatus",
+                    13f,
+                    if (targetStatus == "VALID STRUCTURAL TARGET") {
+                        green
+                    } else {
+                        yellow
+                    },
+                    true
+                )
+            )
+
+            targetCard.addView(
+                label(
+                    "STATUS: ANALYSIS ONLY — NO TRADE EXECUTION",
+                    11f,
+                    muted,
+                    false
+                )
+            )
+
+            page.addView(
+                targetCard,
+                matchWrap().apply {
+                    topMargin = dp(8)
+                    bottomMargin = dp(8)
+                }
+            )
+        }
+    }
     private fun formatMarketPrice(price: Double?): String =
         price?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
 
