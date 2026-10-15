@@ -1896,9 +1896,6 @@ private fun addMarketDataAnalysis() {
             marketDataPrices[symbol] = quote
             marketDataErrors.remove(symbol)
 
-            if (selectedTab == "Analysis") {
-                render()
-            }
         }
     }
     }
