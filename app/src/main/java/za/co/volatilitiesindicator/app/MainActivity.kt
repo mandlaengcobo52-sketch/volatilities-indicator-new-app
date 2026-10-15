@@ -42,6 +42,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val yellow = Color.rgb(255, 220, 45)
     private val red = Color.rgb(255, 65, 75)
     private val cyan = Color.rgb(0, 225, 235)
+    private val blue = Color.rgb(70, 155, 255)
 
     private val appPrefs by lazy {
     getSharedPreferences("volatilities_app_settings", MODE_PRIVATE)
@@ -106,6 +107,7 @@ private val marketDataCandles =
 private val marketDataPrices =
     mutableMapOf<String, Double>()
 private val marketDataPriceViews = mutableMapOf<String, TextView>()
+private val currentPriceViews = mutableMapOf<String, MutableList<TextView>>()
 private val marketDataErrors =
     mutableMapOf<String, String>()
 
@@ -115,6 +117,8 @@ private var mssChochExpanded = true
 private var marketDataExpanded = true
 private var mssChochBehaviourExpanded = true
 private var directionStructuralTargetExpanded = true
+private var qualificationExpanded = true
+private var targetFilterExpanded = true
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -188,6 +192,10 @@ mainScrollView = scroll
         if (drawerOpen) {
             addDrawer()
         }
+if (selectedTab == "Analysis") {
+    currentPriceViews.clear()
+    marketDataPriceViews.clear()
+}
 when (selectedTab) {
                 "Analysis" -> {
     addMarketDataAnalysis()
@@ -791,7 +799,6 @@ private fun addHeader() {
             dp(12),
             dp(12)
         )
-
         card.addView(
             label(
                 "⚡  DERIV EXECUTION ACCOUNT",
@@ -1204,8 +1211,7 @@ private fun analysisMssEvents(candles: List<DerivApiClient.Candle>): List<Analys
 
 private fun analysisLatestMss(candles: List<DerivApiClient.Candle>): AnalysisMssEvent? =
     analysisMssEvents(candles).lastOrNull()
-
-/* Historical Step 5 events only become eligible once the pivot's two
+    /* Historical Step 5 events only become eligible once the pivot's two
    right-side confirmation candles have completed, as in WebTrader h5Events. */
 private fun analysisHistoricalOutcomes(candles: List<DerivApiClient.Candle>): List<AnalysisHistoricalOutcome> {
     if (candles.size < 30) return emptyList()
@@ -1284,7 +1290,7 @@ private fun addMarketDataAnalysis() {
     }
     val header = card().apply { orientation = LinearLayout.VERTICAL }
     val row = horizontalRow()
-    row.addView(label("STEP 1 — MARKET DATA", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
+    row.addView(label("Analysis - Market data", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
     row.addView(button(if (marketDataExpanded) "▼ OPEN" else "▶ CLOSED", marketDataExpanded) {
         marketDataExpanded = !marketDataExpanded; render()
     }, LinearLayout.LayoutParams(-2, dp(48)))
@@ -1296,8 +1302,8 @@ private fun addMarketDataAnalysis() {
     marketDataIndexes.forEach { symbol ->
         val marketCard = card().apply { orientation = LinearLayout.VERTICAL }
         marketCard.addView(label("Index ${symbol.removePrefix("R_")}", 18f, green, true))
-        val priceView = label("CURRENT PRICE: ${formatMarketPrice(marketDataPrices[symbol])}", 14f, white, false)
-        marketDataPriceViews[symbol] = priceView
+        val priceView = label("CURRENT PRICE: ${formatMarketPrice(marketDataPrices[symbol])}", 14f, blue, true)
+        registerCurrentPriceView(symbol, "market-data", priceView)
         marketCard.addView(priceView)
         val candles = marketDataCandles[symbol].orEmpty().sortedBy { it.epoch }
         val completed = analysisCompletedCandles(symbol)
@@ -1321,7 +1327,7 @@ private fun addMarketDataAnalysis() {
 private fun addMarketStructureAnalysis() {
     val header = card().apply { orientation = LinearLayout.VERTICAL }
     val row = horizontalRow()
-    row.addView(label("STEP 3 — CURRENT MARKET STRUCTURE", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
+    row.addView(label("Analysis - Market Structure", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
     row.addView(button(if (marketStructureExpanded) "▼ OPEN" else "▶ CLOSED", marketStructureExpanded) {
         marketStructureExpanded = !marketStructureExpanded; render()
     }, LinearLayout.LayoutParams(-2, dp(48)))
@@ -1333,7 +1339,9 @@ private fun addMarketStructureAnalysis() {
         val candles = analysisCompletedCandles(symbol)
         val structureCard = card().apply { orientation = LinearLayout.VERTICAL }
         structureCard.addView(label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true))
-        structureCard.addView(label("CURRENT PRICE: ${formatMarketPrice(marketDataPrices[symbol])}", 14f, white, false))
+        val structurePriceView = label("CURRENT PRICE: ${formatMarketPrice(marketDataPrices[symbol])}", 14f, blue, true)
+        registerCurrentPriceView(symbol, "market-structure", structurePriceView)
+        structureCard.addView(structurePriceView)
         structureCard.addView(label("COMPLETED H1: ${candles.size}", 12f, muted, false))
         if (candles.size < 20) {
             structureCard.addView(label("STATUS: WAITING FOR SUFFICIENT COMPLETED H1 HISTORY", 12f, yellow, true))
@@ -1370,7 +1378,7 @@ private fun addMarketStructureAnalysis() {
 private fun addMssChochAnalysis() {
     val header = card().apply { orientation = LinearLayout.VERTICAL }
     val row = horizontalRow()
-    row.addView(label("STEP 4 — MSS / CHOCH", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
+    row.addView(label("Analysis - MSS/CHOCH", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
     row.addView(button(if (mssChochExpanded) "▼ OPEN" else "▶ CLOSED", mssChochExpanded) {
         mssChochExpanded = !mssChochExpanded; render()
     }, LinearLayout.LayoutParams(-2, dp(48)))
@@ -1382,7 +1390,9 @@ private fun addMssChochAnalysis() {
         val candles = analysisCompletedCandles(symbol)
         val card = card().apply { orientation = LinearLayout.VERTICAL }
         card.addView(label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true))
-        card.addView(label("CURRENT PRICE: ${formatMarketPrice(marketDataPrices[symbol])}", 14f, white, false))
+        val mssPriceView = label("CURRENT PRICE: ${formatMarketPrice(marketDataPrices[symbol])}", 14f, blue, true)
+        registerCurrentPriceView(symbol, "mss-choch", mssPriceView)
+        card.addView(mssPriceView)
         if (candles.size < 20) {
             card.addView(label("STATUS: WAITING FOR SUFFICIENT COMPLETED H1 HISTORY", 12f, yellow, true))
         } else {
@@ -1413,7 +1423,7 @@ private fun addMssChochAnalysis() {
 private fun addMssChochBehaviourAnalysis() {
     val header = card().apply { orientation = LinearLayout.VERTICAL }
     val row = horizontalRow()
-    row.addView(label("STEP 5 — HISTORICAL MSS / CHOCH BEHAVIOUR", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
+    row.addView(label("Analysis - MSS/CHOCH behaviour", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
     row.addView(button(if (mssChochBehaviourExpanded) "▼ OPEN" else "▶ CLOSED", mssChochBehaviourExpanded) {
         mssChochBehaviourExpanded = !mssChochBehaviourExpanded; render()
     }, LinearLayout.LayoutParams(-2, dp(48)))
@@ -1464,7 +1474,7 @@ private fun addMssChochBehaviourAnalysis() {
 private fun addDirectionStructuralTargetAnalysis() {
     val header = card().apply { orientation = LinearLayout.VERTICAL }
     val row = horizontalRow()
-    row.addView(label("STEP 6 — DIRECTION & STRUCTURAL TARGET", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
+    row.addView(label("Analysis - Direction and structural target", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
     row.addView(button(if (directionStructuralTargetExpanded) "▼ OPEN" else "▶ CLOSED", directionStructuralTargetExpanded) {
         directionStructuralTargetExpanded = !directionStructuralTargetExpanded; render()
     }, LinearLayout.LayoutParams(-2, dp(48)))
@@ -1489,7 +1499,9 @@ private fun addDirectionStructuralTargetAnalysis() {
                 val target = analysisStructuralTarget(candles, current, direction, event.confirmation.epoch)
                 card.addView(label("DIRECTION: $direction", 15f, if (direction == "UP") green else red, true))
                 card.addView(label("STRUCTURAL EVENT: ${event.state}", 12f, white, false))
-                card.addView(label("CURRENT PRICE: ${formatMarketPrice(current)}", 13f, white, false))
+                val directionPriceView = label("CURRENT PRICE: ${formatMarketPrice(current)}", 13f, blue, true)
+                registerCurrentPriceView(symbol, "direction-target", directionPriceView)
+                card.addView(directionPriceView)
                 card.addView(label("BROKEN PIVOT: ${formatMarketPrice(event.broken.price)} | ${formatMarketTime(event.broken.epoch)}", 12f, white, false))
                 card.addView(label("CONFIRMATION CLOSE: ${formatMarketPrice(event.confirmation.close)} | ${formatMarketTime(event.confirmation.epoch + 3600L)}", 12f, muted, false))
                 card.addView(label("STRUCTURAL TARGET: ${target?.let { formatMarketPrice(it.price) } ?: "WAITING"}", 15f, if (target != null) green else yellow, true))
@@ -1508,6 +1520,96 @@ private fun addDirectionStructuralTargetAnalysis() {
         page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
     }
 }
+// =========================================================
+// ANALYSIS — QUALIFICATION
+// =========================================================
+private fun addQualificationAnalysis() {
+    val header = card().apply { orientation = LinearLayout.VERTICAL }
+    val row = horizontalRow()
+    row.addView(label("Analysis - Qualification", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
+    row.addView(button(if (qualificationExpanded) "▼ OPEN" else "▶ CLOSED", qualificationExpanded) {
+        qualificationExpanded = !qualificationExpanded; render()
+    }, LinearLayout.LayoutParams(-2, dp(48)))
+    header.addView(row)
+    page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
+    if (!qualificationExpanded) return
+    page.addView(label("Checks whether a confirmed MSS/CHOCH and a valid structural target are both available. This section reports analysis readiness only; it does not execute trades.", 12f, yellow, false).apply {
+        setPadding(dp(12), dp(10), dp(12), dp(10))
+    })
+    marketDataIndexes.forEach { symbol ->
+        val candles = analysisCompletedCandles(symbol)
+        val card = card().apply { orientation = LinearLayout.VERTICAL }
+        card.addView(label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true))
+        val current = marketDataPrices[symbol] ?: candles.lastOrNull()?.close
+        val priceView = label("CURRENT PRICE: ${formatMarketPrice(current)}", 13f, blue, true)
+        registerCurrentPriceView(symbol, "qualification", priceView)
+        card.addView(priceView)
+        val event = if (candles.size >= 20) analysisLatestMss(candles) else null
+        val direction = when (event?.direction) { "BULLISH" -> "UP"; "BEARISH" -> "DOWN"; else -> "" }
+        val target = if (event != null && current != null && candles.size >= 20)
+            analysisStructuralTarget(candles, current, direction, event.confirmation.epoch) else null
+        val qualified = event != null && target != null
+        card.addView(label("MSS/CHOCH: ${event?.state ?: "WAITING"}", 13f,
+            if (event?.direction == "BULLISH") green else if (event?.direction == "BEARISH") red else yellow, true))
+        card.addView(label("DIRECTION: ${direction.ifBlank { "WAITING" }}", 13f,
+            if (direction == "UP") green else if (direction == "DOWN") red else yellow, true))
+        card.addView(label("STRUCTURAL TARGET: ${target?.let { formatMarketPrice(it.price) } ?: "WAITING"}", 13f,
+            if (target != null) blue else yellow, true))
+        card.addView(label("QUALIFICATION: ${if (qualified) "READY — MSS/CHOCH AND TARGET AVAILABLE" else "NOT QUALIFIED — WAITING FOR CONFIRMATION OR TARGET"}",
+            12f, if (qualified) green else yellow, true))
+        page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
+    }
+}
+
+// =========================================================
+// ANALYSIS — TARGET FILTER
+// =========================================================
+private fun addTargetFilterAnalysis() {
+    val header = card().apply { orientation = LinearLayout.VERTICAL }
+    val row = horizontalRow()
+    row.addView(label("Analysis - Target filter", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
+    row.addView(button(if (targetFilterExpanded) "▼ OPEN" else "▶ CLOSED", targetFilterExpanded) {
+        targetFilterExpanded = !targetFilterExpanded; render()
+    }, LinearLayout.LayoutParams(-2, dp(48)))
+    header.addView(row)
+    page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
+    if (!targetFilterExpanded) return
+    page.addView(label("Checks that a confirmed direction has a valid structural target beyond the live price in that direction. A target is rejected when no valid confirmed pivot is available.", 12f, yellow, false).apply {
+        setPadding(dp(12), dp(10), dp(12), dp(10))
+    })
+    marketDataIndexes.forEach { symbol ->
+        val candles = analysisCompletedCandles(symbol)
+        val card = card().apply { orientation = LinearLayout.VERTICAL }
+        card.addView(label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true))
+        val current = marketDataPrices[symbol] ?: candles.lastOrNull()?.close
+        val priceView = label("CURRENT PRICE: ${formatMarketPrice(current)}", 13f, blue, true)
+        registerCurrentPriceView(symbol, "target-filter", priceView)
+        card.addView(priceView)
+        val event = if (candles.size >= 20) analysisLatestMss(candles) else null
+        val direction = when (event?.direction) { "BULLISH" -> "UP"; "BEARISH" -> "DOWN"; else -> "" }
+        val target = if (event != null && current != null && direction.isNotBlank())
+            analysisStructuralTarget(candles, current, direction, event.confirmation.epoch) else null
+        val distance = if (target != null && current != null && current != 0.0)
+            kotlin.math.abs(target.price - current) / current * 100.0 else null
+        val passes = target != null && distance != null && distance > 0.0 &&
+            ((direction == "UP" && target.price > current!!) || (direction == "DOWN" && target.price < current!!))
+        card.addView(label("DIRECTION: ${direction.ifBlank { "WAITING" }}", 13f,
+            if (direction == "UP") green else if (direction == "DOWN") red else yellow, true))
+        card.addView(label("TARGET PRICE: ${target?.let { formatMarketPrice(it.price) } ?: "REJECTED / NOT AVAILABLE"}", 13f,
+            if (target != null) blue else yellow, true))
+        card.addView(label("TARGET DISTANCE: ${distance?.let { String.format(java.util.Locale.US, "%.3f%%", it) } ?: "—"}", 12f, blue, false))
+        card.addView(label("TARGET FILTER: ${if (passes) "PASS" else "WAIT — NO VALID TARGET"}", 13f,
+            if (passes) green else yellow, true))
+        page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
+    }
+}
+
+    private fun registerCurrentPriceView(symbol: String, section: String, view: TextView) {
+        marketDataPriceViews["$section:$symbol"] = view
+        val views = currentPriceViews.getOrPut(symbol) { mutableListOf() }
+        if (!views.contains(view)) views.add(view)
+    }
+
     private fun formatMarketPrice(price: Double?): String =
         price?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
 
@@ -2198,16 +2300,16 @@ private fun addDirectionStructuralTargetAnalysis() {
     override fun onTick(symbol: String, quote: Double, epoch: Long) {
     runOnUiThread {
         if (symbol in marketDataIndexes && quote.isFinite()) {
-    marketDataPrices[symbol] = quote
-    marketDataErrors.remove(symbol)
-
-    marketDataPriceViews[symbol]?.text =
-        "CURRENT PRICE: ${formatMarketPrice(quote)}"
-            marketDataPriceViews["STRUCTURE_$symbol"]?.text =
-    "CURRENT PRICE: ${formatMarketPrice(quote)}"
+            marketDataPrices[symbol] = quote
+            marketDataErrors.remove(symbol)
+            currentPriceViews[symbol]?.forEach { priceView ->
+                priceView.text = "CURRENT PRICE: ${formatMarketPrice(quote)}"
+                priceView.setTextColor(blue)
+            }
         }
     }
-    }
+}
+
     override fun onTradeData(json: JSONObject) {
     runOnUiThread {
         val messageType = json.optString("msg_type", "")
