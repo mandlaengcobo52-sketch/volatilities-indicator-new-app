@@ -203,6 +203,8 @@ when (selectedTab) {
     addMssChochAnalysis()
     addMssChochBehaviourAnalysis()
     addDirectionStructuralTargetAnalysis()
+    addQualificationAnalysis()
+    addTargetFilterAnalysis()
                 }
 
             "Trade" -> {
@@ -1211,7 +1213,8 @@ private fun analysisMssEvents(candles: List<DerivApiClient.Candle>): List<Analys
 
 private fun analysisLatestMss(candles: List<DerivApiClient.Candle>): AnalysisMssEvent? =
     analysisMssEvents(candles).lastOrNull()
-    /* Historical Step 5 events only become eligible once the pivot's two
+
+/* Historical Step 5 events only become eligible once the pivot's two
    right-side confirmation candles have completed, as in WebTrader h5Events. */
 private fun analysisHistoricalOutcomes(candles: List<DerivApiClient.Candle>): List<AnalysisHistoricalOutcome> {
     if (candles.size < 30) return emptyList()
@@ -1470,99 +1473,6 @@ private fun addMssChochBehaviourAnalysis() {
 
 // =========================================================
 // ANALYSIS — DIRECTION & STRUCTURAL TARGET
-// =========================================================
-private fun addDirectionStructuralTargetAnalysis() {
-    val header = card().apply { orientation = LinearLayout.VERTICAL }
-    val row = horizontalRow()
-    row.addView(label("Analysis - Direction and structural target", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
-    row.addView(button(if (directionStructuralTargetExpanded) "▼ OPEN" else "▶ CLOSED", directionStructuralTargetExpanded) {
-        directionStructuralTargetExpanded = !directionStructuralTargetExpanded; render()
-    }, LinearLayout.LayoutParams(-2, dp(48)))
-    header.addView(row)
-    page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
-    if (!directionStructuralTargetExpanded) return
-    page.addView(label("Direction comes only from the persistent confirmed MSS. UP targets the nearest valid confirmed HIGH above live price; DOWN targets the nearest valid confirmed LOW below live price. Pivots must have been confirmed by the MSS confirmation candle and must not have been invalidated by a completed close through them. No ATR or average-movement target is invented.", 12f, muted, false).apply { setPadding(dp(12), dp(10), dp(12), dp(10)) })
-    marketDataIndexes.forEach { symbol ->
-        val candles = analysisCompletedCandles(symbol)
-        val card = card().apply { orientation = LinearLayout.VERTICAL }
-        card.addView(label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true))
-        if (candles.size < 30) {
-            card.addView(label("STATUS: WAITING FOR SUFFICIENT COMPLETED H1 HISTORY", 12f, yellow, true))
-        } else {
-            val event = analysisLatestMss(candles)
-            if (event == null) {
-                card.addView(label("DIRECTION: WAITING", 13f, yellow, true))
-                card.addView(label("STRUCTURAL TARGET: WAITING FOR A CONFIRMED MSS / CHOCH", 12f, yellow, false))
-            } else {
-                val current = marketDataPrices[symbol] ?: candles.last().close
-                val direction = if (event.direction == "BULLISH") "UP" else "DOWN"
-                val target = analysisStructuralTarget(candles, current, direction, event.confirmation.epoch)
-                card.addView(label("DIRECTION: $direction", 15f, if (direction == "UP") green else red, true))
-                card.addView(label("STRUCTURAL EVENT: ${event.state}", 12f, white, false))
-                val directionPriceView = label("CURRENT PRICE: ${formatMarketPrice(current)}", 13f, blue, true)
-                registerCurrentPriceView(symbol, "direction-target", directionPriceView)
-                card.addView(directionPriceView)
-                card.addView(label("BROKEN PIVOT: ${formatMarketPrice(event.broken.price)} | ${formatMarketTime(event.broken.epoch)}", 12f, white, false))
-                card.addView(label("CONFIRMATION CLOSE: ${formatMarketPrice(event.confirmation.close)} | ${formatMarketTime(event.confirmation.epoch + 3600L)}", 12f, muted, false))
-                card.addView(label("STRUCTURAL TARGET: ${target?.let { formatMarketPrice(it.price) } ?: "WAITING"}", 15f, if (target != null) green else yellow, true))
-                card.addView(label("TARGET PIVOT: ${target?.let { "${it.type} | ${formatMarketTime(it.epoch)} | confirmed ${formatMarketTime(it.confirmedEpoch)}" } ?: "No valid confirmed structural pivot in the required direction."}", 12f, white, false))
-                val outcomes = analysisHistoricalOutcomes(candles)
-                    .filterNot { it.confirmation.epoch == event.confirmation.epoch }
-                    .takeLast(20)
-                    .filter { it.direction == event.direction }
-                val continuation = if (outcomes.isEmpty()) null else outcomes.count { it.maxFav > 0.0 }.toDouble() / outcomes.size * 100.0
-                card.addView(label("HISTORICAL SAMPLE: ${outcomes.size}", 12f, white, false))
-                card.addView(label("HISTORICAL CONTINUATION: ${continuation?.let { String.format(java.util.Locale.US, "%.1f%%", it) } ?: "WAITING"}", 12f, if (continuation != null) green else yellow, true))
-                card.addView(label("AVG FAVOURABLE MOVE: ${outcomes.takeIf { it.isNotEmpty() }?.map { it.maxFav }?.average()?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
-                card.addView(label("AVG ADVERSE MOVE: ${outcomes.takeIf { it.isNotEmpty() }?.map { it.maxAdv }?.average()?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
-            }
-        }
-        page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
-    }
-}
-// =========================================================
-// ANALYSIS — QUALIFICATION
-// =========================================================
-private fun addQualificationAnalysis() {
-    val header = card().apply { orientation = LinearLayout.VERTICAL }
-    val row = horizontalRow()
-    row.addView(label("Analysis - Qualification", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
-    row.addView(button(if (qualificationExpanded) "▼ OPEN" else "▶ CLOSED", qualificationExpanded) {
-        qualificationExpanded = !qualificationExpanded; render()
-    }, LinearLayout.LayoutParams(-2, dp(48)))
-    header.addView(row)
-    page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
-    if (!qualificationExpanded) return
-    page.addView(label("Checks whether a confirmed MSS/CHOCH and a valid structural target are both available. This section reports analysis readiness only; it does not execute trades.", 12f, yellow, false).apply {
-        setPadding(dp(12), dp(10), dp(12), dp(10))
-    })
-    marketDataIndexes.forEach { symbol ->
-        val candles = analysisCompletedCandles(symbol)
-        val card = card().apply { orientation = LinearLayout.VERTICAL }
-        card.addView(label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true))
-        val current = marketDataPrices[symbol] ?: candles.lastOrNull()?.close
-        val priceView = label("CURRENT PRICE: ${formatMarketPrice(current)}", 13f, blue, true)
-        registerCurrentPriceView(symbol, "qualification", priceView)
-        card.addView(priceView)
-        val event = if (candles.size >= 20) analysisLatestMss(candles) else null
-        val direction = when (event?.direction) { "BULLISH" -> "UP"; "BEARISH" -> "DOWN"; else -> "" }
-        val target = if (event != null && current != null && candles.size >= 20)
-            analysisStructuralTarget(candles, current, direction, event.confirmation.epoch) else null
-        val qualified = event != null && target != null
-        card.addView(label("MSS/CHOCH: ${event?.state ?: "WAITING"}", 13f,
-            if (event?.direction == "BULLISH") green else if (event?.direction == "BEARISH") red else yellow, true))
-        card.addView(label("DIRECTION: ${direction.ifBlank { "WAITING" }}", 13f,
-            if (direction == "UP") green else if (direction == "DOWN") red else yellow, true))
-        card.addView(label("STRUCTURAL TARGET: ${target?.let { formatMarketPrice(it.price) } ?: "WAITING"}", 13f,
-            if (target != null) blue else yellow, true))
-        card.addView(label("QUALIFICATION: ${if (qualified) "READY — MSS/CHOCH AND TARGET AVAILABLE" else "NOT QUALIFIED — WAITING FOR CONFIRMATION OR TARGET"}",
-            12f, if (qualified) green else yellow, true))
-        page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
-    }
-}
-
-// =========================================================
-// ANALYSIS — TARGET FILTER
 // =========================================================
 private fun addTargetFilterAnalysis() {
     val header = card().apply { orientation = LinearLayout.VERTICAL }
@@ -1866,7 +1776,7 @@ private fun addTargetFilterAnalysis() {
                 toast(result.optString("message", "Unable to load users."))
             }
         }
-    }
+        }
 
     // =========================================================
     // ADMIN PREVIEW
@@ -2155,7 +2065,6 @@ private fun addTargetFilterAnalysis() {
             Toast.LENGTH_SHORT
         ).show()
     }
-
     // =========================================================
     // DERIV OAUTH CONNECTION (existing OAuth + PKCE flow)
     // =========================================================
@@ -2368,4 +2277,4 @@ override fun onMarketDataError(
         runOnUiThread { connected = false; accountStatus.text = "●  NOT CONNECTED"; accountStatus.setTextColor(red) }
     }
 
-                                   }
+                                        }
