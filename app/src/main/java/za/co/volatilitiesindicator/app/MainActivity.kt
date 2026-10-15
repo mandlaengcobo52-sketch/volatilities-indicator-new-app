@@ -193,7 +193,6 @@ when (selectedTab) {
     addMarketStructureAnalysis()
     addMssChochAnalysis()
     addMssChochBehaviourAnalysis()
-    addDirectionStructuralTargetAnalysis()
                 }
 
             "Trade" -> {
@@ -271,7 +270,6 @@ when (selectedTab) {
 // =========================================================
 // HEADER: EXISTING LOGO AND NOTIFICATION BELL
 // =========================================================
-
 // ==========================================
 // CREATE ACCOUNT — VOLATILITIES INDICATOR
 // ==========================================
@@ -800,12 +798,13 @@ private fun addHeader() {
                 true
             )
         )
+
         accountStatus = label(
     if (connected) {
         "●  CONNECTED — $executionMode"
     } else {
         "●  NOT CONNECTED"
-    },
+        },
     14f,
     if (connected) green else red,
     true
@@ -1408,7 +1407,7 @@ structureCard.addView(structurePriceView)
                     pivot.price > previous.price -> "HH"
                     pivot.price < previous.price -> "LH"
                     else -> "EQUAL HIGH"
-                }
+                    }
 
                 previousHigh = pivot
 
@@ -1605,6 +1604,7 @@ private fun addMssChochAnalysis() {
     page.addView(headerCard, matchWrap().apply { bottomMargin = dp(8) })
 
     if (!mssChochExpanded) return
+
     page.addView(
         label(
             "The engine waits for a confirmed structural break. A live price touch is not enough; " +
@@ -1805,7 +1805,6 @@ private fun addMssChochBehaviourAnalysis() {
         val behaviourCard = card().apply {
             orientation = LinearLayout.VERTICAL
         }
-
         behaviourCard.addView(
             label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true)
         )
@@ -2098,121 +2097,6 @@ private fun addMssChochBehaviourAnalysis() {
         )
     }
 }
-// =========================================================
-// ANALYSIS — DIRECTION & STRUCTURAL TARGET (REBUILT)
-private fun addDirectionStructuralTargetAnalysis() {
-    val headerCard = card().apply {
-        orientation = LinearLayout.VERTICAL
-    }
-    headerCard.addView(label("ANALYSIS - DIRECTION & STRUCTURAL TARGET", 17f, green, true))
-    headerCard.addView(
-        label(
-            "Uses completed H1 candles to identify the latest structural direction and a prior structural target. This section does not qualify or execute trades.",
-            12f, muted, false
-        )
-    )
-    page.addView(headerCard, matchWrap().apply { bottomMargin = dp(8) })
-
-    data class Pivot(
-        val type: String,
-        val price: Double,
-        val candleIndex: Int
-    )
-
-    marketDataIndexes.forEach { symbol ->
-        val targetCard = card().apply { orientation = LinearLayout.VERTICAL }
-        targetCard.addView(label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true))
-
-        val currentPrice = marketDataPrices[symbol]
-        targetCard.addView(label("CURRENT PRICE: ${formatMarketPrice(currentPrice)}", 14f, white, false))
-
-        val allCandles = marketDataCandles[symbol].orEmpty().sortedBy { it.epoch }
-        val nowEpoch = System.currentTimeMillis() / 1000L
-        val candles = allCandles.filter { it.epoch + 3600L <= nowEpoch }
-        val pivots = mutableListOf<Pivot>()
-
-        if (candles.size >= 5) {
-            for (i in 2 until candles.size - 2) {
-                val candle = candles[i]
-                val left = candles.subList(i - 2, i)
-                val right = candles.subList(i + 1, i + 3)
-                val high = left.all { candle.high > it.high } &&
-                    right.all { candle.high > it.high }
-                val low = left.all { candle.low < it.low } &&
-                    right.all { candle.low < it.low }
-                if (high == low) continue
-
-                val candidate = if (high) {
-                    Pivot("HIGH", candle.high, i)
-                } else {
-                    Pivot("LOW", candle.low, i)
-                }
-                val previous = pivots.lastOrNull()
-                if (previous == null) {
-                    pivots.add(candidate)
-                } else if (previous.type == candidate.type) {
-                    val moreExtreme = if (candidate.type == "HIGH") {
-                        candidate.price > previous.price
-                    } else {
-                        candidate.price < previous.price
-                    }
-                    if (moreExtreme) pivots[pivots.lastIndex] = candidate
-                } else {
-                    pivots.add(candidate)
-                }
-            }
-        }
-
-        val latest = pivots.lastOrNull()
-        val prior = pivots.getOrNull(pivots.lastIndex - 1)
-        val direction = when {
-            latest == null || prior == null -> "WAITING FOR STRUCTURE"
-            prior.type == "LOW" && latest.type == "HIGH" -> "BULLISH STRUCTURE"
-            prior.type == "HIGH" && latest.type == "LOW" -> "BEARISH STRUCTURE"
-            else -> "WAITING FOR STRUCTURE"
-        }
-
-        val target = when (direction) {
-            "BULLISH STRUCTURE" -> pivots.lastOrNull {
-                it.type == "HIGH" && it.candleIndex < (latest?.candleIndex ?: -1)
-            }
-            "BEARISH STRUCTURE" -> pivots.lastOrNull {
-                it.type == "LOW" && it.candleIndex < (latest?.candleIndex ?: -1)
-            }
-            else -> null
-        }
-
-        val targetPrice = target?.price
-        val location = when {
-            currentPrice == null || targetPrice == null -> "UNAVAILABLE"
-            targetPrice > currentPrice -> "ABOVE CURRENT PRICE"
-            targetPrice < currentPrice -> "BELOW CURRENT PRICE"
-            else -> "AT CURRENT PRICE"
-        }
-        val distance = if (currentPrice != null && targetPrice != null) {
-            kotlin.math.abs(targetPrice - currentPrice)
-        } else null
-
-        targetCard.addView(label("COMPLETED H1 CANDLES: ${candles.size}", 12f, muted, false))
-        targetCard.addView(label("CONFIRMED DIRECTION: $direction", 14f, when (direction) {
-            "BULLISH STRUCTURE" -> green
-            "BEARISH STRUCTURE" -> red
-            else -> yellow
-        }, true))
-        targetCard.addView(label("STRUCTURAL TARGET: ${formatMarketPrice(targetPrice)}", 14f, white, true))
-        targetCard.addView(label("TARGET LOCATION: $location", 13f, if (targetPrice == null) yellow else white, false))
-        targetCard.addView(label("DISTANCE TO TARGET: ${formatMarketPrice(distance)}", 13f, white, false))
-        targetCard.addView(label(
-            "STATUS: " + if (targetPrice == null) "WAITING FOR STRUCTURAL TARGET" else "STRUCTURAL TARGET IDENTIFIED",
-            12f, if (targetPrice == null) yellow else green, true
-        ))
-        page.addView(targetCard, matchWrap().apply {
-            topMargin = dp(6)
-            bottomMargin = dp(6)
-        })
-    }
-}
-
     private fun formatMarketPrice(price: Double?): String =
         price?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
 
@@ -2712,7 +2596,6 @@ private fun addDirectionStructuralTargetAnalysis() {
             )
         }
     }
-
     private fun horizontalRow(): LinearLayout {
         return LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -2804,6 +2687,7 @@ private fun addDirectionStructuralTargetAnalysis() {
             .appendQueryParameter("code_challenge_method", "S256").build()
         try { startActivity(Intent(Intent.ACTION_VIEW, url)) }
         catch (e: Exception) { toast("Unable to open Deriv login: ${e.message}") }
+    }
 
     private fun handleOAuthCallback(intent: Intent?) {
         val data = intent?.data ?: return
@@ -2819,6 +2703,7 @@ private fun addDirectionStructuralTargetAnalysis() {
         render()
         exchangeOAuthCode(code)
     }
+
     private fun exchangeOAuthCode(code: String) {
         val verifier = prefs.getString("code_verifier", "").orEmpty()
         if (verifier.isBlank()) { toast("OAuth verifier is missing."); return }
@@ -2972,4 +2857,4 @@ override fun onMarketDataError(
         runOnUiThread { connected = false; accountStatus.text = "●  NOT CONNECTED"; accountStatus.setTextColor(red) }
     }
 
-    }
+                            }
