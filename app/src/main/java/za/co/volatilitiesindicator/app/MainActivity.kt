@@ -68,6 +68,8 @@ private var selectedTab = "Home"
 private var drawerOpen = false
 
     private lateinit var page: LinearLayout
+    private var mainScrollView: ScrollView? = null
+    private var lastRenderedTab: String? = null
     private lateinit var accountStatus: TextView
     private lateinit var accountIdView: TextView
     private lateinit var balanceView: TextView
@@ -149,9 +151,11 @@ if (savedToken.isNotBlank() && intent?.data?.host != "oauth-callback") {
         }
 
         val scroll = ScrollView(this).apply {
-            isFillViewport = true
-            overScrollMode = View.OVER_SCROLL_NEVER
-        }
+    isFillViewport = true
+    overScrollMode = View.OVER_SCROLL_NEVER
+    isSmoothScrollingEnabled = true
+}
+mainScrollView = scroll
 
         page = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
