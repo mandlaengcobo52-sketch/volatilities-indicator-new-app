@@ -486,7 +486,7 @@ private fun authRequest(
     }.build()
     val requestBuilder = Request.Builder()
         .url(authEndpoint)
-            .post(form)
+        .post(form)
         .header("Accept", "application/json")
         .header("X-VI-Mobile-App", "1")
     if (token.isNotBlank()) requestBuilder.header("Authorization", "Bearer $token")
@@ -799,7 +799,6 @@ private fun addHeader() {
                 true
             )
         )
-
         accountStatus = label(
     if (connected) {
         "●  CONNECTED — $executionMode"
@@ -877,7 +876,7 @@ private fun addHeader() {
             }
         )
                             }
-                               // =========================================================
+                            // =========================================================
 // TRADE SCREEN
 // =========================================================
 
@@ -1277,6 +1276,7 @@ private fun addMarketStructureAnalysis() {
         val candleIndex: Int,
         var classification: String = ""
     )
+
     marketDataIndexes.forEach { symbol ->
 
         val structureCard = card().apply {
@@ -1480,6 +1480,7 @@ structureCard.addView(structurePriceView)
             previousPivot.type == "LOW" &&
                 latestPivot.type == "HIGH" ->
                 "BULLISH LEG"
+
             previousPivot.type == "HIGH" &&
                 latestPivot.type == "LOW" ->
                 "BEARISH LEG"
@@ -1603,7 +1604,6 @@ private fun addMssChochAnalysis() {
     page.addView(headerCard, matchWrap().apply { bottomMargin = dp(8) })
 
     if (!mssChochExpanded) return
-
     page.addView(
         label(
             "The engine waits for a confirmed structural break. A live price touch is not enough; " +
@@ -2098,175 +2098,120 @@ private fun addMssChochBehaviourAnalysis() {
     }
 }
 // =========================================================
-// ANALYSIS — DIRECTION & STRUCTURAL TARGET
-// =========================================================
+// ANALYSIS — DIRECTION & STRUCTURAL TARGET (REBUILT)
 private fun addDirectionStructuralTargetAnalysis() {
-
     val headerCard = card().apply {
         orientation = LinearLayout.VERTICAL
     }
-
+    headerCard.addView(label("ANALYSIS - DIRECTION & STRUCTURAL TARGET", 17f, green, true))
     headerCard.addView(
         label(
-            "ANALYSIS - DIRECTION & STRUCTURAL TARGET",
-            17f,
-            green,
-            true
+            "Uses completed H1 candles to identify the latest structural direction and a prior structural target. This section does not qualify or execute trades.",
+            12f, muted, false
         )
     )
+    page.addView(headerCard, matchWrap().apply { bottomMargin = dp(8) })
 
-    headerCard.addView(
-        label(
-            "Evaluates confirmed MSS direction, live price, " +
-                "structural target, target location and distance. " +
-                "This section does not qualify or execute trades.",
-            12f,
-            muted,
-            false
-        ).apply {
-            setPadding(0, dp(8), 0, dp(4))
-        }
-    )
-
-    page.addView(
-        headerCard,
-        matchWrap().apply {
-            bottomMargin = dp(8)
-        }
+    data class Pivot(
+        val type: String,
+        val price: Double,
+        val candleIndex: Int
     )
 
     marketDataIndexes.forEach { symbol ->
-
-        val targetCard = card().apply {
-            orientation = LinearLayout.VERTICAL
-        }
-
-        targetCard.addView(
-            label(
-                "INDEX ${symbol.removePrefix("R_")}",
-                17f,
-                green,
-                true
-            )
-        )
+        val targetCard = card().apply { orientation = LinearLayout.VERTICAL }
+        targetCard.addView(label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true))
 
         val currentPrice = marketDataPrices[symbol]
+        targetCard.addView(label("CURRENT PRICE: ${formatMarketPrice(currentPrice)}", 14f, white, false))
 
-        val allCandles = marketDataCandles[symbol]
-            .orEmpty()
-            .sortedBy { it.epoch }
-
+        val allCandles = marketDataCandles[symbol].orEmpty().sortedBy { it.epoch }
         val nowEpoch = System.currentTimeMillis() / 1000L
-
-        val candles = allCandles.filter {
-            it.epoch + 3600L <= nowEpoch
-        }
-
-        fun addTargetDetail(title: String, value: String, color: Int) {
-            targetCard.addView(
-                label(title, 12f, muted, true).apply {
-                    setPadding(0, dp(8), 0, dp(2))
-                }
-            )
-
-            targetCard.addView(
-                label(value, 14f, color, true)
-            )
-        }
-
-        addTargetDetail(
-            "CURRENT PRICE",
-            formatMarketPrice(currentPrice),
-            white
-        )
-
-        if (currentPrice == null || !currentPrice.isFinite()) {
-            addTargetDetail(
-                "CONFIRMED DIRECTION",
-                "WAITING FOR LIVE PRICE",
-                yellow
-            )
-
-            addTargetDetail(
-                "STRUCTURAL TARGET",
-                "Waiting for market data",
-                yellow
-            )
-
-            addTargetDetail(
-                "TARGET LOCATION",
-                "UNAVAILABLE",
-                yellow
-            )
-
-            addTargetDetail(
-                "DISTANCE TO TARGET",
-                "—",
-                muted
-            )
-
-            addTargetDetail(
-                "STATUS",
-                "WAITING FOR LIVE PRICE",
-                yellow
-            )
-
-            page.addView(
-                targetCard,
-                matchWrap().apply {
-                    topMargin = dp(6)
-                    bottomMargin = dp(6)
-                }
-            )
-
-            return@forEach
-        }
-
-        data class TargetPivot(
-            val type: String,
-            val price: Double,
-            val epoch: Long,
-            val candleIndex: Int
-        )
-
-        val pivots = mutableListOf<TargetPivot>()
+        val candles = allCandles.filter { it.epoch + 3600L <= nowEpoch }
+        val pivots = mutableListOf<Pivot>()
 
         if (candles.size >= 5) {
             for (i in 2 until candles.size - 2) {
-
-                val current = candles[i]
+                val candle = candles[i]
                 val left = candles.subList(i - 2, i)
                 val right = candles.subList(i + 1, i + 3)
+                val high = left.all { candle.high > it.high } &&
+                    right.all { candle.high > it.high }
+                val low = left.all { candle.low < it.low } &&
+                    right.all { candle.low < it.low }
+                if (high == low) continue
 
-                val isSwingHigh =
-                    left.all { current.high > it.high } &&
-                        right.all { current.high > it.high }
-
-                val isSwingLow =
-                    left.all { current.low < it.low } &&
-                        right.all { current.low < it.low }
-
-                if (isSwingHigh == isSwingLow) continue
-
-                val candidate = if (isSwingHigh) {
-                    TargetPivot(
-                        "HIGH",
-                        current.high,
-                        current.epoch,
-                        i
-                    )
+                val candidate = if (high) {
+                    Pivot("HIGH", candle.high, i)
                 } else {
-                    TargetPivot(
-                        "LOW",
-                        current.low,
-                        current.epoch,
-                        i
-                    )
+                    Pivot("LOW", candle.low, i)
                 }
-
                 val previous = pivots.lastOrNull()
+                if (previous == null) {
+                    pivots.add(candidate)
+                } else if (previous.type == candidate.type) {
+                    val moreExtreme = if (candidate.type == "HIGH") {
+                        candidate.price > previous.price
+                    } else {
+                        candidate.price < previous.price
+                    }
+                    if (moreExtreme) pivots[pivots.lastIndex] = candidate
+                } else {
+                    pivots.add(candidate)
+                }
+            }
+        }
 
-                if (previous == null)
+        val latest = pivots.lastOrNull()
+        val prior = pivots.getOrNull(pivots.lastIndex - 1)
+        val direction = when {
+            latest == null || prior == null -> "WAITING FOR STRUCTURE"
+            prior.type == "LOW" && latest.type == "HIGH" -> "BULLISH STRUCTURE"
+            prior.type == "HIGH" && latest.type == "LOW" -> "BEARISH STRUCTURE"
+            else -> "WAITING FOR STRUCTURE"
+        }
+
+        val target = when (direction) {
+            "BULLISH STRUCTURE" -> pivots.lastOrNull {
+                it.type == "HIGH" && it.candleIndex < (latest?.candleIndex ?: -1)
+            }
+            "BEARISH STRUCTURE" -> pivots.lastOrNull {
+                it.type == "LOW" && it.candleIndex < (latest?.candleIndex ?: -1)
+            }
+            else -> null
+        }
+
+        val targetPrice = target?.price
+        val location = when {
+            currentPrice == null || targetPrice == null -> "UNAVAILABLE"
+            targetPrice > currentPrice -> "ABOVE CURRENT PRICE"
+            targetPrice < currentPrice -> "BELOW CURRENT PRICE"
+            else -> "AT CURRENT PRICE"
+        }
+        val distance = if (currentPrice != null && targetPrice != null) {
+            kotlin.math.abs(targetPrice - currentPrice)
+        } else null
+
+        targetCard.addView(label("COMPLETED H1 CANDLES: ${candles.size}", 12f, muted, false))
+        targetCard.addView(label("CONFIRMED DIRECTION: $direction", 14f, when (direction) {
+            "BULLISH STRUCTURE" -> green
+            "BEARISH STRUCTURE" -> red
+            else -> yellow
+        }, true))
+        targetCard.addView(label("STRUCTURAL TARGET: ${formatMarketPrice(targetPrice)}", 14f, white, true))
+        targetCard.addView(label("TARGET LOCATION: $location", 13f, if (targetPrice == null) yellow else white, false))
+        targetCard.addView(label("DISTANCE TO TARGET: ${formatMarketPrice(distance)}", 13f, white, false))
+        targetCard.addView(label(
+            "STATUS: " + if (targetPrice == null) "WAITING FOR STRUCTURAL TARGET" else "STRUCTURAL TARGET IDENTIFIED",
+            12f, if (targetPrice == null) yellow else green, true
+        ))
+        page.addView(targetCard, matchWrap().apply {
+            topMargin = dp(6)
+            bottomMargin = dp(6)
+        })
+    }
+}
+
     private fun formatMarketPrice(price: Double?): String =
         price?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
 
@@ -2524,7 +2469,8 @@ private fun addDirectionStructuralTargetAnalysis() {
             }
         }
     }
-     // =========================================================
+
+    // =========================================================
     // ADMIN PREVIEW
     // =========================================================
 
@@ -2799,6 +2745,7 @@ private fun addDirectionStructuralTargetAnalysis() {
             layoutParams = LinearLayout.LayoutParams(width, 1)
         }
     }
+
     private fun dp(value: Int): Int {
         return (
             value * resources.displayMetrics.density
@@ -2871,7 +2818,6 @@ private fun addDirectionStructuralTargetAnalysis() {
         render()
         exchangeOAuthCode(code)
     }
-
     private fun exchangeOAuthCode(code: String) {
         val verifier = prefs.getString("code_verifier", "").orEmpty()
         if (verifier.isBlank()) { toast("OAuth verifier is missing."); return }
