@@ -2860,7 +2860,6 @@ private fun addDirectionStructuralTargetAnalysis() {
             .appendQueryParameter("code_challenge_method", "S256").build()
         try { startActivity(Intent(Intent.ACTION_VIEW, url)) }
         catch (e: Exception) { toast("Unable to open Deriv login: ${e.message}") }
-    }
 
     private fun handleOAuthCallback(intent: Intent?) {
         val data = intent?.data ?: return
