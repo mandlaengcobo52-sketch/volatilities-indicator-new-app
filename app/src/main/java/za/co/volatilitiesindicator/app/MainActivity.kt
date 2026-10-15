@@ -1942,10 +1942,6 @@ override fun onMarketDataError(
 ) {
     runOnUiThread {
         marketDataErrors[symbol] = message
-
-        if (selectedTab == "Analysis") {
-            render()
-        }
     }
 }
 
