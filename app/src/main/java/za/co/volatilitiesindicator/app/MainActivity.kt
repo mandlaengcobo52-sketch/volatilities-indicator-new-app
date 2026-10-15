@@ -113,6 +113,7 @@ private var marketDataRequested = false
 private var marketStructureExpanded = true
 private var mssChochExpanded = true
 private var marketDataExpanded = true
+private var mssChochBehaviourExpanded = true
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -191,6 +192,7 @@ when (selectedTab) {
     addMarketDataAnalysis()
     addMarketStructureAnalysis()
     addMssChochAnalysis()
+    addMssChochBehaviourAnalysis()
                 }
 
             "Trade" -> {
@@ -1749,7 +1751,353 @@ private fun addMssChochAnalysis() {
         page.addView(eventCard, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
     }
 }
+// =========================================================
+// ANALYSIS — MSS / CHOCH BEHAVIOUR
+// =========================================================
+private fun addMssChochBehaviourAnalysis() {
+    val headerCard = card().apply {
+        orientation = LinearLayout.VERTICAL
+    }
 
+    val headerRow = horizontalRow()
+
+    headerRow.addView(
+        label("ANALYSIS - MSS/CHOCH BEHAVIOUR", 17f, green, true),
+        LinearLayout.LayoutParams(0, -2, 1f)
+    )
+
+    headerRow.addView(
+        button(
+            if (mssChochBehaviourExpanded) "▼ OPEN" else "▶ CLOSED",
+            mssChochBehaviourExpanded
+        ) {
+            mssChochBehaviourExpanded = !mssChochBehaviourExpanded
+            render()
+        },
+        LinearLayout.LayoutParams(-2, dp(48))
+    )
+
+    headerCard.addView(headerRow)
+    page.addView(
+        headerCard,
+        matchWrap().apply { bottomMargin = dp(8) }
+    )
+
+    if (!mssChochBehaviourExpanded) return
+
+    page.addView(
+        label(
+            "HISTORICAL BEHAVIOUR RULES: H1 completed candles only. " +
+                "After a confirmed MSS, the engine examines subsequent candles " +
+                "to measure directional continuation, pullback and whether price " +
+                "returns to the broken structural level. This section does not " +
+                "qualify or execute trades.",
+            12f,
+            muted,
+            false
+        ).apply {
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+        },
+        matchWrap().apply { bottomMargin = dp(8) }
+    )
+
+    marketDataIndexes.forEach { symbol ->
+        val behaviourCard = card().apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        behaviourCard.addView(
+            label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true)
+        )
+
+        val allCandles = marketDataCandles[symbol]
+            .orEmpty()
+            .sortedBy { it.epoch }
+
+        val nowEpoch = System.currentTimeMillis() / 1000L
+
+        val candles = allCandles.filter {
+            it.epoch + 3600L <= nowEpoch
+        }
+
+        if (candles.size < 5) {
+            behaviourCard.addView(
+                label(
+                    "STATUS: WAITING FOR COMPLETED H1 CANDLES",
+                    12f,
+                    yellow,
+                    true
+                )
+            )
+            page.addView(
+                behaviourCard,
+                matchWrap().apply {
+                    topMargin = dp(6)
+                    bottomMargin = dp(6)
+                }
+            )
+            return@forEach
+        }
+
+        data class BehaviourPivot(
+            val type: String,
+            val price: Double,
+            val epoch: Long,
+            val candleIndex: Int
+        )
+
+        val pivots = mutableListOf<BehaviourPivot>()
+
+        for (i in 2 until candles.size - 2) {
+            val current = candles[i]
+            val left = candles.subList(i - 2, i)
+            val right = candles.subList(i + 1, i + 3)
+
+            val swingHigh =
+                left.all { current.high > it.high } &&
+                    right.all { current.high > it.high }
+
+            val swingLow =
+                left.all { current.low < it.low } &&
+                    right.all { current.low < it.low }
+
+            if (swingHigh == swingLow) continue
+
+            val candidate = if (swingHigh) {
+                BehaviourPivot("HIGH", current.high, current.epoch, i)
+            } else {
+                BehaviourPivot("LOW", current.low, current.epoch, i)
+            }
+
+            val previous = pivots.lastOrNull()
+
+            if (previous == null) {
+                pivots.add(candidate)
+            } else if (previous.type == candidate.type) {
+                val moreExtreme = if (candidate.type == "HIGH") {
+                    candidate.price > previous.price
+                } else {
+                    candidate.price < previous.price
+                }
+
+                if (moreExtreme) {
+                    pivots[pivots.lastIndex] = candidate
+                }
+            } else {
+                pivots.add(candidate)
+            }
+        }
+
+        val latestPivot = pivots.lastOrNull()
+        val previousPivot = pivots.getOrNull(pivots.lastIndex - 1)
+
+        var direction: String? = null
+        var brokenPivot: BehaviourPivot? = null
+        var confirmationIndex = -1
+
+        if (latestPivot != null && previousPivot != null) {
+            if (
+                previousPivot.type == "HIGH" &&
+                latestPivot.type == "LOW"
+            ) {
+                val target = pivots.lastOrNull {
+                    it.type == "HIGH" &&
+                        it.candleIndex < latestPivot.candleIndex
+                }
+
+                if (target != null) {
+                    val breakIndex = candles.indices.firstOrNull { index ->
+                        candles[index].epoch > latestPivot.epoch &&
+                            candles[index].close > target.price
+                    }
+
+                    if (breakIndex != null) {
+                        direction = "BULLISH MSS"
+                        brokenPivot = target
+                        confirmationIndex = breakIndex
+                    }
+                }
+            } else if (
+                previousPivot.type == "LOW" &&
+                latestPivot.type == "HIGH"
+            ) {
+                val target = pivots.lastOrNull {
+                    it.type == "LOW" &&
+                        it.candleIndex < latestPivot.candleIndex
+                }
+
+                if (target != null) {
+                    val breakIndex = candles.indices.firstOrNull { index ->
+                        candles[index].epoch > latestPivot.epoch &&
+                            candles[index].close < target.price
+                    }
+
+                    if (breakIndex != null) {
+                        direction = "BEARISH MSS"
+                        brokenPivot = target
+                        confirmationIndex = breakIndex
+                    }
+                }
+            }
+        }
+
+        if (
+            direction == null ||
+            brokenPivot == null ||
+            confirmationIndex < 0
+        ) {
+            behaviourCard.addView(
+                label(
+                    "STRUCTURAL EVENT: NO CONFIRMED MSS",
+                    13f,
+                    yellow,
+                    true
+                )
+            )
+            behaviourCard.addView(
+                label(
+                    "Historical behaviour cannot be measured until a structural break is confirmed.",
+                    12f,
+                    muted,
+                    false
+                )
+            )
+        } else {
+            val confirmation = candles[confirmationIndex]
+            val laterCandles = candles.drop(confirmationIndex + 1)
+
+            val bullish = direction == "BULLISH MSS"
+
+            val continued = if (bullish) {
+                laterCandles.count { it.close > confirmation.close }
+            } else {
+                laterCandles.count { it.close < confirmation.close }
+            }
+
+            val pulledBack = if (bullish) {
+                laterCandles.count { it.low < confirmation.close }
+            } else {
+                laterCandles.count { it.high > confirmation.close }
+            }
+
+            val retestedBrokenLevel = if (bullish) {
+                laterCandles.any { it.low <= brokenPivot.price }
+            } else {
+                laterCandles.any { it.high >= brokenPivot.price }
+            }
+
+            val favourableMove = if (bullish) {
+                laterCandles.maxOfOrNull { it.high }?.minus(confirmation.close)
+            } else {
+                laterCandles.minOfOrNull { it.low }?.let {
+                    confirmation.close - it
+                }
+            }
+
+            behaviourCard.addView(
+                label(
+                    "STRUCTURAL EVENT: $direction",
+                    13f,
+                    if (bullish) green else red,
+                    true
+                )
+            )
+
+            behaviourCard.addView(
+                label(
+                    "CONFIRMED AT: ${formatMarketTime(confirmation.epoch + 3600L)}",
+                    12f,
+                    white,
+                    false
+                )
+            )
+
+            behaviourCard.addView(
+                label(
+                    "BROKEN LEVEL: ${formatMarketPrice(brokenPivot.price)}",
+                    12f,
+                    white,
+                    false
+                )
+            )
+
+            behaviourCard.addView(
+                label(
+                    "SUBSEQUENT COMPLETED CANDLES: ${laterCandles.size}",
+                    12f,
+                    white,
+                    false
+                )
+            )
+
+            behaviourCard.addView(
+                label(
+                    "DIRECTIONAL CONTINUATION CLOSES: $continued",
+                    12f,
+                    green,
+                    true
+                )
+            )
+
+            behaviourCard.addView(
+                label(
+                    "PULLBACK CANDLES: $pulledBack",
+                    12f,
+                    yellow,
+                    true
+                )
+            )
+
+            behaviourCard.addView(
+                label(
+                    "BROKEN LEVEL RETESTED: ${if (retestedBrokenLevel) "YES" else "NO"}",
+                    12f,
+                    if (retestedBrokenLevel) yellow else green,
+                    true
+                )
+            )
+
+            behaviourCard.addView(
+                label(
+                    "MAXIMUM FAVOURABLE PRICE MOVEMENT: " +
+                        if (favourableMove != null) {
+                            formatMarketPrice(kotlin.math.abs(favourableMove))
+                        } else {
+                            "Not available"
+                        },
+                    12f,
+                    white,
+                    false
+                )
+            )
+
+            behaviourCard.addView(
+                label(
+                    if (laterCandles.isEmpty()) {
+                        "BEHAVIOUR STATUS: WAITING FOR SUBSEQUENT COMPLETED CANDLES"
+                    } else if (continued > 0) {
+                        "BEHAVIOUR STATUS: DIRECTIONAL CONTINUATION OBSERVED"
+                    } else {
+                        "BEHAVIOUR STATUS: NO DIRECTIONAL CONTINUATION CLOSE OBSERVED"
+                    },
+                    12f,
+                    if (laterCandles.isEmpty()) yellow
+                    else if (continued > 0) green
+                    else red,
+                    true
+                )
+            )
+        }
+
+        page.addView(
+            behaviourCard,
+            matchWrap().apply {
+                topMargin = dp(6)
+                bottomMargin = dp(6)
+            }
+        )
+    }
+}
     private fun formatMarketPrice(price: Double?): String =
         price?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
 
