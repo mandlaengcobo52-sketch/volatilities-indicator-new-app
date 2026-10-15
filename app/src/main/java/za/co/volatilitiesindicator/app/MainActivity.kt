@@ -486,7 +486,7 @@ private fun authRequest(
     }.build()
     val requestBuilder = Request.Builder()
         .url(authEndpoint)
-        .post(form)
+            .post(form)
         .header("Accept", "application/json")
         .header("X-VI-Mobile-App", "1")
     if (token.isNotBlank()) requestBuilder.header("Authorization", "Bearer $token")
@@ -877,7 +877,7 @@ private fun addHeader() {
             }
         )
                             }
-                            // =========================================================
+                               // =========================================================
 // TRADE SCREEN
 // =========================================================
 
@@ -1277,7 +1277,6 @@ private fun addMarketStructureAnalysis() {
         val candleIndex: Int,
         var classification: String = ""
     )
-
     marketDataIndexes.forEach { symbol ->
 
         val structureCard = card().apply {
@@ -1481,7 +1480,6 @@ structureCard.addView(structurePriceView)
             previousPivot.type == "LOW" &&
                 latestPivot.type == "HIGH" ->
                 "BULLISH LEG"
-
             previousPivot.type == "HIGH" &&
                 latestPivot.type == "LOW" ->
                 "BEARISH LEG"
@@ -2268,130 +2266,7 @@ private fun addDirectionStructuralTargetAnalysis() {
 
                 val previous = pivots.lastOrNull()
 
-                                if (previous == null) {
-                    pivots.add(candidate)
-                } else if (previous.type == candidate.type) {
-                    val moreExtreme =
-                        if (candidate.type == "HIGH") {
-                            candidate.price > previous.price
-                        } else {
-                            candidate.price < previous.price
-                        }
-
-                    if (moreExtreme) {
-                        pivots[pivots.lastIndex] = candidate
-                    }
-                } else {
-                    pivots.add(candidate)
-                }
-            }
-        }
-
-        val latestPivot = pivots.lastOrNull()
-        val previousPivot = pivots.getOrNull(pivots.lastIndex - 1)
-
-        val direction = when {
-            latestPivot == null || previousPivot == null ->
-                "WAITING FOR STRUCTURE"
-
-            previousPivot.type == "LOW" &&
-                latestPivot.type == "HIGH" ->
-                "BULLISH STRUCTURE"
-
-            previousPivot.type == "HIGH" &&
-                latestPivot.type == "LOW" ->
-                "BEARISH STRUCTURE"
-
-            else -> "WAITING FOR STRUCTURE"
-        }
-
-        val targetPivot = when (direction) {
-            "BULLISH STRUCTURE" ->
-                pivots.lastOrNull {
-                    it.type == "HIGH" &&
-                        it.candleIndex < (latestPivot?.candleIndex ?: -1)
-                }
-
-            "BEARISH STRUCTURE" ->
-                pivots.lastOrNull {
-                    it.type == "LOW" &&
-                        it.candleIndex < (latestPivot?.candleIndex ?: -1)
-                }
-
-            else -> null
-        }
-
-        val targetPrice = targetPivot?.price
-
-        val targetLocation = when {
-            currentPrice == null || targetPrice == null ->
-                "UNAVAILABLE"
-
-            targetPrice > currentPrice ->
-                "ABOVE CURRENT PRICE"
-
-            targetPrice < currentPrice ->
-                "BELOW CURRENT PRICE"
-
-            else -> "AT CURRENT PRICE"
-        }
-
-        val distance = if (
-            currentPrice != null &&
-            targetPrice != null
-        ) {
-            kotlin.math.abs(targetPrice - currentPrice)
-        } else {
-            null
-        }
-
-        addTargetDetail(
-            "CONFIRMED DIRECTION",
-            direction,
-            when (direction) {
-                "BULLISH STRUCTURE" -> green
-                "BEARISH STRUCTURE" -> red
-                else -> yellow
-            }
-        )
-
-        addTargetDetail(
-            "STRUCTURAL TARGET",
-            formatMarketPrice(targetPrice),
-            white
-        )
-
-        addTargetDetail(
-            "TARGET LOCATION",
-            targetLocation,
-            if (targetPrice != null) green else yellow
-        )
-
-        addTargetDetail(
-            "DISTANCE TO TARGET",
-            formatMarketPrice(distance),
-            white
-        )
-
-        addTargetDetail(
-            "STATUS",
-            if (targetPrice != null) {
-                "STRUCTURAL TARGET IDENTIFIED"
-            } else {
-                "WAITING FOR STRUCTURAL TARGET"
-            },
-            if (targetPrice != null) green else yellow
-        )
-
-        page.addView(
-            targetCard,
-            matchWrap().apply {
-                topMargin = dp(6)
-                bottomMargin = dp(6)
-            }
-        )
-    }
-}
+                if (previous == null)
     private fun formatMarketPrice(price: Double?): String =
         price?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
 
@@ -2649,8 +2524,7 @@ private fun addDirectionStructuralTargetAnalysis() {
             }
         }
     }
-
-    // =========================================================
+     // =========================================================
     // ADMIN PREVIEW
     // =========================================================
 
@@ -2925,7 +2799,6 @@ private fun addDirectionStructuralTargetAnalysis() {
             layoutParams = LinearLayout.LayoutParams(width, 1)
         }
     }
-
     private fun dp(value: Int): Int {
         return (
             value * resources.displayMetrics.density
@@ -3152,5 +3025,4 @@ override fun onMarketDataError(
         runOnUiThread { connected = false; accountStatus.text = "●  NOT CONNECTED"; accountStatus.setTextColor(red) }
     }
 
-                            }
-                            }
+    }
