@@ -186,6 +186,7 @@ mainScrollView = scroll
 when (selectedTab) {
                 "Analysis" -> {
     addMarketDataAnalysis()
+    addMarketStructureAnalysis()
                 }
 
             "Trade" -> {
@@ -1198,6 +1199,382 @@ marketCard.addView(priceView)
             false
         )
     )
+}
+// =========================================================
+// ANALYSIS — MARKET STRUCTURE
+// =========================================================
+
+private fun addMarketStructureAnalysis() {
+
+    val headerCard = card().apply {
+        orientation = LinearLayout.VERTICAL
+    }
+
+    headerCard.addView(
+        label(
+            "ANALYSIS - MARKET STRUCTURE",
+            17f,
+            green,
+            true
+        )
+    )
+
+    headerCard.addView(
+        button(
+            if (marketStructureExpanded) "CLOSE" else "OPEN",
+            marketStructureExpanded
+        ) {
+            marketStructureExpanded = !marketStructureExpanded
+            render()
+        },
+        matchWrap().apply {
+            topMargin = dp(8)
+        }
+    )
+
+    page.addView(
+        headerCard,
+        matchWrap().apply {
+            bottomMargin = dp(8)
+        }
+    )
+
+    if (!marketStructureExpanded) return
+
+    page.addView(
+        label(
+            "STRUCTURAL ANALYSIS RULES",
+            14f,
+            green,
+            true
+        )
+    )
+
+    page.addView(
+        label(
+            "Timeframe: H1. Only completed candles are analysed. " +
+                "A swing requires two candles on its left and two on its right. " +
+                "Structural pivots alternate between highs and lows. " +
+                "Consecutive pivots of the same type retain the more extreme price. " +
+                "Maximum structural pivots: 40. MSS and CHOCH are not confirmed in this module.",
+            12f,
+            muted,
+            false
+        )
+    )
+
+    data class StructurePivot(
+        val type: String,
+        val price: Double,
+        val epoch: Long,
+        val candleIndex: Int,
+        var classification: String = ""
+    )
+
+    marketDataIndexes.forEach { symbol ->
+
+        val structureCard = card().apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        structureCard.addView(
+            label(
+                symbol,
+                18f,
+                green,
+                true
+            )
+        )
+
+        val allCandles = marketDataCandles[symbol]
+            .orEmpty()
+            .sortedBy { it.epoch }
+
+        // Exclude the current, unfinished H1 candle.
+        val nowEpoch = System.currentTimeMillis() / 1000L
+
+        val completedCandles = allCandles.filter {
+            it.epoch + 3600L <= nowEpoch
+        }
+
+        structureCard.addView(
+            label(
+                "CURRENT PRICE: ${
+                    formatMarketPrice(marketDataPrices[symbol])
+                }",
+                14f,
+                white,
+                false
+            )
+        )
+
+        structureCard.addView(
+            label(
+                "COMPLETED H1 CANDLES: ${completedCandles.size}",
+                12f,
+                muted,
+                false
+            )
+        )
+
+        val pivots = mutableListOf<StructurePivot>()
+
+        // Confirm swings with two candles on either side.
+        if (completedCandles.size >= 5) {
+
+            for (i in 2 until completedCandles.size - 2) {
+
+                val current = completedCandles[i]
+
+                val left = completedCandles.subList(i - 2, i)
+                val right = completedCandles.subList(i + 1, i + 3)
+
+                val isSwingHigh =
+                    left.all { current.high > it.high } &&
+                    right.all { current.high > it.high }
+
+                val isSwingLow =
+                    left.all { current.low < it.low } &&
+                    right.all { current.low < it.low }
+
+                // If one candle qualifies as both, skip it because
+                // the pivot direction would be ambiguous.
+                if (isSwingHigh == isSwingLow) continue
+
+                val candidate = if (isSwingHigh) {
+                    StructurePivot(
+                        type = "HIGH",
+                        price = current.high,
+                        epoch = current.epoch,
+                        candleIndex = i
+                    )
+                } else {
+                    StructurePivot(
+                        type = "LOW",
+                        price = current.low,
+                        epoch = current.epoch,
+                        candleIndex = i
+                    )
+                }
+
+                val previous = pivots.lastOrNull()
+
+                if (previous == null) {
+
+                    pivots.add(candidate)
+
+                } else if (previous.type == candidate.type) {
+
+                    // Keep the more extreme consecutive pivot.
+                    val moreExtreme =
+                        if (candidate.type == "HIGH") {
+                            candidate.price > previous.price
+                        } else {
+                            candidate.price < previous.price
+                        }
+
+                    if (moreExtreme) {
+                        pivots[pivots.lastIndex] = candidate
+                    }
+
+                } else {
+
+                    pivots.add(candidate)
+                }
+            }
+        }
+
+        // Retain no more than 40 structural pivots.
+        val retainedPivots = pivots
+            .takeLast(40)
+            .toMutableList()
+
+        var previousHigh: StructurePivot? = null
+        var previousLow: StructurePivot? = null
+
+        retainedPivots.forEach { pivot ->
+
+            if (pivot.type == "HIGH") {
+
+                val previous = previousHigh
+
+                pivot.classification = when {
+                    previous == null -> "INITIAL HIGH"
+                    pivot.price > previous.price -> "HH"
+                    pivot.price < previous.price -> "LH"
+                    else -> "EQUAL HIGH"
+                }
+
+                previousHigh = pivot
+
+            } else {
+
+                val previous = previousLow
+
+                pivot.classification = when {
+                    previous == null -> "INITIAL LOW"
+                    pivot.price > previous.price -> "HL"
+                    pivot.price < previous.price -> "LL"
+                    else -> "EQUAL LOW"
+                }
+
+                previousLow = pivot
+            }
+        }
+
+        structureCard.addView(
+            label(
+                "STRUCTURAL PIVOTS: ${retainedPivots.size}",
+                12f,
+                white,
+                false
+            )
+        )
+
+        val highs = retainedPivots.filter {
+            it.type == "HIGH"
+        }
+
+        val lows = retainedPivots.filter {
+            it.type == "LOW"
+        }
+
+        fun pivotDescription(pivot: StructurePivot?): String {
+            if (pivot == null) return "Not established"
+
+            return "${pivot.classification} | " +
+                "${formatMarketPrice(pivot.price)} | " +
+                formatMarketTime(pivot.epoch)
+        }
+
+        structureCard.addView(
+            label(
+                "LATEST HIGH: ${pivotDescription(highs.lastOrNull())}",
+                12f,
+                white,
+                false
+            )
+        )
+
+        structureCard.addView(
+            label(
+                "LATEST LOW: ${pivotDescription(lows.lastOrNull())}",
+                12f,
+                white,
+                false
+            )
+        )
+
+        val latestPivot = retainedPivots.lastOrNull()
+        val previousPivot = retainedPivots
+            .getOrNull(retainedPivots.lastIndex - 1)
+
+        val structuralLeg = when {
+            latestPivot == null || previousPivot == null ->
+                "NOT ESTABLISHED"
+
+            previousPivot.type == "LOW" &&
+                latestPivot.type == "HIGH" ->
+                "BULLISH LEG"
+
+            previousPivot.type == "HIGH" &&
+                latestPivot.type == "LOW" ->
+                "BEARISH LEG"
+
+            else -> "NOT ESTABLISHED"
+        }
+
+        structureCard.addView(
+            label(
+                "LATEST STRUCTURAL LEG: $structuralLeg",
+                13f,
+                when (structuralLeg) {
+                    "BULLISH LEG" -> green
+                    "BEARISH LEG" -> red
+                    else -> yellow
+                },
+                true
+            )
+        )
+
+        structureCard.addView(
+            label(
+                "LATEST PIVOT: ${pivotDescription(latestPivot)}",
+                12f,
+                white,
+                false
+            )
+        )
+
+        structureCard.addView(
+            label(
+                "HIGH STRUCTURE OBSERVATIONS",
+                13f,
+                green,
+                true
+            )
+        )
+
+        highs.takeLast(4).asReversed().forEach { pivot ->
+
+            structureCard.addView(
+                label(
+                    "${pivot.classification}: " +
+                        "${formatMarketPrice(pivot.price)} | " +
+                        formatMarketTime(pivot.epoch),
+                    12f,
+                    white,
+                    false
+                )
+            )
+        }
+
+        structureCard.addView(
+            label(
+                "LOW STRUCTURE OBSERVATIONS",
+                13f,
+                red,
+                true
+            )
+        )
+
+        lows.takeLast(4).asReversed().forEach { pivot ->
+
+            structureCard.addView(
+                label(
+                    "${pivot.classification}: " +
+                        "${formatMarketPrice(pivot.price)} | " +
+                        formatMarketTime(pivot.epoch),
+                    12f,
+                    white,
+                    false
+                )
+            )
+        }
+
+        structureCard.addView(
+            label(
+                if (completedCandles.size < 5) {
+                    "STATUS: WAITING FOR SUFFICIENT COMPLETED H1 CANDLES"
+                } else if (retainedPivots.isEmpty()) {
+                    "STATUS: NO CONFIRMED STRUCTURAL PIVOTS"
+                } else {
+                    "STATUS: STRUCTURE CALCULATED — MSS/CHOCH NOT CONFIRMED"
+                },
+                11f,
+                if (retainedPivots.isEmpty()) yellow else green,
+                true
+            )
+        )
+
+        page.addView(
+            structureCard,
+            matchWrap().apply {
+                topMargin = dp(8)
+                bottomMargin = dp(8)
+            }
+        )
+    }
 }
     private fun formatMarketPrice(price: Double?): String =
         price?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
