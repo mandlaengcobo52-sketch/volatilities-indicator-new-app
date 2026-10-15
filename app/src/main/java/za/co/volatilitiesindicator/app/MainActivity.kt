@@ -205,6 +205,7 @@ when (selectedTab) {
     addDirectionStructuralTargetAnalysis()
     addQualificationAnalysis()
     addTargetFilterAnalysis()
+                }
 
             "Trade" -> {
                 addTradeScreen()
@@ -751,7 +752,6 @@ private fun addHeader() {
 
     page.addView(row)
     }
-
     // =========================================================
     // EXECUTION MODE SELECTOR
     // =========================================================
@@ -1652,19 +1652,19 @@ private fun addQualificationAnalysis() {
     val header = card().apply { orientation = LinearLayout.VERTICAL }
     val row = horizontalRow()
     row.addView(
-        label("Analysis - Direction and Structural Target", 17f, green, true),
+        label("Analysis - Qualification", 17f, green, true),
         LinearLayout.LayoutParams(0, -2, 1f)
     )
     row.addView(
         button(if (qualificationExpanded) "▼ OPEN" else "▶ CLOSED", qualificationExpanded) {
-    qualificationExpanded = !qualificationExpanded
-    render()
-        }
+            qualificationExpanded = !qualificationExpanded
+            render()
+        },
         LinearLayout.LayoutParams(-2, dp(48))
     )
     header.addView(row)
     page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
-    if (!directionStructuralTargetExpanded) return
+    if (!qualificationExpanded) return
 
     page.addView(
         label(
@@ -1817,7 +1817,6 @@ private fun addTargetFilterAnalysis() {
             },
             matchWrap().apply { topMargin = dp(8); bottomMargin = dp(8) }
         )
-
         val users = adminUsers
         if (adminUsersLoading && users == null) {
             page.addView(label("Loading registrations…", 14f, yellow, false))
@@ -2184,7 +2183,6 @@ private fun addTargetFilterAnalysis() {
             )
         }
     }
-
     private fun label(
         text: String,
         size: Float,
@@ -2534,6 +2532,5 @@ override fun onMarketDataError(
     override fun onDisconnected() {
         runOnUiThread { connected = false; accountStatus.text = "●  NOT CONNECTED"; accountStatus.setTextColor(red) }
     }
-                                        }
 
                                         }
