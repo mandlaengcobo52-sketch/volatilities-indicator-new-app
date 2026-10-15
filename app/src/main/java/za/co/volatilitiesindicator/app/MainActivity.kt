@@ -1892,7 +1892,6 @@ private fun addMarketDataAnalysis() {
         }
     }
     }
-}
     override fun onTradeData(json: JSONObject) {
     runOnUiThread {
         val messageType = json.optString("msg_type", "")
