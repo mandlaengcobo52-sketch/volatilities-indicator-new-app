@@ -193,6 +193,7 @@ when (selectedTab) {
     addMarketStructureAnalysis()
     addMssChochAnalysis()
     addMssChochBehaviourAnalysis()
+    addDirectionStructuralTargetAnalysis()
                 }
 
             "Trade" -> {
@@ -2098,6 +2099,176 @@ private fun addMssChochBehaviourAnalysis() {
         )
     }
 }
+// =========================================================
+// ANALYSIS — DIRECTION & STRUCTURAL TARGET
+// =========================================================
+private fun addDirectionStructuralTargetAnalysis() {
+
+    val headerCard = card().apply {
+        orientation = LinearLayout.VERTICAL
+    }
+
+    headerCard.addView(
+        label(
+            "ANALYSIS - DIRECTION & STRUCTURAL TARGET",
+            17f,
+            green,
+            true
+        )
+    )
+
+    headerCard.addView(
+        label(
+            "Evaluates confirmed MSS direction, live price, " +
+                "structural target, target location and distance. " +
+                "This section does not qualify or execute trades.",
+            12f,
+            muted,
+            false
+        ).apply {
+            setPadding(0, dp(8), 0, dp(4))
+        }
+    )
+
+    page.addView(
+        headerCard,
+        matchWrap().apply {
+            bottomMargin = dp(8)
+        }
+    )
+
+    marketDataIndexes.forEach { symbol ->
+
+        val targetCard = card().apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        targetCard.addView(
+            label(
+                "INDEX ${symbol.removePrefix("R_")}",
+                17f,
+                green,
+                true
+            )
+        )
+
+        val currentPrice = marketDataPrices[symbol]
+
+        val allCandles = marketDataCandles[symbol]
+            .orEmpty()
+            .sortedBy { it.epoch }
+
+        val nowEpoch = System.currentTimeMillis() / 1000L
+
+        val candles = allCandles.filter {
+            it.epoch + 3600L <= nowEpoch
+        }
+
+        fun addTargetDetail(title: String, value: String, color: Int) {
+            targetCard.addView(
+                label(title, 12f, muted, true).apply {
+                    setPadding(0, dp(8), 0, dp(2))
+                }
+            )
+
+            targetCard.addView(
+                label(value, 14f, color, true)
+            )
+        }
+
+        addTargetDetail(
+            "CURRENT PRICE",
+            formatMarketPrice(currentPrice),
+            white
+        )
+
+        if (currentPrice == null || !currentPrice.isFinite()) {
+            addTargetDetail(
+                "CONFIRMED DIRECTION",
+                "WAITING FOR LIVE PRICE",
+                yellow
+            )
+
+            addTargetDetail(
+                "STRUCTURAL TARGET",
+                "Waiting for market data",
+                yellow
+            )
+
+            addTargetDetail(
+                "TARGET LOCATION",
+                "UNAVAILABLE",
+                yellow
+            )
+
+            addTargetDetail(
+                "DISTANCE TO TARGET",
+                "—",
+                muted
+            )
+
+            addTargetDetail(
+                "STATUS",
+                "WAITING FOR LIVE PRICE",
+                yellow
+            )
+
+            page.addView(
+                targetCard,
+                matchWrap().apply {
+                    topMargin = dp(6)
+                    bottomMargin = dp(6)
+                }
+            )
+
+            return@forEach
+        }
+
+        data class TargetPivot(
+            val type: String,
+            val price: Double,
+            val epoch: Long,
+            val candleIndex: Int
+        )
+
+        val pivots = mutableListOf<TargetPivot>()
+
+        if (candles.size >= 5) {
+            for (i in 2 until candles.size - 2) {
+
+                val current = candles[i]
+                val left = candles.subList(i - 2, i)
+                val right = candles.subList(i + 1, i + 3)
+
+                val isSwingHigh =
+                    left.all { current.high > it.high } &&
+                        right.all { current.high > it.high }
+
+                val isSwingLow =
+                    left.all { current.low < it.low } &&
+                        right.all { current.low < it.low }
+
+                if (isSwingHigh == isSwingLow) continue
+
+                val candidate = if (isSwingHigh) {
+                    TargetPivot(
+                        "HIGH",
+                        current.high,
+                        current.epoch,
+                        i
+                    )
+                } else {
+                    TargetPivot(
+                        "LOW",
+                        current.low,
+                        current.epoch,
+                        i
+                    )
+                }
+
+                val previous = pivots.lastOrNull()
+
+                if (previous == null)
     private fun formatMarketPrice(price: Double?): String =
         price?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
 
