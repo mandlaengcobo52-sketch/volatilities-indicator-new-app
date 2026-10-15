@@ -202,7 +202,7 @@ when (selectedTab) {
     addMarketStructureAnalysis()
     addMssChochAnalysis()
     addMssChochBehaviourAnalysis()
-    addDirectionStructuralTargetAnalysis(
+    addDirectionStructuralTargetAnalysis()
     addTargetFilterAnalysis()
                 }
 
