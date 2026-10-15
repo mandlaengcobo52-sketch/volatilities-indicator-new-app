@@ -1905,9 +1905,27 @@ override fun onCandles(
     symbol: String,
     candles: List<DerivApiClient.Candle>
 ) {
+    runOnUiThread {
+        marketDataCandles[symbol] = candles
+        marketDataErrors.remove(symbol)
+
+        if (selectedTab == "Analysis") {
+            render()
+        }
+    }
 }
 
-override fun onMarketDataError(symbol: String, message: String) {
+override fun onMarketDataError(
+    symbol: String,
+    message: String
+) {
+    runOnUiThread {
+        marketDataErrors[symbol] = message
+
+        if (selectedTab == "Analysis") {
+            render()
+        }
+    }
 }
 
     override fun onError(message: String) {
