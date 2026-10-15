@@ -89,7 +89,25 @@ private var drawerOpen = false
     private var openTradesResponse: JSONObject? = null
     private var openContractResponse: JSONObject? = null
     private var tradeHistoryResponse: JSONObject? = null
+    // ANALYSIS — MARKET DATA STATE
+private val marketDataIndexes = listOf(
+    "R_10",
+    "R_25",
+    "R_50",
+    "R_75",
+    "R_100"
+)
 
+private val marketDataCandles =
+    mutableMapOf<String, List<DerivApiClient.Candle>>()
+
+private val marketDataPrices =
+    mutableMapOf<String, Double>()
+
+private val marketDataErrors =
+    mutableMapOf<String, String>()
+
+private var marketDataRequested = false
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
