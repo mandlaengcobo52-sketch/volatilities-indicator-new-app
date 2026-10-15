@@ -105,7 +105,7 @@ private val marketDataCandles =
 
 private val marketDataPrices =
     mutableMapOf<String, Double>()
-
+private val marketDataPriceViews = mutableMapOf<String, TextView>()
 private val marketDataErrors =
     mutableMapOf<String, String>()
 
