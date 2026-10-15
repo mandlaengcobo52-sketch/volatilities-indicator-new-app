@@ -1298,16 +1298,15 @@ private fun addMarketStructureAnalysis() {
             it.epoch + 3600L <= nowEpoch
         }
 
-        structureCard.addView(
-            label(
-                "CURRENT PRICE: ${
-                    formatMarketPrice(marketDataPrices[symbol])
-                }",
-                14f,
-                white,
-                false
-            )
-        )
+        val structurePriceView = label(
+    "CURRENT PRICE: ${formatMarketPrice(marketDataPrices[symbol])}",
+    14f,
+    white,
+    false
+)
+
+marketDataPriceViews["STRUCTURE_$symbol"] = structurePriceView
+structureCard.addView(structurePriceView)
 
         structureCard.addView(
             label(
@@ -2275,6 +2274,8 @@ private fun addMarketStructureAnalysis() {
 
     marketDataPriceViews[symbol]?.text =
         "CURRENT PRICE: ${formatMarketPrice(quote)}"
+            marketDataPriceViews["STRUCTURE_$symbol"]?.text =
+    "CURRENT PRICE: ${formatMarketPrice(quote)}"
         }
     }
     }
