@@ -202,8 +202,7 @@ when (selectedTab) {
     addMarketStructureAnalysis()
     addMssChochAnalysis()
     addMssChochBehaviourAnalysis()
-    addDirectionStructuralTargetAnalysis()
-    addQualificationAnalysis()
+    addDirectionStructuralTargetAnalysis(
     addTargetFilterAnalysis()
                 }
 
@@ -1489,7 +1488,7 @@ private fun addDirectionStructuralTargetAnalysis() {
     )
     header.addView(row)
     page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
-    if (!qualificationExpanded) return
+    if (!directionStructuralTargetExpanded) return
 
     page.addView(
         label(
