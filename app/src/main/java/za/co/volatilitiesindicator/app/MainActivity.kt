@@ -259,11 +259,6 @@ when (selectedTab) {
 
         addBottomNavigation(outer)
     }
-    lastRenderedTab = selectedTab
-
-mainScrollView?.post {
-    mainScrollView?.scrollTo(0, previousScrollY)
-}
 
 // =========================================================
 // HEADER: EXISTING LOGO AND NOTIFICATION BELL
