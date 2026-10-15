@@ -1127,16 +1127,15 @@ private fun addMarketDataAnalysis() {
             label(symbol, 18f, green, true)
         )
 
-        marketCard.addView(
-            label(
-                "CURRENT PRICE: ${
-                    formatMarketPrice(marketDataPrices[symbol])
-                }",
-                14f,
-                white,
-                false
-            )
-        )
+        val priceView = label(
+    "CURRENT PRICE: ${formatMarketPrice(marketDataPrices[symbol])}",
+    14f,
+    white,
+    false
+)
+
+marketDataPriceViews[symbol] = priceView
+marketCard.addView(priceView)
 
         val candles = marketDataCandles[symbol].orEmpty()
 
@@ -1893,9 +1892,11 @@ private fun addMarketDataAnalysis() {
     override fun onTick(symbol: String, quote: Double, epoch: Long) {
     runOnUiThread {
         if (symbol in marketDataIndexes && quote.isFinite()) {
-            marketDataPrices[symbol] = quote
-            marketDataErrors.remove(symbol)
+    marketDataPrices[symbol] = quote
+    marketDataErrors.remove(symbol)
 
+    marketDataPriceViews[symbol]?.text =
+        "CURRENT PRICE: ${formatMarketPrice(quote)}"
         }
     }
     }
