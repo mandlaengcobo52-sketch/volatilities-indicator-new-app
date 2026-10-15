@@ -2534,5 +2534,6 @@ override fun onMarketDataError(
     override fun onDisconnected() {
         runOnUiThread { connected = false; accountStatus.text = "●  NOT CONNECTED"; accountStatus.setTextColor(red) }
     }
+                                        }
 
                                         }
