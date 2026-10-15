@@ -110,6 +110,7 @@ private val marketDataErrors =
     mutableMapOf<String, String>()
 
 private var marketDataRequested = false
+private var marketStructureExpanded = true
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
