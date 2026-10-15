@@ -157,10 +157,7 @@ if (savedToken.isNotBlank() && intent?.data?.host != "oauth-callback") {
         }
 when (selectedTab) {
                 "Analysis" -> {
-    page.addView(
-        sectionTitle("ANALYSIS — NEW MODULE PENDING"),
-        matchWrap()
-    )
+    addMarketDataAnalysis()
                 }
 
             "Trade" -> {
