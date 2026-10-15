@@ -399,8 +399,7 @@ private val candleIndexes = listOf(
             .enqueue(
                 object :
                     okhttp3.Callback {
-
-                    override fun onFailure(
+                        override fun onFailure(
                         call: okhttp3.Call,
                         e: java.io.IOException
                     ) {
@@ -798,7 +797,7 @@ private val candleIndexes = listOf(
 
             if (
                 url.isNotEmpty()
-            ) {
+                ) {
 
                 return url
             }
@@ -1202,7 +1201,7 @@ private fun connectMarketDataEndpoint() {
                 if (candlesJson == null) {
                     callback.onMarketDataError(symbol, "Deriv returned no H1 candles for $symbol.")
                     return
-                }
+                    }
                 val candles = mutableListOf<Candle>()
                 for (i in 0 until candlesJson.length()) {
                     val item = candlesJson.optJSONObject(i) ?: continue
@@ -1584,8 +1583,7 @@ if (tick != null) {
             socket
         )
     }
-
-    /*
+       /*
      * Start the application heartbeat.
      */
     private fun startHeartbeat() {
@@ -1992,7 +1990,7 @@ candleRequestSymbols.clear()
     ) {
 
         val normalized =
-            if (
+        if (
                 newAccountType.equals(
                     "REAL",
                     ignoreCase = true
