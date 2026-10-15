@@ -145,6 +145,12 @@ if (savedToken.isNotBlank() && intent?.data?.host != "oauth-callback") {
     }
 
     private fun render() {
+        val previousScrollY =
+    if (lastRenderedTab == selectedTab) {
+        mainScrollView?.scrollY ?: 0
+    } else {
+        0
+    }
         val outer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(bg)
@@ -253,6 +259,11 @@ when (selectedTab) {
 
         addBottomNavigation(outer)
     }
+    lastRenderedTab = selectedTab
+
+mainScrollView?.post {
+    mainScrollView?.scrollTo(0, previousScrollY)
+}
 
 // =========================================================
 // HEADER: EXISTING LOGO AND NOTIFICATION BELL
