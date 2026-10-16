@@ -24,6 +24,8 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Spinner
+import android.widget.ArrayAdapter
 import android.widget.Toast
 import android.util.Base64
 import java.security.MessageDigest
@@ -219,52 +221,9 @@ private var drawerOpen = false
             distance, probability, samples, "Confirmed MSS/CHOCH + structural target + empirical 72-hour PTPE")
     }
 
-    /** Risk-plan trade allowance, counted from confirmed Deriv buys in a rolling 24-hour window.
-     * Privilege is unlimited. Unrecognized/unassigned plans do not authorize automated execution.
-     */
-    private fun riskPlanTradeLimit(): Int? {
-        val risk = currentProfile?.optString("risk_profile", "").orEmpty()
-            .trim().replace("_", " ").lowercase(java.util.Locale.ROOT)
-        return when (risk) {
-            "privilege", "priviledge" -> null // unlimited
-            "minimum" -> 1
-            "medium" -> 3
-            "maximum" -> 5
-            else -> 0 // no assigned/recognized risk plan: do not execute
-        }
-    }
-
-    private fun confirmedTradesLast24Hours(): Int {
-        val userId = currentProfile?.optString("id", currentProfile?.optString("user_id", "user")).orEmpty()
-            .ifBlank { "user" }
-        val key = "confirmed_trades_${userId}_${accountId}_${executionMode}"
-        val now = System.currentTimeMillis()
-        val cutoff = now - 24L * 60L * 60L * 1000L
-        val times = appPrefs.getString(key, "").orEmpty().split(",")
-            .mapNotNull { it.toLongOrNull() }.filter { it in (cutoff + 1)..now }
-        if (times.size != appPrefs.getString(key, "").orEmpty().split(",").count { it.toLongOrNull() != null }) {
-            appPrefs.edit().putString(key, times.joinToString(",")).apply()
-        }
-        return times.size
-    }
-
-    private fun recordConfirmedTrade() {
-        val userId = currentProfile?.optString("id", currentProfile?.optString("user_id", "user")).orEmpty()
-            .ifBlank { "user" }
-        val key = "confirmed_trades_${userId}_${accountId}_${executionMode}"
-        val now = System.currentTimeMillis()
-        val cutoff = now - 24L * 60L * 60L * 1000L
-        val times = appPrefs.getString(key, "").orEmpty().split(",")
-            .mapNotNull { it.toLongOrNull() }.filter { it > cutoff }.toMutableList()
-        times.add(now)
-        appPrefs.edit().putString(key, times.joinToString(",")).apply()
-    }
-
     private fun attemptMasterDecisionExecution(symbol: String) {
         if (!autoTradeEnabled || !connected || accountId.isBlank() || accountBalance <= 0.0) return
         if (symbol !in marketDataIndexes || activeContractForIndex(symbol)) return
-        val limit = riskPlanTradeLimit() ?: Int.MAX_VALUE
-        if (limit == 0 || confirmedTradesLast24Hours() >= limit) return
         val decision = evaluateMasterDecision(symbol) ?: return
         lastDecisionByIndex[symbol] = decision
         val startCapital = dailyStartingCapital()
@@ -324,12 +283,11 @@ private var drawerOpen = false
             }
             runningContracts[contractId] = RunningContract(contractId, pending.symbol, pending.direction,
                 pending.stake, pending.target, pending.targetProbability, pending.mode)
-            recordConfirmedTrade()
             pendingOrdersByRequest.remove(reqId)
             derivApiClient.send(JSONObject().put("proposal_open_contract", 1).put("contract_id", contractId).put("subscribe", 1))
             derivApiClient.requestOpenTrades()
             derivApiClient.requestTradeHistory()
-            if (selectedTab == "Trade" || selectedTab == "Trading Logs") render()
+            if (selectedTab == "Trade") render()
             return
         }
         if (msgType == "proposal_open_contract") {
@@ -400,7 +358,7 @@ val savedToken = prefs.getString(
 if (savedToken.isNotBlank() && intent?.data?.host != "oauth-callback") {
     connectWithToken(savedToken)
 }
-}
+    }
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
@@ -428,7 +386,6 @@ if (savedToken.isNotBlank() && intent?.data?.host != "oauth-callback") {
     isSmoothScrollingEnabled = true
 }
 mainScrollView = scroll
-
         page = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(8), dp(14), dp(18))
@@ -480,7 +437,6 @@ when (selectedTab) {
     addUserProfileScreen(page)
 }
 "User Accounts" -> addAdminUsersScreen()
-"Trading Logs" -> addTradingLogsScreen()
 
 "Logout" -> {
     performPlatformLogout()
@@ -806,6 +762,7 @@ private fun refreshProfile(showMessage: Boolean) {
         }
     }
 }
+
 private fun performPlatformLogout() {
     val token = authToken
     authToken = ""
@@ -939,11 +896,10 @@ private fun addHeader() {
             listOf(
                 "Home",
                 "Trade",
-                "Analysis",
                 "News",
-                "Settings",
-                "Account",
+                "Notifications",
                 "Trading Logs",
+                "Account",
                 "Logout"
             )
         }
@@ -1147,7 +1103,7 @@ private fun addHeader() {
             matchWrap().apply {
                 topMargin = dp(14)
                 bottomMargin = dp(12)
-            }
+                }
         )
                             }
                             // =========================================================
@@ -1200,6 +1156,7 @@ private fun addTradeScreen() {
             bottomMargin = dp(10)
         }
     )
+
     // Auto Trade: this toggle now enables the integrated Master Decision execution loop.
     page.addView(sectionTitle("MASTER DECISION / AUTO TRADE"))
     val autoTradeCard = card()
@@ -1207,14 +1164,104 @@ private fun addTradeScreen() {
         if (autoTradeEnabled) green else red, true))
     autoTradeCard.addView(label("PTPE target probability ≥ 80% • target eligibility ≥ 1.5% • 3-day ONETOUCH • 10% profit close target • stake 20% of South African day-start capital.", 12f, white, false))
     autoTradeCard.addView(label("Master Decision requires confirmed MSS/CHOCH, a valid structural target, and at least five historical comparable 72-hour samples. One open contract per index.", 12f, muted, false))
-    val riskLimit = riskPlanTradeLimit()
-    autoTradeCard.addView(label("Assigned risk plan: ${currentProfile?.optString("risk_profile", "Not assigned") ?: "Not assigned"} • ${if (riskLimit == null) "Unlimited trades" else if (riskLimit == 0) "Trading disabled until a valid risk plan is assigned" else "$riskLimit confirmed trades per rolling 24 hours"} • Used: ${confirmedTradesLast24Hours()}", 12f, yellow, false))
     autoTradeCard.addView(button(if (autoTradeEnabled) "TURN MASTER DECISION OFF" else "TURN MASTER DECISION ON", autoTradeEnabled) {
         autoTradeEnabled = !autoTradeEnabled
         if (autoTradeEnabled && !connected) toast("Master Decision is ON, but execution waits until Deriv is connected.")
         render()
     }, matchWrap().apply { topMargin = dp(8) })
     page.addView(autoTradeCard, matchWrap().apply { bottomMargin = dp(10) })
+
+    // ADMIN-ONLY MANUAL TOUCH TRADE PANEL, separate from automatic execution.
+    if (currentProfile?.optString("role", "user").equals("admin", ignoreCase = true) && platform == "ADMIN") {
+        page.addView(sectionTitle("ADMIN MANUAL TOUCH TRADE"))
+        val manualCard = card().apply { orientation = LinearLayout.VERTICAL }
+        manualCard.addView(label("Manual TOUCH execution test — use DEMO first", 14f, yellow, true))
+        manualCard.addView(label("Choose the index, barrier direction, target barrier distance, stake and contract timeframe. This submits an ONETOUCH proposal to Deriv.", 12f, muted, false))
+
+        fun addManualSpinner(title: String, options: List<String>): Spinner {
+            manualCard.addView(label(title, 12f, green, true))
+            val spinner = Spinner(this)
+            val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, options)
+            adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+            spinner.adapter = adapter
+            manualCard.addView(spinner, matchWrap())
+            return spinner
+        }
+
+        fun addManualNumberInput(hintText: String): android.widget.EditText {
+            return android.widget.EditText(this).apply {
+                hint = hintText
+                inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+                setSingleLine(true)
+                setTextColor(white)
+                setHintTextColor(muted)
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                setBackgroundTintList(android.content.res.ColorStateList.valueOf(green))
+                manualCard.addView(this, matchWrap())
+            }
+        }
+
+        val manualIndex = addManualSpinner("INDEX", marketDataIndexes)
+        val manualDirection = addManualSpinner("TARGET BARRIER DIRECTION", listOf("TOUCH ABOVE CURRENT PRICE", "TOUCH BELOW CURRENT PRICE"))
+        manualCard.addView(label("TARGET BARRIER DISTANCE (price units)", 12f, green, true))
+        val manualBarrier = addManualNumberInput("e.g. 17.000")
+        manualCard.addView(label("Enter the distance from the current price, not the absolute target price. The app adds + for above and − for below.", 11f, muted, false))
+        manualCard.addView(label("STAKE (account currency)", 12f, green, true))
+        val manualStake = addManualNumberInput("Enter stake")
+        val manualTimeframe = addManualSpinner("TIMEFRAME", listOf("1 minute", "5 minutes", "15 minutes", "1 hour", "4 hours", "1 day"))
+
+        manualCard.addView(button("EXECUTE MANUAL TOUCH TRADE", true) {
+            if (!currentProfile?.optString("role", "user").equals("admin", ignoreCase = true) || platform != "ADMIN") {
+                toast("Administrator access is required."); return@button
+            }
+            if (!connected || accountId.isBlank()) { toast("Connect to Deriv first."); return@button }
+            val stake = manualStake.text.toString().toDoubleOrNull()
+            if (stake == null || !stake.isFinite() || stake <= 0.0 || stake > accountBalance) {
+                toast("Enter a valid stake not exceeding the available balance."); return@button
+            }
+            val barrierDistance = manualBarrier.text.toString().toDoubleOrNull()
+            if (barrierDistance == null || !barrierDistance.isFinite() || barrierDistance <= 0.0) {
+                toast("Enter a target barrier distance greater than zero."); return@button
+            }
+            val symbol = manualIndex.selectedItem.toString()
+            if (activeContractForIndex(symbol)) { toast("A trade is already open or pending for $symbol."); return@button }
+            val isAbove = manualDirection.selectedItemPosition == 0
+            val direction = if (isAbove) "TOUCH_ABOVE" else "TOUCH_BELOW"
+            val selectedTf = manualTimeframe.selectedItem.toString()
+            val (duration, unit) = when (selectedTf) {
+                "1 minute" -> 1 to "m"
+                "5 minutes" -> 5 to "m"
+                "15 minutes" -> 15 to "m"
+                "1 hour" -> 1 to "h"
+                "4 hours" -> 4 to "h"
+                else -> 1 to "d"
+            }
+            val entry = marketDataPrices[symbol] ?: 0.0
+            val signedBarrier = (if (isAbove) "+" else "-") + String.format(java.util.Locale.US, "%.3f", barrierDistance)
+            val reqId = nextTradeRequestId()
+            pendingIndexSymbols.add(symbol)
+            pendingOrdersByRequest[reqId] = PendingOrder(symbol, direction, entry, 0.0, 0.0, stake, executionMode, "MANUAL_PROPOSAL")
+            val proposal = JSONObject()
+                .put("proposal", 1)
+                .put("amount", stake)
+                .put("basis", "stake")
+                .put("contract_type", "ONETOUCH")
+                .put("currency", accountCurrency.ifBlank { "USD" })
+                .put("duration", duration)
+                .put("duration_unit", unit)
+                .put("symbol", symbol)
+                .put("barrier", signedBarrier)
+                .put("req_id", reqId)
+            if (!derivApiClient.send(proposal)) {
+                pendingOrdersByRequest.remove(reqId)
+                pendingIndexSymbols.remove(symbol)
+                toast("Could not send the manual TOUCH proposal.")
+            } else {
+                toast("Manual TOUCH proposal sent for $symbol. Waiting for Deriv confirmation.")
+            }
+        }, matchWrap().apply { topMargin = dp(10) })
+        page.addView(manualCard, matchWrap().apply { bottomMargin = dp(10) })
+    }
 
     // Running Trades
     page.addView(sectionTitle("RUNNING TRADES"))
@@ -1312,45 +1359,6 @@ private fun addTradeScreen() {
         }
     )
 }
-// =========================================================
-// TRADING LOGS — accessible from both user and admin navigation.
-// Users see the history returned for their connected Deriv account.
-// Admin-wide cross-user platform logs require a server endpoint that
-// returns authorized records; this Android source does not contain one.
-// =========================================================
-private fun addTradingLogsScreen() {
-    page.addView(sectionTitle("TRADING LOGS"))
-    val card = card().apply { orientation = LinearLayout.VERTICAL }
-    card.addView(label("ACCOUNT MODE: $executionMode", 13f, green, true))
-    card.addView(label("These records are from the currently connected Deriv account.", 12f, muted, false))
-    val transactions = tradeHistoryResponse?.optJSONObject("profit_table")?.optJSONArray("transactions")
-        ?: tradeHistoryResponse?.optJSONArray("transactions")
-    var count = 0
-    if (transactions != null) {
-        for (i in 0 until transactions.length()) {
-            val item = transactions.optJSONObject(i) ?: continue
-            val symbol = item.optString("underlying", item.optString("symbol", "—"))
-            val contractId = item.optLong("contract_id", 0L)
-            val buyPrice = item.optDouble("buy_price", 0.0)
-            val sellPrice = item.optDouble("sell_price", 0.0)
-            val profit = sellPrice - buyPrice
-            val epoch = item.optLong("purchase_time", item.optLong("date_start", item.optLong("transaction_time", 0L)))
-            val timeText = if (epoch > 0L) java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
-                .format(java.util.Date(epoch * 1000L)) else "Time unavailable"
-            val status = if (sellPrice > 0.0) "CLOSED" else "OPEN/UNKNOWN"
-            val profitColor = if (profit >= 0.0) green else red
-            card.addView(label("$symbol • Contract $contractId", 13f, white, true))
-            card.addView(label("$timeText • Stake ${String.format(java.util.Locale.US, "%.2f", buyPrice)} • P/L ${String.format(java.util.Locale.US, "%.2f", profit)} • $status", 12f, profitColor, false))
-            count++
-        }
-    }
-    if (count == 0) card.addView(label("No trading log records are currently available. Connect to Deriv and refresh.", 12f, yellow, false))
-    card.addView(button("REFRESH TRADING LOGS", false) {
-        if (connected) derivApiClient.requestTradeHistory() else toast("Connect to Deriv first.")
-    }, matchWrap().apply { topMargin = dp(8) })
-    page.addView(card, matchWrap().apply { bottomMargin = dp(10) })
-}
-
 // =========================================================
 // WEBTRADER-PARITY ANALYSIS CORE
 // =========================================================
@@ -1669,163 +1677,40 @@ private fun addMssChochAnalysis() {
 private fun addMssChochBehaviourAnalysis() {
     val header = card().apply { orientation = LinearLayout.VERTICAL }
     val row = horizontalRow()
-    row.addView(
-        label("Analysis - MSS/CHOCH behaviour", 17f, green, true),
-        LinearLayout.LayoutParams(0, -2, 1f)
-    )
-    row.addView(
-        button(if (mssChochBehaviourExpanded) "▼ OPEN" else "▶ CLOSED", mssChochBehaviourExpanded) {
-            mssChochBehaviourExpanded = !mssChochBehaviourExpanded
-            render()
-        },
-        LinearLayout.LayoutParams(-2, dp(48))
-    )
+    row.addView(label("Analysis - MSS/CHOCH behaviour", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
+    row.addView(button(if (mssChochBehaviourExpanded) "▼ OPEN" else "▶ CLOSED", mssChochBehaviourExpanded) {
+        mssChochBehaviourExpanded = !mssChochBehaviourExpanded; render()
+    }, LinearLayout.LayoutParams(-2, dp(48)))
     header.addView(row)
     page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
     if (!mssChochBehaviourExpanded) return
-
-    page.addView(
-        label(
-            "Uses the same completed-H1 MSS event rules. The latest current event is excluded from historical samples. The last 20 historical events are measured until an opposite MSS or the end of loaded history. Continuation is the percentage with favourable movement greater than zero; averages are directional favourable/adverse extremes.",
-            12f, muted, false
-        ).apply { setPadding(dp(12), dp(10), dp(12), dp(10)) }
-    )
-
+    page.addView(label("Uses the same completed-H1 MSS event rules. The latest current event is excluded from historical samples. The last 20 historical events are measured until an opposite MSS or the end of loaded history. Continuation is the percentage with favourable movement greater than zero; averages are directional favourable/adverse extremes.", 12f, muted, false).apply { setPadding(dp(12), dp(10), dp(12), dp(10)) })
     marketDataIndexes.forEach { symbol ->
         val candles = analysisCompletedCandles(symbol)
-        val behaviourCard = card().apply { orientation = LinearLayout.VERTICAL }
-        behaviourCard.addView(label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true))
-
+        val card = card().apply { orientation = LinearLayout.VERTICAL }
+        card.addView(label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true))
         if (candles.size < 30) {
-            behaviourCard.addView(
-                label("STATUS: WAITING FOR AT LEAST 30 COMPLETED H1 CANDLES", 12f, yellow, true)
-            )
+            card.addView(label("STATUS: WAITING FOR AT LEAST 30 COMPLETED H1 CANDLES", 12f, yellow, true))
         } else {
             val allOutcomes = analysisHistoricalOutcomes(candles)
             val currentEvent = analysisLatestMss(candles)
-            val history = allOutcomes
-                .filterNot { currentEvent != null && it.confirmation.epoch == currentEvent.confirmation.epoch }
-                .takeLast(20)
+            val history = allOutcomes.filterNot { currentEvent != null && it.confirmation.epoch == currentEvent.confirmation.epoch }.takeLast(20)
             val direction = currentEvent?.direction
             val sample = when (direction) {
                 "BULLISH" -> history.filter { it.direction == "BULLISH" }
                 "BEARISH" -> history.filter { it.direction == "BEARISH" }
                 else -> history
             }
-            val continuation = if (sample.isEmpty()) null
-                else sample.count { it.maxFav > 0.0 }.toDouble() / sample.size * 100.0
+            val continuation = if (sample.isEmpty()) null else sample.count { it.maxFav > 0.0 }.toDouble() / sample.size * 100.0
             val avgFav = sample.takeIf { it.isNotEmpty() }?.map { it.maxFav }?.average()
             val avgAdv = sample.takeIf { it.isNotEmpty() }?.map { it.maxAdv }?.average()
-
-            behaviourCard.addView(
-                label(
-                    "CURRENT MSS: ${currentEvent?.state ?: "NO CONFIRMED EVENT"}", 13f,
-                    if (currentEvent?.direction == "BULLISH") green else if (currentEvent?.direction == "BEARISH") red else yellow,
-                    true
-                )
-            )
-            behaviourCard.addView(
-                label(
-                    "HISTORICAL SAMPLE: ${sample.size}  |  BULLISH / BEARISH EVENTS: ${history.count { it.direction == "BULLISH" }} / ${history.count { it.direction == "BEARISH" }}",
-                    12f, white, false
-                )
-            )
-            behaviourCard.addView(label("EVENT SAMPLE: ${direction ?: "ALL HISTORICAL MSS"}", 12f, muted, false))
-            behaviourCard.addView(
-                label(
-                    "HISTORICAL CONTINUATION: ${continuation?.let { String.format(java.util.Locale.US, "%.1f%%", it) } ?: "WAITING"}",
-                    13f, if (continuation != null && continuation >= 50.0) green else yellow, true
-                )
-            )
-            behaviourCard.addView(label("AVERAGE FAVOURABLE MOVE: ${avgFav?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
-            behaviourCard.addView(label("AVERAGE ADVERSE MOVE: ${avgAdv?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
-        }
-
-        page.addView(
-            behaviourCard,
-            matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) }
-        )
-    }
-}
-
-// =========================================================
-// ANALYSIS — QUALIFICATION
-// =========================================================
-
-private fun addDirectionStructuralTargetAnalysis() {
-    val header = card().apply {
-        orientation = LinearLayout.VERTICAL
-    }
-
-    val row = horizontalRow()
-
-    row.addView(
-        label("Analysis - Direction and Structural Target", 17f, green, true),
-        LinearLayout.LayoutParams(0, -2, 1f)
-    )
-
-    row.addView(
-        button(
-            if (directionStructuralTargetExpanded) "▼ OPEN" else "▶ CLOSED",
-            directionStructuralTargetExpanded
-        ) {
-            directionStructuralTargetExpanded =
-                !directionStructuralTargetExpanded
-            render()
-        },
-        LinearLayout.LayoutParams(-2, dp(48))
-    )
-
-    header.addView(row)
-    page.addView(header, matchWrap().apply {
-        bottomMargin = dp(8)
-    })
-
-    if (!directionStructuralTargetExpanded) return
-
-    page.addView(
-        label(
-            "Shows the confirmed MSS direction, structural target, " +
-                "current price and target distance.",
-            12f, muted, false
-        ).apply {
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-        }
-    )
-
-    marketDataIndexes.forEach { symbol ->
-        val candles = analysisCompletedCandles(symbol)
-        val current = marketDataPrices[symbol]
-            ?: candles.lastOrNull()?.close
-
-        val event = if (candles.size >= 20) {
-            analysisLatestMss(candles)
-        } else {
-            null
-        }
-
-        val direction = when (event?.direction) {
-            "BULLISH" -> "UP"
-            "BEARISH" -> "DOWN"
-            else -> ""
-        }
-
-        val target = if (
-            event != null &&
-            current != null &&
-            direction.isNotBlank()
-        ) {
-            analysisStructuralTarget(
-                candles,
-                current,
-                direction,
-                event.confirmation.epoch
-            )
-        } else {
-            null
-        }
-
-        val hasTarget = target != null &&
+            card.addView(label("CURRENT MSS: ${currentEvent?.state ?: "NO CONFIRMED EVENT"}", 13f, if (currentEvent?.direction == "BULLISH") green else if (currentEvent?.direction == "BEARISH") red else yellow, true))
+            card.addView(label("HISTORICAL SAMPLE: ${sample.size}  |  BULLISH / BEARISH EVENTS: ${history.count { it.direction == "BULLISH" }} / ${history.count { it.direction == "BEARISH" }}", 12f, white, false))
+            card.addView(label("EVENT SAMPLE: ${direction ?: "ALL HISTORICAL MSS"}", 12f, muted, false))
+            card.addView(label("HISTORICAL CONTINUATION: ${continuation?.let { String.format(java.util.Locale.US, "%.1f%%", it) } ?: "WAITING"}", 13f, if (continuation != null && continuation >= 50.0) green else yellow, true))
+            card.addView(label("AVERAGE FAVOURABLE MOVE: ${avgFav?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
+            card.addView(label("AVERAGE ADVERSE MOVE: ${avgAdv?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
+          val hasTarget = target != null &&
             current != null &&
             (
                 (direction == "UP" && target.price > current) ||
@@ -1902,7 +1787,7 @@ private fun addDirectionStructuralTargetAnalysis() {
 
         indexCard.addView(
             label(
-                   "TARGET DISTANCE: ${
+                "TARGET DISTANCE: ${
                     distance?.let {
                         String.format(
                             java.util.Locale.US,
@@ -1928,7 +1813,6 @@ private fun addDirectionStructuralTargetAnalysis() {
 // =========================================================
 // label("Analysis - Qualification", 17f, green, true)
 // =========================================================
-
 
 private fun addQualificationAnalysis() {
     val header = card().apply { orientation = LinearLayout.VERTICAL }
@@ -1969,7 +1853,7 @@ private fun addQualificationAnalysis() {
         } else null
         val history = if (candles.size >= 30) {
             val outcomes = analysisHistoricalOutcomes(candles)
-            outcomes.filter {
+  outcomes.filter {
                 it.direction == event?.direction &&
                     (event == null || it.confirmation.epoch != event.confirmation.epoch)
             }.takeLast(20)
@@ -2406,13 +2290,11 @@ private fun addTargetFilterAnalysis() {
             )
         }
 
-        val tabs = listOf(
-            "⌂" to "Home",
-            "▥" to "Trade",
-            "⌁" to "Analysis",
-            "▤" to "News",
-            "⚙" to "Settings"
-        )
+        val tabs = if (currentProfile?.optString("role", "user").equals("admin", ignoreCase = true)) {
+            listOf("⌂" to "Home", "▥" to "Trade", "⌁" to "Analysis", "▤" to "News", "⚙" to "Settings")
+        } else {
+            listOf("⌂" to "Home", "▥" to "Trade", "▤" to "News", "♙" to "Account")
+        }
 
         tabs.forEach { (icon, name) ->
             val selected = selectedTab == name
@@ -2719,7 +2601,7 @@ private fun addTargetFilterAnalysis() {
                 }
             }
         })
-    }
+        }
 
     private fun oauthError(body: String): String = try {
         val j = JSONObject(body); val err = j.optJSONObject("error")
@@ -2804,7 +2686,7 @@ private fun addTargetFilterAnalysis() {
             }
         }
 
-        if (selectedTab == "Trade" || selectedTab == "Trading Logs") {
+        if (selectedTab == "Trade") {
             render()
         }
     }
@@ -2845,4 +2727,4 @@ override fun onMarketDataError(
         runOnUiThread { connected = false; accountStatus.text = "●  NOT CONNECTED"; accountStatus.setTextColor(red) }
     }
 
-                                        }
+}
