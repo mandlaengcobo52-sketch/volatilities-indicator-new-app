@@ -174,7 +174,7 @@ private var drawerOpen = false
     }
 
     /** Empirical PTPE: among prior same-direction MSS events, how often was an equivalent
-     * percentage target touched within the following 72 completed H1 candles? */
+ * percentage target touched within the following 3-day (72-hour) window? */
     private fun targetProbabilityPercent(
         candles: List<DerivApiClient.Candle>, direction: String, targetDistancePercent: Double
     ): Pair<Double, Int> {
