@@ -248,7 +248,7 @@ private var drawerOpen = false
             .put("duration", 3)
             .put("duration_unit", "d")
             .put("underlying_symbol", symbol)
-            .put("barrier", (if (barrierOffset > 0) "+" else "") + String.format(java.util.Locale.US, "%.3f", barrierOffset))
+            .put("barrier", (if (barrierOffset > 0) "+" else "") + String.format(java.util.Locale.US, "%.2f", barrierOffset))
             .put("req_id", reqId)
         if (!derivApiClient.send(proposal)) {
             pendingOrdersByRequest.remove(reqId); pendingIndexSymbols.remove(symbol)
@@ -1288,7 +1288,7 @@ private fun addTradeScreen() {
             .put("duration", duration)
             .put("duration_unit", "h")
             .put("underlying_symbol", symbol)
-            .put("barrier", (if (signedBarrier > 0) "+" else "") + String.format(java.util.Locale.US, "%.3f", signedBarrier))
+            .put("barrier", (if (signedBarrier > 0) "+" else "") + String.format(java.util.Locale.US, "%.2f", signedBarrier))
             .put("req_id", reqId)
         if (!derivApiClient.send(proposal)) {
             pendingOrdersByRequest.remove(reqId)
