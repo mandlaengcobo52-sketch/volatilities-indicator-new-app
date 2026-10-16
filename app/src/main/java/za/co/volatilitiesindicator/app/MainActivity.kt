@@ -1,6 +1,13 @@
 package za.co.volatilitiesindicator.app
 
 import android.app.Activity
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.content.Intent
 import android.net.Uri
 import okhttp3.Call
@@ -142,6 +149,21 @@ private var drawerOpen = false
     private var nextTradeRequestId = 710000
     private var manualTradeDirection = "BUY"
     private val lastDecisionByIndex = mutableMapOf<String, MasterDecision>()
+    private data class PtpeDisplay(
+        val direction: String = "WAIT",
+        val target: Double? = null,
+        val distancePercent: Double? = null,
+        val probability: Double = 0.0,
+        val samples: Int = 0,
+        val status: String = "WAITING FOR MARKET DATA"
+    )
+    private val lastPtpeByIndex = mutableMapOf<String, PtpeDisplay>()
+    private val lastPtpeEvaluationAt = mutableMapOf<String, Long>()
+    private val ptpeStatusViews = mutableMapOf<String, TextView>()
+    private val notificationItems = mutableListOf<String>()
+    private var notificationId = 4200
+    private val notificationsEnabled: Boolean
+        get() = appPrefs.getBoolean("notificationsEnabled", false)
     private val dailyCapitalTimeZone = java.util.TimeZone.getTimeZone("Africa/Johannesburg")
 
     private fun nextTradeRequestId(): Int = ++nextTradeRequestId
@@ -149,28 +171,103 @@ private var drawerOpen = false
     private fun saDayKey(): String = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
         .apply { timeZone = dailyCapitalTimeZone }.format(java.util.Date())
 
-    /** Freeze the balance first observed for this account mode on the SA calendar day. */
+    /** Freeze the balance first observed for this account+mode on the SA calendar day. */
     private fun dailyStartingCapital(): Double {
         if (accountBalance <= 0.0) return 0.0
-        val key = "daily_start_${executionMode}_${saDayKey()}"
+        val accountKey = accountId.ifBlank { "unlinked" }.replace(Regex("[^A-Za-z0-9_-]"), "_")
+        val key = "daily_start_${accountKey}_${executionMode}_${saDayKey()}"
         val existing = appPrefs.getString(key, null)?.toDoubleOrNull()
         if (existing != null && existing > 0.0) return existing
         appPrefs.edit().putString(key, accountBalance.toString()).apply()
         return accountBalance
     }
 
+    /** The stake is fixed for the whole South African calendar day: 20% of day-start capital. */
+    private fun fixedDailyStake(): Double {
+        val capital = dailyStartingCapital()
+        return if (capital > 0.0) kotlin.math.round(capital * 0.20 * 100.0) / 100.0 else 0.0
+    }
+
+    private fun normalizedSymbol(item: JSONObject): String = item.optString(
+        "underlying", item.optString("underlying_symbol", item.optString("symbol", ""))
+    ).uppercase()
+
     private fun activeContractForIndex(symbol: String): Boolean {
+        if (pendingIndexSymbols.contains(symbol)) return true
         if (runningContracts.values.any { it.symbol == symbol && it.mode == executionMode }) return true
-        val portfolio = openTradesResponse?.optJSONObject("portfolio")
-            ?: openTradesResponse?.optJSONObject("echo_req")
-        val arr = portfolio?.optJSONArray("contracts")
-            ?: openTradesResponse?.optJSONArray("contracts")
+        val root = openTradesResponse ?: return false
+        val portfolio = root.optJSONObject("portfolio")
+        val arr = portfolio?.optJSONArray("contracts") ?: root.optJSONArray("contracts")
         if (arr != null) for (i in 0 until arr.length()) {
             val item = arr.optJSONObject(i) ?: continue
-            val contractSymbol = item.optString("underlying", item.optString("symbol", ""))
-            if (contractSymbol == symbol && item.optString("is_sold", "0") != "1") return true
+            val contractSymbol = normalizedSymbol(item)
+            val sold = item.optInt("is_sold", 0) == 1 || item.optString("is_sold", "").equals("true", true)
+            val status = item.optString("status", "open").lowercase()
+            if (contractSymbol == symbol.uppercase() && !sold && status !in setOf("sold", "won", "lost", "expired")) return true
         }
-        return pendingIndexSymbols.contains(symbol)
+        return false
+    }
+
+    private fun riskPlanName(): String = currentProfile?.optString("risk_profile", "")?.trim()?.lowercase().orEmpty()
+
+    private fun maxTradesPerDay(): Int {
+        return when (riskPlanName()) {
+            "minimum" -> 1
+            "medium" -> 3
+            "maximum" -> 5
+            "super maximum", "super_maximum", "super-maximum", "privilege" -> Int.MAX_VALUE
+            else -> 0
+        }
+    }
+
+    private fun riskPlanIsActive(): Boolean {
+        val user = currentProfile ?: return false
+        val plan = riskPlanName()
+        if (plan.isBlank() || plan == "null") return false
+        val start = user.optString("start_date", "").trim()
+        val expiry = user.optString("expiry_date", "").trim()
+        if (start.isBlank() || start == "null" || expiry.isBlank() || expiry == "null") return false
+        return try {
+            val fmt = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).apply { isLenient = false; timeZone = dailyCapitalTimeZone }
+            val startDate = fmt.parse(start) ?: return false
+            val expiryDate = fmt.parse(expiry) ?: return false
+            val today = fmt.parse(saDayKey()) ?: return false
+            !today.before(startDate) && !today.after(expiryDate)
+        } catch (_: Exception) { false }
+    }
+
+    private fun dailyTradeCount(): Int {
+        val accountKey = accountId.ifBlank { "unlinked" }.replace(Regex("[^A-Za-z0-9_-]"), "_")
+        return appPrefs.getInt("daily_trades_${accountKey}_${executionMode}_${saDayKey()}", 0)
+    }
+
+    private fun canPlaceTrade(showToast: Boolean = true): Boolean {
+        if (!riskPlanIsActive()) {
+            if (showToast) toast("Trading is locked: an active risk plan must be assigned by the administrator.")
+            return false
+        }
+        val limit = maxTradesPerDay()
+        if (limit <= 0) {
+            if (showToast) toast("Trading is locked: your risk plan is not recognised.")
+            return false
+        }
+        if (dailyTradeCount() >= limit) {
+            if (showToast) toast("Daily risk-plan limit reached (${if (limit == Int.MAX_VALUE) "unlimited" else limit} trades).")
+            val eventKey = "risk_limit_notice_${accountId}_${executionMode}_${saDayKey()}"
+            if (!appPrefs.getBoolean(eventKey, false)) {
+                appPrefs.edit().putBoolean(eventKey, true).apply()
+                notifyEvent("Risk plan limit reached", "No additional trades can be opened until the South African day resets.")
+            }
+            return false
+        }
+        return true
+    }
+
+    private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Long) {
+        val accountKey = accountId.ifBlank { "unlinked" }.replace(Regex("[^A-Za-z0-9_-]"), "_")
+        val key = "daily_trades_${accountKey}_${executionMode}_${saDayKey()}"
+        appPrefs.edit().putInt(key, dailyTradeCount() + 1).apply()
+        notifyEvent("Touch trade opened", "$symbol · Contract $contractId · Stake ${String.format(java.util.Locale.US, "%.2f", stake)} ${accountCurrency.ifBlank { "USD" }}")
     }
 
     /** Empirical PTPE: among prior same-direction MSS events, how often was an equivalent
@@ -203,37 +300,72 @@ private var drawerOpen = false
         return (hits.toDouble() / samples.toDouble() * 100.0) to samples
     }
 
-    /** Sole authority for trade approval. No technical score is relabelled as probability. */
+    /** Sole authority for trade approval. PTPE is always recorded for display, even when it fails. */
     private fun evaluateMasterDecision(symbol: String): MasterDecision? {
         val candles = analysisCompletedCandles(symbol)
-        if (candles.size < 100) return null
-        val current = marketDataPrices[symbol] ?: candles.lastOrNull()?.close ?: return null
-        if (!current.isFinite() || current <= 0.0) return null
-        val event = analysisLatestMss(candles) ?: return null
+        if (candles.size < 100) {
+            lastPtpeByIndex[symbol] = PtpeDisplay(status = "WAITING FOR 100+ CANDLES")
+            lastDecisionByIndex.remove(symbol)
+            return null
+        }
+        val current = marketDataPrices[symbol] ?: candles.lastOrNull()?.close
+        if (current == null || !current.isFinite() || current <= 0.0) {
+            lastPtpeByIndex[symbol] = PtpeDisplay(status = "WAITING FOR LIVE PRICE")
+            lastDecisionByIndex.remove(symbol)
+            return null
+        }
+        val event = analysisLatestMss(candles)
+        if (event == null) {
+            lastPtpeByIndex[symbol] = PtpeDisplay(status = "WAITING FOR CONFIRMED MSS/CHOCH")
+            lastDecisionByIndex.remove(symbol)
+            return null
+        }
         val direction = event.direction
         val targetDirection = if (direction == "BULLISH") "UP" else "DOWN"
-        val targetPivot = analysisStructuralTarget(candles, current, targetDirection, event.confirmation.epoch) ?: return null
+        val targetPivot = analysisStructuralTarget(candles, current, targetDirection, event.confirmation.epoch)
+        if (targetPivot == null) {
+            lastPtpeByIndex[symbol] = PtpeDisplay(direction = if (direction == "BULLISH") "BUY" else "SELL", status = "WAITING FOR STRUCTURAL TARGET")
+            lastDecisionByIndex.remove(symbol)
+            return null
+        }
         val target = targetPivot.price
-        if (!target.isFinite() || (direction == "BULLISH" && target <= current) ||
-            (direction == "BEARISH" && target >= current)) return null
+        if (!target.isFinite() || (direction == "BULLISH" && target <= current) || (direction == "BEARISH" && target >= current)) {
+            lastPtpeByIndex[symbol] = PtpeDisplay(direction = if (direction == "BULLISH") "BUY" else "SELL", target = target, status = "INVALID TARGET DIRECTION")
+            lastDecisionByIndex.remove(symbol)
+            return null
+        }
         val distance = kotlin.math.abs(target - current) / current * 100.0
-        if (distance < 1.5) return null
         val (probability, samples) = targetProbabilityPercent(candles, direction, distance)
-        if (samples < 5 || probability < 80.0) return null
-        // Historical evidence must include at least one prior same-direction outcome.
-        if (analysisHistoricalOutcomes(candles).none { it.direction == direction && it.confirmation.epoch != event.confirmation.epoch }) return null
-        return MasterDecision(symbol, if (direction == "BULLISH") "BUY" else "SELL", current, target,
-            distance, probability, samples, "Confirmed MSS/CHOCH + structural target + empirical 3-day PTPE")
+        val decisionDirection = if (direction == "BULLISH") "BUY" else "SELL"
+        val priorOutcomeExists = analysisHistoricalOutcomes(candles).any { it.direction == direction && it.confirmation.epoch != event.confirmation.epoch }
+        val status = when {
+            distance < 1.5 -> "WAIT — TARGET DISTANCE BELOW 1.5%"
+            samples < 5 -> "WAIT — INSUFFICIENT PTPE SAMPLES"
+            probability < 80.0 -> "WAIT — PTPE BELOW 80%"
+            !priorOutcomeExists -> "WAIT — NO PRIOR SAME-DIRECTION OUTCOME"
+            else -> "QUALIFIED"
+        }
+        lastPtpeByIndex[symbol] = PtpeDisplay(decisionDirection, target, distance, probability, samples, status)
+        if (status != "QUALIFIED") {
+            lastDecisionByIndex.remove(symbol)
+            return null
+        }
+        val decision = MasterDecision(symbol, decisionDirection, current, target, distance, probability, samples,
+            "Confirmed MSS/CHOCH + structural target + empirical 3-day PTPE")
+        lastDecisionByIndex[symbol] = decision
+        return decision
     }
 
     private fun attemptMasterDecisionExecution(symbol: String) {
         if (!autoTradeEnabled || !connected || accountId.isBlank() || accountBalance <= 0.0) return
         if (symbol !in marketDataIndexes || activeContractForIndex(symbol)) return
-        val decision = evaluateMasterDecision(symbol) ?: return
-        lastDecisionByIndex[symbol] = decision
-        val startCapital = dailyStartingCapital()
-        val stake = kotlin.math.round(startCapital * 0.20 * 100.0) / 100.0
-        if (stake <= 0.0 || stake > accountBalance) return
+        val decision = lastDecisionByIndex[symbol] ?: evaluateMasterDecision(symbol) ?: return
+        if (!canPlaceTrade(showToast = false)) return
+        val stake = fixedDailyStake()
+        if (stake <= 0.0 || stake > accountBalance) {
+            notifyEvent("Trade blocked", "The fixed daily stake is greater than the available balance.")
+            return
+        }
         // Deriv accepts an unsigned barrier string as an absolute target price.
         // Do not convert the target into a signed offset from the current spot.
         val absoluteBarrier = decision.target
@@ -265,7 +397,7 @@ private var drawerOpen = false
             val failed = pendingOrdersByRequest.remove(reqId)
             if (failed != null) pendingIndexSymbols.remove(failed.symbol)
             return
-        }
+            }
         val pending = pendingOrdersByRequest[reqId]
         if (pending != null && msgType == "proposal") {
             val proposal = json.optJSONObject("proposal")
@@ -290,6 +422,7 @@ private var drawerOpen = false
             }
             runningContracts[contractId] = RunningContract(contractId, pending.symbol, pending.direction,
                 pending.stake, pending.target, pending.targetProbability, pending.mode)
+            recordSuccessfulTrade(pending.symbol, pending.stake, contractId)
             pendingOrdersByRequest.remove(reqId)
             derivApiClient.send(JSONObject().put("proposal_open_contract", 1).put("contract_id", contractId).put("subscribe", 1))
             derivApiClient.requestOpenTrades()
@@ -311,6 +444,7 @@ private var drawerOpen = false
             if (status == "sold" || status == "won" || status == "lost" || contract.optInt("is_sold", 0) == 1) {
                 runningContracts.remove(contractId)
                 pendingIndexSymbols.remove(running.symbol)
+                notifyEvent("Touch trade closed", "${running.symbol} · Contract $contractId · Final status: ${status.uppercase()}.")
             }
         }
     }
@@ -376,6 +510,18 @@ if (authToken.isNotBlank() && savedToken.isNotBlank() && intent?.data?.host != "
         }
     }
 
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 7802) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                notifyEvent("Notifications enabled", "Android permission granted. Trade and risk alerts can now appear.")
+            } else {
+                toast("Android notification permission was not granted. In-app notification history will still work.")
+            }
+            if (selectedTab == "Notifications") render()
+        }
+    }
+
     private fun render() {
         val previousScrollY =
     if (lastRenderedTab == selectedTab) {
@@ -428,7 +574,11 @@ when (selectedTab) {
                 }
 
             "Trade" -> {
-                addTradeScreen()
+                if (authToken.isBlank()) {
+                    page.addView(sectionTitle("SIGN IN REQUIRED"))
+                    page.addView(label("Sign in to your Volatilities Indicator account before accessing trading.", 14f, yellow, false))
+                    page.addView(button("SIGN IN", true) { selectedTab = "Login"; render() }, matchWrap())
+                } else addTradeScreen()
             }
 "Register" -> {
     addRegistrationScreen()
@@ -444,6 +594,23 @@ when (selectedTab) {
     addUserProfileScreen(page)
 }
 "User Accounts" -> addAdminUsersScreen()
+"Risk Categories" -> {
+    if (platform == "ADMIN") addRiskCategoriesScreen()
+    else { page.addView(label("Only an administrator can view risk categories.", 14f, red, false)) }
+}
+"Notifications" -> addNotificationsScreen()
+"Settings", "System Settings" -> addSettingsScreen()
+"Trading Logs" -> addTradingLogsScreen()
+"Dashboard" -> {
+    if (authToken.isNotBlank()) {
+        addPlatformSelector()
+        addExecutionSelector()
+        addAccountCard()
+    } else {
+        page.addView(label("Sign in to access your dashboard.", 14f, yellow, false))
+        page.addView(button("SIGN IN", true) { selectedTab = "Login"; render() }, matchWrap())
+    }
+}
 
 "Logout" -> {
     performPlatformLogout()
@@ -647,6 +814,7 @@ platform = if (role.equals("admin", ignoreCase = true)) "ADMIN" else "USER"
                         selectedTab = "My profile"
                         drawerOpen = false
                         render()
+                        refreshProfile(showMessage = false)
                         toast("Login successful.")
                     } else {
                         toast(result.optString("message", "Unable to sign in."))
@@ -659,6 +827,7 @@ platform = if (role.equals("admin", ignoreCase = true)) "ADMIN" else "USER"
     loginCard.addView(button("CREATE ACCOUNT", false) {
         selectedTab = "Register"; drawerOpen = false; render()
     }, matchWrap().apply { topMargin = dp(8) })
+    loginCard.addView(button("BACK TO HOME", false) { selectedTab = "Home"; render() }, matchWrap().apply { topMargin = dp(6) })
     page.addView(loginCard, matchWrap())
 }
 
@@ -707,6 +876,16 @@ private fun addUserProfileScreen(page: LinearLayout) {
         val riskPercent = u.optInt("risk_percent", 0)
         val riskText = if (risk.isBlank() || risk == "null") "Not assigned" else "${risk.replaceFirstChar { it.uppercase() }} risk${if (riskPercent > 0) " — $riskPercent% stake" else ""}"
         profileField("Risk plan", riskText)
+        val riskLimitText = when (risk.lowercase()) {
+            "minimum" -> "1 trade per day"
+            "medium" -> "3 trades per day"
+            "maximum" -> "5 trades per day"
+            "super maximum", "super_maximum", "super-maximum", "privilege" -> "Unlimited trades per day"
+            else -> "Trading disabled until assigned"
+        }
+        profileField("Risk-plan trade limit", riskLimitText)
+        profileField("Daily fixed stake", "20% of the account balance frozen at 00:00 South African time")
+        profileField("Trades used today", "${dailyTradeCount()} / ${if (maxTradesPerDay() == Int.MAX_VALUE) "Unlimited" else maxTradesPerDay()}")
         profileField("Start of risk plan", u.optString("start_date", "").takeUnless { it == "null" }.orEmpty())
         profileField("Expiry of risk plan", u.optString("expiry_date", "").takeUnless { it == "null" }.orEmpty())
         val status = u.optString("status", "approved").uppercase()
@@ -759,7 +938,9 @@ private fun refreshProfile(showMessage: Boolean) {
         profileLoading = false
         if (ok) {
             currentProfile = result.optJSONObject("user")
-            if (selectedTab == "My profile" || selectedTab == "Account") render()
+            val role = currentProfile?.optString("role", "user") ?: "user"
+            platform = if (role.equals("admin", true)) "ADMIN" else "USER"
+            if (selectedTab == "My profile" || selectedTab == "Account" || selectedTab == "Notifications" || selectedTab == "Settings") render()
             if (showMessage) toast("Profile updated.")
         } else {
             authToken = ""
@@ -849,23 +1030,14 @@ private fun addHeader() {
             LinearLayout.LayoutParams(0, -2, 1f)
         )
 
-        // Notification bell. Notification functionality is not
-        // connected yet.
         val bell = TextView(this).apply {
-            text = "♧"
-            textSize = 29f
-            setTextColor(white)
+            text = if (notificationsEnabled) "🔔" else "♧"
+            textSize = 25f
+            setTextColor(if (notificationsEnabled) green else white)
             gravity = Gravity.CENTER
             contentDescription = "Notifications"
-
-            setOnClickListener {
-                toast("Notifications will be connected later")
-            }
+            setOnClickListener { selectedTab = "Notifications"; drawerOpen = false; render() }
         }
-
-        // Draw a clear bell symbol rather than using the club glyph.
-        bell.text = "🔔"
-        bell.textSize = 25f
 
         row.addView(
             bell,
@@ -1123,10 +1295,26 @@ private fun addHeader() {
             }
         )
                             }
+private fun ptpeDisplayText(symbol: String): String {
+    val ptpe = lastPtpeByIndex[symbol] ?: PtpeDisplay()
+    val targetText = ptpe.target?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
+    val distanceText = ptpe.distancePercent?.let { String.format(java.util.Locale.US, "%.2f%%", it) } ?: "—"
+    return "$symbol • ${ptpe.direction} • Target $targetText • Distance $distanceText • PTPE ${String.format(java.util.Locale.US, "%.1f", ptpe.probability)}% (${ptpe.samples} samples) • ${ptpe.status}"
+}
+
+private fun updatePtpeDisplay(symbol: String) {
+    val view = ptpeStatusViews[symbol] ?: return
+    val qualified = lastDecisionByIndex.containsKey(symbol)
+    view.text = ptpeDisplayText(symbol)
+    view.setTextColor(if (qualified) green else yellow)
+}
+
 // =========================================================
 // TRADE SCREEN
 // =========================================================
 private fun addTradeScreen() {
+    ptpeStatusViews.clear()
+    marketDataIndexes.forEach { evaluateMasterDecision(it) }
     page.addView(sectionTitle("TRADE CONTROL"))
 
     // Account and connection status
@@ -1178,7 +1366,7 @@ private fun addTradeScreen() {
     val autoTradeCard = card()
     autoTradeCard.addView(label(if (autoTradeEnabled) "MASTER DECISION: ACTIVE" else "MASTER DECISION: OFF", 15f,
         if (autoTradeEnabled) green else red, true))
-    autoTradeCard.addView(label("PTPE target probability ≥ 80% • target eligibility ≥ 1.5% • 3-day ONETOUCH • 10% profit close target • stake 20% of South African day-start capital.", 12f, white, false))
+    autoTradeCard.addView(label("PTPE target probability ≥ 80% • target eligibility ≥ 1.5% • 3-day ONETOUCH • 10% profit close target • fixed daily stake = 20% of South African day-start capital; risk plan controls daily trade count.", 12f, white, false))
     autoTradeCard.addView(label("Master Decision requires confirmed MSS/CHOCH, a valid structural target, and at least five historical comparable 3-day samples . One open contract per index.", 12f, muted, false))
     val gateCard = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
@@ -1187,15 +1375,13 @@ private fun addTradeScreen() {
     }
     gateCard.addView(label("ANALYSIS GATE BY INDEX", 12f, green, true))
     marketDataIndexes.forEach { symbol ->
-        val decision = lastDecisionByIndex[symbol]
-        val text = if (decision != null) {
-            "$symbol • ${decision.direction} • Target ${String.format(java.util.Locale.US, "%.2f", decision.target)} • PTPE ${String.format(java.util.Locale.US, "%.1f", decision.targetProbability)}% • ${decision.sampleCount} samples"
-        } else {
-            "$symbol • WAITING — all MSS/CHOCH, structural-target and PTPE gates not yet confirmed"
-        }
-        gateCard.addView(label(text, 11f, if (decision != null) green else yellow, decision != null).apply {
+        val decision = evaluateMasterDecision(symbol)
+        val ptpe = lastPtpeByIndex[symbol] ?: PtpeDisplay()
+        val ptpeView = label(ptpeDisplayText(symbol), 11f, if (decision != null) green else yellow, decision != null).apply {
             setPadding(0, dp(5), 0, dp(3))
-            })
+        }
+        ptpeStatusViews[symbol] = ptpeView
+        gateCard.addView(ptpeView)
         }
     autoTradeCard.addView(gateCard, matchWrap().apply { topMargin = dp(8) })
     autoTradeCard.addView(button(if (autoTradeEnabled) "TURN MASTER DECISION OFF" else "TURN MASTER DECISION ON", autoTradeEnabled) {
@@ -1251,9 +1437,8 @@ private fun addTradeScreen() {
     manualCard.addView(label("BARRIER TARGET PRICE", 11f, green, true).apply { setPadding(0, dp(7), 0, 0) })
     val barrierInput = manualInput("e.g. 760.50", "760.50")
     manualCard.addView(barrierInput, matchWrap())
-    manualCard.addView(label("STAKE (${accountCurrency.ifBlank { "USD" }})", 11f, green, true).apply { setPadding(0, dp(7), 0, 0) })
-    val stakeInput = manualInput("1.00", "1.00")
-    manualCard.addView(stakeInput, matchWrap())
+    manualCard.addView(label("FIXED DAILY STAKE (${accountCurrency.ifBlank { "USD" }})", 11f, green, true).apply { setPadding(0, dp(7), 0, 0) })
+    manualCard.addView(label("${String.format(java.util.Locale.US, "%.2f", fixedDailyStake())} — 20% of the frozen day-start capital", 15f, yellow, true).apply { setPadding(dp(4), dp(8), dp(4), dp(8)) })
     manualCard.addView(button("PURCHASE TOUCH CONTRACT", true) {
         if (!connected || accountId.isBlank()) {
             toast("Connect the selected Deriv account before manual execution.")
@@ -1262,11 +1447,12 @@ private fun addTradeScreen() {
         val symbol = symbolSpinner.selectedItem?.toString().orEmpty()
         val duration = durationInput.text.toString().toIntOrNull()
         val targetPrice = barrierInput.text.toString().toDoubleOrNull()
-        val stake = stakeInput.text.toString().toDoubleOrNull()
-        if (duration == null || duration < 1 || targetPrice == null || !targetPrice.isFinite() || targetPrice <= 0.0 || stake == null || !stake.isFinite() || stake <= 0.0) {
-            toast("Enter a duration of at least 1 hour, a valid absolute barrier target price and a positive stake.")
+        val stake = fixedDailyStake()
+        if (duration == null || duration < 1 || targetPrice == null || !targetPrice.isFinite() || targetPrice <= 0.0 || stake <= 0.0) {
+            toast("Enter a duration of at least 1 hour and a valid absolute barrier target price. Connect to Deriv to calculate the fixed daily stake.")
             return@button
         }
+        if (!canPlaceTrade()) return@button
         if (stake > accountBalance) {
             toast("Stake exceeds the available account balance.")
             return@button
@@ -2277,7 +2463,8 @@ private fun addTargetFilterAnalysis() {
         val riskSpinner = Spinner(this).apply {
             adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, riskPlans)
             val existingRisk = user.optString("risk_profile", "").replaceFirstChar { it.uppercase() }
-            val idx = riskPlans.indexOf(existingRisk)
+            val normalizedRisk = existingRisk.replace("_", " ").replace("-", " ")
+            val idx = riskPlans.indexOfFirst { it.equals(normalizedRisk, true) }
             if (idx >= 0) setSelection(idx)
         }
         val fields = LinearLayout(this).apply {
@@ -2313,10 +2500,11 @@ private fun addTargetFilterAnalysis() {
                             "Maximum" -> "5"
                             else -> "unlimited"
                         }
-                        val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+                        val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).apply { timeZone = dailyCapitalTimeZone }
                         val planStartDate = dateFormat.format(java.util.Date())
                         val planExpiryCalendar = java.util.Calendar.getInstance().apply {
-                            add(java.util.Calendar.DAY_OF_YEAR, 30)
+                            timeZone = dailyCapitalTimeZone
+                            add(java.util.Calendar.DAY_OF_YEAR, 29)
                         }
                         val planExpiryDate = dateFormat.format(planExpiryCalendar.time)
                         if (first.isBlank() || last.isBlank() || mail.isBlank() || contact.length < 7) {
@@ -2329,7 +2517,7 @@ private fun addTargetFilterAnalysis() {
                             "surname" to last,
                             "email" to mail,
                             "phone" to contact,
-                            "risk_profile" to selectedRisk.lowercase(),
+                                "risk_profile" to selectedRisk.lowercase(),
                             "risk_trades_per_day" to tradesPerDay,
                             "risk_period_days" to "30",
                             "start_date" to planStartDate,
@@ -2374,6 +2562,119 @@ private fun addTargetFilterAnalysis() {
             }
         }
     }
+    private fun addRiskCategoriesScreen() {
+        page.addView(sectionTitle("RISK CATEGORIES"))
+        page.addView(label("Risk rules are applied before both manual and automatic trades. Each trade uses the same fixed daily stake: 20% of the frozen day-start account capital. Trade count resets on the South African calendar day.", 13f, muted, false))
+        val rules = listOf(
+            Triple("MINIMUM", "1 trade per day", "30-day plan"),
+            Triple("MEDIUM", "3 trades per day", "30-day plan"),
+            Triple("MAXIMUM", "5 trades per day", "30-day plan"),
+            Triple("SUPER MAXIMUM", "Unlimited trades per day", "30-day plan")
+        )
+        rules.forEach { (name, limit, duration) ->
+            val ruleCard = card().apply { orientation = LinearLayout.VERTICAL }
+            ruleCard.addView(label(name, 16f, green, true))
+            ruleCard.addView(label("Stake: 20% of daily starting capital", 13f, white, false))
+            ruleCard.addView(label("Profit-close target: 10% of stake", 13f, white, false))
+            ruleCard.addView(label("Limit: $limit", 13f, yellow, true))
+            ruleCard.addView(label(duration, 12f, muted, false))
+            page.addView(ruleCard, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
+        }
+        page.addView(button("ASSIGN / EDIT A USER'S RISK PLAN", true) { selectedTab = "User Accounts"; loadAdminUsers() }, matchWrap().apply { topMargin = dp(8) })
+        page.addView(label("Important: this Android screen enforces limits locally. The mobile-auth.php backend must also enforce the same risk plan and daily trade limits to prevent bypass from another device or app version.", 12f, yellow, false).apply { setPadding(0, dp(10), 0, 0) })
+    }
+
+    private fun addTradingLogsScreen() {
+        page.addView(sectionTitle("TRADING LOGS"))
+        val card = card().apply { orientation = LinearLayout.VERTICAL }
+        card.addView(label("Recent local trading events", 16f, green, true))
+        val logs = appPrefs.getString("notification_feed", "").orEmpty().lines().filter { it.isNotBlank() }
+        if (logs.isEmpty()) card.addView(label("No local events recorded yet.", 13f, yellow, false))
+        else logs.take(50).forEach { card.addView(label(it, 12f, white, false).apply { setPadding(0, dp(5), 0, dp(5)) }) }
+        card.addView(button("REFRESH DERIV TRADES", false) {
+            if (connected) { derivApiClient.requestOpenTrades(); derivApiClient.requestTradeHistory(); toast("Refreshing open trades and history.") }
+            else toast("Connect to Deriv first.")
+        }, matchWrap().apply { topMargin = dp(8) })
+        page.addView(card, matchWrap())
+    }
+
+    private fun addNotificationsScreen() {
+        page.addView(sectionTitle("NOTIFICATIONS"))
+        val card = card().apply { orientation = LinearLayout.VERTICAL }
+        card.addView(label("Trade and risk notifications", 18f, green, true))
+        card.addView(label("Notifications are off until you activate them here. When enabled, the app records trade events in this feed and posts Android notifications when permission is granted.", 13f, muted, false))
+        card.addView(button(if (notificationsEnabled) "TURN NOTIFICATIONS OFF" else "ACTIVATE NOTIFICATIONS", notificationsEnabled) {
+            if (!notificationsEnabled) {
+                appPrefs.edit().putBoolean("notificationsEnabled", true).apply()
+                ensureNotificationPermission()
+                notifyEvent("Notifications activated", "Trade and risk event notifications are now enabled.")
+            } else {
+                appPrefs.edit().putBoolean("notificationsEnabled", false).apply()
+                addNotificationFeedItem("Notifications deactivated")
+            }
+            render()
+        }, matchWrap().apply { topMargin = dp(10) })
+        card.addView(label("Notification permission: ${if (Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) "GRANTED / NOT REQUIRED" else "NOT GRANTED — allow it in Android settings"}", 12f, yellow, false).apply { setPadding(0, dp(8), 0, dp(4)) })
+        card.addView(button("CLEAR NOTIFICATION FEED", false) {
+            appPrefs.edit().remove("notification_feed").apply()
+            render()
+        }, matchWrap().apply { topMargin = dp(6) })
+        page.addView(card, matchWrap().apply { bottomMargin = dp(10) })
+        page.addView(sectionTitle("RECENT NOTIFICATIONS"))
+        val saved = appPrefs.getString("notification_feed", "").orEmpty().lines().filter { it.isNotBlank() }
+        if (saved.isEmpty()) page.addView(label("No notifications yet.", 13f, yellow, false))
+        else saved.take(50).forEach { item ->
+            val row = card().apply { addView(label(item, 12f, white, false)) }
+            page.addView(row, matchWrap().apply { bottomMargin = dp(5) })
+        }
+    }
+
+    private fun addSettingsScreen() {
+        page.addView(sectionTitle("SETTINGS"))
+        val card = card().apply { orientation = LinearLayout.VERTICAL }
+        card.addView(label("Account and notification settings", 16f, green, true))
+        card.addView(button("OPEN NOTIFICATIONS", true) { selectedTab = "Notifications"; render() }, matchWrap())
+        card.addView(button("MY PROFILE", false) { selectedTab = "My profile"; render() }, matchWrap().apply { topMargin = dp(6) })
+        card.addView(button("SIGN OUT", false) { performPlatformLogout() }, matchWrap().apply { topMargin = dp(6) })
+        page.addView(card, matchWrap())
+    }
+
+    private fun addNotificationFeedItem(message: String) {
+        val stamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).apply { timeZone = dailyCapitalTimeZone }.format(java.util.Date())
+        val entry = "$stamp · $message"
+        val current = appPrefs.getString("notification_feed", "").orEmpty().lines().filter { it.isNotBlank() }.toMutableList()
+        current.add(0, entry)
+        appPrefs.edit().putString("notification_feed", current.take(50).joinToString("\n")).apply()
+    }
+
+    private fun ensureNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7802)
+        }
+    }
+
+    private fun notifyEvent(title: String, message: String) {
+        addNotificationFeedItem("$title — $message")
+        if (!notificationsEnabled) return
+        try {
+            val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+            val channelId = "vi_trade_events"
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                manager.createNotificationChannel(NotificationChannel(channelId, "Trading notifications", NotificationManager.IMPORTANCE_DEFAULT))
+            }
+            if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+            val intent = Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            val pendingIntent = PendingIntent.getActivity(this, 7803, intent, PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0))
+            val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Notification.Builder(this, channelId).setSmallIcon(R.drawable.volatilities_indicator_logo).setContentTitle(title).setContentText(message).setStyle(Notification.BigTextStyle().bigText(message)).setContentIntent(pendingIntent).setAutoCancel(true).build()
+            } else {
+                @Suppress("DEPRECATION")
+                Notification.Builder(this).setSmallIcon(R.drawable.volatilities_indicator_logo).setContentTitle(title).setContentText(message).setContentIntent(pendingIntent).setAutoCancel(true).build()
+            }
+            manager.notify(notificationId++, notification)
+        } catch (_: Exception) { /* Feed remains available even if Android notifications are unavailable. */ }
+    }
+
     // =========================================================
     // ADMIN PREVIEW
     // =========================================================
@@ -2395,7 +2696,15 @@ private fun addTargetFilterAnalysis() {
         ).forEach { item ->
             card.addView(
                 button("⚙  $item", false) {
-                    toast("$item screen will be built separately.")
+                    selectedTab = when (item) {
+                        "Risk Categories" -> "Risk Categories"
+                        "User Accounts" -> "User Accounts"
+                        "Notifications" -> "Notifications"
+                        "Trading Logs" -> "Trading Logs"
+                        "System Settings" -> "Settings"
+                        else -> "Dashboard"
+                    }
+                    if (selectedTab == "User Accounts") loadAdminUsers() else render()
                 },
                 matchWrap().apply {
                     bottomMargin = dp(5)
@@ -2428,21 +2737,12 @@ private fun addTargetFilterAnalysis() {
             )
         }
 
-        val tabs = if (platform == "ADMIN") {
-            listOf(
-                "⌂" to "Home",
-                "▥" to "Trade",
-                "⌁" to "Analysis",
-                "▤" to "News",
-                "⚙" to "Settings"
-            )
+        val tabs = if (authToken.isBlank()) {
+            listOf("⌂" to "Home", "↪" to "Login", "+" to "Register")
+        } else if (platform == "ADMIN") {
+            listOf("⌂" to "Home", "▥" to "Trade", "⌁" to "Analysis", "🔔" to "Notifications", "⚙" to "Settings")
         } else {
-            listOf(
-                "⌂" to "Home",
-                "▥" to "Trade",
-                "▤" to "News",
-                "♙" to "My profile"
-            )
+            listOf("⌂" to "Home", "▥" to "Trade", "🔔" to "Notifications", "♙" to "My profile")
         }
 
         tabs.forEach { (icon, name) ->
@@ -2787,6 +3087,12 @@ private fun addTargetFilterAnalysis() {
             currentPriceViews[symbol]?.forEach { priceView ->
                 priceView.text = "CURRENT PRICE: ${formatMarketPrice(quote)}"
                 priceView.setTextColor(blue)
+            }
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (now - (lastPtpeEvaluationAt[symbol] ?: 0L) >= 3000L) {
+                lastPtpeEvaluationAt[symbol] = now
+                evaluateMasterDecision(symbol)
+                updatePtpeDisplay(symbol)
             }
             attemptMasterDecisionExecution(symbol)
         }
