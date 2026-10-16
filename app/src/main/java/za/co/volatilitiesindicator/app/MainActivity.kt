@@ -24,6 +24,8 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Spinner
+import android.widget.ArrayAdapter
 import android.widget.Toast
 import android.util.Base64
 import java.security.MessageDigest
@@ -138,6 +140,7 @@ private var drawerOpen = false
     private val pendingIndexSymbols = mutableSetOf<String>()
     private val runningContracts = mutableMapOf<Long, RunningContract>()
     private var nextTradeRequestId = 710000
+    private var manualTradeDirection = "BUY"
     private val lastDecisionByIndex = mutableMapOf<String, MasterDecision>()
     private val dailyCapitalTimeZone = java.util.TimeZone.getTimeZone("Africa/Johannesburg")
 
@@ -394,7 +397,6 @@ mainScrollView = scroll
             setPadding(dp(14), dp(8), dp(14), dp(18))
             setBackgroundColor(bg)
         }
-
         scroll.addView(page)
 
         outer.addView(
@@ -493,15 +495,15 @@ when (selectedTab) {
 
         addBottomNavigation(outer)
 
-        // Restore the previous scroll offset only after the new view tree is laid out.
-        // This prevents data callbacks that call render() from jumping to the top.
-        scroll.post {
+        // Restore the previous position after layout settles. Live account callbacks can
+        // trigger repeated renders; a delayed restore prevents the REAL account screen jumping.
+        scroll.postDelayed({
             if (lastRenderedTab == selectedTab) {
                 val maxScroll = (page.height - scroll.height).coerceAtLeast(0)
                 scroll.scrollTo(0, previousScrollY.coerceIn(0, maxScroll))
             }
             lastRenderedTab = selectedTab
-        }
+        }, 80L)
     }
 
 // =========================================================
@@ -794,13 +796,12 @@ private fun performPlatformLogout() {
     if (token.isNotBlank()) authRequest("logout", token = token) { _, _ -> }
     toast("You have been signed out.")
 }
-
 private fun addHeader() {
     val row = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         setPadding(dp(2), dp(4), dp(2), dp(4))
     }
-    val menu = label("☰", 28f, white, true).apply {
+        val menu = label("☰", 28f, white, true).apply {
             gravity = Gravity.CENTER
 
             setOnClickListener {
@@ -1190,12 +1191,127 @@ private fun addTradeScreen() {
         if (autoTradeEnabled) green else red, true))
     autoTradeCard.addView(label("PTPE target probability ≥ 80% • target eligibility ≥ 1.5% • 3-day ONETOUCH • 10% profit close target • stake 20% of South African day-start capital.", 12f, white, false))
     autoTradeCard.addView(label("Master Decision requires confirmed MSS/CHOCH, a valid structural target, and at least five historical comparable 72-hour samples. One open contract per index.", 12f, muted, false))
+    val gateCard = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(10), dp(9), dp(10), dp(9))
+        background = shape(bg, greenDark, 8, 1)
+    }
+    gateCard.addView(label("ANALYSIS GATE BY INDEX", 12f, green, true))
+    marketDataIndexes.forEach { symbol ->
+        val decision = lastDecisionByIndex[symbol]
+        val text = if (decision != null) {
+            "$symbol • ${decision.direction} • Target ${String.format(java.util.Locale.US, "%.3f", decision.target)} • PTPE ${String.format(java.util.Locale.US, "%.1f", decision.targetProbability)}% • ${decision.sampleCount} samples"
+        } else {
+            "$symbol • WAITING — all MSS/CHOCH, structural-target and PTPE gates not yet confirmed"
+        }
+        gateCard.addView(label(text, 11f, if (decision != null) green else yellow, decision != null).apply {
+            setPadding(0, dp(5), 0, dp(3))
+        })
+    }
+    autoTradeCard.addView(gateCard, matchWrap().apply { topMargin = dp(8) })
     autoTradeCard.addView(button(if (autoTradeEnabled) "TURN MASTER DECISION OFF" else "TURN MASTER DECISION ON", autoTradeEnabled) {
         autoTradeEnabled = !autoTradeEnabled
         if (autoTradeEnabled && !connected) toast("Master Decision is ON, but execution waits until Deriv is connected.")
         render()
     }, matchWrap().apply { topMargin = dp(8) })
     page.addView(autoTradeCard, matchWrap().apply { bottomMargin = dp(10) })
+
+    // Manual Touch trade — intentionally excludes No Touch and all other contract types.
+    page.addView(sectionTitle("MANUAL TOUCH TRADE"))
+    val manualCard = card()
+    manualCard.addView(label("Manual execution • Touch only", 14f, green, true))
+    manualCard.addView(label("Choose an index, direction, duration, barrier offset and stake. This places a Deriv ONETOUCH contract only.", 12f, muted, false))
+
+    val symbolSpinner = Spinner(this)
+    val symbolAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item,
+        listOf("R_10", "R_25", "R_50", "R_75", "R_100"))
+    symbolAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+    symbolSpinner.adapter = symbolAdapter
+    manualCard.addView(label("INDEX", 11f, green, true))
+    manualCard.addView(symbolSpinner, matchWrap())
+
+    val directionRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+    val buyDirection = button("BUY / TOUCHES", manualTradeDirection == "BUY") {
+        manualTradeDirection = "BUY"
+        render()
+    }
+    val sellDirection = button("SELL / TOUCHES", manualTradeDirection == "SELL") {
+        manualTradeDirection = "SELL"
+        render()
+    }
+    directionRow.addView(buyDirection, LinearLayout.LayoutParams(0, dp(48), 1f).apply { rightMargin = dp(5) })
+    directionRow.addView(sellDirection, LinearLayout.LayoutParams(0, dp(48), 1f).apply { leftMargin = dp(5) })
+    manualCard.addView(directionRow, matchWrap().apply { topMargin = dp(7) })
+
+    fun manualInput(hint: String, value: String, numeric: Boolean = true): android.widget.EditText {
+        return android.widget.EditText(this).apply {
+            setSingleLine(true)
+            setText(value)
+            this.hint = hint
+            setHintTextColor(muted)
+            setTextColor(yellow)
+            textSize = 16f
+            inputType = if (numeric) android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL or android.text.InputType.TYPE_NUMBER_FLAG_SIGNED else android.text.InputType.TYPE_CLASS_TEXT
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            background = shape(panel2, greenDark, 8, 1)
+        }
+    }
+    manualCard.addView(label("DURATION (HOURS)", 11f, green, true))
+    val durationInput = manualInput("8", "8")
+    manualCard.addView(durationInput, matchWrap())
+    manualCard.addView(label("BARRIER OFFSET (PRICE UNITS)", 11f, green, true).apply { setPadding(0, dp(7), 0, 0) })
+    val barrierInput = manualInput("1.10", "1.10")
+    manualCard.addView(barrierInput, matchWrap())
+    manualCard.addView(label("STAKE (${accountCurrency.ifBlank { "USD" }})", 11f, green, true).apply { setPadding(0, dp(7), 0, 0) })
+    val stakeInput = manualInput("1.00", "1.00")
+    manualCard.addView(stakeInput, matchWrap())
+    manualCard.addView(button("PURCHASE TOUCH CONTRACT", true) {
+        if (!connected || accountId.isBlank()) {
+            toast("Connect the selected Deriv account before manual execution.")
+            return@button
+        }
+        val symbol = symbolSpinner.selectedItem?.toString().orEmpty()
+        val duration = durationInput.text.toString().toIntOrNull()
+        val barrierMagnitude = barrierInput.text.toString().toDoubleOrNull()
+        val stake = stakeInput.text.toString().toDoubleOrNull()
+        if (duration == null || duration < 1 || barrierMagnitude == null || barrierMagnitude <= 0.0 || stake == null || stake <= 0.0) {
+            toast("Enter a duration of at least 1 hour, a positive barrier offset and a positive stake.")
+            return@button
+        }
+        if (stake > accountBalance) {
+            toast("Stake exceeds the available account balance.")
+            return@button
+        }
+        if (activeContractForIndex(symbol)) {
+            toast("An open or pending contract already exists for $symbol.")
+            return@button
+        }
+        val current = marketDataPrices[symbol] ?: 0.0
+        val signedBarrier = if (manualTradeDirection == "BUY") barrierMagnitude else -barrierMagnitude
+        val target = if (current > 0.0) current + signedBarrier else signedBarrier
+        val reqId = nextTradeRequestId()
+        pendingIndexSymbols.add(symbol)
+        pendingOrdersByRequest[reqId] = PendingOrder(symbol, manualTradeDirection, current, target, 0.0, stake, executionMode, "PROPOSAL")
+        val proposal = JSONObject()
+            .put("proposal", 1)
+            .put("amount", stake)
+            .put("basis", "stake")
+            .put("contract_type", "ONETOUCH")
+            .put("currency", accountCurrency.ifBlank { "USD" })
+            .put("duration", duration)
+            .put("duration_unit", "h")
+            .put("symbol", symbol)
+            .put("barrier", (if (signedBarrier > 0) "+" else "") + String.format(java.util.Locale.US, "%.3f", signedBarrier))
+            .put("req_id", reqId)
+        if (!derivApiClient.send(proposal)) {
+            pendingOrdersByRequest.remove(reqId)
+            pendingIndexSymbols.remove(symbol)
+            toast("Unable to submit Touch proposal.")
+        } else {
+            toast("Touch proposal requested for $symbol.")
+        }
+    }, matchWrap().apply { topMargin = dp(10) })
+    page.addView(manualCard, matchWrap().apply { bottomMargin = dp(12) })
 
     // Running Trades
     page.addView(sectionTitle("RUNNING TRADES"))
@@ -1220,15 +1336,52 @@ private fun addTradeScreen() {
         val symbol = item.optString("underlying", item.optString("symbol", "—"))
         val contractType = item.optString("contract_type", "")
         val direction = if (contractType.contains("DOWN") || contractType.contains("PUT")) "SELL" else "BUY"
-        val stake = item.optDouble("buy_price", item.optDouble("buy_price", 0.0))
-        val stakeText = String.format(java.util.Locale.US, "%.2f", stake)
-        runningCard.addView(label("$symbol • $direction • Contract $contractId • Stake $stakeText", 12f, white, false))
+        val stake = item.optDouble("buy_price", 0.0)
+        val currentValue = item.optDouble("bid_price", item.optDouble("current_spot", 0.0))
+        val profit = item.optDouble("profit", item.optDouble("profit_open", 0.0))
+        val barrier = item.optString("barrier", "—")
+        val expiryEpoch = item.optLong("date_expiry", 0L)
+        val expiryText = if (expiryEpoch > 0L) {
+            val remain = (expiryEpoch - System.currentTimeMillis() / 1000L).coerceAtLeast(0L)
+            String.format(java.util.Locale.US, "%02d:%02d:%02d", remain / 3600, (remain % 3600) / 60, remain % 60)
+        } else "—"
+        val tradeRow = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            background = shape(panel, greenDark, 8, 1)
+        }
+        tradeRow.addView(label("$symbol • $direction ${if (contractType.contains("TOUCH")) "TOUCH" else contractType}", 14f, green, true))
+        tradeRow.addView(label("Contract: $contractId", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
+        tradeRow.addView(label("Stake: ${String.format(java.util.Locale.US, "%.2f", stake)}   P/L: ${String.format(java.util.Locale.US, "%.2f", profit)}", 12f, if (profit >= 0) blue else red, true).apply { setPadding(0, dp(4), 0, 0) })
+        tradeRow.addView(label("Current value/spot: ${if (currentValue > 0) String.format(java.util.Locale.US, "%.2f", currentValue) else "—"}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
+        tradeRow.addView(label("Barrier: $barrier   Expiry: $expiryText", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
+        tradeRow.addView(button("CLOSE TRADE", true) {
+            if (connected && contractId > 0L) {
+                val sent = derivApiClient.send(JSONObject().put("sell", contractId).put("price", 0).put("req_id", nextTradeRequestId()))
+                if (!sent) toast("Unable to send close request.")
+                else toast("Close request sent for contract $contractId.")
+            } else toast("Connect to the account holding this contract.")
+        }, matchWrap().apply { topMargin = dp(8) })
+        runningCard.addView(tradeRow, matchWrap().apply { topMargin = dp(7) })
         visibleRunning++
     }
     runningContracts.values.forEach { running ->
         val runningStakeText = String.format(java.util.Locale.US, "%.2f", running.stake)
         val runningProbabilityText = String.format(java.util.Locale.US, "%.1f", running.targetProbability)
-        runningCard.addView(label("${running.symbol} • ${running.direction} • Contract ${running.contractId} • Stake $runningStakeText • PTPE $runningProbabilityText%", 12f, green, false))
+        val tradeRow = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            background = shape(panel, greenDark, 8, 1)
+        }
+        tradeRow.addView(label("${running.symbol} • ${running.direction} TOUCH", 14f, green, true))
+        tradeRow.addView(label("Contract: ${running.contractId}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
+        tradeRow.addView(label("Stake: $runningStakeText   PTPE: $runningProbabilityText%", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
+        tradeRow.addView(label("Target: ${String.format(java.util.Locale.US, "%.3f", running.target)}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
+        tradeRow.addView(button("CLOSE TRADE", true) {
+            if (connected) derivApiClient.send(JSONObject().put("sell", running.contractId).put("price", 0).put("req_id", nextTradeRequestId()))
+            else toast("Connect to the account holding this contract.")
+        }, matchWrap().apply { topMargin = dp(8) })
+        runningCard.addView(tradeRow, matchWrap().apply { topMargin = dp(7) })
         visibleRunning++
     }
     if (visibleRunning == 0) runningCard.addView(label("No open contracts returned by Deriv for this account.", 12f, yellow, false))
@@ -1410,8 +1563,7 @@ private fun analysisMssEvents(candles: List<DerivApiClient.Candle>): List<Analys
 }
 private fun analysisLatestMss(candles: List<DerivApiClient.Candle>): AnalysisMssEvent? =
     analysisMssEvents(candles).lastOrNull()
-
-/* Historical Step 5 events only become eligible once the pivot's two
+    /* Historical Step 5 events only become eligible once the pivot's two
    right-side confirmation candles have completed, as in WebTrader h5Events. */
 private fun analysisHistoricalOutcomes(candles: List<DerivApiClient.Candle>): List<AnalysisHistoricalOutcome> {
     if (candles.size < 30) return emptyList()
@@ -1892,6 +2044,7 @@ private fun addQualificationAnalysis() {
         page.addView(qualificationCard, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
     }
 }
+
 private fun addTargetFilterAnalysis() {
     val header = card().apply { orientation = LinearLayout.VERTICAL }
     val row = horizontalRow()
@@ -2271,7 +2424,7 @@ private fun addTargetFilterAnalysis() {
             val item = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
-                setPadding(dp(3), dp(7), dp(3), dp(5))
+                setPadding(dp(2), dp(3), dp(2), dp(2))
                 background = shape(
                     Color.rgb(4, 12, 10),
                     if (selected) greenDark else Color.rgb(40, 68, 72),
@@ -2286,15 +2439,21 @@ private fun addTargetFilterAnalysis() {
             }
 
             item.addView(
-                label(icon, 24f, if (selected) green else white, true)
+                label(icon, 23f, if (selected) green else yellow, true).apply {
+                    gravity = Gravity.CENTER
+                }
             )
             item.addView(
-                label(name, 11f, if (selected) green else white, selected)
+                label(name, 10f, if (selected) green else yellow, selected).apply {
+                    gravity = Gravity.CENTER
+                    maxLines = 1
+                    includeFontPadding = true
+                }
             )
-            nav.addView(item, LinearLayout.LayoutParams(0, dp(55), 1f))
+            nav.addView(item, LinearLayout.LayoutParams(0, dp(68), 1f))
         }
 
-        outer.addView(nav, LinearLayout.LayoutParams(-1, dp(65)))
+        outer.addView(nav, LinearLayout.LayoutParams(-1, dp(76)))
     }
 
     // =========================================================
@@ -2688,5 +2847,6 @@ override fun onMarketDataError(
         runOnUiThread { connected = false; accountStatus.text = "●  NOT CONNECTED"; accountStatus.setTextColor(red) }
     }
 
-                                        }   
-            
+                }
+        
+  
