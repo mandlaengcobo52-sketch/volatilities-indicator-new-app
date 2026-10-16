@@ -142,19 +142,6 @@ private var drawerOpen = false
     private var nextTradeRequestId = 710000
     private var manualTradeDirection = "BUY"
     private val lastDecisionByIndex = mutableMapOf<String, MasterDecision>()
-    private val executionStatusByIndex = mutableMapOf<String, String>()
-    private val executionStatusViewsByIndex = mutableMapOf<String, TextView>()
-
-    private fun setExecutionStatus(symbol: String, status: String) {
-        executionStatusByIndex[symbol] = status
-        val view = executionStatusViewsByIndex[symbol] ?: return
-        view.text = "   $status"
-        view.setTextColor(when {
-            status.startsWith("EXECUTED") || status.startsWith("PROPOSAL ACCEPTED") -> green
-            status.contains("REJECTED") || status.contains("FAILED") || status.startsWith("NOT SENT") || status.startsWith("BUY NOT SENT") -> red
-            else -> yellow
-        })
-    }
     private val dailyCapitalTimeZone = java.util.TimeZone.getTimeZone("Africa/Johannesburg")
 
     private fun nextTradeRequestId(): Int = ++nextTradeRequestId
@@ -239,61 +226,19 @@ private var drawerOpen = false
     }
 
     private fun attemptMasterDecisionExecution(symbol: String) {
-        if (symbol !in marketDataIndexes) return
-        if (!autoTradeEnabled) {
-            setExecutionStatus(symbol, "NOT SENT — Master Decision is OFF")
-            return
-        }
-        if (!connected || accountId.isBlank()) {
-            setExecutionStatus(symbol, "NOT SENT — Deriv account is not connected")
-            return
-        }
-        if (accountBalance <= 0.0) {
-            setExecutionStatus(symbol, "NOT SENT — waiting for account balance")
-            return
-        }
-        if (activeContractForIndex(symbol)) {
-            val status = if (pendingIndexSymbols.contains(symbol)) {
-                "PENDING/ACTIVE — duplicate execution blocked for this index"
-            } else {
-                "ALREADY ACTIVE — one contract per index rule"
-            }
-            setExecutionStatus(symbol, status)
-            return
-        }
-
-        val decision = evaluateMasterDecision(symbol)
-        if (decision == null) {
-            lastDecisionByIndex.remove(symbol)
-            setExecutionStatus(symbol, "NOT QUALIFIED — at least one Master Decision gate is not met")
-            return
-        }
+        if (!autoTradeEnabled || !connected || accountId.isBlank() || accountBalance <= 0.0) return
+        if (symbol !in marketDataIndexes || activeContractForIndex(symbol)) return
+        val decision = evaluateMasterDecision(symbol) ?: return
         lastDecisionByIndex[symbol] = decision
         val startCapital = dailyStartingCapital()
-        if (startCapital <= 0.0) {
-            setExecutionStatus(symbol, "NOT SENT — daily starting capital is unavailable")
-            return
-        }
         val stake = kotlin.math.round(startCapital * 0.20 * 100.0) / 100.0
-        if (stake <= 0.0) {
-            setExecutionStatus(symbol, "NOT SENT — calculated stake is zero")
-            return
-        }
-        if (stake > accountBalance) {
-            setExecutionStatus(symbol, "NOT SENT — stake ${formatMoney(stake)} exceeds available balance ${formatMoney(accountBalance)}")
-            return
-        }
+        if (stake <= 0.0 || stake > accountBalance) return
         val barrierOffset = decision.target - decision.entry
-        if (!barrierOffset.isFinite() || kotlin.math.abs(barrierOffset) < 0.000001) {
-            setExecutionStatus(symbol, "NOT SENT — target barrier offset is invalid")
-            return
-        }
-
+        if (!barrierOffset.isFinite() || kotlin.math.abs(barrierOffset) < 0.000001) return
         val reqId = nextTradeRequestId()
         pendingIndexSymbols.add(symbol)
         pendingOrdersByRequest[reqId] = PendingOrder(symbol, decision.direction, decision.entry,
             decision.target, decision.targetProbability, stake, executionMode, "PROPOSAL")
-        setExecutionStatus(symbol, "PROPOSAL SENT — waiting for Deriv confirmation")
         val proposal = JSONObject()
             .put("proposal", 1)
             .put("amount", stake)
@@ -302,13 +247,11 @@ private var drawerOpen = false
             .put("currency", accountCurrency.ifBlank { "USD" })
             .put("duration", 3)
             .put("duration_unit", "d")
-            .put("symbol", symbol)
+            .put("underlying_symbol", symbol)
             .put("barrier", (if (barrierOffset > 0) "+" else "") + String.format(java.util.Locale.US, "%.3f", barrierOffset))
             .put("req_id", reqId)
         if (!derivApiClient.send(proposal)) {
-            pendingOrdersByRequest.remove(reqId)
-            pendingIndexSymbols.remove(symbol)
-            setExecutionStatus(symbol, "NOT SENT — DerivApiClient refused the proposal message")
+            pendingOrdersByRequest.remove(reqId); pendingIndexSymbols.remove(symbol)
         }
     }
 
@@ -317,12 +260,7 @@ private var drawerOpen = false
         val reqId = json.optInt("req_id", -1)
         if (json.has("error")) {
             val failed = pendingOrdersByRequest.remove(reqId)
-            if (failed != null) {
-                pendingIndexSymbols.remove(failed.symbol)
-                val error = json.optJSONObject("error")?.optString("message", "Unknown Deriv error")
-                    ?: "Unknown Deriv error"
-                setExecutionStatus(failed.symbol, "DERIV REJECTED ${failed.stage}: $error")
-            }
+            if (failed != null) pendingIndexSymbols.remove(failed.symbol)
             return
         }
         val pending = pendingOrdersByRequest[reqId]
@@ -331,19 +269,13 @@ private var drawerOpen = false
             val proposalId = proposal?.optString("id", "").orEmpty()
             val payout = proposal?.optDouble("payout", 0.0) ?: 0.0
             if (proposalId.isBlank() || payout <= 0.0) {
-                pendingOrdersByRequest.remove(reqId)
-                pendingIndexSymbols.remove(pending.symbol)
-                setExecutionStatus(pending.symbol, "PROPOSAL REJECTED — Deriv returned no valid proposal ID or payout")
-                return
+                pendingOrdersByRequest.remove(reqId); pendingIndexSymbols.remove(pending.symbol); return
             }
             val buyReqId = nextTradeRequestId()
             pendingOrdersByRequest.remove(reqId)
             pendingOrdersByRequest[buyReqId] = pending.copy(stage = "BUY")
-            setExecutionStatus(pending.symbol, "PROPOSAL ACCEPTED — purchase request sent to Deriv")
             if (!derivApiClient.send(JSONObject().put("buy", proposalId).put("price", pending.stake).put("req_id", buyReqId))) {
-                pendingOrdersByRequest.remove(buyReqId)
-                pendingIndexSymbols.remove(pending.symbol)
-                setExecutionStatus(pending.symbol, "BUY NOT SENT — DerivApiClient refused the purchase message")
+                pendingOrdersByRequest.remove(buyReqId); pendingIndexSymbols.remove(pending.symbol)
             }
             return
         }
@@ -351,15 +283,11 @@ private var drawerOpen = false
             val buy = json.optJSONObject("buy")
             val contractId = buy?.optLong("contract_id", 0L) ?: 0L
             if (contractId <= 0L) {
-                pendingOrdersByRequest.remove(reqId)
-                pendingIndexSymbols.remove(pending.symbol)
-                setExecutionStatus(pending.symbol, "BUY FAILED — Deriv response contained no contract ID")
-                return
+                pendingOrdersByRequest.remove(reqId); pendingIndexSymbols.remove(pending.symbol); return
             }
             runningContracts[contractId] = RunningContract(contractId, pending.symbol, pending.direction,
                 pending.stake, pending.target, pending.targetProbability, pending.mode)
             pendingOrdersByRequest.remove(reqId)
-            setExecutionStatus(pending.symbol, "EXECUTED — contract $contractId is running")
             derivApiClient.send(JSONObject().put("proposal_open_contract", 1).put("contract_id", contractId).put("subscribe", 1))
             derivApiClient.requestOpenTrades()
             derivApiClient.requestTradeHistory()
@@ -380,11 +308,9 @@ private var drawerOpen = false
             if (status == "sold" || status == "won" || status == "lost" || contract.optInt("is_sold", 0) == 1) {
                 runningContracts.remove(contractId)
                 pendingIndexSymbols.remove(running.symbol)
-                setExecutionStatus(running.symbol, "CONTRACT CLOSED — contract $contractId status $status")
             }
         }
     }
-
     // ANALYSIS — MARKET DATA STATE
 private val marketDataIndexes = listOf(
     "R_10",
@@ -471,7 +397,6 @@ mainScrollView = scroll
             setPadding(dp(14), dp(8), dp(14), dp(18))
             setBackgroundColor(bg)
         }
-
         scroll.addView(page)
 
         outer.addView(
@@ -1196,11 +1121,10 @@ private fun addHeader() {
             }
         )
                             }
-                             // =========================================================
+                            // =========================================================
 // TRADE SCREEN
 // =========================================================
 private fun addTradeScreen() {
-    executionStatusViewsByIndex.clear()
     page.addView(sectionTitle("TRADE CONTROL"))
 
     // Account and connection status
@@ -1262,21 +1186,14 @@ private fun addTradeScreen() {
     gateCard.addView(label("ANALYSIS GATE BY INDEX", 12f, green, true))
     marketDataIndexes.forEach { symbol ->
         val decision = lastDecisionByIndex[symbol]
-        val qualificationText = if (decision != null) {
-            "$symbol • QUALIFIED ${decision.direction} • Target ${String.format(java.util.Locale.US, "%.3f", decision.target)} • PTPE ${String.format(java.util.Locale.US, "%.1f", decision.targetProbability)}% • ${decision.sampleCount} samples"
+        val text = if (decision != null) {
+            "$symbol • ${decision.direction} • Target ${String.format(java.util.Locale.US, "%.3f", decision.target)} • PTPE ${String.format(java.util.Locale.US, "%.1f", decision.targetProbability)}% • ${decision.sampleCount} samples"
         } else {
-            "$symbol • WAITING — Master Decision qualification gates not all met"
+            "$symbol • WAITING — all MSS/CHOCH, structural-target and PTPE gates not yet confirmed"
         }
-        gateCard.addView(label(qualificationText, 11f, if (decision != null) green else yellow, decision != null).apply {
-            setPadding(0, dp(5), 0, dp(2))
-        })
-        val executionText = executionStatusByIndex[symbol] ?: "EXECUTION STATUS — no qualifying order attempted yet"
-        val executionView = label("   $executionText", 10f,
-            if (executionText.startsWith("EXECUTED") || executionText.startsWith("PROPOSAL ACCEPTED")) green
-            else if (executionText.contains("REJECTED") || executionText.contains("FAILED") || executionText.startsWith("NOT SENT") || executionText.startsWith("BUY NOT SENT")) red
-            else yellow, false).apply { setPadding(0, 0, 0, dp(4)) }
-        executionStatusViewsByIndex[symbol] = executionView
-        gateCard.addView(executionView)
+        gateCard.addView(label(text, 11f, if (decision != null) green else yellow, decision != null).apply {
+            setPadding(0, dp(5), 0, dp(3))
+            })
     }
     autoTradeCard.addView(gateCard, matchWrap().apply { topMargin = dp(8) })
     autoTradeCard.addView(button(if (autoTradeEnabled) "TURN MASTER DECISION OFF" else "TURN MASTER DECISION ON", autoTradeEnabled) {
@@ -1370,7 +1287,7 @@ private fun addTradeScreen() {
             .put("currency", accountCurrency.ifBlank { "USD" })
             .put("duration", duration)
             .put("duration_unit", "h")
-            .put("symbol", symbol)
+            .put("underlying_symbol", symbol)
             .put("barrier", (if (signedBarrier > 0) "+" else "") + String.format(java.util.Locale.US, "%.3f", signedBarrier))
             .put("req_id", reqId)
         if (!derivApiClient.send(proposal)) {
@@ -1659,7 +1576,7 @@ private fun analysisHistoricalOutcomes(candles: List<DerivApiClient.Candle>): Li
         } else if (hl != null && c.epoch > hl.epoch && c.close < hl.price) {
             if (used.add("S:${hl.epoch}")) events.add(AnalysisMssEvent("BEARISH MSS", "BEARISH", hl, c))
         }
-        }
+    }
     return events.mapIndexed { idx, event ->
         var end = candles.lastIndex
         for (next in idx + 1 until events.size) {
@@ -1883,6 +1800,7 @@ private fun addMssChochBehaviourAnalysis() {
         page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
     }
 }
+
 // =========================================================
 // ANALYSIS — DIRECTION AND STRUCTURAL TARGET
 // =========================================================
@@ -1989,7 +1907,6 @@ private fun addDirectionStructuralTargetAnalysis() {
                 12f, blue, false
             )
         )
-
         page.addView(
             indexCard,
             matchWrap().apply {
@@ -1999,6 +1916,7 @@ private fun addDirectionStructuralTargetAnalysis() {
         )
     }
 }
+
 // =========================================================
 // label("Analysis - Qualification", 17f, green, true)
 // =========================================================
@@ -2373,7 +2291,7 @@ private fun addTargetFilterAnalysis() {
                         val id = user.optString("id", "")
                         val first = firstName.text.toString().trim()
                         val last = surname.text.toString().trim()
-                        val mail = email.text.toString().trim()
+                    val mail = email.text.toString().trim()
                         val contact = phone.text.toString().trim()
                         val newPassword = password.text.toString()
                         val selectedRisk = riskPlans[riskSpinner.selectedItemPosition]
@@ -2603,6 +2521,7 @@ private fun addTargetFilterAnalysis() {
             this.text = text
             textSize = 13f
             isAllCaps = false
+
             typeface = Typeface.create(
                 "sans-serif",
                 Typeface.BOLD
@@ -2687,7 +2606,6 @@ private fun addTargetFilterAnalysis() {
     private fun weighted(): LinearLayout.LayoutParams {
         return LinearLayout.LayoutParams(0, dp(52), 1f)
     }
-
     private fun space(width: Int): View {
         return View(this).apply {
             layoutParams = LinearLayout.LayoutParams(width, 1)
@@ -2848,7 +2766,6 @@ private fun addTargetFilterAnalysis() {
             accountBalance = balance; accountCurrency = currency; connected = true
             balanceView.text = "Balance:  $currency ${String.format(java.util.Locale.US, "%.2f", balance)}"
             accountStatus.text = "●  CONNECTED — $executionMode"; accountStatus.setTextColor(green)
-            marketDataIndexes.forEach { attemptMasterDecisionExecution(it) }
         }
     }
     override fun onTick(symbol: String, quote: Double, epoch: Long) {
@@ -2914,7 +2831,6 @@ override fun onCandles(
     runOnUiThread {
         marketDataCandles[symbol] = candles
         marketDataErrors.remove(symbol)
-        attemptMasterDecisionExecution(symbol)
 
         if (selectedTab == "Analysis") {
             render()
@@ -2944,4 +2860,4 @@ override fun onMarketDataError(
         runOnUiThread { connected = false; accountStatus.text = "●  NOT CONNECTED"; accountStatus.setTextColor(red) }
     }
 
-                                        }
+                }
