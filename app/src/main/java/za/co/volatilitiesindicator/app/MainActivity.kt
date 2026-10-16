@@ -37,8 +37,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val panel2 = Color.rgb(16, 34, 39)
     private val green = Color.rgb(0, 255, 92)
     private val greenDark = Color.rgb(0, 120, 48)
-    private val white = Color.rgb(242, 248, 245)
-    private val muted = Color.rgb(145, 164, 155)
+    private val white = Color.rgb(255, 220, 45)
+    private val muted = Color.rgb(242, 248, 245)
     private val yellow = Color.rgb(255, 220, 45)
     private val red = Color.rgb(255, 65, 75)
     private val cyan = Color.rgb(0, 225, 235)
@@ -345,6 +345,7 @@ window.decorView.systemUiVisibility = 0
 platform = appPrefs.getString("platform", "USER") ?: "USER"
 executionMode = appPrefs.getString("executionMode", "DEMO") ?: "DEMO"
 selectedTab = appPrefs.getString("selectedTab", "Home") ?: "Home"
+        if (selectedTab == "Account") selectedTab = "My profile"
 authToken = authPrefs.getString("mobile_auth_token", "").orEmpty()
 
 render()
@@ -399,7 +400,7 @@ mainScrollView = scroll
         outer.addView(
             scroll,
             LinearLayout.LayoutParams(-1, 0, 1f)
-            )
+        )
         setContentView(outer)
         addHeader()
 
@@ -434,7 +435,7 @@ when (selectedTab) {
         matchWrap()
     )
 }
-"Account" -> {
+"My profile", "Account" -> {
     addUserProfileScreen(page)
 }
 "User Accounts" -> addAdminUsersScreen()
@@ -595,7 +596,7 @@ private fun addRegistrationScreen() {
                             authToken = token
                             authPrefs.edit().putString("mobile_auth_token", token).apply()
                             currentProfile = result.optJSONObject("user")
-                            selectedTab = "Account"
+                            selectedTab = "My profile"
                         } else {
                             selectedTab = "Login"
                         }
@@ -654,7 +655,7 @@ private fun addLoginScreen() {
                         currentProfile = result.optJSONObject("user")
                         val role = currentProfile?.optString("role", "user") ?: "user"
 platform = if (role.equals("admin", ignoreCase = true)) "ADMIN" else "USER"
-                        selectedTab = "Account"
+                        selectedTab = "My profile"
                         drawerOpen = false
                         render()
                         toast("Login successful.")
@@ -673,8 +674,26 @@ platform = if (role.equals("admin", ignoreCase = true)) "ADMIN" else "USER"
 }
 
 private fun addUserProfileScreen(page: LinearLayout) {
-    val profileCard = card().apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(20), dp(20), dp(20)) }
-    profileCard.addView(label("MY PROFILE", 22f, green, true))
+    val profileCard = card().apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(20), dp(20), dp(20), dp(20))
+    }
+    val profileLogo = ImageView(this).apply {
+        setImageResource(R.drawable.volatilities_indicator_logo)
+        scaleType = ImageView.ScaleType.FIT_CENTER
+        contentDescription = "Volatilities Indicator logo"
+    }
+    profileCard.addView(
+        profileLogo,
+        LinearLayout.LayoutParams(dp(96), dp(96)).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            bottomMargin = dp(12)
+        }
+    )
+    profileCard.addView(label("MY PROFILE", 22f, green, true).apply {
+        gravity = Gravity.CENTER
+        setPadding(0, 0, 0, dp(16))
+    })
     if (authToken.isBlank()) {
         profileCard.addView(label("Sign in to view your account profile.", 15f, muted, false))
         profileCard.addView(button("SIGN IN", true) { selectedTab = "Login"; render() }, matchWrap())
@@ -698,9 +717,9 @@ private fun addUserProfileScreen(page: LinearLayout) {
         val risk = u.optString("risk_profile", "")
         val riskPercent = u.optInt("risk_percent", 0)
         val riskText = if (risk.isBlank() || risk == "null") "Not assigned" else "${risk.replaceFirstChar { it.uppercase() }} risk${if (riskPercent > 0) " — $riskPercent% stake" else ""}"
-        profileField("Assigned risk plan", riskText)
-        profileField("Start date", u.optString("start_date", "").takeUnless { it == "null" }.orEmpty())
-        profileField("Expiry date", u.optString("expiry_date", "").takeUnless { it == "null" }.orEmpty())
+        profileField("Risk plan", riskText)
+        profileField("Start of risk plan", u.optString("start_date", "").takeUnless { it == "null" }.orEmpty())
+        profileField("Expiry of risk plan", u.optString("expiry_date", "").takeUnless { it == "null" }.orEmpty())
         val status = u.optString("status", "approved").uppercase()
         profileField("Account status", status)
         profileCard.addView(button("REFRESH PROFILE", false) { refreshProfile(showMessage = true) }, matchWrap().apply { topMargin = dp(8) })
@@ -751,7 +770,7 @@ private fun refreshProfile(showMessage: Boolean) {
         profileLoading = false
         if (ok) {
             currentProfile = result.optJSONObject("user")
-            if (selectedTab == "Account") render()
+            if (selectedTab == "My profile" || selectedTab == "Account") render()
             if (showMessage) toast("Profile updated.")
         } else {
             authToken = ""
@@ -781,7 +800,7 @@ private fun addHeader() {
         orientation = LinearLayout.HORIZONTAL
         setPadding(dp(2), dp(4), dp(2), dp(4))
     }
-        val menu = label("☰", 28f, white, true).apply {
+    val menu = label("☰", 28f, white, true).apply {
             gravity = Gravity.CENTER
 
             setOnClickListener {
@@ -802,6 +821,7 @@ private fun addHeader() {
             scaleType = ImageView.ScaleType.CENTER_CROP
 
             contentDescription = "Volatilities Indicator logo"
+
             background = shape(
                 Color.rgb(0, 22, 12),
                 green,
@@ -895,10 +915,8 @@ private fun addHeader() {
             listOf(
                 "Home",
                 "Trade",
-                "Analysis",
                 "News",
-                "Settings",
-                "Account",
+                "My profile",
                 "Logout"
             )
         }
@@ -1874,7 +1892,6 @@ private fun addQualificationAnalysis() {
         page.addView(qualificationCard, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
     }
 }
-
 private fun addTargetFilterAnalysis() {
     val header = card().apply { orientation = LinearLayout.VERTICAL }
     val row = horizontalRow()
@@ -2232,13 +2249,22 @@ private fun addTargetFilterAnalysis() {
             )
         }
 
-        val tabs = listOf(
-            "⌂" to "Home",
-            "▥" to "Trade",
-            "⌁" to "Analysis",
-            "▤" to "News",
-            "⚙" to "Settings"
-        )
+        val tabs = if (platform == "ADMIN") {
+            listOf(
+                "⌂" to "Home",
+                "▥" to "Trade",
+                "⌁" to "Analysis",
+                "▤" to "News",
+                "⚙" to "Settings"
+            )
+        } else {
+            listOf(
+                "⌂" to "Home",
+                "▥" to "Trade",
+                "▤" to "News",
+                "♙" to "My profile"
+            )
+        }
 
         tabs.forEach { (icon, name) ->
             val selected = selectedTab == name
@@ -2305,7 +2331,7 @@ private fun addTargetFilterAnalysis() {
                 typeface = Typeface.create(
                     "sans-serif",
                     Typeface.BOLD
-                    )
+                )
             }
 
             gravity = Gravity.CENTER_VERTICAL
@@ -2662,4 +2688,5 @@ override fun onMarketDataError(
         runOnUiThread { connected = false; accountStatus.text = "●  NOT CONNECTED"; accountStatus.setTextColor(red) }
     }
 
-                }
+                                        }   
+            
