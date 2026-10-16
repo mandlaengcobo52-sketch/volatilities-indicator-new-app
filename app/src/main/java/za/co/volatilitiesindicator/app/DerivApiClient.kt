@@ -398,8 +398,9 @@ private val candleIndexes = listOf(
             )
             .enqueue(
                 object :
-                    okhttp3.Callback {
-                        override fun onFailure(
+                okhttp3.Callback {
+
+                    override fun onFailure(
                         call: okhttp3.Call,
                         e: java.io.IOException
                     ) {
@@ -797,11 +798,10 @@ private val candleIndexes = listOf(
 
             if (
                 url.isNotEmpty()
-                ) {
+            ) {
 
                 return url
             }
-
             val websocketUrl =
                 data.optString(
                     "websocket_url",
@@ -1196,12 +1196,11 @@ private fun connectMarketDataEndpoint() {
                 val symbol = echoRequest?.optString("ticks_history", "")?.takeIf { it in candleIndexes }
                     ?: candleRequestSymbols.remove(requestId).orEmpty()
                 if (symbol !in candleIndexes) return
-
                 val candlesJson = json.optJSONArray("candles") ?: json.optJSONObject("history")?.optJSONArray("candles")
                 if (candlesJson == null) {
                     callback.onMarketDataError(symbol, "Deriv returned no H1 candles for $symbol.")
                     return
-                    }
+                }
                 val candles = mutableListOf<Candle>()
                 for (i in 0 until candlesJson.length()) {
                     val item = candlesJson.optJSONObject(i) ?: continue
@@ -1345,7 +1344,10 @@ if (tick != null) {
             if (
                 tradeMessageType == "portfolio" ||
                 tradeMessageType == "profit_table" ||
-                tradeMessageType == "proposal_open_contract"
+                tradeMessageType == "proposal_open_contract" ||
+                tradeMessageType == "proposal" ||
+                tradeMessageType == "buy" ||
+                tradeMessageType == "sell"
             ) {
                 callback.onTradeData(json)
             }
@@ -1374,6 +1376,9 @@ if (tick != null) {
                         }
                         ?: "Unknown Deriv WebSocket error"
 
+                if (json.has("req_id")) {
+                    callback.onTradeData(json)
+                }
                 callback.onError(
                     "Deriv: $message"
                 )
@@ -1583,7 +1588,8 @@ if (tick != null) {
             socket
         )
     }
-       /*
+
+    /*
      * Start the application heartbeat.
      */
     private fun startHeartbeat() {
@@ -1988,9 +1994,8 @@ candleRequestSymbols.clear()
     fun switchAccount(
         newAccountType: String
     ) {
-
         val normalized =
-        if (
+            if (
                 newAccountType.equals(
                     "REAL",
                     ignoreCase = true
