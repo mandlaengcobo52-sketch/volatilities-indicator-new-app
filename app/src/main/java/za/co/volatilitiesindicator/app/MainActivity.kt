@@ -24,8 +24,6 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import android.widget.Spinner
-import android.widget.ArrayAdapter
 import android.widget.Toast
 import android.util.Base64
 import java.security.MessageDigest
@@ -76,6 +74,9 @@ private var drawerOpen = false
     private lateinit var accountStatus: TextView
     private lateinit var accountIdView: TextView
     private lateinit var balanceView: TextView
+    private lateinit var openPlView: TextView
+    private val liveContractProfits = mutableMapOf<Long, Double>()
+    private var historyAccountKey: String = ""
     private var connected = false
     private var accountId = ""
     private var accountType = ""
@@ -386,6 +387,7 @@ if (savedToken.isNotBlank() && intent?.data?.host != "oauth-callback") {
     isSmoothScrollingEnabled = true
 }
 mainScrollView = scroll
+
         page = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(8), dp(14), dp(18))
@@ -792,7 +794,6 @@ private fun addHeader() {
             menu,
             LinearLayout.LayoutParams(dp(40), dp(54))
         )
-
         // Use the logo PNG already in res/drawable.
         val logo = ImageView(this).apply {
             setImageResource(
@@ -807,7 +808,7 @@ private fun addHeader() {
                 green,
                 100,
                 2
-                )
+            )
 
             clipToOutline = true
         }
@@ -895,9 +896,9 @@ private fun addHeader() {
             listOf(
                 "Home",
                 "Trade",
+                "Analysis",
                 "News",
-                "Notifications",
-                "Trading Logs",
+                "Settings",
                 "Account",
                 "Logout"
             )
@@ -973,6 +974,17 @@ private fun addHeader() {
     page.addView(row)
     }
 
+    private fun resetAccountScopedTradeData() {
+        tradeHistoryResponse = null
+        openTradesResponse = null
+        openContractResponse = null
+        liveContractProfits.clear()
+        historyAccountKey = ""
+    }
+
+    private fun formatMoney(value: Double): String = String.format(java.util.Locale.US, "%.2f", value)
+    private fun profitColor(value: Double): Int = when { value > 0.000001 -> green; value < -0.000001 -> red; else -> white }
+
     // =========================================================
     // EXECUTION MODE SELECTOR
     // =========================================================
@@ -983,6 +995,7 @@ private fun addHeader() {
         val row = horizontalRow()
         row.addView(
     button("⌁  DEMO", executionMode == "DEMO") {
+        if (executionMode != "DEMO") resetAccountScopedTradeData()
         executionMode = "DEMO"
         render()
         beginDerivConnection()
@@ -995,6 +1008,7 @@ private fun addHeader() {
         row.addView(
     button("▥  REAL", executionMode == "REAL") {
     if (executionMode != "REAL") {
+        resetAccountScopedTradeData()
         executionMode = "REAL"
         render()
         beginDerivConnection()
@@ -1062,12 +1076,9 @@ private fun addHeader() {
         balanceView = label("Balance:  ${if (connected) "$accountCurrency ${String.format(java.util.Locale.US, "%.2f", accountBalance)}" else "—"}", 14f, white, false)
         card.addView(balanceView, matchWrap().apply { topMargin = dp(4) })
 
-        card.addView(
-            label("Open P/L:  —", 14f, white, false),
-            matchWrap().apply {
-                topMargin = dp(4)
-            }
-        )
+        openPlView = label("Open P/L:  ${formatMoney(liveContractProfits.values.sum())}", 14f,
+            profitColor(liveContractProfits.values.sum()), true)
+        card.addView(openPlView, matchWrap().apply { topMargin = dp(4) })
 
         val buttons = horizontalRow()
 
@@ -1102,13 +1113,12 @@ private fun addHeader() {
             matchWrap().apply {
                 topMargin = dp(14)
                 bottomMargin = dp(12)
-                }
+            }
         )
                             }
                             // =========================================================
 // TRADE SCREEN
 // =========================================================
-
 private fun addTradeScreen() {
     page.addView(sectionTitle("TRADE CONTROL"))
 
@@ -1169,97 +1179,6 @@ private fun addTradeScreen() {
         render()
     }, matchWrap().apply { topMargin = dp(8) })
     page.addView(autoTradeCard, matchWrap().apply { bottomMargin = dp(10) })
-
-    // ADMIN-ONLY MANUAL TOUCH TRADE PANEL, separate from automatic execution.
-    if (currentProfile?.optString("role", "user").equals("admin", ignoreCase = true) && platform == "ADMIN") {
-        page.addView(sectionTitle("ADMIN MANUAL TOUCH TRADE"))
-        val manualCard = card().apply { orientation = LinearLayout.VERTICAL }
-        manualCard.addView(label("Manual TOUCH execution test — use DEMO first", 14f, yellow, true))
-        manualCard.addView(label("Choose the index, barrier direction, target barrier distance, stake and contract timeframe. This submits an ONETOUCH proposal to Deriv.", 12f, muted, false))
-
-        fun addManualSpinner(title: String, options: List<String>): Spinner {
-            manualCard.addView(label(title, 12f, green, true))
-            val spinner = Spinner(this)
-            val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, options)
-            adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-            spinner.adapter = adapter
-            manualCard.addView(spinner, matchWrap())
-            return spinner
-        }
-
-        fun addManualNumberInput(hintText: String): android.widget.EditText {
-            return android.widget.EditText(this).apply {
-                hint = hintText
-                inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-                setSingleLine(true)
-                setTextColor(white)
-                setHintTextColor(muted)
-                setPadding(dp(12), dp(10), dp(12), dp(10))
-                setBackgroundTintList(android.content.res.ColorStateList.valueOf(green))
-                manualCard.addView(this, matchWrap())
-            }
-        }
-        val manualIndex = addManualSpinner("INDEX", marketDataIndexes)
-        val manualDirection = addManualSpinner("TARGET BARRIER DIRECTION", listOf("TOUCH ABOVE CURRENT PRICE", "TOUCH BELOW CURRENT PRICE"))
-        manualCard.addView(label("TARGET BARRIER DISTANCE (price units)", 12f, green, true))
-        val manualBarrier = addManualNumberInput("e.g. 17.000")
-        manualCard.addView(label("Enter the distance from the current price, not the absolute target price. The app adds + for above and − for below.", 11f, muted, false))
-        manualCard.addView(label("STAKE (account currency)", 12f, green, true))
-        val manualStake = addManualNumberInput("Enter stake")
-        val manualTimeframe = addManualSpinner("TIMEFRAME", listOf("1 minute", "5 minutes", "15 minutes", "1 hour", "4 hours", "1 day"))
-
-        manualCard.addView(button("EXECUTE MANUAL TOUCH TRADE", true) {
-            if (!currentProfile?.optString("role", "user").equals("admin", ignoreCase = true) || platform != "ADMIN") {
-                toast("Administrator access is required."); return@button
-            }
-            if (!connected || accountId.isBlank()) { toast("Connect to Deriv first."); return@button }
-            val stake = manualStake.text.toString().toDoubleOrNull()
-            if (stake == null || !stake.isFinite() || stake <= 0.0 || stake > accountBalance) {
-                toast("Enter a valid stake not exceeding the available balance."); return@button
-            }
-            val barrierDistance = manualBarrier.text.toString().toDoubleOrNull()
-            if (barrierDistance == null || !barrierDistance.isFinite() || barrierDistance <= 0.0) {
-                toast("Enter a target barrier distance greater than zero."); return@button
-            }
-            val symbol = manualIndex.selectedItem.toString()
-            if (activeContractForIndex(symbol)) { toast("A trade is already open or pending for $symbol."); return@button }
-            val isAbove = manualDirection.selectedItemPosition == 0
-            val direction = if (isAbove) "TOUCH_ABOVE" else "TOUCH_BELOW"
-            val selectedTf = manualTimeframe.selectedItem.toString()
-            val (duration, unit) = when (selectedTf) {
-                "1 minute" -> 1 to "m"
-                "5 minutes" -> 5 to "m"
-                "15 minutes" -> 15 to "m"
-                "1 hour" -> 1 to "h"
-                "4 hours" -> 4 to "h"
-                else -> 1 to "d"
-            }
-            val entry = marketDataPrices[symbol] ?: 0.0
-            val signedBarrier = (if (isAbove) "+" else "-") + String.format(java.util.Locale.US, "%.3f", barrierDistance)
-            val reqId = nextTradeRequestId()
-            pendingIndexSymbols.add(symbol)
-            pendingOrdersByRequest[reqId] = PendingOrder(symbol, direction, entry, 0.0, 0.0, stake, executionMode, "MANUAL_PROPOSAL")
-            val proposal = JSONObject()
-                .put("proposal", 1)
-                .put("amount", stake)
-                .put("basis", "stake")
-                .put("contract_type", "ONETOUCH")
-                .put("currency", accountCurrency.ifBlank { "USD" })
-                .put("duration", duration)
-                .put("duration_unit", unit)
-                .put("symbol", symbol)
-                .put("barrier", signedBarrier)
-                .put("req_id", reqId)
-            if (!derivApiClient.send(proposal)) {
-                pendingOrdersByRequest.remove(reqId)
-                pendingIndexSymbols.remove(symbol)
-                toast("Could not send the manual TOUCH proposal.")
-            } else {
-                toast("Manual TOUCH proposal sent for $symbol. Waiting for Deriv confirmation.")
-            }
-        }, matchWrap().apply { topMargin = dp(10) })
-        page.addView(manualCard, matchWrap().apply { bottomMargin = dp(10) })
-    }
 
     // Running Trades
     page.addView(sectionTitle("RUNNING TRADES"))
@@ -1345,7 +1264,19 @@ private fun addTradeScreen() {
         val buyPriceText = String.format(java.util.Locale.US, "%.2f", buyPrice)
         val profitText = String.format(java.util.Locale.US, "%.2f", profit)
         val statusText = if (sellPrice > 0) "CLOSED" else "OPEN/UNKNOWN"
-        historyCard.addView(label("$symbol • Contract $contractId • $timeText • Stake $buyPriceText • P/L $profitText • $statusText", 12f, white, false))
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), dp(9), dp(10), dp(9))
+            background = GradientDrawable().apply {
+                setColor(Color.rgb(10, 25, 22))
+                setStroke(dp(1), if (profit > 0.0) greenDark else if (profit < 0.0) Color.rgb(130, 35, 42) else Color.rgb(45, 65, 58))
+                cornerRadius = dp(7).toFloat()
+            }
+        }
+        row.addView(label("$symbol   •   $statusText", 13f, white, true))
+        row.addView(label("Contract $contractId   •   $timeText", 11f, muted, false).apply { setPadding(0, dp(4), 0, 0) })
+        row.addView(label("STAKE  $buyPriceText     P/L  $profitText", 12f, profitColor(profit), true).apply { setPadding(0, dp(5), 0, 0) })
+        historyCard.addView(row, matchWrap().apply { topMargin = dp(6) })
         historyCount++
     }
     if (historyCount == 0) historyCard.addView(label("No completed trade-history records were returned by Deriv yet.", 12f, yellow, false))
@@ -1714,21 +1645,10 @@ private fun addMssChochBehaviourAnalysis() {
 }
 
 // =========================================================
-// ANALYSIS — DIRECTION & STRUCTURAL TARGET
+// ANALYSIS — DIRECTION AND STRUCTURAL TARGET
 // =========================================================
 private fun addDirectionStructuralTargetAnalysis() {
-    val header = card().apply { orientation = LinearLayout.VERTICAL }
-    val row = horizontalRow()
-    row.addView(label("Analysis - Direction & structural target", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
-    row.addView(button(if (directionStructuralTargetExpanded) "▼ OPEN" else "▶ CLOSED", directionStructuralTargetExpanded) {
-        directionStructuralTargetExpanded = !directionStructuralTargetExpanded
-        render()
-    }, LinearLayout.LayoutParams(-2, dp(48)))
-    header.addView(row)
-    page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
-    if (!directionStructuralTargetExpanded) return
-
-    page.addView(label("Direction and target use the latest confirmed MSS/CHOCH and the same structural pivot rules as Market Structure.", 12f, muted, false))
+    page.addView(label("Direction is taken from the latest confirmed MSS/CHOCH. The structural target must lie beyond the current price in that direction.", 12f, muted, false))
     marketDataIndexes.forEach { symbol ->
         val candles = analysisCompletedCandles(symbol)
         val current = marketDataPrices[symbol] ?: candles.lastOrNull()?.close
@@ -1741,26 +1661,103 @@ private fun addDirectionStructuralTargetAnalysis() {
         val target = if (event != null && current != null && direction.isNotBlank()) {
             analysisStructuralTarget(candles, current, direction, event.confirmation.epoch)
         } else null
-        val hasTarget = target != null && current != null &&
-            ((direction == "UP" && target.price > current) ||
-             (direction == "DOWN" && target.price < current))
-        val distance = if (hasTarget && current != null && current > 0.0) {
-            kotlin.math.abs(target!!.price - current) / current * 100.0
-        } else null
+        val hasTarget = target != null &&
+            current != null &&
+            (
+                (direction == "UP" && target.price > current) ||
+                (direction == "DOWN" && target.price < current)
+            )
 
-        val indexCard = card().apply { orientation = LinearLayout.VERTICAL }
-        indexCard.addView(label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true))
-        val priceView = label("CURRENT PRICE: ${formatMarketPrice(current)}", 14f, blue, true)
-        registerCurrentPriceView(symbol, "direction-target", priceView)
+        val distance = if (
+            hasTarget && current != null && current != 0.0
+        ) {
+            kotlin.math.abs(target!!.price - current) /
+                current * 100.0
+        } else {
+            null
+        }
+
+        val indexCard = card().apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        indexCard.addView(
+            label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true)
+        )
+
+        val priceView = label(
+            "CURRENT PRICE: ${formatMarketPrice(current)}",
+            14f, blue, true
+        )
+
+        registerCurrentPriceView(
+            symbol,
+            "direction-target",
+            priceView
+        )
+
         indexCard.addView(priceView)
-        indexCard.addView(label("MSS / CHOCH: ${event?.state ?: "WAITING"}", 13f,
-            when (direction) { "UP" -> green; "DOWN" -> red; else -> yellow }, true))
-        indexCard.addView(label("DIRECTION: ${direction.ifBlank { "WAITING" }}", 13f,
-            when (direction) { "UP" -> green; "DOWN" -> red; else -> yellow }, true))
-        indexCard.addView(label("STRUCTURAL TARGET: ${if (hasTarget) formatMarketPrice(target?.price) else "WAITING"}", 13f,
-            if (hasTarget) green else yellow, true))
-        indexCard.addView(label("TARGET DISTANCE: ${distance?.let { String.format(java.util.Locale.US, "%.3f%%", it) } ?: "—"}", 12f, blue, false))
-        page.addView(indexCard, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
+
+        indexCard.addView(
+            label(
+                "MSS / CHOCH: ${event?.state ?: "WAITING"}",
+                13f,
+                when (direction) {
+                    "UP" -> green
+                    "DOWN" -> red
+                    else -> yellow
+                },
+                true
+            )
+        )
+
+        indexCard.addView(
+            label(
+                "DIRECTION: ${direction.ifBlank { "WAITING" }}",
+                13f,
+                when (direction) {
+                    "UP" -> green
+                    "DOWN" -> red
+                    else -> yellow
+                },
+                true
+            )
+        )
+
+        indexCard.addView(
+            label(
+                "STRUCTURAL TARGET: ${
+                    if (hasTarget) formatMarketPrice(target?.price)
+                    else "WAITING"
+                }",
+                13f,
+                if (hasTarget) green else yellow,
+                true
+            )
+        )
+
+        indexCard.addView(
+            label(
+                "TARGET DISTANCE: ${
+                    distance?.let {
+                        String.format(
+                            java.util.Locale.US,
+                            "%.3f%%",
+                            it
+                        )
+                    } ?: "—"
+                }",
+                12f, blue, false
+            )
+        )
+
+        page.addView(
+            indexCard,
+            matchWrap().apply {
+                topMargin = dp(6)
+                bottomMargin = dp(6)
+            }
+        )
     }
 }
 
@@ -1807,7 +1804,7 @@ private fun addQualificationAnalysis() {
         } else null
         val history = if (candles.size >= 30) {
             val outcomes = analysisHistoricalOutcomes(candles)
-  outcomes.filter {
+            outcomes.filter {
                 it.direction == event?.direction &&
                     (event == null || it.confirmation.epoch != event.confirmation.epoch)
             }.takeLast(20)
@@ -1963,7 +1960,6 @@ private fun addTargetFilterAnalysis() {
             },
             matchWrap().apply { topMargin = dp(8); bottomMargin = dp(8) }
         )
-
         val users = adminUsers
         if (adminUsersLoading && users == null) {
             page.addView(label("Loading registrations…", 14f, yellow, false))
@@ -2198,7 +2194,7 @@ private fun addTargetFilterAnalysis() {
             "Index Settings",
             "Risk Categories",
             "User Accounts",
-                 "Notifications",
+            "Notifications",
             "Trading Logs",
             "System Settings"
         ).forEach { item ->
@@ -2238,17 +2234,21 @@ private fun addTargetFilterAnalysis() {
 
             background = shape(
                 Color.rgb(4, 12, 10),
+                background = shape(
+                Color.rgb(4, 12, 10),
                 greenDark,
                 12,
                 1
             )
         }
 
-        val tabs = if (currentProfile?.optString("role", "user").equals("admin", ignoreCase = true)) {
-            listOf("⌂" to "Home", "▥" to "Trade", "⌁" to "Analysis", "▤" to "News", "⚙" to "Settings")
-        } else {
-            listOf("⌂" to "Home", "▥" to "Trade", "▤" to "News", "♙" to "Account")
-        }
+        val tabs = listOf(
+            "⌂" to "Home",
+            "▥" to "Trade",
+            "⌁" to "Analysis",
+            "▤" to "News",
+            "⚙" to "Settings"
+        )
 
         tabs.forEach { (icon, name) ->
             val selected = selectedTab == name
@@ -2365,7 +2365,6 @@ private fun addTargetFilterAnalysis() {
                 "sans-serif",
                 Typeface.BOLD
             )
-
             setTextColor(
                 if (active) {
                     Color.rgb(0, 25, 12)
@@ -2525,7 +2524,6 @@ private fun addTargetFilterAnalysis() {
         render()
         exchangeOAuthCode(code)
     }
-
     private fun exchangeOAuthCode(code: String) {
         val verifier = prefs.getString("code_verifier", "").orEmpty()
         if (verifier.isBlank()) { toast("OAuth verifier is missing."); return }
@@ -2555,7 +2553,7 @@ private fun addTargetFilterAnalysis() {
                 }
             }
         })
-        }
+    }
 
     private fun oauthError(body: String): String = try {
         val j = JSONObject(body); val err = j.optJSONObject("error")
@@ -2591,9 +2589,11 @@ private fun addTargetFilterAnalysis() {
     }
     override fun onConnected(accountId: String, accountType: String) {
     runOnUiThread {
+        if (this.accountId.isNotBlank() && this.accountId != accountId) resetAccountScopedTradeData()
         this.accountId = accountId
         this.accountType = accountType
-                derivApiClient.requestOpenTrades()
+        historyAccountKey = "$executionMode:$accountId"
+        derivApiClient.requestOpenTrades()
         derivApiClient.requestTradeHistory()
         derivApiClient.requestHistoricalCandles()
         connected = true
@@ -2630,13 +2630,32 @@ private fun addTargetFilterAnalysis() {
         when (messageType) {
             "portfolio" -> {
                 openTradesResponse = json
+                val contracts = json.optJSONObject("portfolio")?.optJSONArray("contracts") ?: json.optJSONArray("contracts")
+                if (contracts != null) for (i in 0 until contracts.length()) {
+                    val c = contracts.optJSONObject(i) ?: continue
+                    val id = c.optLong("contract_id", 0L)
+                    if (id > 0L) derivApiClient.send(JSONObject().put("proposal_open_contract", 1).put("contract_id", id).put("subscribe", 1))
+                }
             }
-
             "proposal_open_contract" -> {
                 openContractResponse = json
+                val contract = json.optJSONObject("proposal_open_contract")
+                if (contract != null) {
+                    val id = contract.optLong("contract_id", 0L)
+                    val status = contract.optString("status", "")
+                    if (id > 0L) {
+                        if (status == "sold" || status == "won" || status == "lost" || contract.optInt("is_sold", 0) == 1) liveContractProfits.remove(id)
+                        else liveContractProfits[id] = contract.optDouble("profit", contract.optDouble("profit_open", 0.0))
+                    }
+                    if (::openPlView.isInitialized) {
+                        val pl = liveContractProfits.values.sum()
+                        openPlView.text = "Open P/L:  ${formatMoney(pl)}"
+                        openPlView.setTextColor(profitColor(pl))
+                    }
+                }
             }
-               "profit_table" -> {
-                tradeHistoryResponse = json
+            "profit_table" -> {
+                if (connected && accountId.isNotBlank()) tradeHistoryResponse = json
             }
         }
 
@@ -2681,4 +2700,5 @@ override fun onMarketDataError(
         runOnUiThread { connected = false; accountStatus.text = "●  NOT CONNECTED"; accountStatus.setTextColor(red) }
     }
 
-                                        }
+                }
+                
