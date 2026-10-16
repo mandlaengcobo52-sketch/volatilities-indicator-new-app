@@ -399,7 +399,7 @@ mainScrollView = scroll
         outer.addView(
             scroll,
             LinearLayout.LayoutParams(-1, 0, 1f)
-        )
+            )
         setContentView(outer)
         addHeader()
 
@@ -802,7 +802,6 @@ private fun addHeader() {
             scaleType = ImageView.ScaleType.CENTER_CROP
 
             contentDescription = "Volatilities Indicator logo"
-
             background = shape(
                 Color.rgb(0, 22, 12),
                 green,
@@ -2224,17 +2223,8 @@ private fun addTargetFilterAnalysis() {
         val nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-
-            setPadding(
-                dp(3),
-                dp(7),
-                dp(3),
-                dp(5)
-            )
-
+            setPadding(dp(3), dp(7), dp(3), dp(5))
             background = shape(
-                Color.rgb(4, 12, 10),
-                background = shape(
                 Color.rgb(4, 12, 10),
                 greenDark,
                 12,
@@ -2252,26 +2242,16 @@ private fun addTargetFilterAnalysis() {
 
         tabs.forEach { (icon, name) ->
             val selected = selectedTab == name
-
             val item = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
-
-                            setPadding(
-                dp(3),
-                dp(7),
-                dp(3),
-                dp(5)
-            )
-
-            background = shape(
-                Color.rgb(4, 12, 10),
-                greenDark,
-                12,
-                1
-            )
-            }
-
+                setPadding(dp(3), dp(7), dp(3), dp(5))
+                background = shape(
+                    Color.rgb(4, 12, 10),
+                    if (selected) greenDark else Color.rgb(40, 68, 72),
+                    12,
+                    1
+                )
                 setOnClickListener {
                     selectedTab = name
                     drawerOpen = false
@@ -2280,32 +2260,15 @@ private fun addTargetFilterAnalysis() {
             }
 
             item.addView(
-                label(
-                    icon,
-                    24f,
-                    if (selected) green else white,
-                    true
-                )
+                label(icon, 24f, if (selected) green else white, true)
             )
             item.addView(
-                label(
-                    name,
-                    11f,
-                    if (selected) green else white,
-                    selected
-                )
+                label(name, 11f, if (selected) green else white, selected)
             )
-
-            nav.addView(
-                item,
-                LinearLayout.LayoutParams(0, dp(55), 1f)
-            )
+            nav.addView(item, LinearLayout.LayoutParams(0, dp(55), 1f))
         }
 
-        outer.addView(
-            nav,
-            LinearLayout.LayoutParams(-1, dp(65))
-        )
+        outer.addView(nav, LinearLayout.LayoutParams(-1, dp(65)))
     }
 
     // =========================================================
@@ -2342,7 +2305,7 @@ private fun addTargetFilterAnalysis() {
                 typeface = Typeface.create(
                     "sans-serif",
                     Typeface.BOLD
-                )
+                    )
             }
 
             gravity = Gravity.CENTER_VERTICAL
@@ -2700,4 +2663,3 @@ override fun onMarketDataError(
     }
 
                 }
-                
