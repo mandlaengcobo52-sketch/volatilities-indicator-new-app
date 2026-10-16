@@ -102,6 +102,7 @@ private var drawerOpen = false
     private var adminUsers: JSONArray? = null
     private var adminUsersLoading: Boolean = false
     private var openTradesResponse: JSONObject? = null
+    private var portfolioLoadedForAccount: Boolean = false
     private var openContractResponse: JSONObject? = null
     private var tradeHistoryResponse: JSONObject? = null
 
@@ -142,6 +143,17 @@ private var drawerOpen = false
         val mode: String,
         var takeProfitRequested: Boolean = false
     )
+    private data class ContractLiveViews(
+        val stake: Double,
+        val symbol: String,
+        val target: Double?,
+        val probability: Double,
+        val pnl: TextView,
+        val spot: TextView,
+        val barrierExpiry: TextView,
+        val ptpe: TextView
+    )
+    private val contractLiveViews = mutableMapOf<Long, ContractLiveViews>()
 
     private val pendingOrdersByRequest = mutableMapOf<Int, PendingOrder>()
     private val pendingIndexSymbols = mutableSetOf<String>()
@@ -204,6 +216,25 @@ private var drawerOpen = false
             val sold = item.optInt("is_sold", 0) == 1 || item.optString("is_sold", "").equals("true", true)
             val status = item.optString("status", "open").lowercase()
             if (contractSymbol == symbol.uppercase() && !sold && status !in setOf("sold", "won", "lost", "expired")) return true
+        }
+        return false
+    }
+
+    /** Enforce one identical stake for every trade during the fixed account/mode/day window. */
+    private fun hasOpenStakeMismatch(expectedStake: Double): Boolean {
+        if (expectedStake <= 0.0) return true
+        if (pendingOrdersByRequest.values.any { it.mode == executionMode && kotlin.math.abs(it.stake - expectedStake) > 0.01 }) return true
+        if (runningContracts.values.any { it.mode == executionMode && kotlin.math.abs(it.stake - expectedStake) > 0.01 }) return true
+        val root = openTradesResponse ?: return false
+        val portfolio = root.optJSONObject("portfolio")
+        val contracts = portfolio?.optJSONArray("contracts") ?: root.optJSONArray("contracts") ?: return false
+        for (i in 0 until contracts.length()) {
+            val item = contracts.optJSONObject(i) ?: continue
+            val sold = item.optInt("is_sold", 0) == 1 || item.optString("is_sold", "").equals("true", true)
+            val status = item.optString("status", "open").lowercase()
+            if (sold || status in setOf("sold", "won", "lost", "expired")) continue
+            val existingStake = item.optDouble("buy_price", Double.NaN)
+            if (existingStake.isFinite() && existingStake > 0.0 && kotlin.math.abs(existingStake - expectedStake) > 0.01) return true
         }
         return false
     }
@@ -355,13 +386,18 @@ private var drawerOpen = false
         lastDecisionByIndex[symbol] = decision
         return decision
     }
-
     private fun attemptMasterDecisionExecution(symbol: String) {
         if (!autoTradeEnabled || !connected || accountId.isBlank() || accountBalance <= 0.0) return
+        // Never execute against a stale/unknown portfolio: wait until Deriv confirms current open contracts.
+        if (!portfolioLoadedForAccount) return
         if (symbol !in marketDataIndexes || activeContractForIndex(symbol)) return
         val decision = lastDecisionByIndex[symbol] ?: evaluateMasterDecision(symbol) ?: return
         if (!canPlaceTrade(showToast = false)) return
         val stake = fixedDailyStake()
+        if (hasOpenStakeMismatch(stake)) {
+            notifyEvent("Trade blocked", "An existing open or pending contract uses a different stake. No new trade can open until the stake is consistent.")
+            return
+        }
         if (stake <= 0.0 || stake > accountBalance) {
             notifyEvent("Trade blocked", "The fixed daily stake is greater than the available balance.")
             return
@@ -397,7 +433,7 @@ private var drawerOpen = false
             val failed = pendingOrdersByRequest.remove(reqId)
             if (failed != null) pendingIndexSymbols.remove(failed.symbol)
             return
-            }
+        }
         val pending = pendingOrdersByRequest[reqId]
         if (pending != null && msgType == "proposal") {
             val proposal = json.optJSONObject("proposal")
@@ -1153,6 +1189,7 @@ private fun addHeader() {
     private fun resetAccountScopedTradeData() {
         tradeHistoryResponse = null
         openTradesResponse = null
+        portfolioLoadedForAccount = false
         openContractResponse = null
         liveContractProfits.clear()
         historyAccountKey = ""
@@ -1314,6 +1351,7 @@ private fun updatePtpeDisplay(symbol: String) {
 // =========================================================
 private fun addTradeScreen() {
     ptpeStatusViews.clear()
+    contractLiveViews.clear()
     marketDataIndexes.forEach { evaluateMasterDecision(it) }
     page.addView(sectionTitle("TRADE CONTROL"))
 
@@ -1452,6 +1490,15 @@ private fun addTradeScreen() {
             toast("Enter a duration of at least 1 hour and a valid absolute barrier target price. Connect to Deriv to calculate the fixed daily stake.")
             return@button
         }
+        if (!portfolioLoadedForAccount) {
+            toast("Checking your current Deriv positions. Please try again in a moment.")
+            derivApiClient.requestOpenTrades()
+            return@button
+        }
+        if (hasOpenStakeMismatch(stake)) {
+            toast("Trading blocked: an existing open or pending contract uses a different stake. Wait until it closes before opening another trade.")
+            return@button
+        }
         if (!canPlaceTrade()) return@button
         if (stake > accountBalance) {
             toast("Stake exceeds the available account balance.")
@@ -1515,17 +1562,22 @@ private fun addTradeScreen() {
     val portfolioArray = openTradesResponse?.optJSONObject("portfolio")?.optJSONArray("contracts")
         ?: openTradesResponse?.optJSONArray("contracts")
     var visibleRunning = 0
+    val renderedContractIds = mutableSetOf<Long>()
     if (portfolioArray != null) for (i in 0 until portfolioArray.length()) {
         val item = portfolioArray.optJSONObject(i) ?: continue
         val contractId = item.optLong("contract_id", 0L)
-        val symbol = item.optString("underlying", item.optString("symbol", "—"))
-        val contractType = item.optString("contract_type", "")
-        val direction = if (contractType.contains("DOWN") || contractType.contains("PUT")) "SELL" else "BUY"
-        val stake = item.optDouble("buy_price", 0.0)
-        val currentValue = item.optDouble("bid_price", item.optDouble("current_spot", 0.0))
-        val profit = item.optDouble("profit", item.optDouble("profit_open", 0.0))
-        val barrier = item.optString("barrier", "—")
-        val expiryEpoch = item.optLong("date_expiry", 0L)
+        if (contractId > 0L) renderedContractIds.add(contractId)
+        val tracked = runningContracts[contractId]
+        val symbol = item.optString("underlying", item.optString("underlying_symbol", item.optString("symbol", tracked?.symbol ?: "—")))
+        val contractType = item.optString("contract_type", item.optString("contract_type_display", "TOUCH"))
+        val direction = tracked?.direction ?: if (contractType.contains("DOWN", true) || contractType.contains("PUT", true) || contractType.contains("SELL", true)) "SELL" else "BUY"
+        val stake = item.optDouble("buy_price", tracked?.stake ?: 0.0)
+        val currentValue = item.optDouble("bid_price", item.optDouble("current_spot", item.optDouble("current_spot_display_value", 0.0)))
+        val profit = liveContractProfits[contractId] ?: item.optDouble("profit", item.optDouble("profit_open", 0.0))
+        val barrierRaw = item.optString("barrier", "").trim()
+        val barrier = if (barrierRaw.isNotEmpty() && barrierRaw != "null") barrierRaw else tracked?.target?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
+        val probability = tracked?.targetProbability ?: lastPtpeByIndex[symbol]?.probability ?: 0.0
+        val expiryEpoch = item.optLong("date_expiry", item.optLong("expiry_time", 0L))
         val expiryText = if (expiryEpoch > 0L) {
             val remain = (expiryEpoch - System.currentTimeMillis() / 1000L).coerceAtLeast(0L)
             String.format(java.util.Locale.US, "%02d:%02d:%02d", remain / 3600, (remain % 3600) / 60, remain % 60)
@@ -1537,9 +1589,15 @@ private fun addTradeScreen() {
         }
         tradeRow.addView(label("$symbol • $direction ${if (contractType.contains("TOUCH")) "TOUCH" else contractType}", 14f, green, true))
         tradeRow.addView(label("Contract: $contractId", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
-        tradeRow.addView(label("Stake: ${String.format(java.util.Locale.US, "%.2f", stake)}   P/L: ${String.format(java.util.Locale.US, "%.2f", profit)}", 12f, if (profit >= 0) blue else red, true).apply { setPadding(0, dp(4), 0, 0) })
-        tradeRow.addView(label("Current value/spot: ${if (currentValue > 0) String.format(java.util.Locale.US, "%.2f", currentValue) else "—"}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
-        tradeRow.addView(label("Barrier: $barrier   Expiry: $expiryText", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
+        val pnlView = label("Stake: ${String.format(java.util.Locale.US, "%.2f", stake)}   P/L: ${String.format(java.util.Locale.US, "%.2f", profit)}", 12f, if (profit >= 0) blue else red, true).apply { setPadding(0, dp(4), 0, 0) }
+        val spotView = label("Current value/spot: ${if (currentValue > 0) String.format(java.util.Locale.US, "%.2f", currentValue) else "—"}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
+        val barrierExpiryView = label("Barrier: $barrier   Expiry: $expiryText", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
+        val ptpeView = label("PTPE: ${String.format(java.util.Locale.US, "%.1f", probability)}%", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
+        tradeRow.addView(pnlView)
+        tradeRow.addView(spotView)
+        tradeRow.addView(barrierExpiryView)
+        tradeRow.addView(ptpeView)
+        if (contractId > 0L) contractLiveViews[contractId] = ContractLiveViews(stake, symbol, tracked?.target, probability, pnlView, spotView, barrierExpiryView, ptpeView)
         tradeRow.addView(button("CLOSE TRADE", true) {
             if (connected && contractId > 0L) {
                 val sent = derivApiClient.send(JSONObject().put("sell", contractId).put("price", 0).put("req_id", nextTradeRequestId()))
@@ -1550,7 +1608,7 @@ private fun addTradeScreen() {
         runningCard.addView(tradeRow, matchWrap().apply { topMargin = dp(7) })
         visibleRunning++
     }
-    runningContracts.values.forEach { running ->
+    runningContracts.values.filter { it.contractId !in renderedContractIds }.forEach { running ->
         val runningStakeText = String.format(java.util.Locale.US, "%.2f", running.stake)
         val runningProbabilityText = String.format(java.util.Locale.US, "%.1f", running.targetProbability)
         val tradeRow = LinearLayout(this).apply {
@@ -2517,7 +2575,7 @@ private fun addTargetFilterAnalysis() {
                             "surname" to last,
                             "email" to mail,
                             "phone" to contact,
-                                "risk_profile" to selectedRisk.lowercase(),
+                            "risk_profile" to selectedRisk.lowercase(),
                             "risk_trades_per_day" to tradesPerDay,
                             "risk_period_days" to "30",
                             "start_date" to planStartDate,
@@ -2531,8 +2589,22 @@ private fun addTargetFilterAnalysis() {
                             values["password"] = newPassword
                         }
                         authRequest("admin_edit_user", values) { ok, result ->
-                            toast(result.optString("message", if (ok) "User details updated." else "Unable to update user."))
-                            if (ok) loadAdminUsers()
+                            if (!ok) {
+                                toast(result.optString("message", "Unable to update user details."))
+                                return@authRequest
+                            }
+                            val riskValues = mapOf(
+                                "user_id" to id,
+                                "risk_profile" to selectedRisk.lowercase(java.util.Locale.US),
+                                "risk_percent" to "20",
+                                "plan_id" to (selectedRisk.lowercase(java.util.Locale.US).replace(" ", "_") + "_30_days"),
+                                "start_date" to planStartDate,
+                                "expiry_date" to planExpiryDate
+                            )
+                            authRequest("admin_allocate_risk", riskValues) { riskOk, riskResult ->
+                                toast(riskResult.optString("message", if (riskOk) "User details and risk plan saved." else "User details saved, but risk plan allocation failed."))
+                                if (riskOk) loadAdminUsers() else loadAdminUsers()
+                            }
                         }
                         dismiss()
                     }
@@ -2628,7 +2700,6 @@ private fun addTargetFilterAnalysis() {
             page.addView(row, matchWrap().apply { bottomMargin = dp(5) })
         }
     }
-
     private fun addSettingsScreen() {
         page.addView(sectionTitle("SETTINGS"))
         val card = card().apply { orientation = LinearLayout.VERTICAL }
@@ -2725,6 +2796,8 @@ private fun addTargetFilterAnalysis() {
     // =========================================================
 
     private fun addBottomNavigation(outer: LinearLayout) {
+        // The application bottom tabs are visible only after the platform account is signed in.
+        if (authToken.isBlank()) return
         val nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -3064,6 +3137,7 @@ private fun addTargetFilterAnalysis() {
         this.accountId = accountId
         this.accountType = accountType
         historyAccountKey = "$executionMode:$accountId"
+        portfolioLoadedForAccount = false
         derivApiClient.requestOpenTrades()
         derivApiClient.requestTradeHistory()
         derivApiClient.requestHistoricalCandles()
@@ -3107,12 +3181,14 @@ private fun addTargetFilterAnalysis() {
         when (messageType) {
             "portfolio" -> {
                 openTradesResponse = json
+                portfolioLoadedForAccount = true
                 val contracts = json.optJSONObject("portfolio")?.optJSONArray("contracts") ?: json.optJSONArray("contracts")
                 if (contracts != null) for (i in 0 until contracts.length()) {
                     val c = contracts.optJSONObject(i) ?: continue
                     val id = c.optLong("contract_id", 0L)
                     if (id > 0L) derivApiClient.send(JSONObject().put("proposal_open_contract", 1).put("contract_id", id).put("subscribe", 1))
                 }
+                if (selectedTab == "Trade") render()
             }
             "proposal_open_contract" -> {
                 openContractResponse = json
@@ -3124,11 +3200,29 @@ private fun addTargetFilterAnalysis() {
                         if (status == "sold" || status == "won" || status == "lost" || contract.optInt("is_sold", 0) == 1) liveContractProfits.remove(id)
                         else liveContractProfits[id] = contract.optDouble("profit", contract.optDouble("profit_open", 0.0))
                     }
+                    if (id > 0L) {
+                        val liveProfit = contract.optDouble("profit", contract.optDouble("profit_open", liveContractProfits[id] ?: 0.0))
+                        val views = contractLiveViews[id]
+                        if (views != null) {
+                            views.pnl.text = "Stake: ${formatMoney(views.stake)}   P/L: ${formatMoney(liveProfit)}"
+                            views.pnl.setTextColor(profitColor(liveProfit))
+                            val spot = contract.optDouble("current_spot", contract.optDouble("current_spot_display_value", 0.0))
+                            views.spot.text = "Current value/spot: ${if (spot > 0.0) formatMoney(spot) else "—"}"
+                            val barrierValue = contract.optString("barrier", "").takeIf { it.isNotBlank() && it != "null" }
+                                ?: views.target?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
+                            val expiryEpoch = contract.optLong("date_expiry", contract.optLong("expiry_time", 0L))
+                            val expiryRemaining = if (expiryEpoch > 0L) (expiryEpoch - System.currentTimeMillis() / 1000L).coerceAtLeast(0L) else 0L
+                            val expiryText = if (expiryEpoch > 0L) String.format(java.util.Locale.US, "%02d:%02d:%02d", expiryRemaining / 3600, (expiryRemaining % 3600) / 60, expiryRemaining % 60) else "—"
+                            views.barrierExpiry.text = "Barrier: $barrierValue   Expiry: $expiryText"
+                            views.ptpe.text = "PTPE: ${String.format(java.util.Locale.US, "%.1f", views.probability)}%"
+                        }
+                    }
                     if (::openPlView.isInitialized) {
                         val pl = liveContractProfits.values.sum()
                         openPlView.text = "Open P/L:  ${formatMoney(pl)}"
                         openPlView.setTextColor(profitColor(pl))
                     }
+                    if ((status == "sold" || status == "won" || status == "lost" || contract.optInt("is_sold", 0) == 1) && selectedTab == "Trade") render()
                 }
             }
             "profit_table" -> {
