@@ -1200,6 +1200,7 @@ private fun addTradeScreen() {
             bottomMargin = dp(10)
         }
     )
+
     // Auto Trade: this toggle now enables the integrated Master Decision execution loop.
     page.addView(sectionTitle("MASTER DECISION / AUTO TRADE"))
     val autoTradeCard = card()
@@ -1669,141 +1670,87 @@ private fun addMssChochAnalysis() {
 private fun addMssChochBehaviourAnalysis() {
     val header = card().apply { orientation = LinearLayout.VERTICAL }
     val row = horizontalRow()
-    row.addView(label("Analysis - MSS/CHOCH behaviour", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
-    row.addView(button(if (mssChochBehaviourExpanded) "▼ OPEN" else "▶ CLOSED", mssChochBehaviourExpanded) {
-        mssChochBehaviourExpanded = !mssChochBehaviourExpanded; render()
-    }, LinearLayout.LayoutParams(-2, dp(48)))
+    row.addView(
+        label("Analysis - MSS/CHOCH behaviour", 17f, green, true),
+        LinearLayout.LayoutParams(0, -2, 1f)
+    )
+    row.addView(
+        button(if (mssChochBehaviourExpanded) "▼ OPEN" else "▶ CLOSED", mssChochBehaviourExpanded) {
+            mssChochBehaviourExpanded = !mssChochBehaviourExpanded
+            render()
+        },
+        LinearLayout.LayoutParams(-2, dp(48))
+    )
     header.addView(row)
     page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
     if (!mssChochBehaviourExpanded) return
-    page.addView(label("Uses the same completed-H1 MSS event rules. The latest current event is excluded from historical samples. The last 20 historical events are measured until an opposite MSS or the end of loaded history. Continuation is the percentage with favourable movement greater than zero; averages are directional favourable/adverse extremes.", 12f, muted, false).apply { setPadding(dp(12), dp(10), dp(12), dp(10)) })
+
+    page.addView(
+        label(
+            "Uses the same completed-H1 MSS event rules. The latest current event is excluded from historical samples. The last 20 historical events are measured until an opposite MSS or the end of loaded history. Continuation is the percentage with favourable movement greater than zero; averages are directional favourable/adverse extremes.",
+            12f, muted, false
+        ).apply { setPadding(dp(12), dp(10), dp(12), dp(10)) }
+    )
+
     marketDataIndexes.forEach { symbol ->
         val candles = analysisCompletedCandles(symbol)
-        val card = card().apply { orientation = LinearLayout.VERTICAL }
-        card.addView(label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true))
+        val behaviourCard = card().apply { orientation = LinearLayout.VERTICAL }
+        behaviourCard.addView(label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true))
+
         if (candles.size < 30) {
-            card.addView(label("STATUS: WAITING FOR AT LEAST 30 COMPLETED H1 CANDLES", 12f, yellow, true))
+            behaviourCard.addView(
+                label("STATUS: WAITING FOR AT LEAST 30 COMPLETED H1 CANDLES", 12f, yellow, true)
+            )
         } else {
             val allOutcomes = analysisHistoricalOutcomes(candles)
             val currentEvent = analysisLatestMss(candles)
-            val history = allOutcomes.filterNot { currentEvent != null && it.confirmation.epoch == currentEvent.confirmation.epoch }.takeLast(20)
+            val history = allOutcomes
+                .filterNot { currentEvent != null && it.confirmation.epoch == currentEvent.confirmation.epoch }
+                .takeLast(20)
             val direction = currentEvent?.direction
             val sample = when (direction) {
                 "BULLISH" -> history.filter { it.direction == "BULLISH" }
                 "BEARISH" -> history.filter { it.direction == "BEARISH" }
                 else -> history
             }
-            val continuation = if (sample.isEmpty()) null else sample.count { it.maxFav > 0.0 }.toDouble() / sample.size * 100.0
+            val continuation = if (sample.isEmpty()) null
+                else sample.count { it.maxFav > 0.0 }.toDouble() / sample.size * 100.0
             val avgFav = sample.takeIf { it.isNotEmpty() }?.map { it.maxFav }?.average()
             val avgAdv = sample.takeIf { it.isNotEmpty() }?.map { it.maxAdv }?.average()
-            card.addView(label("CURRENT MSS: ${currentEvent?.state ?: "NO CONFIRMED EVENT"}", 13f, if (currentEvent?.direction == "BULLISH") green else if (currentEvent?.direction == "BEARISH") red else yellow, true))
-            card.addView(label("HISTORICAL SAMPLE: ${sample.size}  |  BULLISH / BEARISH EVENTS: ${history.count { it.direction == "BULLISH" }} / ${history.count { it.direction == "BEARISH" }}", 12f, white, false))
-            card.addView(label("EVENT SAMPLE: ${direction ?: "ALL HISTORICAL MSS"}", 12f, muted, false))
-            card.addView(label("HISTORICAL CONTINUATION: ${continuation?.let { String.format(java.util.Locale.US, "%.1f%%", it) } ?: "WAITING"}", 13f, if (continuation != null && continuation >= 50.0) green else yellow, true))
-            card.addView(label("AVERAGE FAVOURABLE MOVE: ${avgFav?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
-            card.addView(label("AVERAGE ADVERSE MOVE: ${avgAdv?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
-          val hasTarget = target != null &&
-            current != null &&
-            (
-                (direction == "UP" && target.price > current) ||
-                (direction == "DOWN" && target.price < current)
-            )
 
-        val distance = if (
-            hasTarget && current != null && current != 0.0
-        ) {
-            kotlin.math.abs(target!!.price - current) /
-                current * 100.0
-        } else {
-            null
+            behaviourCard.addView(
+                label(
+                    "CURRENT MSS: ${currentEvent?.state ?: "NO CONFIRMED EVENT"}", 13f,
+                    if (currentEvent?.direction == "BULLISH") green else if (currentEvent?.direction == "BEARISH") red else yellow,
+                    true
+                )
+            )
+            behaviourCard.addView(
+                label(
+                    "HISTORICAL SAMPLE: ${sample.size}  |  BULLISH / BEARISH EVENTS: ${history.count { it.direction == "BULLISH" }} / ${history.count { it.direction == "BEARISH" }}",
+                    12f, white, false
+                )
+            )
+            behaviourCard.addView(label("EVENT SAMPLE: ${direction ?: "ALL HISTORICAL MSS"}", 12f, muted, false))
+            behaviourCard.addView(
+                label(
+                    "HISTORICAL CONTINUATION: ${continuation?.let { String.format(java.util.Locale.US, "%.1f%%", it) } ?: "WAITING"}",
+                    13f, if (continuation != null && continuation >= 50.0) green else yellow, true
+                )
+            )
+            behaviourCard.addView(label("AVERAGE FAVOURABLE MOVE: ${avgFav?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
+            behaviourCard.addView(label("AVERAGE ADVERSE MOVE: ${avgAdv?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
         }
-
-        val indexCard = card().apply {
-            orientation = LinearLayout.VERTICAL
-        }
-
-        indexCard.addView(
-            label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true)
-        )
-
-        val priceView = label(
-            "CURRENT PRICE: ${formatMarketPrice(current)}",
-            14f, blue, true
-        )
-
-        registerCurrentPriceView(
-            symbol,
-            "direction-target",
-            priceView
-        )
-
-        indexCard.addView(priceView)
-
-        indexCard.addView(
-            label(
-                "MSS / CHOCH: ${event?.state ?: "WAITING"}",
-                13f,
-                when (direction) {
-                    "UP" -> green
-                    "DOWN" -> red
-                    else -> yellow
-                },
-                true
-            )
-        )
-
-        indexCard.addView(
-            label(
-                "DIRECTION: ${direction.ifBlank { "WAITING" }}",
-                13f,
-                when (direction) {
-                    "UP" -> green
-                    "DOWN" -> red
-                    else -> yellow
-                },
-                true
-            )
-        )
-
-        indexCard.addView(
-            label(
-                "STRUCTURAL TARGET: ${
-                    if (hasTarget) formatMarketPrice(target?.price)
-                    else "WAITING"
-                }",
-                13f,
-                if (hasTarget) green else yellow,
-                true
-            )
-        )
-
-        indexCard.addView(
-            label(
-                "TARGET DISTANCE: ${
-                    distance?.let {
-                        String.format(
-                            java.util.Locale.US,
-                            "%.3f%%",
-                            it
-                        )
-                    } ?: "—"
-                }",
-                12f, blue, false
-            )
-        )
 
         page.addView(
-            indexCard,
-            matchWrap().apply {
-                topMargin = dp(6)
-                bottomMargin = dp(6)
-            }
+            behaviourCard,
+            matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) }
         )
     }
 }
 
 // =========================================================
-// label("Analysis - Qualification", 17f, green, true)
+// ANALYSIS — QUALIFICATION
 // =========================================================
 
 private fun addQualificationAnalysis() {
@@ -2249,6 +2196,7 @@ private fun addTargetFilterAnalysis() {
                 }
             )
         }
+
         page.addView(
             card,
             matchWrap().apply {
@@ -2720,4 +2668,4 @@ override fun onMarketDataError(
         runOnUiThread { connected = false; accountStatus.text = "●  NOT CONNECTED"; accountStatus.setTextColor(red) }
     }
 
-}
+                                        }
