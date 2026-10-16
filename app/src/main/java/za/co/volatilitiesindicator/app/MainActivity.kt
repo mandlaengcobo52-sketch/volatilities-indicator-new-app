@@ -142,6 +142,19 @@ private var drawerOpen = false
     private var nextTradeRequestId = 710000
     private var manualTradeDirection = "BUY"
     private val lastDecisionByIndex = mutableMapOf<String, MasterDecision>()
+    private val executionStatusByIndex = mutableMapOf<String, String>()
+    private val executionStatusViewsByIndex = mutableMapOf<String, TextView>()
+
+    private fun setExecutionStatus(symbol: String, status: String) {
+        executionStatusByIndex[symbol] = status
+        val view = executionStatusViewsByIndex[symbol] ?: return
+        view.text = "   $status"
+        view.setTextColor(when {
+            status.startsWith("EXECUTED") || status.startsWith("PROPOSAL ACCEPTED") -> green
+            status.contains("REJECTED") || status.contains("FAILED") || status.startsWith("NOT SENT") || status.startsWith("BUY NOT SENT") -> red
+            else -> yellow
+        })
+    }
     private val dailyCapitalTimeZone = java.util.TimeZone.getTimeZone("Africa/Johannesburg")
 
     private fun nextTradeRequestId(): Int = ++nextTradeRequestId
@@ -226,19 +239,61 @@ private var drawerOpen = false
     }
 
     private fun attemptMasterDecisionExecution(symbol: String) {
-        if (!autoTradeEnabled || !connected || accountId.isBlank() || accountBalance <= 0.0) return
-        if (symbol !in marketDataIndexes || activeContractForIndex(symbol)) return
-        val decision = evaluateMasterDecision(symbol) ?: return
+        if (symbol !in marketDataIndexes) return
+        if (!autoTradeEnabled) {
+            setExecutionStatus(symbol, "NOT SENT — Master Decision is OFF")
+            return
+        }
+        if (!connected || accountId.isBlank()) {
+            setExecutionStatus(symbol, "NOT SENT — Deriv account is not connected")
+            return
+        }
+        if (accountBalance <= 0.0) {
+            setExecutionStatus(symbol, "NOT SENT — waiting for account balance")
+            return
+        }
+        if (activeContractForIndex(symbol)) {
+            val status = if (pendingIndexSymbols.contains(symbol)) {
+                "PENDING/ACTIVE — duplicate execution blocked for this index"
+            } else {
+                "ALREADY ACTIVE — one contract per index rule"
+            }
+            setExecutionStatus(symbol, status)
+            return
+        }
+
+        val decision = evaluateMasterDecision(symbol)
+        if (decision == null) {
+            lastDecisionByIndex.remove(symbol)
+            setExecutionStatus(symbol, "NOT QUALIFIED — at least one Master Decision gate is not met")
+            return
+        }
         lastDecisionByIndex[symbol] = decision
         val startCapital = dailyStartingCapital()
+        if (startCapital <= 0.0) {
+            setExecutionStatus(symbol, "NOT SENT — daily starting capital is unavailable")
+            return
+        }
         val stake = kotlin.math.round(startCapital * 0.20 * 100.0) / 100.0
-        if (stake <= 0.0 || stake > accountBalance) return
+        if (stake <= 0.0) {
+            setExecutionStatus(symbol, "NOT SENT — calculated stake is zero")
+            return
+        }
+        if (stake > accountBalance) {
+            setExecutionStatus(symbol, "NOT SENT — stake ${formatMoney(stake)} exceeds available balance ${formatMoney(accountBalance)}")
+            return
+        }
         val barrierOffset = decision.target - decision.entry
-        if (!barrierOffset.isFinite() || kotlin.math.abs(barrierOffset) < 0.000001) return
+        if (!barrierOffset.isFinite() || kotlin.math.abs(barrierOffset) < 0.000001) {
+            setExecutionStatus(symbol, "NOT SENT — target barrier offset is invalid")
+            return
+        }
+
         val reqId = nextTradeRequestId()
         pendingIndexSymbols.add(symbol)
         pendingOrdersByRequest[reqId] = PendingOrder(symbol, decision.direction, decision.entry,
             decision.target, decision.targetProbability, stake, executionMode, "PROPOSAL")
+        setExecutionStatus(symbol, "PROPOSAL SENT — waiting for Deriv confirmation")
         val proposal = JSONObject()
             .put("proposal", 1)
             .put("amount", stake)
@@ -251,7 +306,9 @@ private var drawerOpen = false
             .put("barrier", (if (barrierOffset > 0) "+" else "") + String.format(java.util.Locale.US, "%.3f", barrierOffset))
             .put("req_id", reqId)
         if (!derivApiClient.send(proposal)) {
-            pendingOrdersByRequest.remove(reqId); pendingIndexSymbols.remove(symbol)
+            pendingOrdersByRequest.remove(reqId)
+            pendingIndexSymbols.remove(symbol)
+            setExecutionStatus(symbol, "NOT SENT — DerivApiClient refused the proposal message")
         }
     }
 
@@ -260,7 +317,12 @@ private var drawerOpen = false
         val reqId = json.optInt("req_id", -1)
         if (json.has("error")) {
             val failed = pendingOrdersByRequest.remove(reqId)
-            if (failed != null) pendingIndexSymbols.remove(failed.symbol)
+            if (failed != null) {
+                pendingIndexSymbols.remove(failed.symbol)
+                val error = json.optJSONObject("error")?.optString("message", "Unknown Deriv error")
+                    ?: "Unknown Deriv error"
+                setExecutionStatus(failed.symbol, "DERIV REJECTED ${failed.stage}: $error")
+            }
             return
         }
         val pending = pendingOrdersByRequest[reqId]
@@ -269,13 +331,19 @@ private var drawerOpen = false
             val proposalId = proposal?.optString("id", "").orEmpty()
             val payout = proposal?.optDouble("payout", 0.0) ?: 0.0
             if (proposalId.isBlank() || payout <= 0.0) {
-                pendingOrdersByRequest.remove(reqId); pendingIndexSymbols.remove(pending.symbol); return
+                pendingOrdersByRequest.remove(reqId)
+                pendingIndexSymbols.remove(pending.symbol)
+                setExecutionStatus(pending.symbol, "PROPOSAL REJECTED — Deriv returned no valid proposal ID or payout")
+                return
             }
             val buyReqId = nextTradeRequestId()
             pendingOrdersByRequest.remove(reqId)
             pendingOrdersByRequest[buyReqId] = pending.copy(stage = "BUY")
+            setExecutionStatus(pending.symbol, "PROPOSAL ACCEPTED — purchase request sent to Deriv")
             if (!derivApiClient.send(JSONObject().put("buy", proposalId).put("price", pending.stake).put("req_id", buyReqId))) {
-                pendingOrdersByRequest.remove(buyReqId); pendingIndexSymbols.remove(pending.symbol)
+                pendingOrdersByRequest.remove(buyReqId)
+                pendingIndexSymbols.remove(pending.symbol)
+                setExecutionStatus(pending.symbol, "BUY NOT SENT — DerivApiClient refused the purchase message")
             }
             return
         }
@@ -283,11 +351,15 @@ private var drawerOpen = false
             val buy = json.optJSONObject("buy")
             val contractId = buy?.optLong("contract_id", 0L) ?: 0L
             if (contractId <= 0L) {
-                pendingOrdersByRequest.remove(reqId); pendingIndexSymbols.remove(pending.symbol); return
+                pendingOrdersByRequest.remove(reqId)
+                pendingIndexSymbols.remove(pending.symbol)
+                setExecutionStatus(pending.symbol, "BUY FAILED — Deriv response contained no contract ID")
+                return
             }
             runningContracts[contractId] = RunningContract(contractId, pending.symbol, pending.direction,
                 pending.stake, pending.target, pending.targetProbability, pending.mode)
             pendingOrdersByRequest.remove(reqId)
+            setExecutionStatus(pending.symbol, "EXECUTED — contract $contractId is running")
             derivApiClient.send(JSONObject().put("proposal_open_contract", 1).put("contract_id", contractId).put("subscribe", 1))
             derivApiClient.requestOpenTrades()
             derivApiClient.requestTradeHistory()
@@ -308,9 +380,11 @@ private var drawerOpen = false
             if (status == "sold" || status == "won" || status == "lost" || contract.optInt("is_sold", 0) == 1) {
                 runningContracts.remove(contractId)
                 pendingIndexSymbols.remove(running.symbol)
+                setExecutionStatus(running.symbol, "CONTRACT CLOSED — contract $contractId status $status")
             }
         }
     }
+
     // ANALYSIS — MARKET DATA STATE
 private val marketDataIndexes = listOf(
     "R_10",
@@ -322,8 +396,7 @@ private val marketDataIndexes = listOf(
 
 private val marketDataCandles =
     mutableMapOf<String, List<DerivApiClient.Candle>>()
-
-private val marketDataPrices =
+    private val marketDataPrices =
     mutableMapOf<String, Double>()
 private val marketDataPriceViews = mutableMapOf<String, TextView>()
 private val currentPriceViews = mutableMapOf<String, MutableList<TextView>>()
@@ -1126,6 +1199,7 @@ private fun addHeader() {
 // TRADE SCREEN
 // =========================================================
 private fun addTradeScreen() {
+    executionStatusViewsByIndex.clear()
     page.addView(sectionTitle("TRADE CONTROL"))
 
     // Account and connection status
@@ -1187,14 +1261,21 @@ private fun addTradeScreen() {
     gateCard.addView(label("ANALYSIS GATE BY INDEX", 12f, green, true))
     marketDataIndexes.forEach { symbol ->
         val decision = lastDecisionByIndex[symbol]
-        val text = if (decision != null) {
-            "$symbol • ${decision.direction} • Target ${String.format(java.util.Locale.US, "%.3f", decision.target)} • PTPE ${String.format(java.util.Locale.US, "%.1f", decision.targetProbability)}% • ${decision.sampleCount} samples"
+        val qualificationText = if (decision != null) {
+            "$symbol • QUALIFIED ${decision.direction} • Target ${String.format(java.util.Locale.US, "%.3f", decision.target)} • PTPE ${String.format(java.util.Locale.US, "%.1f", decision.targetProbability)}% • ${decision.sampleCount} samples"
         } else {
-            "$symbol • WAITING — all MSS/CHOCH, structural-target and PTPE gates not yet confirmed"
+            "$symbol • WAITING — Master Decision qualification gates not all met"
         }
-        gateCard.addView(label(text, 11f, if (decision != null) green else yellow, decision != null).apply {
-            setPadding(0, dp(5), 0, dp(3))
+        gateCard.addView(label(qualificationText, 11f, if (decision != null) green else yellow, decision != null).apply {
+            setPadding(0, dp(5), 0, dp(2))
         })
+        val executionText = executionStatusByIndex[symbol] ?: "EXECUTION STATUS — no qualifying order attempted yet"
+        val executionView = label("   $executionText", 10f,
+            if (executionText.startsWith("EXECUTED") || executionText.startsWith("PROPOSAL ACCEPTED")) green
+            else if (executionText.contains("REJECTED") || executionText.contains("FAILED") || executionText.startsWith("NOT SENT") || executionText.startsWith("BUY NOT SENT")) red
+            else yellow, false).apply { setPadding(0, 0, 0, dp(4)) }
+        executionStatusViewsByIndex[symbol] = executionView
+        gateCard.addView(executionView)
     }
     autoTradeCard.addView(gateCard, matchWrap().apply { topMargin = dp(8) })
     autoTradeCard.addView(button(if (autoTradeEnabled) "TURN MASTER DECISION OFF" else "TURN MASTER DECISION ON", autoTradeEnabled) {
@@ -1797,66 +1878,7 @@ private fun addMssChochBehaviourAnalysis() {
             card.addView(label("HISTORICAL CONTINUATION: ${continuation?.let { String.format(java.util.Locale.US, "%.1f%%", it) } ?: "WAITING"}", 13f, if (continuation != null && continuation >= 50.0) green else yellow, true))
             card.addView(label("AVERAGE FAVOURABLE MOVE: ${avgFav?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
             card.addView(label("AVERAGE ADVERSE MOVE: ${avgAdv?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
-        }
-        page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
-    }
-}
-
-// =========================================================
-// ANALYSIS — DIRECTION AND STRUCTURAL TARGET
-// =========================================================
-private fun addDirectionStructuralTargetAnalysis() {
-    page.addView(label("Direction is taken from the latest confirmed MSS/CHOCH. The structural target must lie beyond the current price in that direction.", 12f, muted, false))
-    marketDataIndexes.forEach { symbol ->
-        val candles = analysisCompletedCandles(symbol)
-        val current = marketDataPrices[symbol] ?: candles.lastOrNull()?.close
-        val event = if (candles.size >= 20) analysisLatestMss(candles) else null
-        val direction = when (event?.direction) {
-            "BULLISH" -> "UP"
-            "BEARISH" -> "DOWN"
-            else -> ""
-        }
-        val target = if (event != null && current != null && direction.isNotBlank()) {
-            analysisStructuralTarget(candles, current, direction, event.confirmation.epoch)
-        } else null
-        val hasTarget = target != null &&
-            current != null &&
-            (
-                (direction == "UP" && target.price > current) ||
-                (direction == "DOWN" && target.price < current)
-            )
-
-        val distance = if (
-            hasTarget && current != null && current != 0.0
-        ) {
-            kotlin.math.abs(target!!.price - current) /
-                current * 100.0
-        } else {
-            null
-        }
-
-        val indexCard = card().apply {
-            orientation = LinearLayout.VERTICAL
-        }
-
-        indexCard.addView(
-            label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true)
-        )
-
-        val priceView = label(
-            "CURRENT PRICE: ${formatMarketPrice(current)}",
-            14f, blue, true
-        )
-
-        registerCurrentPriceView(
-            symbol,
-            "direction-target",
-            priceView
-        )
-
-        indexCard.addView(priceView)
-
-        indexCard.addView(
+      indexCard.addView(
             label(
                 "MSS / CHOCH: ${event?.state ?: "WAITING"}",
                 13f,
@@ -2163,6 +2185,59 @@ private fun addTargetFilterAnalysis() {
                                 .setPositiveButton("REACTIVATE") { _, _ ->
                                     authRequest("admin_reactivate_user", mapOf("user_id" to userId)) { ok, result ->
                                         toast(result.optString("message", if (ok) "User reactivated." else "Unable to reactivate user."))
+                                        if (ok) loadAdminUsers()
+                                    }
+                                }.show()
+                        },
+                        matchWrap().apply { topMargin = dp(6) }
+                    )
+                } else if (userStatus == "APPROVED") {
+                    userCard.addView(
+                        button("SUSPEND USER", false) {
+                            android.app.AlertDialog.Builder(this@MainActivity)
+                                .setTitle("Suspend user")
+                                .setMessage("This user will no longer be able to log in. Continue?")
+                                .setNegativeButton("CANCEL", null)
+                                .setPositiveButton("SUSPEND") { _, _ ->
+                                    authRequest("admin_suspend_user", mapOf("user_id" to userId)) { ok, result ->
+                                        toast(result.optString("message", if (ok) "User suspended." else "Unable to suspend user."))
+                                        if (ok) loadAdminUsers()
+                                    }
+                                }.show()
+                        },
+                        matchWrap().apply { topMargin = dp(6) }
+                    )
+                }
+                if (!user.optString("role", "user").equals("admin", ignoreCase = true)) {
+                    userCard.addView(
+                        button("DELETE USER", false) {
+                            android.app.AlertDialog.Builder(this@MainActivity)
+                                .setTitle("Delete user")
+                                .setMessage("Permanently delete ${user.optString("full_name", "this user")} from user management? This cannot be undone.")
+                                .setNegativeButton("CANCEL", null)
+                                .setPositiveButton("DELETE") { _, _ ->
+                                    authRequest("admin_delete_user", mapOf("user_id" to userId)) { ok, result ->
+                                        toast(result.optString("message", if (ok) "User deleted." else "Unable to delete user."))
+                                        if (ok) loadAdminUsers()
+                                    }
+                                }.show()
+                        },
+                        matchWrap().apply { topMargin = dp(6) }
+                    )
+                }
+            } else {
+                userCard.addView(label("This record has no user ID; it cannot be edited, suspended, or deleted from the app.", 12f, yellow, false))
+            }
+
+            if (userStatus == "PENDING") {
+                userCard.addView(
+                    button("APPROVE USER", true) {
+                        val id = user.optString("id", "")
+                        if (id.isBlank()) {
+                            toast("This user record has no ID. Please manage it in WebTrader.")
+                        } else {
+                            authRequest("admin_approve_user", mapOf("user_id" to id)) { ok, result ->
+                                toast(result.optString("message", if (ok) "User reactivated." else "Unable to reactivate user."))
                                         if (ok) loadAdminUsers()
                                     }
                                 }.show()
@@ -2768,6 +2843,7 @@ private fun addTargetFilterAnalysis() {
             accountBalance = balance; accountCurrency = currency; connected = true
             balanceView.text = "Balance:  $currency ${String.format(java.util.Locale.US, "%.2f", balance)}"
             accountStatus.text = "●  CONNECTED — $executionMode"; accountStatus.setTextColor(green)
+            marketDataIndexes.forEach { attemptMasterDecisionExecution(it) }
         }
     }
     override fun onTick(symbol: String, quote: Double, epoch: Long) {
@@ -2833,6 +2909,7 @@ override fun onCandles(
     runOnUiThread {
         marketDataCandles[symbol] = candles
         marketDataErrors.remove(symbol)
+        attemptMasterDecisionExecution(symbol)
 
         if (selectedTab == "Analysis") {
             render()
@@ -2862,4 +2939,4 @@ override fun onMarketDataError(
         runOnUiThread { connected = false; accountStatus.text = "●  NOT CONNECTED"; accountStatus.setTextColor(red) }
     }
 
-                }
+                                        }
