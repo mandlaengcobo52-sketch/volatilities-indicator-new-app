@@ -1188,7 +1188,7 @@ private fun addTradeScreen() {
     marketDataIndexes.forEach { symbol ->
         val decision = lastDecisionByIndex[symbol]
         val text = if (decision != null) {
-            "$symbol • ${decision.direction} • Target ${String.format(java.util.Locale.US, "%.3f", decision.target)} • PTPE ${String.format(java.util.Locale.US, "%.1f", decision.targetProbability)}% • ${decision.sampleCount} samples"
+            "$symbol • ${decision.direction} • Target ${String.format(java.util.Locale.US, "%.2f", decision.target)} • PTPE ${String.format(java.util.Locale.US, "%.1f", decision.targetProbability)}% • ${decision.sampleCount} samples"
         } else {
             "$symbol • WAITING — all MSS/CHOCH, structural-target and PTPE gates not yet confirmed"
         }
