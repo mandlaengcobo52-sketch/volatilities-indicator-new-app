@@ -360,7 +360,7 @@ val savedToken = prefs.getString(
     ""
 ).orEmpty()
 
-if (savedToken.isNotBlank() && intent?.data?.host != "oauth-callback") {
+if (authToken.isNotBlank() && savedToken.isNotBlank() && intent?.data?.host != "oauth-callback") {
     connectWithToken(savedToken)
 }
     }
@@ -397,6 +397,7 @@ mainScrollView = scroll
             setPadding(dp(14), dp(8), dp(14), dp(18))
             setBackgroundColor(bg)
         }
+
         scroll.addView(page)
 
         outer.addView(
@@ -449,46 +450,28 @@ when (selectedTab) {
     addLoginScreen()
             }
                     else -> {
-                addPlatformSelector()
-                addExecutionSelector()
-                addAccountCard()
-                                                if (platform == "USER") {
-
-                    // Show sign-in and registration only when logged out.
-                    if (authToken.isBlank()) {
-                        page.addView(
-                            button("SIGN IN", false) {
-                                selectedTab = "Login"
-                                render()
-                            },
-                            matchWrap()
-                        )
-                    }
-
-                    // Show Deriv registration only when disconnected.
-                    if (!connected) {
+                if (authToken.isNotBlank()) {
+                    addPlatformSelector()
+                    addExecutionSelector()
+                    addAccountCard()
+                    if (platform == "USER" && !connected) {
                         page.addView(
                             button("CREATE DERIV ACCOUNT", true) {
                                 try {
-                                    val derivSignupUrl =
-                                        Uri.parse("https://deriv.com/signup/")
-
-                                    startActivity(
-                                        Intent(
-                                            Intent.ACTION_VIEW,
-                                            derivSignupUrl
-                                        )
-                                    )
+                                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://deriv.com/signup/")))
                                 } catch (e: Exception) {
-                                    toast(
-                                        "Unable to open Deriv registration. " +
-                                            "Please try again."
-                                    )
+                                    toast("Unable to open Deriv registration. Please try again.")
                                 }
                             },
                             matchWrap()
                         )
                     }
+                } else {
+                    page.addView(label("Sign in to your Volatilities Indicator account to access Deriv trading.", 15f, white, false), matchWrap())
+                    page.addView(button("SIGN IN", true) {
+                        selectedTab = "Login"
+                        render()
+                    }, matchWrap())
                 }
             }
 }
@@ -497,13 +480,15 @@ when (selectedTab) {
 
         // Restore the previous position after layout settles. Live account callbacks can
         // trigger repeated renders; a delayed restore prevents the REAL account screen jumping.
-        scroll.postDelayed({
-            if (lastRenderedTab == selectedTab) {
-                val maxScroll = (page.height - scroll.height).coerceAtLeast(0)
-                scroll.scrollTo(0, previousScrollY.coerceIn(0, maxScroll))
-            }
-            lastRenderedTab = selectedTab
-        }, 80L)
+        scroll.post {
+            scroll.postDelayed({
+                if (lastRenderedTab == selectedTab && mainScrollView === scroll) {
+                    val maxScroll = (page.height - scroll.height).coerceAtLeast(0)
+                    scroll.scrollTo(0, previousScrollY.coerceIn(0, maxScroll))
+                }
+                lastRenderedTab = selectedTab
+            }, 120L)
+        }
     }
 
 // =========================================================
@@ -796,6 +781,7 @@ private fun performPlatformLogout() {
     if (token.isNotBlank()) authRequest("logout", token = token) { _, _ -> }
     toast("You have been signed out.")
 }
+
 private fun addHeader() {
     val row = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
@@ -904,7 +890,6 @@ private fun addHeader() {
         val items = if (platform == "ADMIN") {
             listOf(
                 "Dashboard",
-                "Index Settings",
                 "Risk Categories",
                 "User Accounts",
                 "Notifications",
@@ -1109,9 +1094,12 @@ private fun addHeader() {
         buttons.addView(
             button("⟳  REFRESH", false) {
                 if (connected) {
-                    accountStatus.text = "●  CONNECTED — $executionMode"
-                    accountStatus.setTextColor(green)
-                    toast("Deriv connection is active.")
+                    derivApiClient.requestBalance()
+                    derivApiClient.requestOpenTrades()
+                    derivApiClient.requestTradeHistory()
+                    accountStatus.text = "●  REFRESHING — $executionMode"
+                    accountStatus.setTextColor(yellow)
+                    toast("Refreshing Deriv balance, open trades and history…")
                 } else {
                     toast("Connect to Deriv first.")
                 }
@@ -1563,7 +1551,8 @@ private fun analysisMssEvents(candles: List<DerivApiClient.Candle>): List<Analys
 }
 private fun analysisLatestMss(candles: List<DerivApiClient.Candle>): AnalysisMssEvent? =
     analysisMssEvents(candles).lastOrNull()
-    /* Historical Step 5 events only become eligible once the pivot's two
+
+/* Historical Step 5 events only become eligible once the pivot's two
    right-side confirmation candles have completed, as in WebTrader h5Events. */
 private fun analysisHistoricalOutcomes(candles: List<DerivApiClient.Candle>): List<AnalysisHistoricalOutcome> {
     if (candles.size < 30) return emptyList()
@@ -1588,7 +1577,7 @@ private fun analysisHistoricalOutcomes(candles: List<DerivApiClient.Candle>): Li
         } else if (hl != null && c.epoch > hl.epoch && c.close < hl.price) {
             if (used.add("S:${hl.epoch}")) events.add(AnalysisMssEvent("BEARISH MSS", "BEARISH", hl, c))
         }
-    }
+        }
     return events.mapIndexed { idx, event ->
         var end = candles.lastIndex
         for (next in idx + 1 until events.size) {
@@ -1929,7 +1918,6 @@ private fun addDirectionStructuralTargetAnalysis() {
         )
     }
 }
-
 // =========================================================
 // label("Analysis - Qualification", 17f, green, true)
 // =========================================================
@@ -2274,6 +2262,13 @@ private fun addTargetFilterAnalysis() {
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
             setSingleLine(true)
         }
+        val riskPlans = listOf("Minimum", "Medium", "Maximum", "Super Maximum")
+        val riskSpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, riskPlans)
+            val existingRisk = user.optString("risk_profile", "").replaceFirstChar { it.uppercase() }
+            val idx = riskPlans.indexOf(existingRisk)
+            if (idx >= 0) setSelection(idx)
+        }
         val fields = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(8), dp(20), dp(4))
@@ -2281,10 +2276,13 @@ private fun addTargetFilterAnalysis() {
             addView(surname)
             addView(email)
             addView(phone)
+            addView(label("Risk plan (30 days)", 14f, yellow, true))
+            addView(riskSpinner)
+            addView(label("Minimum: 1 trade/day · Medium: 3 trades/day · Maximum: 5 trades/day · Super Maximum: unlimited trades/day", 12f, white, false))
             addView(password)
         }
         android.app.AlertDialog.Builder(this)
-            .setTitle("Edit user details")
+            .setTitle("Edit user details and risk plan")
             .setView(fields)
             .setNegativeButton("CANCEL", null)
             .setPositiveButton("SAVE", null)
@@ -2297,6 +2295,19 @@ private fun addTargetFilterAnalysis() {
                         val mail = email.text.toString().trim()
                         val contact = phone.text.toString().trim()
                         val newPassword = password.text.toString()
+                        val selectedRisk = riskPlans[riskSpinner.selectedItemPosition]
+                        val tradesPerDay = when (selectedRisk) {
+                            "Minimum" -> "1"
+                            "Medium" -> "3"
+                            "Maximum" -> "5"
+                            else -> "unlimited"
+                        }
+                        val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+                        val planStartDate = dateFormat.format(java.util.Date())
+                        val planExpiryCalendar = java.util.Calendar.getInstance().apply {
+                            add(java.util.Calendar.DAY_OF_YEAR, 30)
+                        }
+                        val planExpiryDate = dateFormat.format(planExpiryCalendar.time)
                         if (first.isBlank() || last.isBlank() || mail.isBlank() || contact.length < 7) {
                             toast("Enter name, surname, email and a valid contact number.")
                             return@setOnClickListener
@@ -2306,7 +2317,12 @@ private fun addTargetFilterAnalysis() {
                             "first_name" to first,
                             "surname" to last,
                             "email" to mail,
-                            "phone" to contact
+                            "phone" to contact,
+                            "risk_profile" to selectedRisk.lowercase(),
+                            "risk_trades_per_day" to tradesPerDay,
+                            "risk_period_days" to "30",
+                            "start_date" to planStartDate,
+                            "expiry_date" to planExpiryDate
                         )
                         if (newPassword.isNotEmpty()) {
                             if (newPassword.length < 8) {
@@ -2360,7 +2376,6 @@ private fun addTargetFilterAnalysis() {
 
         listOf(
             "Dashboard",
-            "Index Settings",
             "Risk Categories",
             "User Accounts",
             "Notifications",
@@ -2806,9 +2821,9 @@ private fun addTargetFilterAnalysis() {
             }
         }
 
-        if (selectedTab == "Trade") {
-            render()
-        }
+        // Do not rebuild the entire Trade view for every live quote/contract update.
+        // Re-rendering here caused the ScrollView to reset/jump while users scrolled.
+        // The explicit Refresh button requests fresh account/trade data when needed.
     }
     }
 override fun onCandles(
@@ -2848,5 +2863,3 @@ override fun onMarketDataError(
     }
 
                 }
-        
-  
