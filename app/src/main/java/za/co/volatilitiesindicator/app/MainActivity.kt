@@ -234,8 +234,10 @@ private var drawerOpen = false
         val startCapital = dailyStartingCapital()
         val stake = kotlin.math.round(startCapital * 0.20 * 100.0) / 100.0
         if (stake <= 0.0 || stake > accountBalance) return
-        val barrierOffset = decision.target - decision.entry
-        if (!barrierOffset.isFinite() || kotlin.math.abs(barrierOffset) < 0.000001) return
+        // Deriv accepts an unsigned barrier string as an absolute target price.
+        // Do not convert the target into a signed offset from the current spot.
+        val absoluteBarrier = decision.target
+        if (!absoluteBarrier.isFinite() || absoluteBarrier <= 0.0) return
         val reqId = nextTradeRequestId()
         pendingIndexSymbols.add(symbol)
         pendingOrdersByRequest[reqId] = PendingOrder(symbol, decision.direction, decision.entry,
@@ -249,7 +251,7 @@ private var drawerOpen = false
             .put("duration", 3)
             .put("duration_unit", "d")
             .put("underlying_symbol", symbol)
-            .put("barrier", (if (barrierOffset > 0) "+" else "") + String.format(java.util.Locale.US, "%.2f", barrierOffset))
+            .put("barrier", String.format(java.util.Locale.US, "%.2f", absoluteBarrier))
             .put("req_id", reqId)
         if (!derivApiClient.send(proposal)) {
             pendingOrdersByRequest.remove(reqId); pendingIndexSymbols.remove(symbol)
@@ -789,7 +791,6 @@ private fun addHeader() {
     }
         val menu = label("☰", 28f, white, true).apply {
             gravity = Gravity.CENTER
-
             setOnClickListener {
                 drawerOpen = !drawerOpen
                 render()
@@ -1195,7 +1196,7 @@ private fun addTradeScreen() {
         gateCard.addView(label(text, 11f, if (decision != null) green else yellow, decision != null).apply {
             setPadding(0, dp(5), 0, dp(3))
             })
-    }
+        }
     autoTradeCard.addView(gateCard, matchWrap().apply { topMargin = dp(8) })
     autoTradeCard.addView(button(if (autoTradeEnabled) "TURN MASTER DECISION OFF" else "TURN MASTER DECISION ON", autoTradeEnabled) {
         autoTradeEnabled = !autoTradeEnabled
@@ -1208,7 +1209,7 @@ private fun addTradeScreen() {
     page.addView(sectionTitle("MANUAL TOUCH TRADE"))
     val manualCard = card()
     manualCard.addView(label("Manual execution • Touch only", 14f, green, true))
-    manualCard.addView(label("Choose an index, direction, duration, barrier offset and stake. This places a Deriv ONETOUCH contract only.", 12f, muted, false))
+    manualCard.addView(label("Choose an index, direction, duration, absolute target price and stake. This places a Deriv ONETOUCH contract only.", 12f, muted, false))
 
     val symbolSpinner = Spinner(this)
     val symbolAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item,
@@ -1247,8 +1248,8 @@ private fun addTradeScreen() {
     manualCard.addView(label("DURATION (HOURS)", 11f, green, true))
     val durationInput = manualInput("8", "8")
     manualCard.addView(durationInput, matchWrap())
-    manualCard.addView(label("BARRIER OFFSET (PRICE UNITS)", 11f, green, true).apply { setPadding(0, dp(7), 0, 0) })
-    val barrierInput = manualInput("1.10", "1.10")
+    manualCard.addView(label("BARRIER TARGET PRICE", 11f, green, true).apply { setPadding(0, dp(7), 0, 0) })
+    val barrierInput = manualInput("e.g. 760.50", "760.50")
     manualCard.addView(barrierInput, matchWrap())
     manualCard.addView(label("STAKE (${accountCurrency.ifBlank { "USD" }})", 11f, green, true).apply { setPadding(0, dp(7), 0, 0) })
     val stakeInput = manualInput("1.00", "1.00")
@@ -1260,10 +1261,10 @@ private fun addTradeScreen() {
         }
         val symbol = symbolSpinner.selectedItem?.toString().orEmpty()
         val duration = durationInput.text.toString().toIntOrNull()
-        val barrierMagnitude = barrierInput.text.toString().toDoubleOrNull()
+        val targetPrice = barrierInput.text.toString().toDoubleOrNull()
         val stake = stakeInput.text.toString().toDoubleOrNull()
-        if (duration == null || duration < 1 || barrierMagnitude == null || barrierMagnitude <= 0.0 || stake == null || stake <= 0.0) {
-            toast("Enter a duration of at least 1 hour, a positive barrier offset and a positive stake.")
+        if (duration == null || duration < 1 || targetPrice == null || !targetPrice.isFinite() || targetPrice <= 0.0 || stake == null || !stake.isFinite() || stake <= 0.0) {
+            toast("Enter a duration of at least 1 hour, a valid absolute barrier target price and a positive stake.")
             return@button
         }
         if (stake > accountBalance) {
@@ -1275,11 +1276,21 @@ private fun addTradeScreen() {
             return@button
         }
         val current = marketDataPrices[symbol] ?: 0.0
-        val signedBarrier = if (manualTradeDirection == "BUY") barrierMagnitude else -barrierMagnitude
-        val target = if (current > 0.0) current + signedBarrier else signedBarrier
+        if (!current.isFinite() || current <= 0.0) {
+            toast("Current market price is unavailable for $symbol. Wait for live prices before placing the trade.")
+            return@button
+        }
+        if (manualTradeDirection == "BUY" && targetPrice <= current) {
+            toast("For BUY / TOUCHES, the target barrier must be above the current price ($current).")
+            return@button
+        }
+        if (manualTradeDirection == "SELL" && targetPrice >= current) {
+            toast("For SELL / TOUCHES, the target barrier must be below the current price ($current).")
+            return@button
+        }
         val reqId = nextTradeRequestId()
         pendingIndexSymbols.add(symbol)
-        pendingOrdersByRequest[reqId] = PendingOrder(symbol, manualTradeDirection, current, target, 0.0, stake, executionMode, "PROPOSAL")
+        pendingOrdersByRequest[reqId] = PendingOrder(symbol, manualTradeDirection, current, targetPrice, 0.0, stake, executionMode, "PROPOSAL")
         val proposal = JSONObject()
             .put("proposal", 1)
             .put("amount", stake)
@@ -1289,7 +1300,7 @@ private fun addTradeScreen() {
             .put("duration", duration)
             .put("duration_unit", "h")
             .put("underlying_symbol", symbol)
-            .put("barrier", (if (signedBarrier > 0) "+" else "") + String.format(java.util.Locale.US, "%.2f", signedBarrier))
+            .put("barrier", String.format(java.util.Locale.US, "%.2f", targetPrice))
             .put("req_id", reqId)
         if (!derivApiClient.send(proposal)) {
             pendingOrdersByRequest.remove(reqId)
@@ -2618,7 +2629,6 @@ private fun addTargetFilterAnalysis() {
             value * resources.displayMetrics.density
         ).toInt()
     }
-
     private fun toast(message: String) {
         Toast.makeText(
             this,
@@ -2861,4 +2871,4 @@ override fun onMarketDataError(
         runOnUiThread { connected = false; accountStatus.text = "●  NOT CONNECTED"; accountStatus.setTextColor(red) }
     }
 
-                }
+                                        }
