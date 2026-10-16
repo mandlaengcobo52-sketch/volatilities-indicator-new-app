@@ -184,14 +184,15 @@ private var drawerOpen = false
         var hits = 0
         for (outcome in outcomes) {
             val start = candles.indexOfFirst { it.epoch == outcome.confirmation.epoch }
-            if (start < 0 || start + 72 >= candles.size) continue // require a full 72-hour forward window
+            val evaluationCandles = 3 * 24
+            if (start < 0 || start + evaluationCandles >= candles.size) continue // require a full 72-hour forward window
             val entry = outcome.confirmation.close
             if (entry <= 0.0 || !entry.isFinite()) continue
             val target = if (direction == "BULLISH") entry * (1.0 + targetDistancePercent / 100.0)
                          else entry * (1.0 - targetDistancePercent / 100.0)
             samples++
             var touched = false
-            for (i in (start + 1)..(start + 72)) {
+            for (i in (start + 1)..(start + evaluationCandles)) {
                 val candle = candles[i]
                 if ((direction == "BULLISH" && candle.high >= target) ||
                     (direction == "BEARISH" && candle.low <= target)) { touched = true; break }
