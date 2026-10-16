@@ -2257,21 +2257,20 @@ private fun addTargetFilterAnalysis() {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
 
-                setPadding(
-                    dp(2),
-                    dp(2),
-                    dp(2),
-                    dp(2)
-                )
+                            setPadding(
+                dp(3),
+                dp(7),
+                dp(3),
+                dp(5)
+            )
 
-                if (selected) {
-                    background = shape(
-                        Color.rgb(0, 35, 17),
-                        greenDark,
-                        10,
-                        1
-                    )
-                }
+            background = shape(
+                Color.rgb(4, 12, 10),
+                greenDark,
+                12,
+                1
+            )
+            }
 
                 setOnClickListener {
                     selectedTab = name
