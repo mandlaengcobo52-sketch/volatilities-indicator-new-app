@@ -398,7 +398,6 @@ mainScrollView = scroll
             scroll,
             LinearLayout.LayoutParams(-1, 0, 1f)
         )
-
         setContentView(outer)
         addHeader()
 
@@ -808,7 +807,7 @@ private fun addHeader() {
                 green,
                 100,
                 2
-            )
+                )
 
             clipToOutline = true
         }
@@ -1200,7 +1199,6 @@ private fun addTradeScreen() {
                 manualCard.addView(this, matchWrap())
             }
         }
-
         val manualIndex = addManualSpinner("INDEX", marketDataIndexes)
         val manualDirection = addManualSpinner("TARGET BARRIER DIRECTION", listOf("TOUCH ABOVE CURRENT PRICE", "TOUCH BELOW CURRENT PRICE"))
         manualCard.addView(label("TARGET BARRIER DISTANCE (price units)", 12f, green, true))
@@ -1710,103 +1708,59 @@ private fun addMssChochBehaviourAnalysis() {
             card.addView(label("HISTORICAL CONTINUATION: ${continuation?.let { String.format(java.util.Locale.US, "%.1f%%", it) } ?: "WAITING"}", 13f, if (continuation != null && continuation >= 50.0) green else yellow, true))
             card.addView(label("AVERAGE FAVOURABLE MOVE: ${avgFav?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
             card.addView(label("AVERAGE ADVERSE MOVE: ${avgAdv?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
-          val hasTarget = target != null &&
-            current != null &&
-            (
-                (direction == "UP" && target.price > current) ||
-                (direction == "DOWN" && target.price < current)
-            )
-
-        val distance = if (
-            hasTarget && current != null && current != 0.0
-        ) {
-            kotlin.math.abs(target!!.price - current) /
-                current * 100.0
-        } else {
-            null
         }
+        page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
+    }
+}
 
-        val indexCard = card().apply {
-            orientation = LinearLayout.VERTICAL
+// =========================================================
+// ANALYSIS — DIRECTION & STRUCTURAL TARGET
+// =========================================================
+private fun addDirectionStructuralTargetAnalysis() {
+    val header = card().apply { orientation = LinearLayout.VERTICAL }
+    val row = horizontalRow()
+    row.addView(label("Analysis - Direction & structural target", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
+    row.addView(button(if (directionStructuralTargetExpanded) "▼ OPEN" else "▶ CLOSED", directionStructuralTargetExpanded) {
+        directionStructuralTargetExpanded = !directionStructuralTargetExpanded
+        render()
+    }, LinearLayout.LayoutParams(-2, dp(48)))
+    header.addView(row)
+    page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
+    if (!directionStructuralTargetExpanded) return
+
+    page.addView(label("Direction and target use the latest confirmed MSS/CHOCH and the same structural pivot rules as Market Structure.", 12f, muted, false))
+    marketDataIndexes.forEach { symbol ->
+        val candles = analysisCompletedCandles(symbol)
+        val current = marketDataPrices[symbol] ?: candles.lastOrNull()?.close
+        val event = if (candles.size >= 20) analysisLatestMss(candles) else null
+        val direction = when (event?.direction) {
+            "BULLISH" -> "UP"
+            "BEARISH" -> "DOWN"
+            else -> ""
         }
+        val target = if (event != null && current != null && direction.isNotBlank()) {
+            analysisStructuralTarget(candles, current, direction, event.confirmation.epoch)
+        } else null
+        val hasTarget = target != null && current != null &&
+            ((direction == "UP" && target.price > current) ||
+             (direction == "DOWN" && target.price < current))
+        val distance = if (hasTarget && current != null && current > 0.0) {
+            kotlin.math.abs(target!!.price - current) / current * 100.0
+        } else null
 
-        indexCard.addView(
-            label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true)
-        )
-
-        val priceView = label(
-            "CURRENT PRICE: ${formatMarketPrice(current)}",
-            14f, blue, true
-        )
-
-        registerCurrentPriceView(
-            symbol,
-            "direction-target",
-            priceView
-        )
-
+        val indexCard = card().apply { orientation = LinearLayout.VERTICAL }
+        indexCard.addView(label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true))
+        val priceView = label("CURRENT PRICE: ${formatMarketPrice(current)}", 14f, blue, true)
+        registerCurrentPriceView(symbol, "direction-target", priceView)
         indexCard.addView(priceView)
-
-        indexCard.addView(
-            label(
-                "MSS / CHOCH: ${event?.state ?: "WAITING"}",
-                13f,
-                when (direction) {
-                    "UP" -> green
-                    "DOWN" -> red
-                    else -> yellow
-                },
-                true
-            )
-        )
-
-        indexCard.addView(
-            label(
-                "DIRECTION: ${direction.ifBlank { "WAITING" }}",
-                13f,
-                when (direction) {
-                    "UP" -> green
-                    "DOWN" -> red
-                    else -> yellow
-                },
-                true
-            )
-        )
-
-        indexCard.addView(
-            label(
-                "STRUCTURAL TARGET: ${
-                    if (hasTarget) formatMarketPrice(target?.price)
-                    else "WAITING"
-                }",
-                13f,
-                if (hasTarget) green else yellow,
-                true
-            )
-        )
-
-        indexCard.addView(
-            label(
-                "TARGET DISTANCE: ${
-                    distance?.let {
-                        String.format(
-                            java.util.Locale.US,
-                            "%.3f%%",
-                            it
-                        )
-                    } ?: "—"
-                }",
-                12f, blue, false
-            )
-        )
-
-        page.addView(
-            indexCard,
-            matchWrap().apply {
-                topMargin = dp(6)
-                bottomMargin = dp(6)
-            }
-        )
+        indexCard.addView(label("MSS / CHOCH: ${event?.state ?: "WAITING"}", 13f,
+            when (direction) { "UP" -> green; "DOWN" -> red; else -> yellow }, true))
+        indexCard.addView(label("DIRECTION: ${direction.ifBlank { "WAITING" }}", 13f,
+            when (direction) { "UP" -> green; "DOWN" -> red; else -> yellow }, true))
+        indexCard.addView(label("STRUCTURAL TARGET: ${if (hasTarget) formatMarketPrice(target?.price) else "WAITING"}", 13f,
+            if (hasTarget) green else yellow, true))
+        indexCard.addView(label("TARGET DISTANCE: ${distance?.let { String.format(java.util.Locale.US, "%.3f%%", it) } ?: "—"}", 12f, blue, false))
+        page.addView(indexCard, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
     }
 }
 
@@ -2244,7 +2198,7 @@ private fun addTargetFilterAnalysis() {
             "Index Settings",
             "Risk Categories",
             "User Accounts",
-            "Notifications",
+                 "Notifications",
             "Trading Logs",
             "System Settings"
         ).forEach { item ->
@@ -2727,4 +2681,4 @@ override fun onMarketDataError(
         runOnUiThread { connected = false; accountStatus.text = "●  NOT CONNECTED"; accountStatus.setTextColor(red) }
     }
 
-}
+                                        }
