@@ -396,7 +396,8 @@ private val marketDataIndexes = listOf(
 
 private val marketDataCandles =
     mutableMapOf<String, List<DerivApiClient.Candle>>()
-    private val marketDataPrices =
+
+private val marketDataPrices =
     mutableMapOf<String, Double>()
 private val marketDataPriceViews = mutableMapOf<String, TextView>()
 private val currentPriceViews = mutableMapOf<String, MutableList<TextView>>()
@@ -1195,7 +1196,7 @@ private fun addHeader() {
             }
         )
                             }
-                            // =========================================================
+                             // =========================================================
 // TRADE SCREEN
 // =========================================================
 private fun addTradeScreen() {
@@ -1878,7 +1879,65 @@ private fun addMssChochBehaviourAnalysis() {
             card.addView(label("HISTORICAL CONTINUATION: ${continuation?.let { String.format(java.util.Locale.US, "%.1f%%", it) } ?: "WAITING"}", 13f, if (continuation != null && continuation >= 50.0) green else yellow, true))
             card.addView(label("AVERAGE FAVOURABLE MOVE: ${avgFav?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
             card.addView(label("AVERAGE ADVERSE MOVE: ${avgAdv?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
-      indexCard.addView(
+        }
+        page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
+    }
+}
+// =========================================================
+// ANALYSIS — DIRECTION AND STRUCTURAL TARGET
+// =========================================================
+private fun addDirectionStructuralTargetAnalysis() {
+    page.addView(label("Direction is taken from the latest confirmed MSS/CHOCH. The structural target must lie beyond the current price in that direction.", 12f, muted, false))
+    marketDataIndexes.forEach { symbol ->
+        val candles = analysisCompletedCandles(symbol)
+        val current = marketDataPrices[symbol] ?: candles.lastOrNull()?.close
+        val event = if (candles.size >= 20) analysisLatestMss(candles) else null
+        val direction = when (event?.direction) {
+            "BULLISH" -> "UP"
+            "BEARISH" -> "DOWN"
+            else -> ""
+        }
+        val target = if (event != null && current != null && direction.isNotBlank()) {
+            analysisStructuralTarget(candles, current, direction, event.confirmation.epoch)
+        } else null
+        val hasTarget = target != null &&
+            current != null &&
+            (
+                (direction == "UP" && target.price > current) ||
+                (direction == "DOWN" && target.price < current)
+            )
+
+        val distance = if (
+            hasTarget && current != null && current != 0.0
+        ) {
+            kotlin.math.abs(target!!.price - current) /
+                current * 100.0
+        } else {
+            null
+        }
+
+        val indexCard = card().apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        indexCard.addView(
+            label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true)
+        )
+
+        val priceView = label(
+            "CURRENT PRICE: ${formatMarketPrice(current)}",
+            14f, blue, true
+        )
+
+        registerCurrentPriceView(
+            symbol,
+            "direction-target",
+            priceView
+        )
+
+        indexCard.addView(priceView)
+
+        indexCard.addView(
             label(
                 "MSS / CHOCH: ${event?.state ?: "WAITING"}",
                 13f,
@@ -2185,59 +2244,6 @@ private fun addTargetFilterAnalysis() {
                                 .setPositiveButton("REACTIVATE") { _, _ ->
                                     authRequest("admin_reactivate_user", mapOf("user_id" to userId)) { ok, result ->
                                         toast(result.optString("message", if (ok) "User reactivated." else "Unable to reactivate user."))
-                                        if (ok) loadAdminUsers()
-                                    }
-                                }.show()
-                        },
-                        matchWrap().apply { topMargin = dp(6) }
-                    )
-                } else if (userStatus == "APPROVED") {
-                    userCard.addView(
-                        button("SUSPEND USER", false) {
-                            android.app.AlertDialog.Builder(this@MainActivity)
-                                .setTitle("Suspend user")
-                                .setMessage("This user will no longer be able to log in. Continue?")
-                                .setNegativeButton("CANCEL", null)
-                                .setPositiveButton("SUSPEND") { _, _ ->
-                                    authRequest("admin_suspend_user", mapOf("user_id" to userId)) { ok, result ->
-                                        toast(result.optString("message", if (ok) "User suspended." else "Unable to suspend user."))
-                                        if (ok) loadAdminUsers()
-                                    }
-                                }.show()
-                        },
-                        matchWrap().apply { topMargin = dp(6) }
-                    )
-                }
-                if (!user.optString("role", "user").equals("admin", ignoreCase = true)) {
-                    userCard.addView(
-                        button("DELETE USER", false) {
-                            android.app.AlertDialog.Builder(this@MainActivity)
-                                .setTitle("Delete user")
-                                .setMessage("Permanently delete ${user.optString("full_name", "this user")} from user management? This cannot be undone.")
-                                .setNegativeButton("CANCEL", null)
-                                .setPositiveButton("DELETE") { _, _ ->
-                                    authRequest("admin_delete_user", mapOf("user_id" to userId)) { ok, result ->
-                                        toast(result.optString("message", if (ok) "User deleted." else "Unable to delete user."))
-                                        if (ok) loadAdminUsers()
-                                    }
-                                }.show()
-                        },
-                        matchWrap().apply { topMargin = dp(6) }
-                    )
-                }
-            } else {
-                userCard.addView(label("This record has no user ID; it cannot be edited, suspended, or deleted from the app.", 12f, yellow, false))
-            }
-
-            if (userStatus == "PENDING") {
-                userCard.addView(
-                    button("APPROVE USER", true) {
-                        val id = user.optString("id", "")
-                        if (id.isBlank()) {
-                            toast("This user record has no ID. Please manage it in WebTrader.")
-                        } else {
-                            authRequest("admin_approve_user", mapOf("user_id" to id)) { ok, result ->
-                                toast(result.optString("message", if (ok) "User reactivated." else "Unable to reactivate user."))
                                         if (ok) loadAdminUsers()
                                     }
                                 }.show()
@@ -2597,7 +2603,6 @@ private fun addTargetFilterAnalysis() {
             this.text = text
             textSize = 13f
             isAllCaps = false
-
             typeface = Typeface.create(
                 "sans-serif",
                 Typeface.BOLD
