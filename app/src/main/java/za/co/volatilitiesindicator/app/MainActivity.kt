@@ -277,6 +277,14 @@ when (selectedTab) {
 }
 
         addBottomNavigation(outer)
+
+        // Restore the previous position after the new content has been measured.
+        // Deriv sends frequent trade updates; without this, rebuilding the Trade
+        // screen resets ScrollView to the top and makes upward scrolling jump back.
+        lastRenderedTab = selectedTab
+        scroll.post {
+            scroll.scrollTo(0, previousScrollY.coerceAtLeast(0))
+        }
     }
 
 // =========================================================
@@ -388,13 +396,13 @@ private fun addRegistrationScreen() {
     registrationCard.addView(submit, matchWrap().apply { topMargin = dp(12) })
     page.addView(registrationCard, matchWrap())
 }
+
 // SIGN IN — uses the same user records and approval status as WebTrader.
 private fun addLoginScreen() {
     page.addView(sectionTitle("SIGN IN"))
     val loginCard = card().apply { orientation = LinearLayout.VERTICAL }
     loginCard.addView(label("Welcome back", 20f, green, true))
     loginCard.addView(label("Sign in with the email address and password used for your Volatilities Indicator account.", 14f, muted, false))
-
     val emailInput = android.widget.EditText(this).apply {
         hint = "Email address"
         inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
@@ -1178,16 +1186,7 @@ private fun addMarketDataAnalysis() {
     }, LinearLayout.LayoutParams(-2, dp(48)))
     header.addView(row)
     page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
-    if (!marketDataExpanded) return
-    page.addView(label("Live market prices and historical H1 candles from the existing Deriv market-data connection.", 13f, muted, false))
-    page.addView(label("TIMEFRAME: H1  |  HISTORICAL CANDLES: 1000 PER INDEX", 12f, green, true))
-    marketDataIndexes.forEach { symbol ->
-        val marketCard = card().apply { orientation = LinearLayout.VERTICAL }
-        marketCard.addView(label("Index ${symbol.removePrefix("R_")}", 18f, green, true))
-        val priceView = label("CURRENT PRICE: ${formatMarketPrice(marketDataPrices[symbol])}", 14f, blue, true)
-        registerCurrentPriceView(symbol, "market-data", priceView)
-        marketCard.addView(priceView)
-        val candles = marketDataCandles[symbol].orEmpty().sortedBy { it.epoch }
+    val candles = marketDataCandles[symbol].orEmpty().sortedBy { it.epoch }
         val completed = analysisCompletedCandles(symbol)
         marketCard.addView(label("HISTORICAL CANDLES: ${candles.size}", 13f, white, false))
         marketCard.addView(label("COMPLETED H1 CANDLES: ${completed.size}", 12f, muted, false))
@@ -1925,7 +1924,6 @@ private fun addTargetFilterAnalysis() {
         page.addView(sectionTitle("ADMINISTRATION"))
 
         val card = card()
-
         card.orientation = LinearLayout.VERTICAL
 
         listOf(
@@ -2248,7 +2246,6 @@ private fun addTargetFilterAnalysis() {
         try { startActivity(Intent(Intent.ACTION_VIEW, url)) }
         catch (e: Exception) { toast("Unable to open Deriv login: ${e.message}") }
     }
-
     private fun handleOAuthCallback(intent: Intent?) {
         val data = intent?.data ?: return
         if (data.scheme != "volatilitiesindicator" || data.host != "oauth-callback") return
