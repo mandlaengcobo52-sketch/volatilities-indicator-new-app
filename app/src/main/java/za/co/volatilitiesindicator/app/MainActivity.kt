@@ -397,7 +397,6 @@ mainScrollView = scroll
             scroll,
             LinearLayout.LayoutParams(-1, 0, 1f)
         )
-
         setContentView(outer)
         addHeader()
 
@@ -1617,7 +1616,29 @@ private fun addMssChochBehaviourAnalysis() {
             card.addView(label("HISTORICAL CONTINUATION: ${continuation?.let { String.format(java.util.Locale.US, "%.1f%%", it) } ?: "WAITING"}", 13f, if (continuation != null && continuation >= 50.0) green else yellow, true))
             card.addView(label("AVERAGE FAVOURABLE MOVE: ${avgFav?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
             card.addView(label("AVERAGE ADVERSE MOVE: ${avgAdv?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
-          val hasTarget = target != null &&
+        }
+        page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
+    }
+}
+
+// =========================================================
+// ANALYSIS — DIRECTION AND STRUCTURAL TARGET
+// =========================================================
+private fun addDirectionStructuralTargetAnalysis() {
+    page.addView(label("Direction is taken from the latest confirmed MSS/CHOCH. The structural target must lie beyond the current price in that direction.", 12f, muted, false))
+    marketDataIndexes.forEach { symbol ->
+        val candles = analysisCompletedCandles(symbol)
+        val current = marketDataPrices[symbol] ?: candles.lastOrNull()?.close
+        val event = if (candles.size >= 20) analysisLatestMss(candles) else null
+        val direction = when (event?.direction) {
+            "BULLISH" -> "UP"
+            "BEARISH" -> "DOWN"
+            else -> ""
+        }
+        val target = if (event != null && current != null && direction.isNotBlank()) {
+            analysisStructuralTarget(candles, current, direction, event.confirmation.epoch)
+        } else null
+        val hasTarget = target != null &&
             current != null &&
             (
                 (direction == "UP" && target.price > current) ||
@@ -1916,7 +1937,6 @@ private fun addTargetFilterAnalysis() {
             },
             matchWrap().apply { topMargin = dp(8); bottomMargin = dp(8) }
         )
-
         val users = adminUsers
         if (adminUsersLoading && users == null) {
             page.addView(label("Loading registrations…", 14f, yellow, false))
@@ -2320,7 +2340,6 @@ private fun addTargetFilterAnalysis() {
                 "sans-serif",
                 Typeface.BOLD
             )
-
             setTextColor(
                 if (active) {
                     Color.rgb(0, 25, 12)
@@ -2636,4 +2655,4 @@ override fun onMarketDataError(
         runOnUiThread { connected = false; accountStatus.text = "●  NOT CONNECTED"; accountStatus.setTextColor(red) }
     }
 
-}
+                                        }
