@@ -223,7 +223,7 @@ private var drawerOpen = false
         // Historical evidence must include at least one prior same-direction outcome.
         if (analysisHistoricalOutcomes(candles).none { it.direction == direction && it.confirmation.epoch != event.confirmation.epoch }) return null
         return MasterDecision(symbol, if (direction == "BULLISH") "BUY" else "SELL", current, target,
-            distance, probability, samples, "Confirmed MSS/CHOCH + structural target + empirical 72-hour PTPE")
+            distance, probability, samples, "Confirmed MSS/CHOCH + structural target + empirical 3-day PTPE")
     }
 
     private fun attemptMasterDecisionExecution(symbol: String) {
@@ -1122,7 +1122,7 @@ private fun addHeader() {
             }
         )
                             }
-                            // =========================================================
+// =========================================================
 // TRADE SCREEN
 // =========================================================
 private fun addTradeScreen() {
@@ -1178,7 +1178,7 @@ private fun addTradeScreen() {
     autoTradeCard.addView(label(if (autoTradeEnabled) "MASTER DECISION: ACTIVE" else "MASTER DECISION: OFF", 15f,
         if (autoTradeEnabled) green else red, true))
     autoTradeCard.addView(label("PTPE target probability ≥ 80% • target eligibility ≥ 1.5% • 3-day ONETOUCH • 10% profit close target • stake 20% of South African day-start capital.", 12f, white, false))
-    autoTradeCard.addView(label("Master Decision requires confirmed MSS/CHOCH, a valid structural target, and at least five historical comparable 72-hour samples. One open contract per index.", 12f, muted, false))
+    autoTradeCard.addView(label("Master Decision requires confirmed MSS/CHOCH, a valid structural target, and at least five historical comparable 3-day samples . One open contract per index.", 12f, muted, false))
     val gateCard = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(10), dp(9), dp(10), dp(9))
@@ -2018,7 +2018,7 @@ private fun addQualificationAnalysis() {
         ))
         val ptpeText = if (masterDecision != null) {
             String.format(java.util.Locale.US, "%.1f%%", masterDecision.targetProbability) +
-                " (${masterDecision.sampleCount} comparable 72H samples)"
+                " (${masterDecision.sampleCount} comparable 3-day samples)"
         } else "WAIT — BELOW 80% OR INSUFFICIENT SAMPLES"
         qualificationCard.addView(label(
             "PTPE TARGET PROBABILITY: $ptpeText",
