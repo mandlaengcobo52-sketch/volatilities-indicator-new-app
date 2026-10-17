@@ -394,8 +394,7 @@ private val candleIndexes = listOf(
                 )
                 .get()
                 .build()
-
-        httpClient
+                httpClient
             .newCall(
                 request
             )
@@ -720,8 +719,7 @@ private val candleIndexes = listOf(
                                 JSONObject(
                                     body
                                 )
-
-                            val websocketUrl =
+                                val websocketUrl =
                                 extractWebSocketUrl(
                                     json
                                 )
@@ -1370,42 +1368,36 @@ if (tick != null) {
 }
             val tradeMessageType = json.optString("msg_type", "")
 
+            /*
+             * Forward every response needed by the trade execution state machine.
+             * Proposal and buy responses are essential: MainActivity matches their
+             * req_id values to pending orders and advances PROPOSAL -> BUY -> OPEN.
+             * Deriv error responses also need to reach that handler so it can release
+             * the correct index lock instead of waiting for the proposal timeout.
+             */
             if (
                 tradeMessageType == "portfolio" ||
                 tradeMessageType == "profit_table" ||
-                tradeMessageType == "proposal_open_contract"
+                tradeMessageType == "proposal_open_contract" ||
+                tradeMessageType == "proposal" ||
+                tradeMessageType == "buy" ||
+                json.has("error")
             ) {
                 callback.onTradeData(json)
             }
+
             /*
-             * Deriv WebSocket error.
+             * Deriv WebSocket error. Forwarding above allows the pending trade
+             * request to be resolved; this callback preserves general error reporting.
              */
-            if (
-                json.has(
-                    "error"
-                )
-            ) {
+            if (json.has("error")) {
+                val error = json.optJSONObject("error")
+                val message = error
+                    ?.optString("message", "")
+                    ?.takeIf { it.isNotBlank() }
+                    ?: "Unknown Deriv WebSocket error"
 
-                val error =
-                    json.optJSONObject(
-                        "error"
-                    )
-
-                val message =
-                    error
-                        ?.optString(
-                            "message",
-                            ""
-                        )
-                        ?.takeIf {
-                            it.isNotBlank()
-                        }
-                        ?: "Unknown Deriv WebSocket error"
-
-                callback.onError(
-                    "Deriv: $message"
-                )
-
+                callback.onError("Deriv: $message")
                 return
             }
 
@@ -1610,7 +1602,6 @@ if (tick != null) {
             socket
         )
     }
-
     /*
      * Start the application heartbeat.
      */
@@ -1921,7 +1912,6 @@ if (tick != null) {
 
         manuallyDisconnected =
             true
-
         cancelReconnect()
         marketDataReconnectFuture?.cancel(false)
         marketDataReconnectFuture = null
@@ -2202,8 +2192,7 @@ candleRequestSymbols.clear()
                     1000,
                     "Client destroyed"
                 )
-
-        } catch (
+                } catch (
            _: Exception
         ) {
         }
