@@ -176,6 +176,7 @@ class DerivApiClient(
                 30,
                 TimeUnit.SECONDS
             )
+            .retryOnConnectionFailure(true)
             .build()
 
     /*
@@ -202,6 +203,7 @@ class DerivApiClient(
                 30,
                 TimeUnit.SECONDS
             )
+            .retryOnConnectionFailure(true)
             .build()
 
     /*
@@ -270,6 +272,7 @@ private val candleIndexes = listOf(
 
     private var reconnectScheduled =
         false
+    private var reconnectAttempt = 0
 
     /*
      * Connect after OAuth succeeds.
@@ -394,7 +397,8 @@ private val candleIndexes = listOf(
                 )
                 .get()
                 .build()
-                httpClient
+
+        httpClient
             .newCall(
                 request
             )
@@ -719,7 +723,8 @@ private val candleIndexes = listOf(
                                 JSONObject(
                                     body
                                 )
-                                val websocketUrl =
+
+                            val websocketUrl =
                                 extractWebSocketUrl(
                                     json
                                 )
@@ -812,7 +817,7 @@ private val candleIndexes = listOf(
 
             if (
                 websocketUrl.isNotEmpty()
-            ) {
+               ) {
                 return websocketUrl
             }
 
@@ -914,6 +919,7 @@ private val candleIndexes = listOf(
 
                             reconnectScheduled =
                                 false
+                            reconnectAttempt = 0
 
                             callback.onConnected(
                                 accountId
@@ -1388,6 +1394,7 @@ if (tick != null) {
 
             /*
              * Deriv WebSocket error. Forwarding above allows the pending trade
+ Forwarding above allows the pending trade
              * request to be resolved; this callback preserves general error reporting.
              */
             if (json.has("error")) {
@@ -1602,6 +1609,7 @@ if (tick != null) {
             socket
         )
     }
+
     /*
      * Start the application heartbeat.
      */
@@ -1808,45 +1816,23 @@ if (tick != null) {
             return
         }
 
-        reconnectScheduled =
-            true
+        reconnectScheduled = true
+        // Back off repeated resets instead of hammering the OAuth/account/WebSocket flow.
+        // Delay sequence: 5s, 10s, 20s, then 30s maximum. Successful connection resets it.
+        val delaySeconds = minOf(30L, 5L shl reconnectAttempt.coerceAtMost(3))
+        reconnectAttempt = (reconnectAttempt + 1).coerceAtMost(4)
+        reconnectFuture = scheduler.schedule({
+            reconnectScheduled = false
+            if (manuallyDisconnected) return@schedule
 
-        reconnectFuture =
-            scheduler.schedule(
-                {
+            val token = accessToken
+            if (token.isNullOrBlank()) {
+                callback.onError("Cannot reconnect: Deriv access token is unavailable.")
+                return@schedule
+            }
 
-                    reconnectScheduled =
-                        false
-                       if (
-                        manuallyDisconnected
-                    ) {
-
-                        return@schedule
-                    }
-
-                    val token =
-                        accessToken
-
-                    if (
-                        token.isNullOrBlank()
-                    ) {
-
-                        callback.onError(
-                            "Cannot reconnect: Deriv access token is unavailable."
-                        )
-
-                        return@schedule
-                    }
-
-                    connectWithAccessToken(
-                        token,
-                        accountType
-                    )
-
-                },
-                5,
-                TimeUnit.SECONDS
-            )
+            connectWithAccessToken(token, accountType)
+        }, delaySeconds, TimeUnit.SECONDS)
     }
 
     /*
@@ -1912,6 +1898,7 @@ if (tick != null) {
 
         manuallyDisconnected =
             true
+
         cancelReconnect()
         marketDataReconnectFuture?.cancel(false)
         marketDataReconnectFuture = null
@@ -2192,7 +2179,8 @@ candleRequestSymbols.clear()
                     1000,
                     "Client destroyed"
                 )
-                } catch (
+
+        } catch (
            _: Exception
         ) {
         }
