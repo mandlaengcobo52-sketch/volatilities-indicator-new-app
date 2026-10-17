@@ -3552,7 +3552,6 @@ private fun addTargetFilterAnalysis() {
         // Re-rendering here caused the ScrollView to reset/jump while users scrolled.
         // The explicit Refresh button requests fresh account/trade data when needed.
     }
-    }
 override fun onCandles(
     symbol: String,
     candles: List<DerivApiClient.Candle>
