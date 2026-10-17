@@ -3592,15 +3592,15 @@ override fun onMarketDataError(
         toast("Deriv: $message")
     }
     }
-    override fun onDisconnected() {
+        override fun onDisconnected() {
         runOnUiThread {
             connected = false
             marketDataRequested = false
+
             if (::accountStatus.isInitialized) {
                 accountStatus.text = "●  NOT CONNECTED"
                 accountStatus.setTextColor(red)
             }
         }
     }
-
                                         }
