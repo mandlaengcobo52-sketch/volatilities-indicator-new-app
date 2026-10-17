@@ -106,6 +106,8 @@ private var drawerOpen = false
     private var adminUsersLoading: Boolean = false
     private var openTradesResponse: JSONObject? = null
     private var portfolioLoadedForAccount: Boolean = false
+    // Throttle retries while waiting for Deriv's portfolio response.
+    private var lastOpenTradesRequestAt: Long = 0L
     private var openContractResponse: JSONObject? = null
     private var tradeHistoryResponse: JSONObject? = null
 
@@ -209,19 +211,35 @@ private var drawerOpen = false
     ).uppercase()
 
     private fun activeContractForIndex(symbol: String): Boolean {
-        if (pendingIndexSymbols.contains(symbol)) return true
-        if (runningContracts.values.any { it.symbol == symbol && it.mode == executionMode }) return true
+        // A pending request is a duplicate-execution lock, not proof of an open contract.
+        if (pendingOrdersByRequest.values.any {
+                it.symbol == symbol && it.mode == executionMode
+            }) return true
+        if (runningContracts.values.any {
+                it.symbol == symbol && it.mode == executionMode
+            }) return true
+
         val root = openTradesResponse ?: return false
         val portfolio = root.optJSONObject("portfolio")
         val arr = portfolio?.optJSONArray("contracts") ?: root.optJSONArray("contracts")
         if (arr != null) for (i in 0 until arr.length()) {
             val item = arr.optJSONObject(i) ?: continue
             val contractSymbol = normalizedSymbol(item)
-            val sold = item.optInt("is_sold", 0) == 1 || item.optString("is_sold", "").equals("true", true)
+            val sold = item.optInt("is_sold", 0) == 1 ||
+                item.optString("is_sold", "").equals("true", true)
             val status = item.optString("status", "open").lowercase()
-            if (contractSymbol == symbol.uppercase() && !sold && status !in setOf("sold", "won", "lost", "expired")) return true
+            if (contractSymbol == symbol.uppercase() && !sold &&
+                status !in setOf("sold", "won", "lost", "expired")) return true
         }
         return false
+    }
+
+    private fun requestOpenTradesIfNeeded() {
+        if (!connected || accountId.isBlank() || portfolioLoadedForAccount) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastOpenTradesRequestAt < 5000L) return
+        lastOpenTradesRequestAt = now
+        derivApiClient.requestOpenTrades()
     }
 
     /** Enforce one identical stake for every trade during the fixed account/mode/day window. */
@@ -295,7 +313,7 @@ private var drawerOpen = false
                     "daily_limit_${accountId}_${executionMode}_${saDayKey()}")
             }
             return false
-        }
+            }
         return true
     }
 
@@ -335,6 +353,7 @@ private var drawerOpen = false
         if (samples == 0) return 0.0 to 0
         return (hits.toDouble() / samples.toDouble() * 100.0) to samples
     }
+
     /** Sole authority for trade approval. PTPE is always recorded for display, even when it fails. */
     private fun evaluateMasterDecision(symbol: String): MasterDecision? {
         val candles = analysisCompletedCandles(symbol)
@@ -410,15 +429,35 @@ private var drawerOpen = false
         }
         // Never execute against a stale/unknown portfolio: wait until Deriv confirms current open contracts.
         if (!portfolioLoadedForAccount) {
-            recordExecutionStage("Execution blocked", "$symbol · Waiting for Deriv to confirm the open-contract portfolio.", "blocked_portfolio_$signalKey")
+            requestOpenTradesIfNeeded()
+            recordExecutionStage(
+                "Execution waiting",
+                "$symbol · Waiting for Deriv's current open-contract portfolio. No purchase has been submitted.",
+                "waiting_portfolio_${accountId}_${executionMode}"
+            )
             return
         }
         if (symbol !in marketDataIndexes) {
             recordExecutionStage("Execution blocked", "$symbol · Unsupported index.", "blocked_index_$signalKey")
             return
         }
+        if (pendingOrdersByRequest.values.any { it.symbol == symbol && it.mode == executionMode }) {
+            val stage = pendingOrdersByRequest.values.firstOrNull {
+                it.symbol == symbol && it.mode == executionMode
+            }?.stage ?: "EXECUTION"
+            recordExecutionStage(
+                "Execution in progress",
+                "$symbol · A $stage request is already in progress for this index. Duplicate purchase suppressed.",
+                "execution_in_progress_${accountId}_${executionMode}_${symbol}"
+            )
+            return
+        }
         if (activeContractForIndex(symbol)) {
-            recordExecutionStage("Execution blocked", "$symbol · A pending or open contract already exists for this index.", "blocked_existing_$signalKey")
+            recordExecutionStage(
+                "Execution blocked",
+                "$symbol · Deriv's confirmed portfolio or local confirmed-contract state shows an open contract for this index.",
+                "blocked_open_contract_${accountId}_${executionMode}_${symbol}"
+            )
             return
         }
         if (!canPlaceTrade(showToast = false)) {
@@ -473,6 +512,23 @@ private var drawerOpen = false
         } else {
             notifyEvent("Execution requested", "$symbol · ${decision.direction} · Proposal request sent to Deriv. Stake ${formatMoney(stake)}; target ${formatMarketPrice(absoluteBarrier)}.",
                 "execution_requested_${accountId}_${executionMode}_$reqId")
+            // A proposal timeout is safe to release because no purchase request has been sent.
+            // Do not leave the index locked indefinitely if Deriv never answers the proposal.
+            android.os.Handler(mainLooper).postDelayed({
+                val stillWaiting = pendingOrdersByRequest[reqId]
+                if (stillWaiting != null && stillWaiting.stage == "PROPOSAL") {
+                    pendingOrdersByRequest.remove(reqId)
+                    if (pendingOrdersByRequest.values.none { it.symbol == stillWaiting.symbol && it.mode == stillWaiting.mode } &&
+                        runningContracts.values.none { it.symbol == stillWaiting.symbol && it.mode == stillWaiting.mode }) {
+                        pendingIndexSymbols.remove(stillWaiting.symbol)
+                    }
+                    notifyEvent(
+                        "Execution rejected",
+                        "${stillWaiting.symbol} · No proposal response was received from Deriv within 15 seconds. No purchase was submitted; the index lock was released safely.",
+                        "proposal_timeout_${accountId}_${executionMode}_$reqId"
+                    )
+                }
+            }, 15000L)
         }
     }
 
@@ -584,66 +640,7 @@ private var drawerOpen = false
             derivApiClient.send(JSONObject().put("proposal_open_contract", 1).put("contract_id", contractId).put("subscribe", 1))
             derivApiClient.requestOpenTrades()
             derivApiClient.requestTradeHistory()
-            if (selectedTab == "Trade") render()
-            return
-        }
-        if (msgType == "proposal_open_contract") {
-            val contract = json.optJSONObject("proposal_open_contract") ?: return
-            val contractId = contract.optLong("contract_id", 0L)
-            val running = runningContracts[contractId] ?: return
-            val status = contract.optString("status", "")
-            if (!running.openContractConfirmed && status !in setOf("sold", "won", "lost", "expired") && contractId > 0L) {
-                running.openContractConfirmed = true
-                notifyEvent("Open contract confirmed", "${running.symbol} · Contract $contractId · Deriv confirms status ${status.ifBlank { "open" }.uppercase()}.",
-                    "open_contract_confirmed_${accountId}_${executionMode}_$contractId")
-            }
-            val profitOpen = contract.optDouble("profit", contract.optDouble("profit_open", 0.0))
-            if (!running.takeProfitRequested && status != "sold" && status != "won" && status != "lost" &&
-                profitOpen >= running.stake * 0.10) {
-                running.takeProfitRequested = true
-                derivApiClient.send(JSONObject().put("sell", contractId).put("price", 0).put("req_id", nextTradeRequestId()))
-            }
-            if (status == "sold" || status == "won" || status == "lost" || contract.optInt("is_sold", 0) == 1) {
-                runningContracts.remove(contractId)
-                pendingIndexSymbols.remove(running.symbol)
-                notifyEvent("Trade closed", "${running.symbol} · Contract $contractId · Final status: ${status.uppercase()}.",
-                    "trade_closed_${accountId}_${executionMode}_$contractId")
-            }
-        }
-    }
-    // ANALYSIS — MARKET DATA STATE
-private val marketDataIndexes = listOf(
-    "R_10",
-    "R_25",
-    "R_50",
-    "R_75",
-    "R_100"
-)
-
-private val marketDataCandles =
-    mutableMapOf<String, List<DerivApiClient.Candle>>()
-
-private val marketDataPrices =
-    mutableMapOf<String, Double>()
-private val marketDataPriceViews = mutableMapOf<String, TextView>()
-private val dashboardPriceViews = mutableMapOf<String, TextView>()
-private val dashboardStatusViews = mutableMapOf<String, TextView>()
-private val currentPriceViews = mutableMapOf<String, MutableList<TextView>>()
-private val marketDataErrors =
-    mutableMapOf<String, String>()
-
-private var marketDataRequested = false
-private var marketStructureExpanded = true
-private var mssChochExpanded = true
-private var marketDataExpanded = true
-private var mssChochBehaviourExpanded = true
-private var directionStructuralTargetExpanded = true
-private var qualificationExpanded = true
-private var targetFilterExpanded = true
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-
-        window.statusBarColor = bg
+          window.statusBarColor = bg
 window.navigationBarColor = bg
 window.decorView.systemUiVisibility = 0
 
@@ -747,7 +744,7 @@ when (selectedTab) {
                     page.addView(button("SIGN IN", true) { selectedTab = "Login"; render() }, matchWrap())
                 } else addTradeScreen()
             }
-            "Register" -> {
+"Register" -> {
     addRegistrationScreen()
     page.addView(
         button("BACK TO HOME", false) {
@@ -1225,6 +1222,7 @@ private fun addHeader() {
         titles.addView(
             label("TRADE SMARTER TODAY", 8f, muted, false)
         )
+
         row.addView(
             titles,
             LinearLayout.LayoutParams(0, -2, 1f)
@@ -1255,7 +1253,6 @@ private fun addHeader() {
         val card = card()
 
         card.orientation = LinearLayout.VERTICAL
-
         card.addView(
             label("NAVIGATION", 13f, green, true)
         )
@@ -1354,6 +1351,7 @@ private fun addHeader() {
         tradeHistoryResponse = null
         openTradesResponse = null
         portfolioLoadedForAccount = false
+        lastOpenTradesRequestAt = 0L
         openContractResponse = null
         liveContractProfits.clear()
         historyAccountKey = ""
@@ -1521,6 +1519,7 @@ private fun addHeader() {
             },
                     weighted()
         )
+
         card.addView(
             buttons,
             matchWrap().apply {
@@ -1618,7 +1617,7 @@ private fun addTradeScreen() {
                 "Account ID: $accountId"
             } else {
                 "Account ID: —"
-            },
+                },
             12f,
             muted,
             false
@@ -2256,7 +2255,6 @@ private fun addDirectionStructuralTargetAnalysis() {
                 true
             )
         )
-
         indexCard.addView(
             label(
                 "STRUCTURAL TARGET: ${
@@ -2876,6 +2874,66 @@ private fun addTargetFilterAnalysis() {
         page.addView(card, matchWrap())
     }
 
+    private fun loadAdminUsers() {
+        if (authToken.isBlank()) {
+            toast("Sign in with the administrator account first.")
+            return
+        }
+        if (adminUsersLoading) return
+        adminUsersLoading = true
+        adminUsers = null
+        val requestedToken = authToken
+        val requestedGeneration = authSessionGeneration
+        render()
+        authRequest("admin_users", token = requestedToken) { ok, result ->
+            if (requestedGeneration != authSessionGeneration || requestedToken != authToken) return@authRequest
+            adminUsersLoading = false
+            if (ok) {
+                adminUsers = result.optJSONArray("users") ?: JSONArray()
+                if (selectedTab == "User Accounts") render()
+            } else {
+                adminUsers = null
+                if (selectedTab == "User Accounts") render()
+                toast(result.optString("message", "Unable to load users."))
+            }
+        }
+    }
+    private fun addRiskCategoriesScreen() {
+        page.addView(sectionTitle("RISK CATEGORIES"))
+        page.addView(label("Risk rules are applied before both manual and automatic trades. Each trade uses the same fixed daily stake: 20% of the frozen day-start account capital. Trade count resets on the South African calendar day.", 13f, muted, false))
+        val rules = listOf(
+            Triple("MINIMUM", "1 trade per day", "30-day plan"),
+            Triple("MEDIUM", "3 trades per day", "30-day plan"),
+            Triple("MAXIMUM", "5 trades per day", "30-day plan"),
+            Triple("SUPER MAXIMUM", "Unlimited trades per day", "30-day plan")
+        )
+        rules.forEach { (name, limit, duration) ->
+            val ruleCard = card().apply { orientation = LinearLayout.VERTICAL }
+            ruleCard.addView(label(name, 16f, green, true))
+            ruleCard.addView(label("Stake: 20% of daily starting capital", 13f, white, false))
+            ruleCard.addView(label("Profit-close target: 10% of stake", 13f, white, false))
+            ruleCard.addView(label("Limit: $limit", 13f, yellow, true))
+            ruleCard.addView(label(duration, 12f, muted, false))
+            page.addView(ruleCard, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
+        }
+        page.addView(button("ASSIGN / EDIT A USER'S RISK PLAN", true) { selectedTab = "User Accounts"; loadAdminUsers() }, matchWrap().apply { topMargin = dp(8) })
+        page.addView(label("Important: this Android screen enforces limits locally. The mobile-auth.php backend must also enforce the same risk plan and daily trade limits to prevent bypass from another device or app version.", 12f, yellow, false).apply { setPadding(0, dp(10), 0, 0) })
+    }
+
+    private fun addTradingLogsScreen() {
+        page.addView(sectionTitle("TRADING LOGS"))
+        val card = card().apply { orientation = LinearLayout.VERTICAL }
+        card.addView(label("Recent local trading events", 16f, green, true))
+        val logs = appPrefs.getString("notification_feed", "").orEmpty().lines().filter { it.isNotBlank() }
+        if (logs.isEmpty()) card.addView(label("No local events recorded yet.", 13f, yellow, false))
+        else logs.take(50).forEach { card.addView(label(it, 12f, white, false).apply { setPadding(0, dp(5), 0, dp(5)) }) }
+        card.addView(button("REFRESH DERIV TRADES", false) {
+            if (connected) { derivApiClient.requestOpenTrades(); derivApiClient.requestTradeHistory(); toast("Refreshing open trades and history.") }
+            else toast("Connect to Deriv first.")
+        }, matchWrap().apply { topMargin = dp(8) })
+        page.addView(card, matchWrap())
+    }
+
     private fun addNotificationsScreen() {
         page.addView(sectionTitle("NOTIFICATIONS"))
         val card = card().apply { orientation = LinearLayout.VERTICAL }
@@ -2974,6 +3032,7 @@ private fun addTargetFilterAnalysis() {
             // The in-app notification feed remains available if Android notification delivery fails.
         }
     }
+
     // =========================================================
     // ADMIN PREVIEW
     // =========================================================
@@ -3332,6 +3391,7 @@ private fun addTargetFilterAnalysis() {
         val j = JSONObject(body); val err = j.optJSONObject("error")
         err?.optString("message")?.takeIf { !it.isNullOrBlank() } ?: j.optString("message", body.take(180))
     } catch (_: Exception) { body.take(180) }
+
     private fun connectWithToken(token: String) {
     if (token.isBlank()) {
         toast("Deriv access token is empty.")
@@ -3388,6 +3448,7 @@ private fun addTargetFilterAnalysis() {
         this.accountType = accountType
         historyAccountKey = "$executionMode:$accountId"
         portfolioLoadedForAccount = false
+        lastOpenTradesRequestAt = android.os.SystemClock.elapsedRealtime()
         derivApiClient.requestOpenTrades()
         derivApiClient.requestTradeHistory()
         marketDataRequested = true
@@ -3543,5 +3604,3 @@ override fun onMarketDataError(
     }
 
                                         }
-
-        
