@@ -99,6 +99,9 @@ private var drawerOpen = false
     private var authToken: String = ""
     private var currentProfile: JSONObject? = null
     private var profileLoading: Boolean = false
+    // Incremented whenever the signed-in account changes. Responses from an older
+    // account session must never overwrite the currently signed-in user's details.
+    private var authSessionGeneration: Long = 0L
     private var adminUsers: JSONArray? = null
     private var adminUsersLoading: Boolean = false
     private var openTradesResponse: JSONObject? = null
@@ -331,7 +334,6 @@ private var drawerOpen = false
         if (samples == 0) return 0.0 to 0
         return (hits.toDouble() / samples.toDouble() * 100.0) to samples
     }
-
     /** Sole authority for trade approval. PTPE is always recorded for display, even when it fails. */
     private fun evaluateMasterDecision(symbol: String): MasterDecision? {
         val candles = analysisCompletedCandles(symbol)
@@ -359,7 +361,7 @@ private var drawerOpen = false
             lastPtpeByIndex[symbol] = PtpeDisplay(direction = if (direction == "BULLISH") "BUY" else "SELL", status = "WAITING FOR STRUCTURAL TARGET")
             lastDecisionByIndex.remove(symbol)
             return null
-            }
+        }
         val target = targetPivot.price
         if (!target.isFinite() || (direction == "BULLISH" && target <= current) || (direction == "BEARISH" && target >= current)) {
             lastPtpeByIndex[symbol] = PtpeDisplay(direction = if (direction == "BULLISH") "BUY" else "SELL", target = target, status = "INVALID TARGET DIRECTION")
@@ -543,8 +545,7 @@ private val dashboardStatusViews = mutableMapOf<String, TextView>()
 private val currentPriceViews = mutableMapOf<String, MutableList<TextView>>()
 private val marketDataErrors =
     mutableMapOf<String, String>()
-
-private var marketDataRequested = false
+    private var marketDataRequested = false
 private var marketStructureExpanded = true
 private var mssChochExpanded = true
 private var marketDataExpanded = true
@@ -816,6 +817,7 @@ private fun addRegistrationScreen() {
             else -> {
                 submit.isEnabled = false
                 submit.text = "SUBMITTING APPLICATION…"
+                val registrationGeneration = authSessionGeneration
                 authRequest("register", mapOf(
                     "first_name" to name,
                     "surname" to surname,
@@ -824,12 +826,18 @@ private fun addRegistrationScreen() {
                     "password" to password,
                     "password_confirm" to confirmPassword
                 ), token = "") { ok, result ->
+                    if (registrationGeneration != authSessionGeneration) return@authRequest
                     submit.isEnabled = true
                     submit.text = "CREATE ACCOUNT"
                     if (ok) {
                         val message = result.optString("message", "Application submitted. Await administrator approval.")
                         val token = result.optString("token", "")
                         if (token.isNotBlank()) {
+                            authSessionGeneration++
+                            profileLoading = false
+                            currentProfile = null
+                            adminUsers = null
+                            adminUsersLoading = false
                             authToken = token
                             authPrefs.edit().putString("mobile_auth_token", token).apply()
                             currentProfile = result.optJSONObject("user")
@@ -883,10 +891,18 @@ private fun addLoginScreen() {
             else -> {
                 signIn.isEnabled = false
                 signIn.text = "SIGNING IN…"
+                val loginGeneration = authSessionGeneration
                 authRequest("login", mapOf("email" to email, "password" to password), token = "") { ok, result ->
+                    if (loginGeneration != authSessionGeneration) return@authRequest
                     signIn.isEnabled = true
                     signIn.text = "SIGN IN"
                     if (ok) {
+                        // Invalidate any profile response belonging to the previous account.
+                        authSessionGeneration++
+                        profileLoading = false
+                        currentProfile = null
+                        adminUsers = null
+                        adminUsersLoading = false
                         authToken = result.optString("token", "")
                         authPrefs.edit().putString("mobile_auth_token", authToken).apply()
                         currentProfile = result.optJSONObject("user")
@@ -1005,16 +1021,22 @@ private fun authRequest(
         }
     })
 }
+
 private fun refreshProfile(showMessage: Boolean) {
     if (authToken.isBlank()) {
         currentProfile = null
+        profileLoading = false
         selectedTab = "Login"
         render()
         return
     }
     if (profileLoading) return
+    val requestedToken = authToken
+    val requestedGeneration = authSessionGeneration
     profileLoading = true
-    authRequest("profile") { ok, result ->
+    authRequest("profile", token = requestedToken) { ok, result ->
+        // A delayed response from a logged-out user must not populate the new user's profile.
+        if (requestedGeneration != authSessionGeneration || requestedToken != authToken) return@authRequest
         profileLoading = false
         if (ok) {
             currentProfile = result.optJSONObject("user")
@@ -1023,9 +1045,14 @@ private fun refreshProfile(showMessage: Boolean) {
             if (selectedTab == "My profile" || selectedTab == "Account" || selectedTab == "Notifications" || selectedTab == "Settings") render()
             if (showMessage) toast("Profile updated.")
         } else {
+            authSessionGeneration++
             authToken = ""
             currentProfile = null
+            profileLoading = false
+            adminUsers = null
+            adminUsersLoading = false
             authPrefs.edit().remove("mobile_auth_token").apply()
+            platform = "USER"
             selectedTab = "Login"
             render()
             toast(result.optString("message", "Please sign in again."))
@@ -1035,12 +1062,19 @@ private fun refreshProfile(showMessage: Boolean) {
 
 private fun performPlatformLogout() {
     val token = authToken
+    // Invalidate in-flight profile/login responses before clearing the old account.
+    // This prevents delayed callbacks from restoring the previous user's details.
+    authSessionGeneration++
+    profileLoading = false
+    currentProfile = null
+    adminUsers = null
+    adminUsersLoading = false
     // Clear Deriv session and both saved OAuth tokens so another user on this device
     // cannot reconnect to the previous user's Deriv account.
     disconnectDeriv(clearSavedTokens = true)
     authToken = ""
-    currentProfile = null
     authPrefs.edit().remove("mobile_auth_token").apply()
+    platform = "USER"
     selectedTab = "Login"
     drawerOpen = false
     render()
@@ -1121,7 +1155,6 @@ private fun addHeader() {
             contentDescription = "Notifications"
             setOnClickListener { selectedTab = "Notifications"; drawerOpen = false; render() }
         }
-
         row.addView(
             bell,
             LinearLayout.LayoutParams(dp(42), dp(52))
@@ -1307,7 +1340,8 @@ private fun addHeader() {
             dashboardPriceViews[symbol] = priceView
             row.addView(priceView, LinearLayout.LayoutParams(0, -2, 1f))
             val decision = lastDecisionByIndex[symbol]
-            val statusView = label(if (decision != null) "QUALIFIED ${decision.direction}" else "WAITING", 11f, if (decision != null) green else yellow, true)
+            val initialStatus = dashboardDecisionStatus(symbol)
+            val statusView = label(initialStatus.first, 10f, initialStatus.second, true)
             dashboardStatusViews[symbol] = statusView
             row.addView(statusView)
             row.setOnClickListener { selectedTab = "Analysis"; render() }
@@ -1358,6 +1392,7 @@ private fun addHeader() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
+
         statusLine.addView(
             accountStatus,
             LinearLayout.LayoutParams(-1, -2)
@@ -1426,17 +1461,42 @@ private fun ptpeDisplayText(symbol: String): String {
     return "$symbol • ${ptpe.direction} • Target $targetText • Distance $distanceText • PTPE ${String.format(java.util.Locale.US, "%.1f", ptpe.probability)}% (${ptpe.samples} samples) • ${ptpe.status}"
 }
 
-private fun updatePtpeDisplay(symbol: String) {
-    val view = ptpeStatusViews[symbol] ?: return
-    val qualified = lastDecisionByIndex.containsKey(symbol)
-    view.text = ptpeDisplayText(symbol)
-    view.setTextColor(if (qualified) green else yellow)
-    dashboardStatusViews[symbol]?.apply {
-        text = if (qualified) "QUALIFIED ${lastDecisionByIndex[symbol]?.direction ?: ""}" else "WAITING"
-        setTextColor(if (qualified) green else yellow)
+/** Short, actionable dashboard status. WAITING is reserved for data not yet received. */
+private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
+    val decision = lastDecisionByIndex[symbol]
+    if (decision != null) return "QUALIFIED ${decision.direction}" to green
+    val status = lastPtpeByIndex[symbol]?.status ?: "WAITING FOR MARKET DATA"
+    val shortStatus = when {
+        status.contains("100+ CANDLES") -> "HISTORY WAIT"
+        status.contains("LIVE PRICE") -> "PRICE WAIT"
+        status.contains("MSS/CHOCH") -> "MSS WAIT"
+        status.contains("STRUCTURAL TARGET") -> "TARGET WAIT"
+        status.contains("INVALID TARGET") -> "INVALID TARGET"
+        status.contains("DISTANCE BELOW") -> "DISTANCE <1.5%"
+        status.contains("INSUFFICIENT PTPE") -> "PTPE SAMPLES"
+        status.contains("PTPE BELOW") -> "PTPE <80%"
+        status.contains("NO PRIOR") -> "NO PRIOR EVENT"
+        status.contains("ERROR") -> "DATA ERROR"
+        else -> "DATA WAIT"
     }
+    return shortStatus to yellow
 }
 
+private fun updatePtpeDisplay(symbol: String) {
+    val qualified = lastDecisionByIndex.containsKey(symbol)
+    ptpeStatusViews[symbol]?.apply {
+        text = ptpeDisplayText(symbol)
+        setTextColor(if (qualified) green else yellow)
+    }
+    // Update the dashboard even when the Trade tab is not open. Previously this
+    // function returned early when there was no Trade-tab PTPE view, leaving the
+    // dashboard status permanently stuck on WAITING.
+    val (statusText, statusColor) = dashboardDecisionStatus(symbol)
+    dashboardStatusViews[symbol]?.apply {
+        text = statusText
+        setTextColor(statusColor)
+    }
+}
 // =========================================================
 // TRADE SCREEN
 // =========================================================
@@ -1666,7 +1726,7 @@ private fun addTradeScreen() {
         row.addView(label("STAKE  $buyPriceText     P/L  $profitText", 12f, profitColor(profit), true).apply { setPadding(0, dp(5), 0, 0) })
         historyCard.addView(row, matchWrap().apply { topMargin = dp(6) })
         historyCount++
-        }
+    }
     if (historyCount == 0) historyCard.addView(label("No completed trade-history records were returned by Deriv yet.", 12f, yellow, false))
 
     page.addView(
@@ -1775,8 +1835,8 @@ private fun analysisMssEvents(candles: List<DerivApiClient.Candle>): List<Analys
         }
         if (priorHL != null && candle.close < priorHL.price && brokenLows.add(priorHL.index)) {
             events.add(AnalysisMssEvent("BEARISH MSS", "BEARISH", priorHL, candle))
-            }
-    }
+        }
+        }
     return events
 }
 private fun analysisLatestMss(candles: List<DerivApiClient.Candle>): AnalysisMssEvent? =
@@ -2851,7 +2911,7 @@ private fun addTargetFilterAnalysis() {
                         "Trading Logs" -> "Trading Logs"
                         "System Settings" -> "Settings"
                         else -> "Dashboard"
-                        }
+                    }
                     if (selectedTab == "User Accounts") loadAdminUsers() else render()
                 },
                 matchWrap().apply {
@@ -2931,8 +2991,7 @@ private fun addTargetFilterAnalysis() {
 
         outer.addView(nav, LinearLayout.LayoutParams(-1, dp(76)))
     }
-
-    // =========================================================
+   // =========================================================
     // UI HELPERS
     // =========================================================
 
@@ -3347,6 +3406,11 @@ override fun onCandles(
         marketDataCandles[symbol] = candles
         marketDataErrors.remove(symbol)
 
+        // Re-evaluate the Master Decision as soon as the historical H1 candles
+        // arrive, rather than waiting for the next live tick or Trade-tab render.
+        evaluateMasterDecision(symbol)
+        updatePtpeDisplay(symbol)
+
         if (selectedTab == "Analysis") {
             render()
         }
@@ -3380,5 +3444,5 @@ override fun onMarketDataError(
             }
         }
     }
-
                                         }
+                                        
