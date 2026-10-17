@@ -227,6 +227,7 @@ class DerivApiClient(
     private var marketDataEndpointIndex = 0
     private var marketDataAttempt = 0
     private var marketDataTimeout: java.util.concurrent.ScheduledFuture<*>? = null
+    private var marketDataReconnectFuture: ScheduledFuture<*>? = null
     private val marketDataEndpoints = listOf(
         "wss://ws.binaryws.com/websockets/v3?app_id=1089",
         "wss://ws.binaryws.com/websockets/v3",
@@ -313,6 +314,8 @@ private val candleIndexes = listOf(
         manuallyDisconnected =
             false
 
+        marketDataReconnectFuture?.cancel(false)
+        marketDataReconnectFuture = null
         cancelReconnect()
 
         stopHeartbeat()
@@ -398,7 +401,7 @@ private val candleIndexes = listOf(
             )
             .enqueue(
                 object :
-                okhttp3.Callback {
+                    okhttp3.Callback {
 
                     override fun onFailure(
                         call: okhttp3.Call,
@@ -635,7 +638,7 @@ private val candleIndexes = listOf(
                 .addHeader(
                     "Authorization",
                     "Bearer $token"
-                )
+                    )
                 .post(
                     okhttp3.FormBody.Builder()
                         .build()
@@ -802,6 +805,7 @@ private val candleIndexes = listOf(
 
                 return url
             }
+
             val websocketUrl =
                 data.optString(
                     "websocket_url",
@@ -930,7 +934,6 @@ private val candleIndexes = listOf(
                              * account balance after connection.
                              */
                         }
-
                         override fun onMessage(
                             socket: WebSocket,
                             text: String
@@ -1196,6 +1199,7 @@ private fun connectMarketDataEndpoint() {
                 val symbol = echoRequest?.optString("ticks_history", "")?.takeIf { it in candleIndexes }
                     ?: candleRequestSymbols.remove(requestId).orEmpty()
                 if (symbol !in candleIndexes) return
+
                 val candlesJson = json.optJSONArray("candles") ?: json.optJSONObject("history")?.optJSONArray("candles")
                 if (candlesJson == null) {
                     callback.onMarketDataError(symbol, "Deriv returned no H1 candles for $symbol.")
@@ -1216,8 +1220,11 @@ private fun connectMarketDataEndpoint() {
                 if (candles.isNotEmpty()) {
                     candleRequestSymbols.remove(requestId)
                     callback.onCandles(symbol, candles.sortedBy { it.epoch })
-                    marketDataTimeout?.cancel(false)
-                    marketDataTimeout = null
+                    // Keep the timeout active until all five index histories have replied.
+                    if (candleRequestSymbols.isEmpty()) {
+                        marketDataTimeout?.cancel(false)
+                        marketDataTimeout = null
+                    }
                 } else {
                     callback.onMarketDataError(symbol, "Deriv returned a candle response, but no valid candles could be read.")
                 }
@@ -1227,36 +1234,58 @@ private fun connectMarketDataEndpoint() {
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            if (marketDataSocket !== webSocket) return
             android.util.Log.e("DerivCandles", "Market-data endpoint failed: $endpoint; HTTP=${response?.code}; ${t.message}")
-            if (marketDataSocket === webSocket) marketDataSocket = null
+            marketDataSocket = null
             marketDataTimeout?.cancel(false)
             marketDataTimeout = null
             candleRequestSymbols.clear()
+            if (manuallyDisconnected) return
             if (marketDataAttempt < marketDataEndpoints.size - 1) {
                 marketDataAttempt++
                 marketDataEndpointIndex = (marketDataEndpointIndex + 1) % marketDataEndpoints.size
-                scheduler.schedule({ connectMarketDataEndpoint() }, 700, java.util.concurrent.TimeUnit.MILLISECONDS)
+                scheduleMarketDataReconnect(700L)
             } else {
+                for (symbol in candleIndexes) {
+                    callback.onMarketDataError(symbol, "Market-data connection failed; retrying automatically. Last HTTP=${response?.code ?: "unknown"}; ${t.message ?: "network error"}")
+                }
                 marketDataAttempt = 0
-                for (symbol in candleIndexes) callback.onMarketDataError(symbol, "All configured market-data endpoints failed. Last HTTP=${response?.code ?: "unknown"}; ${t.message ?: "network error"}")
-                // Cycle to the first endpoint for the next explicit refresh/retry.
                 marketDataEndpointIndex = 0
+                scheduleMarketDataReconnect(5000L)
             }
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-            if (marketDataSocket === webSocket) marketDataSocket = null
+            if (marketDataSocket !== webSocket) return
+            marketDataSocket = null
             marketDataTimeout?.cancel(false)
             marketDataTimeout = null
+            candleRequestSymbols.clear()
+            if (manuallyDisconnected) return
             if (code == 1011 && marketDataAttempt < marketDataEndpoints.size - 1) {
                 marketDataAttempt++
                 marketDataEndpointIndex = (marketDataEndpointIndex + 1) % marketDataEndpoints.size
-                scheduler.schedule({ connectMarketDataEndpoint() }, 700, java.util.concurrent.TimeUnit.MILLISECONDS)
+                scheduleMarketDataReconnect(700L)
+            } else {
+                // A normal/remote close can also leave the index monitor stuck; reconnect it.
+                marketDataAttempt = 0
+                if (code == 1011) marketDataEndpointIndex = 0
+                scheduleMarketDataReconnect(2000L)
             }
         }
     })
     // Keep the pending socket reference so repeated calls don't create parallel connections.
     marketDataSocket = socket
+}
+
+private fun scheduleMarketDataReconnect(delayMs: Long) {
+    if (manuallyDisconnected) return
+    marketDataReconnectFuture?.cancel(false)
+    marketDataReconnectFuture = scheduler.schedule({
+        if (!manuallyDisconnected && marketDataSocket == null) {
+            connectMarketDataEndpoint()
+        }
+    }, delayMs, TimeUnit.MILLISECONDS)
 }
 
 // =============================================================
@@ -1344,10 +1373,7 @@ if (tick != null) {
             if (
                 tradeMessageType == "portfolio" ||
                 tradeMessageType == "profit_table" ||
-                tradeMessageType == "proposal_open_contract" ||
-                tradeMessageType == "proposal" ||
-                tradeMessageType == "buy" ||
-                tradeMessageType == "sell"
+                tradeMessageType == "proposal_open_contract"
             ) {
                 callback.onTradeData(json)
             }
@@ -1376,9 +1402,6 @@ if (tick != null) {
                         }
                         ?: "Unknown Deriv WebSocket error"
 
-                if (json.has("req_id")) {
-                    callback.onTradeData(json)
-                }
                 callback.onError(
                     "Deriv: $message"
                 )
@@ -1515,7 +1538,6 @@ if (tick != null) {
 
             return
         }
-
         try {
 
             val request =
@@ -1785,7 +1807,6 @@ if (tick != null) {
         if (
             manuallyDisconnected
         ) {
-
             return
         }
 
@@ -1902,6 +1923,8 @@ if (tick != null) {
             true
 
         cancelReconnect()
+        marketDataReconnectFuture?.cancel(false)
+        marketDataReconnectFuture = null
 
         stopHeartbeat()
 
@@ -1994,6 +2017,7 @@ candleRequestSymbols.clear()
     fun switchAccount(
         newAccountType: String
     ) {
+
         val normalized =
             if (
                 newAccountType.equals(
@@ -2037,6 +2061,8 @@ candleRequestSymbols.clear()
         manuallyDisconnected =
             false
 
+        marketDataReconnectFuture?.cancel(false)
+        marketDataReconnectFuture = null
         cancelReconnect()
 
         stopHeartbeat()
@@ -2164,6 +2190,8 @@ candleRequestSymbols.clear()
             true
 
         cancelReconnect()
+        marketDataReconnectFuture?.cancel(false)
+        marketDataReconnectFuture = null
 
         stopHeartbeat()
 
@@ -2176,7 +2204,7 @@ candleRequestSymbols.clear()
                 )
 
         } catch (
-            _: Exception
+           _: Exception
         ) {
         }
 
