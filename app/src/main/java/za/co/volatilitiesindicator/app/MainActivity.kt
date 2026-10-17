@@ -397,7 +397,7 @@ private var drawerOpen = false
         if (hasOpenStakeMismatch(stake)) {
             notifyEvent("Trade blocked", "An existing open or pending contract uses a different stake. No new trade can open until the stake is consistent.")
             return
-            }
+        }
         if (stake <= 0.0 || stake > accountBalance) {
             notifyEvent("Trade blocked", "The fixed daily stake is greater than the available balance.")
             return
@@ -795,7 +795,7 @@ private fun addRegistrationScreen() {
                         drawerOpen = false
                         render()
                         toast(message)
-                        } else {
+                    } else {
                         toast(result.optString("message", "Registration failed. Please try again."))
                     }
                 }
@@ -1118,7 +1118,6 @@ private fun addHeader() {
 
         items.forEach { item ->
             val b = button("  $item", false)
-
             b.gravity = Gravity.START or Gravity.CENTER_VERTICAL
 
             b.setOnClickListener {
@@ -1197,6 +1196,7 @@ private fun addHeader() {
 
     private fun formatMoney(value: Double): String = String.format(java.util.Locale.US, "%.2f", value)
     private fun profitColor(value: Double): Int = when { value > 0.000001 -> green; value < -0.000001 -> red; else -> white }
+
     // =========================================================
     // EXECUTION MODE SELECTOR
     // =========================================================
@@ -1781,7 +1781,6 @@ private fun analysisPivots(candles: List<DerivApiClient.Candle>): List<AnalysisP
     lows.forEachIndexed { i, pivot -> pivot.label = if (i > 0 && pivot.price > lows[i-1].price) "HL" else "LL" }
     return collapsed
 }
-
 private fun analysisMssEvents(candles: List<DerivApiClient.Candle>): List<AnalysisMssEvent> {
     if (candles.size < 20) return emptyList()
     val pivots = analysisPivots(candles)
@@ -2258,9 +2257,13 @@ private fun addQualificationAnalysis() {
                 12f, if (hasHistory) green else yellow, true
             )
         )
-        val targetDistance = if (target != null && current != null && current > 0.0) {
-            kotlin.math.abs(target.
-                           } else null
+        val currentPriceForDistance = current ?: 0.0
+        val targetPriceForDistance = target?.price
+        val targetDistance: Double? = if (targetPriceForDistance != null && currentPriceForDistance > 0.0) {
+            kotlin.math.abs(targetPriceForDistance - currentPriceForDistance) / currentPriceForDistance * 100.0
+        } else {
+            null
+        }
         val targetEligibilityText = if (targetDistance != null && targetDistance >= 1.5) {
             "PASS — " + String.format(java.util.Locale.US, "%.3f%%", targetDistance)
         } else {
@@ -2312,10 +2315,16 @@ private fun addTargetFilterAnalysis() {
         val direction = when (event?.direction) { "BULLISH" -> "UP"; "BEARISH" -> "DOWN"; else -> "" }
         val target = if (event != null && current != null && direction.isNotBlank())
             analysisStructuralTarget(candles, current, direction, event.confirmation.epoch) else null
-        val distance = if (target != null && current != null && current != 0.0)
-            kotlin.math.abs(target.price - current) / current * 100.0 else null
-        val passes = target != null && distance != null && distance > 0.0 &&
-            ((direction == "UP" && target.price > current!!) || (direction == "DOWN" && target.price < current!!))
+        val currentPriceForDistance = current ?: 0.0
+        val targetPriceForDistance = target?.price
+        val distance: Double? = if (targetPriceForDistance != null && currentPriceForDistance > 0.0) {
+            kotlin.math.abs(targetPriceForDistance - currentPriceForDistance) / currentPriceForDistance * 100.0
+        } else {
+            null
+        }
+        val passes = targetPriceForDistance != null && distance != null && distance > 0.0 &&
+            ((direction == "UP" && targetPriceForDistance > currentPriceForDistance) ||
+             (direction == "DOWN" && targetPriceForDistance < currentPriceForDistance))
         card.addView(label("DIRECTION: ${direction.ifBlank { "WAITING" }}", 13f,
             if (direction == "UP") green else if (direction == "DOWN") red else yellow, true))
         card.addView(label("TARGET PRICE: ${target?.let { formatMarketPrice(it.price) } ?: "REJECTED / NOT AVAILABLE"}", 13f,
@@ -3097,7 +3106,6 @@ private fun addTargetFilterAnalysis() {
             }
         })
     }
-
     private fun oauthError(body: String): String = try {
         val j = JSONObject(body); val err = j.optJSONObject("error")
         err?.optString("message")?.takeIf { !it.isNullOrBlank() } ?: j.optString("message", body.take(180))
@@ -3296,4 +3304,4 @@ override fun onMarketDataError(
         }
     }
 
-                            }
+                                        }
