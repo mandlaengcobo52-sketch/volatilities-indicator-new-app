@@ -397,7 +397,7 @@ private var drawerOpen = false
         if (hasOpenStakeMismatch(stake)) {
             notifyEvent("Trade blocked", "An existing open or pending contract uses a different stake. No new trade can open until the stake is consistent.")
             return
-        }
+            }
         if (stake <= 0.0 || stake > accountBalance) {
             notifyEvent("Trade blocked", "The fixed daily stake is greater than the available balance.")
             return
@@ -795,7 +795,7 @@ private fun addRegistrationScreen() {
                         drawerOpen = false
                         render()
                         toast(message)
-                    } else {
+                        } else {
                         toast(result.optString("message", "Registration failed. Please try again."))
                     }
                 }
@@ -1197,7 +1197,6 @@ private fun addHeader() {
 
     private fun formatMoney(value: Double): String = String.format(java.util.Locale.US, "%.2f", value)
     private fun profitColor(value: Double): Int = when { value > 0.000001 -> green; value < -0.000001 -> red; else -> white }
-
     // =========================================================
     // EXECUTION MODE SELECTOR
     // =========================================================
@@ -2260,8 +2259,8 @@ private fun addQualificationAnalysis() {
             )
         )
         val targetDistance = if (target != null && current != null && current > 0.0) {
-            kotlin.math.abs(target.price - current) / current * 100.0
-        } else null
+            kotlin.math.abs(target.
+                           } else null
         val targetEligibilityText = if (targetDistance != null && targetDistance >= 1.5) {
             "PASS — " + String.format(java.util.Locale.US, "%.3f%%", targetDistance)
         } else {
@@ -3122,14 +3121,29 @@ private fun addTargetFilterAnalysis() {
 
     private fun disconnectDeriv() {
         try { derivApiClient.disconnect() } catch (_: Exception) {}
-        connected = false; accountId = ""; accountType = ""; accountBalance = 0.0; accountCurrency = ""
-        accountStatus.text = "●  NOT CONNECTED"; accountStatus.setTextColor(red)
-        accountIdView.text = "Account:  —"; balanceView.text = "Balance:  —"
+        connected = false
+        accountId = ""
+        accountType = ""
+        accountBalance = 0.0
+        accountCurrency = ""
+        // These views only exist on screens that render the account card.
+        // Analysis and other tabs can be active while Deriv callbacks arrive.
+        if (::accountStatus.isInitialized) {
+            accountStatus.text = "●  NOT CONNECTED"
+            accountStatus.setTextColor(red)
+        }
+        if (::accountIdView.isInitialized) accountIdView.text = "Account:  —"
+        if (::balanceView.isInitialized) balanceView.text = "Balance:  —"
         toast("Deriv disconnected.")
     }
 
     override fun onConnecting(message: String) {
-        runOnUiThread { accountStatus.text = "●  CONNECTING TO DERIV"; accountStatus.setTextColor(yellow) }
+        runOnUiThread {
+            if (::accountStatus.isInitialized) {
+                accountStatus.text = "●  CONNECTING TO DERIV"
+                accountStatus.setTextColor(yellow)
+            }
+        }
     }
     override fun onConnected(accountId: String, accountType: String) {
     runOnUiThread {
@@ -3149,8 +3163,13 @@ private fun addTargetFilterAnalysis() {
     override fun onBalance(balance: Double, currency: String) {
         runOnUiThread {
             accountBalance = balance; accountCurrency = currency; connected = true
-            balanceView.text = "Balance:  $currency ${String.format(java.util.Locale.US, "%.2f", balance)}"
-            accountStatus.text = "●  CONNECTED — $executionMode"; accountStatus.setTextColor(green)
+            if (::balanceView.isInitialized) {
+                balanceView.text = "Balance:  $currency ${String.format(java.util.Locale.US, "%.2f", balance)}"
+            }
+            if (::accountStatus.isInitialized) {
+                accountStatus.text = "●  CONNECTED — $executionMode"
+                accountStatus.setTextColor(green)
+            }
         }
     }
     override fun onTick(symbol: String, quote: Double, epoch: Long) {
@@ -3260,7 +3279,7 @@ override fun onMarketDataError(
 
     override fun onError(message: String) {
     runOnUiThread {
-        if (!connected) {
+        if (!connected && ::accountStatus.isInitialized) {
             accountStatus.text = "●  CONNECTION ERROR"
             accountStatus.setTextColor(red)
         }
@@ -3268,7 +3287,13 @@ override fun onMarketDataError(
     }
     }
     override fun onDisconnected() {
-        runOnUiThread { connected = false; accountStatus.text = "●  NOT CONNECTED"; accountStatus.setTextColor(red) }
+        runOnUiThread {
+            connected = false
+            if (::accountStatus.isInitialized) {
+                accountStatus.text = "●  NOT CONNECTED"
+                accountStatus.setTextColor(red)
+            }
+        }
     }
 
-                                        }
+                            }
