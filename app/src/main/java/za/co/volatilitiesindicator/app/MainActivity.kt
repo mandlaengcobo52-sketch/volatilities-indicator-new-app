@@ -414,10 +414,9 @@ private var drawerOpen = false
         )
         return decision
     }
-    private fun attemptMasterDecisionExecution(symbol: String) {
-        // Never execute a cached qualification. Recalculate Master Decision from the latest
-        // available market price each time the execution path runs.
-        val decision = evaluateMasterDecision(symbol) ?: return
+    private fun attemptMasterDecisionExecution(symbol: String, decision: MasterDecision) {
+        // This decision was evaluated from the latest tick immediately before this call.
+        // The proposal-response path still performs its own fresh validation before purchase.
         val signalKey = "${accountId}_${executionMode}_${symbol}_${decision.direction}_${String.format(java.util.Locale.US, "%.3f", decision.target)}"
         if (!autoTradeEnabled) {
             recordExecutionStage("Execution blocked", "$symbol · Auto Trade is OFF.", "blocked_auto_$signalKey")
@@ -756,7 +755,6 @@ if (authToken.isNotBlank() && savedToken.isNotBlank() &&
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(bg)
         }
-
         val scroll = ScrollView(this).apply {
     isFillViewport = true
     overScrollMode = View.OVER_SCROLL_NEVER
@@ -1367,7 +1365,6 @@ private fun addHeader() {
             }
         )
     }
-
     // =========================================================
     // PLATFORM SELECTOR
     // =========================================================
@@ -1670,7 +1667,6 @@ private fun addTradeScreen() {
             true
         )
     )
-
     accountCard.addView(
         label(
             if (accountId.isNotBlank()) {
@@ -2235,7 +2231,6 @@ private fun addMssChochBehaviourAnalysis() {
         page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
     }
 }
-
 // =========================================================
 // ANALYSIS — DIRECTION AND STRUCTURAL TARGET
 // =========================================================
@@ -2522,7 +2517,6 @@ private fun addTargetFilterAnalysis() {
         val views = currentPriceViews.getOrPut(symbol) { mutableListOf() }
         if (!views.contains(view)) views.add(view)
     }
-
     private fun formatMarketPrice(price: Double?): String =
         price?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
 
@@ -3122,7 +3116,6 @@ private fun addTargetFilterAnalysis() {
                     render()
                 }
             }
-
             item.addView(
                 label(icon, 23f, if (selected) green else yellow, true).apply {
                     gravity = Gravity.CENTER
@@ -3482,10 +3475,12 @@ private fun addTargetFilterAnalysis() {
             val now = android.os.SystemClock.elapsedRealtime()
             if (now - (lastPtpeEvaluationAt[symbol] ?: 0L) >= 3000L) {
                 lastPtpeEvaluationAt[symbol] = now
-                evaluateMasterDecision(symbol)
+                // Heavy historical analysis is limited to one pass per index per interval.
+                // Reuse its result for this execution check instead of calculating it twice.
+                val decision = evaluateMasterDecision(symbol)
                 updatePtpeDisplay(symbol)
+                if (decision != null) attemptMasterDecisionExecution(symbol, decision)
             }
-            attemptMasterDecisionExecution(symbol)
         }
     }
 }
@@ -3603,4 +3598,3 @@ override fun onMarketDataError(
     }
 
                                         }
-        
