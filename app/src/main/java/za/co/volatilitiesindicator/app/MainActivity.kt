@@ -313,7 +313,7 @@ private var drawerOpen = false
                     "daily_limit_${accountId}_${executionMode}_${saDayKey()}")
             }
             return false
-            }
+        }
         return true
     }
 
@@ -381,7 +381,7 @@ private var drawerOpen = false
             lastPtpeByIndex[symbol] = PtpeDisplay(direction = if (direction == "BULLISH") "BUY" else "SELL", status = "WAITING FOR STRUCTURAL TARGET")
             lastDecisionByIndex.remove(symbol)
             return null
-        }
+            }
         val target = targetPivot.price
         if (!target.isFinite() || (direction == "BULLISH" && target <= current) || (direction == "BEARISH" && target >= current)) {
             lastPtpeByIndex[symbol] = PtpeDisplay(direction = if (direction == "BULLISH") "BUY" else "SELL", target = target, status = "INVALID TARGET DIRECTION")
@@ -640,7 +640,66 @@ private var drawerOpen = false
             derivApiClient.send(JSONObject().put("proposal_open_contract", 1).put("contract_id", contractId).put("subscribe", 1))
             derivApiClient.requestOpenTrades()
             derivApiClient.requestTradeHistory()
-          window.statusBarColor = bg
+            if (selectedTab == "Trade") render()
+            return
+        }
+        if (msgType == "proposal_open_contract") {
+            val contract = json.optJSONObject("proposal_open_contract") ?: return
+            val contractId = contract.optLong("contract_id", 0L)
+            val running = runningContracts[contractId] ?: return
+            val status = contract.optString("status", "")
+            if (!running.openContractConfirmed && status !in setOf("sold", "won", "lost", "expired") && contractId > 0L) {
+                running.openContractConfirmed = true
+                notifyEvent("Open contract confirmed", "${running.symbol} · Contract $contractId · Deriv confirms status ${status.ifBlank { "open" }.uppercase()}.",
+                    "open_contract_confirmed_${accountId}_${executionMode}_$contractId")
+            }
+            val profitOpen = contract.optDouble("profit", contract.optDouble("profit_open", 0.0))
+            if (!running.takeProfitRequested && status != "sold" && status != "won" && status != "lost" &&
+                profitOpen >= running.stake * 0.10) {
+                running.takeProfitRequested = true
+                derivApiClient.send(JSONObject().put("sell", contractId).put("price", 0).put("req_id", nextTradeRequestId()))
+            }
+            if (status == "sold" || status == "won" || status == "lost" || contract.optInt("is_sold", 0) == 1) {
+                runningContracts.remove(contractId)
+                pendingIndexSymbols.remove(running.symbol)
+                notifyEvent("Trade closed", "${running.symbol} · Contract $contractId · Final status: ${status.uppercase()}.",
+                    "trade_closed_${accountId}_${executionMode}_$contractId")
+            }
+        }
+    }
+    // ANALYSIS — MARKET DATA STATE
+private val marketDataIndexes = listOf(
+    "R_10",
+    "R_25",
+    "R_50",
+    "R_75",
+    "R_100"
+)
+
+private val marketDataCandles =
+    mutableMapOf<String, List<DerivApiClient.Candle>>()
+
+private val marketDataPrices =
+    mutableMapOf<String, Double>()
+private val marketDataPriceViews = mutableMapOf<String, TextView>()
+private val dashboardPriceViews = mutableMapOf<String, TextView>()
+private val dashboardStatusViews = mutableMapOf<String, TextView>()
+private val currentPriceViews = mutableMapOf<String, MutableList<TextView>>()
+private val marketDataErrors =
+    mutableMapOf<String, String>()
+
+private var marketDataRequested = false
+private var marketStructureExpanded = true
+private var mssChochExpanded = true
+private var marketDataExpanded = true
+private var mssChochBehaviourExpanded = true
+private var directionStructuralTargetExpanded = true
+private var qualificationExpanded = true
+private var targetFilterExpanded = true
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        window.statusBarColor = bg
 window.navigationBarColor = bg
 window.decorView.systemUiVisibility = 0
 
@@ -1253,6 +1312,7 @@ private fun addHeader() {
         val card = card()
 
         card.orientation = LinearLayout.VERTICAL
+
         card.addView(
             label("NAVIGATION", 13f, green, true)
         )
@@ -1535,7 +1595,7 @@ private fun addHeader() {
             }
         )
                             }
-private fun ptpeDisplayText(symbol: String): String {
+                            private fun ptpeDisplayText(symbol: String): String {
     val ptpe = lastPtpeByIndex[symbol] ?: PtpeDisplay()
     val targetText = ptpe.target?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
     val distanceText = ptpe.distancePercent?.let { String.format(java.util.Locale.US, "%.2f%%", it) } ?: "—"
@@ -1617,7 +1677,7 @@ private fun addTradeScreen() {
                 "Account ID: $accountId"
             } else {
                 "Account ID: —"
-                },
+            },
             12f,
             muted,
             false
@@ -2255,6 +2315,7 @@ private fun addDirectionStructuralTargetAnalysis() {
                 true
             )
         )
+
         indexCard.addView(
             label(
                 "STRUCTURAL TARGET: ${
@@ -2640,7 +2701,6 @@ private fun addTargetFilterAnalysis() {
         ).joinToString("\n\n")
         android.app.AlertDialog.Builder(this).setTitle("User view").setMessage(details).setPositiveButton("CLOSE", null).show()
     }
-
     private fun showAssignPlanDatesDialog(user: JSONObject) {
         val userId = user.optString("id", user.optString("user_id", ""))
         if (userId.isBlank()) { toast("This user record has no ID."); return }
@@ -2874,66 +2934,6 @@ private fun addTargetFilterAnalysis() {
         page.addView(card, matchWrap())
     }
 
-    private fun loadAdminUsers() {
-        if (authToken.isBlank()) {
-            toast("Sign in with the administrator account first.")
-            return
-        }
-        if (adminUsersLoading) return
-        adminUsersLoading = true
-        adminUsers = null
-        val requestedToken = authToken
-        val requestedGeneration = authSessionGeneration
-        render()
-        authRequest("admin_users", token = requestedToken) { ok, result ->
-            if (requestedGeneration != authSessionGeneration || requestedToken != authToken) return@authRequest
-            adminUsersLoading = false
-            if (ok) {
-                adminUsers = result.optJSONArray("users") ?: JSONArray()
-                if (selectedTab == "User Accounts") render()
-            } else {
-                adminUsers = null
-                if (selectedTab == "User Accounts") render()
-                toast(result.optString("message", "Unable to load users."))
-            }
-        }
-    }
-    private fun addRiskCategoriesScreen() {
-        page.addView(sectionTitle("RISK CATEGORIES"))
-        page.addView(label("Risk rules are applied before both manual and automatic trades. Each trade uses the same fixed daily stake: 20% of the frozen day-start account capital. Trade count resets on the South African calendar day.", 13f, muted, false))
-        val rules = listOf(
-            Triple("MINIMUM", "1 trade per day", "30-day plan"),
-            Triple("MEDIUM", "3 trades per day", "30-day plan"),
-            Triple("MAXIMUM", "5 trades per day", "30-day plan"),
-            Triple("SUPER MAXIMUM", "Unlimited trades per day", "30-day plan")
-        )
-        rules.forEach { (name, limit, duration) ->
-            val ruleCard = card().apply { orientation = LinearLayout.VERTICAL }
-            ruleCard.addView(label(name, 16f, green, true))
-            ruleCard.addView(label("Stake: 20% of daily starting capital", 13f, white, false))
-            ruleCard.addView(label("Profit-close target: 10% of stake", 13f, white, false))
-            ruleCard.addView(label("Limit: $limit", 13f, yellow, true))
-            ruleCard.addView(label(duration, 12f, muted, false))
-            page.addView(ruleCard, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
-        }
-        page.addView(button("ASSIGN / EDIT A USER'S RISK PLAN", true) { selectedTab = "User Accounts"; loadAdminUsers() }, matchWrap().apply { topMargin = dp(8) })
-        page.addView(label("Important: this Android screen enforces limits locally. The mobile-auth.php backend must also enforce the same risk plan and daily trade limits to prevent bypass from another device or app version.", 12f, yellow, false).apply { setPadding(0, dp(10), 0, 0) })
-    }
-
-    private fun addTradingLogsScreen() {
-        page.addView(sectionTitle("TRADING LOGS"))
-        val card = card().apply { orientation = LinearLayout.VERTICAL }
-        card.addView(label("Recent local trading events", 16f, green, true))
-        val logs = appPrefs.getString("notification_feed", "").orEmpty().lines().filter { it.isNotBlank() }
-        if (logs.isEmpty()) card.addView(label("No local events recorded yet.", 13f, yellow, false))
-        else logs.take(50).forEach { card.addView(label(it, 12f, white, false).apply { setPadding(0, dp(5), 0, dp(5)) }) }
-        card.addView(button("REFRESH DERIV TRADES", false) {
-            if (connected) { derivApiClient.requestOpenTrades(); derivApiClient.requestTradeHistory(); toast("Refreshing open trades and history.") }
-            else toast("Connect to Deriv first.")
-        }, matchWrap().apply { topMargin = dp(8) })
-        page.addView(card, matchWrap())
-    }
-
     private fun addNotificationsScreen() {
         page.addView(sectionTitle("NOTIFICATIONS"))
         val card = card().apply { orientation = LinearLayout.VERTICAL }
@@ -2991,7 +2991,6 @@ private fun addTargetFilterAnalysis() {
     private fun recordExecutionStage(title: String, message: String, eventKey: String) {
         notifyEvent(title, message, eventKey)
     }
-
     private fun notifyEvent(title: String, message: String, eventKey: String = "") {
         val stableKey = eventKey.ifBlank {
             "${saDayKey()}_${accountId}_${executionMode}_${title}_${message}".hashCode().toString()
@@ -3248,7 +3247,7 @@ private fun addTargetFilterAnalysis() {
                 Color.rgb(0, 100, 48),
                 14,
                 1
-            )
+                )
         }
     }
     private fun horizontalRow(): LinearLayout {
@@ -3552,6 +3551,7 @@ private fun addTargetFilterAnalysis() {
         // Re-rendering here caused the ScrollView to reset/jump while users scrolled.
         // The explicit Refresh button requests fresh account/trade data when needed.
     }
+    }
 override fun onCandles(
     symbol: String,
     candles: List<DerivApiClient.Candle>
@@ -3591,15 +3591,16 @@ override fun onMarketDataError(
         toast("Deriv: $message")
     }
     }
-        override fun onDisconnected() {
+    override fun onDisconnected() {
         runOnUiThread {
             connected = false
             marketDataRequested = false
-
             if (::accountStatus.isInitialized) {
                 accountStatus.text = "●  NOT CONNECTED"
                 accountStatus.setTextColor(red)
             }
         }
     }
+
                                         }
+        
