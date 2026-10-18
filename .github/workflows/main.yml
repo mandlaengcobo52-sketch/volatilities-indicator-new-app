@@ -1,4 +1,4 @@
-name: Build and Sign APK
+name: Build and Sign Volatilities Indicator APK
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build:
-    name: Build and Sign Volatilities Indicator
+    name: Build and Sign APK
     runs-on: ubuntu-latest
 
     steps:
@@ -24,30 +24,21 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-            - name: Set up Android SDK
-        run: |
-          echo "ANDROID_HOME=${ANDROID_HOME:-/usr/local/lib/android/sdk}" >> "$GITHUB_ENV"
-          echo "${ANDROID_HOME:-/usr/local/lib/android/sdk}/platform-tools" >> "$GITHUB_PATH"
-          test -d "${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
 
-      - name: Install Android build tools
+      - name: Check Android project
         run: |
-          sdkmanager --install "platform-tools" "build-tools;35.0.0"
+          test -f settings.gradle || test -f settings.gradle.kts
+          test -d app
+
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
-
-      - name: Check project
-        run: |
-          set -euo pipefail
-          java -version
-          gradle --version
-          test -d app || {
-            echo "ERROR: app directory not found"
-            exit 1
-          }
 
       - name: Build Debug APK
         run: gradle --no-daemon assembleDebug
@@ -61,8 +52,7 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$ANDROID_KEYSTORE_BASE64"
-          printf '%s' "$ANDROID_KEYSTORE_BASE64" \
-            | base64 --decode > "$RUNNER_TEMP/release.jks"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
           test -s "$RUNNER_TEMP/release.jks"
 
       - name: Sign Release APK
@@ -71,51 +61,15 @@ jobs:
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           set -euo pipefail
-
           test -n "$KEYSTORE_PASSWORD"
           test -n "$KEY_ALIAS"
-
-          KEYSTORE="$RUNNER_TEMP/release.jks"
-          RELEASE_DIR="app/build/outputs/apk/release"
-          BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
-
-          test -s "$KEYSTORE"
-
-          APK="$(find "$RELEASE_DIR" -maxdepth 1 \
-            -type f -name '*.apk' \
-            ! -name '*signed*' \
-            | head -n 1)"
-
-          if [ -z "$APK" ]; then
-            echo "ERROR: No release APK was produced."
-            find "$RELEASE_DIR" -maxdepth 2 -type f || true
-            exit 1
-          fi
-
-          "$BUILD_TOOLS/zipalign" -f -v 4 \
-            "$APK" "$RUNNER_TEMP/aligned-release.apk"
-
+          APK="app/build/outputs/apk/release/app-release-unsigned.apk"
+          test -f "$APK"
+          BUILD_TOOLS="${ANDROID_HOME}/build-tools/35.0.0"
           "$BUILD_TOOLS/apksigner" sign \
-            --ks "$KEYSTORE" \
+            --ks "$RUNNER_TEMP/release.jks" \
             --ks-key-alias "$KEY_ALIAS" \
             --ks-pass env:KEYSTORE_PASSWORD \
-            --key-pass env:KEYSTORE_PASSWORD \
-            --out "$RELEASE_DIR/volatilities-indicator-release.apk" \
-            "$RUNNER_TEMP/aligned-release.apk"
-
-          "$BUILD_TOOLS/apksigner" verify --verbose \
-            "$RELEASE_DIR/volatilities-indicator-release.apk"
-
-      - name: Upload Debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: volatilities-indicator-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
-
-      - name: Upload Signed Release APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: volatilities-indicator-signed-release-apk
-          path: app/build/outputs/apk/release/volatilities-indicator-release.apk
-          if-no-files-found: error
+            --out app/build/outputs/apk/release/app-release-signed.apk \
+            "$APK"
+          "$BUILD_TOOLS/apksigner" verify app/build/outputs/apk/release/app-release-signed.apk
