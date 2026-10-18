@@ -60,12 +60,14 @@ jobs:
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
           test -s "$RUNNER_TEMP/release.jks"
 
-            - name: Verify signing keystore
+                 - name: Verify signing keystore
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
           set -euo pipefail
           keytool -list \
             -keystore "$RUNNER_TEMP/release.jks" \
-            -storepass "$KEYSTORE_PASSWORD"
+            -storepass "$KEYSTORE_PASSWORD" 
         env:
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
 
