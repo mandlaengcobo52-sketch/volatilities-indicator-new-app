@@ -85,6 +85,7 @@ private var drawerOpen = false
     private lateinit var balanceView: TextView
     private lateinit var openPlView: TextView
     private val liveContractProfits = mutableMapOf<Long, Double>()
+    private val liveContractProfitModes = mutableMapOf<Long, String>()
     private var historyAccountKey: String = ""
     private var connected = false
     private var accountId = ""
@@ -242,23 +243,16 @@ private var drawerOpen = false
         derivApiClient.requestOpenTrades()
     }
 
-    /** Enforce one identical stake for every trade during the fixed account/mode/day window. */
+    /**
+     * A confirmed contract may carry a stake from a previous day's capital cycle.
+     * That contract must never block today's trade solely because its stake differs.
+     * Only a still-pending purchase in the same selected mode can block a conflicting stake.
+     */
     private fun hasOpenStakeMismatch(expectedStake: Double): Boolean {
         if (expectedStake <= 0.0) return true
-        if (pendingOrdersByRequest.values.any { it.mode == executionMode && kotlin.math.abs(it.stake - expectedStake) > 0.01 }) return true
-        if (runningContracts.values.any { it.mode == executionMode && kotlin.math.abs(it.stake - expectedStake) > 0.01 }) return true
-        val root = openTradesResponse ?: return false
-        val portfolio = root.optJSONObject("portfolio")
-        val contracts = portfolio?.optJSONArray("contracts") ?: root.optJSONArray("contracts") ?: return false
-        for (i in 0 until contracts.length()) {
-            val item = contracts.optJSONObject(i) ?: continue
-            val sold = item.optInt("is_sold", 0) == 1 || item.optString("is_sold", "").equals("true", true)
-            val status = item.optString("status", "open").lowercase()
-            if (sold || status in setOf("sold", "won", "lost", "expired")) continue
-            val existingStake = item.optDouble("buy_price", Double.NaN)
-            if (existingStake.isFinite() && existingStake > 0.0 && kotlin.math.abs(existingStake - expectedStake) > 0.01) return true
+        return pendingOrdersByRequest.values.any {
+            it.mode == executionMode && kotlin.math.abs(it.stake - expectedStake) > 0.01
         }
-        return false
     }
 
     private fun riskPlanName(): String = currentProfile?.optString("risk_profile", "")?.trim()?.lowercase().orEmpty()
@@ -266,8 +260,8 @@ private var drawerOpen = false
     private fun maxTradesPerDay(): Int {
         return when (riskPlanName()) {
             "minimum" -> 1
-            "medium" -> 3
-            "maximum" -> 5
+            "medium" -> 2
+            "maximum" -> 3
             "super maximum", "super_maximum", "super-maximum", "privilege" -> Int.MAX_VALUE
             else -> 0
         }
@@ -353,7 +347,6 @@ private var drawerOpen = false
         if (samples == 0) return 0.0 to 0
         return (hits.toDouble() / samples.toDouble() * 100.0) to samples
     }
-
     /** Sole authority for trade approval. PTPE is always recorded for display, even when it fails. */
     private fun evaluateMasterDecision(symbol: String): MasterDecision? {
         val candles = analysisCompletedCandles(symbol)
@@ -1114,11 +1107,25 @@ private fun addUserProfileScreen(page: LinearLayout) {
         val riskPercent = u.optInt("risk_percent", 0)
         val riskText = if (risk.isBlank() || risk == "null") "Not assigned" else "${risk.replaceFirstChar { it.uppercase() }} risk${if (riskPercent > 0) " — $riskPercent% stake" else ""}"
         profileField("Risk plan", riskText)
+        val riskKey = risk.lowercase().replace("_", " ").replace("-", " ")
+        val subscriptionText = when (riskKey) {
+            "minimum" -> "R250"
+            "medium" -> "R750"
+            "maximum" -> "R1,000"
+            "super maximum", "privilege" -> "As assigned by administrator"
+            "trial" -> "Free"
+            else -> "As assigned by administrator"
+        }
+        val periodText = if (riskKey == "trial") "7 days" else if (riskKey.isBlank() || riskKey == "null") "Not assigned" else "30 days"
+        profileField("Subscription", subscriptionText)
+        profileField("Period", periodText)
+        profileField("Target profit", "10% of stake")
         val riskLimitText = when (risk.lowercase()) {
             "minimum" -> "1 trade per day"
-            "medium" -> "3 trades per day"
-            "maximum" -> "5 trades per day"
+            "medium" -> "2 trades per day"
+            "maximum" -> "3 trades per day"
             "super maximum", "super_maximum", "super-maximum", "privilege" -> "Unlimited trades per day"
+            "trial" -> "Trade limit not configured"
             else -> "Trading disabled until assigned"
         }
         profileField("Risk-plan trade limit", riskLimitText)
@@ -1128,6 +1135,39 @@ private fun addUserProfileScreen(page: LinearLayout) {
         profileField("Expiry of risk plan", u.optString("expiry_date", "").takeUnless { it == "null" }.orEmpty())
         val status = u.optString("status", "approved").uppercase()
         profileField("Account status", status)
+        if (connected && accountId.isNotBlank()) {
+            profileCard.addView(label("APPLY FOR A RISK PLAN", 14f, green, true).apply { setPadding(0, dp(12), 0, dp(4)) })
+            val riskOptions = listOf("Minimum — R250 / 30 days", "Medium — R750 / 30 days", "Maximum — R1,000 / 30 days", "Super Maximum — 30 days", "Trial — Free / 7 days")
+            val riskValues = listOf("minimum", "medium", "maximum", "super_maximum", "trial")
+            val riskSpinner = Spinner(this).apply {
+                adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, riskOptions)
+            }
+            profileCard.addView(riskSpinner, matchWrap())
+            profileCard.addView(label("Stake: 20% of daily starting capital • Target profit: 10% of stake. Applying does not activate a plan; the administrator must verify payment where required and assign the plan and dates.", 12f, muted, false).apply { setPadding(0, dp(5), 0, dp(5)) })
+            profileCard.addView(button("SUBMIT RISK-PLAN APPLICATION", true) {
+                val chosen = riskValues[riskSpinner.selectedItemPosition]
+                val fee = when (chosen) { "minimum" -> "250"; "medium" -> "750"; "maximum" -> "1000"; "super_maximum" -> "0"; else -> "0" }
+                val days = if (chosen == "trial") "7" else "30"
+                val applicationFields = mapOf(
+                    "risk_profile" to chosen,
+                    "plan_id" to "${chosen}_${days}_days",
+                    "period_days" to days,
+                    "subscription_amount" to fee,
+                    "deriv_account_id" to accountId,
+                    "payment_status" to if (fee == "0") "not_required_or_pending_admin_review" else "awaiting_payment"
+                )
+                authRequest("risk_application", applicationFields) { ok, result ->
+                    if (ok) {
+                        notifyEvent("Risk-plan application submitted", "Application submitted for ${riskOptions[riskSpinner.selectedItemPosition]}. The administrator must verify payment where required and assign the plan.")
+                        toast(result.optString("message", "Application submitted. Await administrator assignment."))
+                    } else {
+                        toast(result.optString("message", "Risk-plan applications are not yet enabled by the server. No plan has been activated."))
+                    }
+                }
+            }, matchWrap().apply { topMargin = dp(6) })
+        } else {
+            profileCard.addView(label("Connect your Deriv account to choose a risk plan.", 12f, yellow, false).apply { setPadding(0, dp(10), 0, dp(4)) })
+        }
         profileCard.addView(button("REFRESH PROFILE", false) { refreshProfile(showMessage = true) }, matchWrap().apply { topMargin = dp(8) })
         profileCard.addView(button("LOG OUT", true) { performPlatformLogout() }, matchWrap().apply { topMargin = dp(8) })
     }
@@ -1169,7 +1209,7 @@ private fun refreshProfile(showMessage: Boolean) {
         selectedTab = "Login"
         render()
         return
-    }
+        }
     if (profileLoading) return
     val requestedToken = authToken
     val requestedGeneration = authSessionGeneration
@@ -1411,6 +1451,7 @@ private fun addHeader() {
         lastOpenTradesRequestAt = 0L
         openContractResponse = null
         liveContractProfits.clear()
+        liveContractProfitModes.clear()
         historyAccountKey = ""
     }
 
@@ -1462,7 +1503,7 @@ private fun addHeader() {
         marketDataIndexes.forEach { symbol ->
             val accent = when (symbol) {
                 "R_10" -> cyan
-                "R_25" -> green
+                     "R_25" -> green
                 "R_50" -> yellow
                 "R_75" -> red
                 else -> Color.rgb(190, 75, 255)
@@ -1549,8 +1590,9 @@ private fun addHeader() {
         balanceView = label("Balance:  ${if (connected) "$accountCurrency ${String.format(java.util.Locale.US, "%.2f", accountBalance)}" else "—"}", 14f, white, false)
         card.addView(balanceView, matchWrap().apply { topMargin = dp(4) })
 
-        openPlView = label("Open P/L:  ${formatMoney(liveContractProfits.values.sum())}", 14f,
-            profitColor(liveContractProfits.values.sum()), true)
+        val selectedModePl = liveContractProfits.filterKeys { liveContractProfitModes[it] == "${accountId}_$executionMode" }.values.sum()
+        openPlView = label("Open P/L:  ${formatMoney(selectedModePl)}", 14f,
+            profitColor(selectedModePl), true)
         card.addView(openPlView, matchWrap().apply { topMargin = dp(4) })
 
         val buttons = horizontalRow()
@@ -1642,95 +1684,26 @@ private fun addTradeScreen() {
     ptpeStatusViews.clear()
     contractLiveViews.clear()
     marketDataIndexes.forEach { evaluateMasterDecision(it) }
-    page.addView(sectionTitle("TRADE CONTROL"))
+    page.addView(sectionTitle("TRADE"))
 
-    // Account and connection status
-    val accountCard = card()
+    val accountCard = card().apply { orientation = LinearLayout.VERTICAL }
+    accountCard.addView(label("EXECUTION ACCOUNT", 14f, green, true))
+    accountCard.addView(label("Mode: $executionMode", 13f, white, true))
+    accountCard.addView(label("Connection: ${if (connected) "CONNECTED" else "DISCONNECTED"}", 12f, if (connected) green else red, true))
+    accountCard.addView(label("Account ID: ${accountId.ifBlank { "—" }}", 12f, muted, false))
+    page.addView(accountCard, matchWrap().apply { bottomMargin = dp(10) })
 
-    accountCard.addView(
-        label("EXECUTION ACCOUNT", 14f, green, true)
-    )
-
-    accountCard.addView(
-        label("Mode: $executionMode", 13f, white, true)
-    )
-
-    accountCard.addView(
-        label(
-            if (connected) {
-                "Connection: CONNECTED"
-            } else {
-                "Connection: NOT CONNECTED"
-            },
-            12f,
-            if (connected) green else red,
-            true
-        )
-    )
-    accountCard.addView(
-        label(
-            if (accountId.isNotBlank()) {
-                "Account ID: $accountId"
-            } else {
-                "Account ID: —"
-            },
-            12f,
-            muted,
-            false
-        )
-    )
-
-    page.addView(
-        accountCard,
-        matchWrap().apply {
-            bottomMargin = dp(10)
-        }
-    )
-
-    // Auto Trade: this toggle now enables the integrated Master Decision execution loop.
-    page.addView(sectionTitle("MASTER DECISION / AUTO TRADE"))
-    val autoTradeCard = card()
-    autoTradeCard.addView(label(if (autoTradeEnabled) "MASTER DECISION: ACTIVE" else "MASTER DECISION: OFF", 15f,
-        if (autoTradeEnabled) green else red, true))
-    autoTradeCard.addView(label("PTPE target probability ≥ 80% • target eligibility ≥ 1.5% • 3-day ONETOUCH • 10% profit close target • fixed daily stake = 20% of South African day-start capital; risk plan controls daily trade count.", 12f, white, false))
-    autoTradeCard.addView(label("Master Decision requires confirmed MSS/CHOCH, a valid structural target, and at least five historical comparable 3-day samples . One open contract per index.", 12f, muted, false))
-    val gateCard = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(dp(10), dp(9), dp(10), dp(9))
-        background = shape(bg, greenDark, 8, 1)
-    }
-    gateCard.addView(label("ANALYSIS GATE BY INDEX", 12f, green, true))
-    marketDataIndexes.forEach { symbol ->
-        val decision = evaluateMasterDecision(symbol)
-        val ptpe = lastPtpeByIndex[symbol] ?: PtpeDisplay()
-        val ptpeView = label(ptpeDisplayText(symbol), 11f, if (decision != null) green else yellow, decision != null).apply {
-            setPadding(0, dp(5), 0, dp(3))
-        }
-        ptpeStatusViews[symbol] = ptpeView
-        gateCard.addView(ptpeView)
-        }
-    autoTradeCard.addView(gateCard, matchWrap().apply { topMargin = dp(8) })
-    autoTradeCard.addView(button(if (autoTradeEnabled) "TURN MASTER DECISION OFF" else "TURN MASTER DECISION ON", autoTradeEnabled) {
+    val decisionCard = card().apply { orientation = LinearLayout.VERTICAL }
+    decisionCard.addView(label(if (autoTradeEnabled) "MASTER DECISION: ON" else "MASTER DECISION: OFF", 15f, if (autoTradeEnabled) green else red, true))
+    decisionCard.addView(button(if (autoTradeEnabled) "TURN MASTER DECISION OFF" else "TURN MASTER DECISION ON", autoTradeEnabled) {
         autoTradeEnabled = !autoTradeEnabled
         if (autoTradeEnabled && !connected) toast("Master Decision is ON, but execution waits until Deriv is connected.")
         render()
     }, matchWrap().apply { topMargin = dp(8) })
-    page.addView(autoTradeCard, matchWrap().apply { bottomMargin = dp(10) })
+    page.addView(decisionCard, matchWrap().apply { bottomMargin = dp(10) })
 
-    // Running Trades
     page.addView(sectionTitle("RUNNING TRADES"))
-
-    val runningCard = card()
-
-    runningCard.addView(
-        label(
-            "OPEN CONTRACT DETAILS",
-            13f,
-            green,
-            true
-        )
-    )
-
+    val runningCard = card().apply { orientation = LinearLayout.VERTICAL }
     val portfolioArray = openTradesResponse?.optJSONObject("portfolio")?.optJSONArray("contracts")
         ?: openTradesResponse?.optJSONArray("contracts")
     var visibleRunning = 0
@@ -1738,102 +1711,72 @@ private fun addTradeScreen() {
     if (portfolioArray != null) for (i in 0 until portfolioArray.length()) {
         val item = portfolioArray.optJSONObject(i) ?: continue
         val contractId = item.optLong("contract_id", 0L)
-        if (contractId > 0L) renderedContractIds.add(contractId)
+        if (contractId <= 0L) continue
+        renderedContractIds.add(contractId)
         val tracked = runningContracts[contractId]
         val symbol = item.optString("underlying", item.optString("underlying_symbol", item.optString("symbol", tracked?.symbol ?: "—")))
-        val contractType = item.optString("contract_type", item.optString("contract_type_display", "TOUCH"))
-        val direction = tracked?.direction ?: if (contractType.contains("DOWN", true) || contractType.contains("PUT", true) || contractType.contains("SELL", true)) "SELL" else "BUY"
         val stake = item.optDouble("buy_price", tracked?.stake ?: 0.0)
-        val currentValue = item.optDouble("bid_price", item.optDouble("current_spot", item.optDouble("current_spot_display_value", 0.0)))
-        val profit = liveContractProfits[contractId] ?: item.optDouble("profit", item.optDouble("profit_open", 0.0))
-        val barrierRaw = item.optString("barrier", "").trim()
-        val barrier = if (barrierRaw.isNotEmpty() && barrierRaw != "null") barrierRaw else tracked?.target?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
-        val probability = tracked?.targetProbability ?: lastPtpeByIndex[symbol]?.probability ?: 0.0
+        val currentValue = item.optDouble("current_spot", item.optDouble("current_spot_display_value", item.optDouble("bid_price", 0.0)))
         val expiryEpoch = item.optLong("date_expiry", item.optLong("expiry_time", 0L))
         val expiryText = if (expiryEpoch > 0L) {
             val remain = (expiryEpoch - System.currentTimeMillis() / 1000L).coerceAtLeast(0L)
             String.format(java.util.Locale.US, "%02d:%02d:%02d", remain / 3600, (remain % 3600) / 60, remain % 60)
         } else "—"
-        val tradeRow = LinearLayout(this).apply {
+        val row = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(10), dp(10), dp(10), dp(10))
             background = shape(panel, greenDark, 8, 1)
         }
-        tradeRow.addView(label("$symbol • $direction ${if (contractType.contains("TOUCH")) "TOUCH" else contractType}", 14f, green, true))
-        tradeRow.addView(label("Contract: $contractId", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
-        val pnlView = label("Stake: ${String.format(java.util.Locale.US, "%.2f", stake)}   P/L: ${String.format(java.util.Locale.US, "%.2f", profit)}", 12f, if (profit >= 0) blue else red, true).apply { setPadding(0, dp(4), 0, 0) }
-        val spotView = label("Current value/spot: ${if (currentValue > 0) String.format(java.util.Locale.US, "%.2f", currentValue) else "—"}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
-        val barrierExpiryView = label("Barrier: $barrier   Expiry: $expiryText", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
-        val ptpeView = label("PTPE: ${String.format(java.util.Locale.US, "%.1f", probability)}%", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
-        tradeRow.addView(pnlView)
-        tradeRow.addView(spotView)
-        tradeRow.addView(barrierExpiryView)
-        tradeRow.addView(ptpeView)
-        if (contractId > 0L) contractLiveViews[contractId] = ContractLiveViews(stake, symbol, tracked?.target, probability, pnlView, spotView, barrierExpiryView, ptpeView)
-        tradeRow.addView(button("CLOSE TRADE", true) {
-            if (connected && contractId > 0L) {
+        row.addView(label("Index: $symbol", 14f, green, true))
+        row.addView(label("Contract number: $contractId", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
+        row.addView(label("Stake: ${formatMoney(stake)}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
+        val pnlHidden = label("", 1f, white, false)
+        val spotView = label("Current value/spot: ${if (currentValue > 0) formatMoney(currentValue) else "—"}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
+        val expiryView = label("Expiry: $expiryText", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
+        val ptpeHidden = label("", 1f, white, false)
+        row.addView(spotView)
+        row.addView(expiryView)
+        contractLiveViews[contractId] = ContractLiveViews(stake, symbol, tracked?.target, tracked?.targetProbability ?: 0.0, pnlHidden, spotView, expiryView, ptpeHidden)
+        row.addView(button("CLOSE TRADE", true) {
+            if (connected) {
                 val sent = derivApiClient.send(JSONObject().put("sell", contractId).put("price", 0).put("req_id", nextTradeRequestId()))
-                if (!sent) toast("Unable to send close request.")
-                else toast("Close request sent for contract $contractId.")
+                if (!sent) toast("Unable to send close request.") else toast("Close request sent for contract $contractId.")
             } else toast("Connect to the account holding this contract.")
         }, matchWrap().apply { topMargin = dp(8) })
-        runningCard.addView(tradeRow, matchWrap().apply { topMargin = dp(7) })
+        runningCard.addView(row, matchWrap().apply { topMargin = dp(7) })
         visibleRunning++
     }
-    runningContracts.values.filter { it.contractId !in renderedContractIds }.forEach { running ->
-        val runningStakeText = String.format(java.util.Locale.US, "%.2f", running.stake)
-        val runningProbabilityText = String.format(java.util.Locale.US, "%.1f", running.targetProbability)
-        val tradeRow = LinearLayout(this).apply {
+    runningContracts.values.filter { it.mode == executionMode && it.contractId !in renderedContractIds }.forEach { running ->
+        val row = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(10), dp(10), dp(10), dp(10))
             background = shape(panel, greenDark, 8, 1)
         }
-        tradeRow.addView(label("${running.symbol} • ${running.direction} TOUCH", 14f, green, true))
-        tradeRow.addView(label("Contract: ${running.contractId}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
-        tradeRow.addView(label("Stake: $runningStakeText   PTPE: $runningProbabilityText%", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
-        tradeRow.addView(label("Target: ${String.format(java.util.Locale.US, "%.3f", running.target)}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
-        tradeRow.addView(button("CLOSE TRADE", true) {
+        row.addView(label("Index: ${running.symbol}", 14f, green, true))
+        row.addView(label("Contract number: ${running.contractId}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
+        row.addView(label("Stake: ${formatMoney(running.stake)}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
+        val pnlHidden = label("", 1f, white, false)
+        val spotView = label("Current value/spot: —", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
+        val expiryView = label("Expiry: —", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
+        val ptpeHidden = label("", 1f, white, false)
+        row.addView(spotView); row.addView(expiryView)
+        contractLiveViews[running.contractId] = ContractLiveViews(running.stake, running.symbol, running.target, running.targetProbability, pnlHidden, spotView, expiryView, ptpeHidden)
+        row.addView(button("CLOSE TRADE", true) {
             if (connected) derivApiClient.send(JSONObject().put("sell", running.contractId).put("price", 0).put("req_id", nextTradeRequestId()))
             else toast("Connect to the account holding this contract.")
         }, matchWrap().apply { topMargin = dp(8) })
-        runningCard.addView(tradeRow, matchWrap().apply { topMargin = dp(7) })
+        runningCard.addView(row, matchWrap().apply { topMargin = dp(7) })
         visibleRunning++
     }
-    if (visibleRunning == 0) runningCard.addView(label("No open contracts returned by Deriv for this account.", 12f, yellow, false))
-    runningCard.addView(button("REFRESH RUNNING TRADES & HISTORY", false) {
+    if (visibleRunning == 0) runningCard.addView(label("No open contracts for the selected account.", 12f, yellow, false))
+    runningCard.addView(button("REFRESH RUNNING TRADES AND HISTORY", false) {
         if (connected) { derivApiClient.requestOpenTrades(); derivApiClient.requestTradeHistory() } else toast("Connect to Deriv first.")
     }, matchWrap().apply { topMargin = dp(8) })
+    page.addView(runningCard, matchWrap().apply { bottomMargin = dp(10) })
 
-    page.addView(
-        runningCard,
-        matchWrap().apply {
-            bottomMargin = dp(10)
-        }
-    )
-
-    // Trading History
     page.addView(sectionTitle("TRADING HISTORY"))
-
-    val historyCard = card()
-
-    historyCard.addView(
-        label(
-            "ACCOUNT MODE: $executionMode",
-            13f,
-            green,
-            true
-        )
-    )
-
-    historyCard.addView(
-        label(
-            "History is displayed for the selected account mode only.",
-            12f,
-            muted,
-            false
-        )
-    )
-
+    val historyCard = card().apply { orientation = LinearLayout.VERTICAL }
+    historyCard.addView(label("Account mode: $executionMode", 12f, green, true))
     val historyArray = tradeHistoryResponse?.optJSONObject("profit_table")?.optJSONArray("transactions")
         ?: tradeHistoryResponse?.optJSONArray("transactions")
     var historyCount = 0
@@ -1843,35 +1786,18 @@ private fun addTradeScreen() {
         val contractId = item.optLong("contract_id", 0L)
         val buyPrice = item.optDouble("buy_price", 0.0)
         val sellPrice = item.optDouble("sell_price", 0.0)
-        val profit = item.optDouble("sell_price", 0.0) - buyPrice
+        val profit = sellPrice - buyPrice
         val epoch = item.optLong("purchase_time", item.optLong("date_start", 0L))
         val timeText = if (epoch > 0) java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(epoch * 1000L)) else "Time unavailable"
-        val buyPriceText = String.format(java.util.Locale.US, "%.2f", buyPrice)
-        val profitText = String.format(java.util.Locale.US, "%.2f", profit)
-        val statusText = if (sellPrice > 0) "CLOSED" else "OPEN/UNKNOWN"
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(10), dp(9), dp(10), dp(9))
-            background = GradientDrawable().apply {
-                setColor(Color.rgb(10, 25, 22))
-                setStroke(dp(1), if (profit > 0.0) greenDark else if (profit < 0.0) Color.rgb(130, 35, 42) else Color.rgb(45, 65, 58))
-                cornerRadius = dp(7).toFloat()
-            }
-        }
-        row.addView(label("$symbol   •   $statusText", 13f, white, true))
-        row.addView(label("Contract $contractId   •   $timeText", 11f, muted, false).apply { setPadding(0, dp(4), 0, 0) })
-        row.addView(label("STAKE  $buyPriceText     P/L  $profitText", 12f, profitColor(profit), true).apply { setPadding(0, dp(5), 0, 0) })
-        historyCard.addView(row, matchWrap().apply { topMargin = dp(6) })
-        historyCount++
+        val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(10), dp(9), dp(10), dp(9)); background = shape(panel, greenDark, 7, 1) }
+        row.addView(label("$symbol • Contract $contractId", 12f, white, true))
+        row.addView(label("$timeText • Stake ${formatMoney(buyPrice)} • P/L ${formatMoney(profit)}", 11f, profitColor(profit), false).apply { setPadding(0, dp(4), 0, 0) })
+        historyCard.addView(row, matchWrap().apply { topMargin = dp(6) }); historyCount++
     }
     if (historyCount == 0) historyCard.addView(label("No completed trade-history records were returned by Deriv yet.", 12f, yellow, false))
-
-    page.addView(
-        historyCard,
-        matchWrap().apply {
-            bottomMargin = dp(10)
-        }
-    )
+    page.addView(historyCard, matchWrap().apply { bottomMargin = dp(10) })
+    page.addView(button("NOTIFICATIONS", false) { selectedTab = "Notifications"; render() }, matchWrap().apply { bottomMargin = dp(6) })
+    page.addView(button("MY PROFILE", false) { selectedTab = "My profile"; render() }, matchWrap())
 }
 // =========================================================
 // WEBTRADER-PARITY ANALYSIS CORE
@@ -1891,7 +1817,6 @@ private data class AnalysisMssEvent(
     val broken: AnalysisPivot,
     val confirmation: DerivApiClient.Candle
 )
-
 private data class AnalysisHistoricalOutcome(
     val direction: String,
     val pivot: AnalysisPivot,
@@ -2173,7 +2098,7 @@ private fun addMssChochAnalysis() {
             val event = analysisLatestMss(candles)
             card.addView(label("STRUCTURAL EVENT: ${event?.state ?: "WAITING FOR MSS / CHOCH"}", 13f, if (event?.direction == "BULLISH") green else if (event?.direction == "BEARISH") red else yellow, true))
             if (event != null) {
-                card.addView(label("DIRECTION: ${event.direction}", 13f, if (event.direction == "BULLISH") green else red, true))
+               card.addView(label("DIRECTION: ${event.direction}", 13f, if (event.direction == "BULLISH") green else red, true))
                 card.addView(label("BROKEN PIVOT: ${event.broken.label} ${formatMarketPrice(event.broken.price)}", 12f, white, false))
                 card.addView(label("PIVOT TIME: ${formatMarketTime(event.broken.epoch)}", 12f, muted, false))
                 card.addView(label("CONFIRMATION CLOSE: ${formatMarketPrice(event.confirmation.close)}", 12f, white, false))
@@ -2465,7 +2390,6 @@ private fun addQualificationAnalysis() {
         page.addView(qualificationCard, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
     }
 }
-
 private fun addTargetFilterAnalysis() {
     val header = card().apply { orientation = LinearLayout.VERTICAL }
     val row = horizontalRow()
@@ -2772,7 +2696,7 @@ private fun addTargetFilterAnalysis() {
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
             setSingleLine(true)
         }
-        val riskPlans = listOf("Minimum", "Medium", "Maximum", "Super Maximum")
+        val riskPlans = listOf("Minimum", "Medium", "Maximum", "Super Maximum", "Trial")
         val riskSpinner = Spinner(this).apply {
             adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, riskPlans)
             val existingRisk = user.optString("risk_profile", "").replaceFirstChar { it.uppercase() }
@@ -2789,7 +2713,7 @@ private fun addTargetFilterAnalysis() {
             addView(phone)
             addView(label("Risk plan (30 days)", 14f, yellow, true))
             addView(riskSpinner)
-            addView(label("Minimum: 1 trade/day · Medium: 3 trades/day · Maximum: 5 trades/day · Super Maximum: unlimited trades/day", 12f, white, false))
+            addView(label("Minimum: 1/day · Medium: 2/day · Maximum: 3/day · Super Maximum: unlimited/day · Trial: 7 days", 12f, white, false))
             addView(password)
         }
         android.app.AlertDialog.Builder(this)
@@ -2809,15 +2733,17 @@ private fun addTargetFilterAnalysis() {
                         val selectedRisk = riskPlans[riskSpinner.selectedItemPosition]
                         val tradesPerDay = when (selectedRisk) {
                             "Minimum" -> "1"
-                            "Medium" -> "3"
-                            "Maximum" -> "5"
-                            else -> "unlimited"
+                            "Medium" -> "2"
+                            "Maximum" -> "3"
+                            "Super Maximum" -> "unlimited"
+                            else -> "1"
                         }
+                        val planDays = if (selectedRisk == "Trial") 7 else 30
                         val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).apply { timeZone = dailyCapitalTimeZone }
                         val planStartDate = dateFormat.format(java.util.Date())
                         val planExpiryCalendar = java.util.Calendar.getInstance().apply {
                             timeZone = dailyCapitalTimeZone
-                            add(java.util.Calendar.DAY_OF_YEAR, 29)
+                            add(java.util.Calendar.DAY_OF_YEAR, planDays - 1)
                         }
                         val planExpiryDate = dateFormat.format(planExpiryCalendar.time)
                         if (first.isBlank() || last.isBlank() || mail.isBlank() || contact.length < 7) {
@@ -2832,7 +2758,7 @@ private fun addTargetFilterAnalysis() {
                             "phone" to contact,
                             "risk_profile" to selectedRisk.lowercase(),
                             "risk_trades_per_day" to tradesPerDay,
-                            "risk_period_days" to "30",
+                            "risk_period_days" to planDays.toString(),
                             "start_date" to planStartDate,
                             "expiry_date" to planExpiryDate
                         )
@@ -2852,7 +2778,7 @@ private fun addTargetFilterAnalysis() {
                                 "user_id" to id,
                                 "risk_profile" to selectedRisk.lowercase(java.util.Locale.US),
                                 "risk_percent" to "20",
-                                "plan_id" to (selectedRisk.lowercase(java.util.Locale.US).replace(" ", "_") + "_30_days"),
+                                "plan_id" to (selectedRisk.lowercase(java.util.Locale.US).replace(" ", "_") + "_${planDays}_days"),
                                 "start_date" to planStartDate,
                                 "expiry_date" to planExpiryDate
                             )
@@ -2894,24 +2820,25 @@ private fun addTargetFilterAnalysis() {
     }
     private fun addRiskCategoriesScreen() {
         page.addView(sectionTitle("RISK CATEGORIES"))
-        page.addView(label("Risk rules are applied before both manual and automatic trades. Each trade uses the same fixed daily stake: 20% of the frozen day-start account capital. Trade count resets on the South African calendar day.", 13f, muted, false))
+        page.addView(label("Interest is administrator-only. Users see plan, subscription, period, stake, target, trade limit, and assigned dates in My Profile.", 13f, muted, false))
         val rules = listOf(
-            Triple("MINIMUM", "1 trade per day", "30-day plan"),
-            Triple("MEDIUM", "3 trades per day", "30-day plan"),
-            Triple("MAXIMUM", "5 trades per day", "30-day plan"),
-            Triple("SUPER MAXIMUM", "Unlimited trades per day", "30-day plan")
+            listOf("MINIMUM RISK", "Interest: 50%", "Subscription: R250", "Period: 30 days", "Stake: 20% of capital", "Target profit: 10% of stake", "Trades per day: 1"),
+            listOf("MEDIUM RISK", "Interest: 100%", "Subscription: R750", "Period: 30 days", "Stake: 20% of capital", "Target profit: 10% of stake", "Trades per day: 2"),
+            listOf("MAXIMUM RISK", "Interest: 200%", "Subscription: R1,000", "Period: 30 days", "Stake: 20% of capital", "Target profit: 10% of stake", "Trades per day: 3"),
+            listOf("SUPER MAXIMUM RISK", "Period: 30 days", "Stake: 20% of capital", "Target profit: 10% per stake", "Trades per day: Unlimited"),
+            listOf("TRIAL", "Interest: 50%", "Subscription: Free", "Period: 7 days", "Stake: 20% of capital", "Target profit: 10% per stake", "Trade limit: Not specified")
         )
-        rules.forEach { (name, limit, duration) ->
+        rules.forEach { details ->
             val ruleCard = card().apply { orientation = LinearLayout.VERTICAL }
-            ruleCard.addView(label(name, 16f, green, true))
-            ruleCard.addView(label("Stake: 20% of daily starting capital", 13f, white, false))
-            ruleCard.addView(label("Profit-close target: 10% of stake", 13f, white, false))
-            ruleCard.addView(label("Limit: $limit", 13f, yellow, true))
-            ruleCard.addView(label(duration, 12f, muted, false))
+            ruleCard.addView(label(details.first(), 16f, green, true))
+            details.drop(1).forEach { detail ->
+                val adminOnlyInterest = detail.startsWith("Interest:")
+                if (platform == "ADMIN" || !adminOnlyInterest) ruleCard.addView(label(detail, 13f, if (adminOnlyInterest) yellow else white, adminOnlyInterest))
+            }
             page.addView(ruleCard, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
         }
         page.addView(button("ASSIGN / EDIT A USER'S RISK PLAN", true) { selectedTab = "User Accounts"; loadAdminUsers() }, matchWrap().apply { topMargin = dp(8) })
-        page.addView(label("Important: this Android screen enforces limits locally. The mobile-auth.php backend must also enforce the same risk plan and daily trade limits to prevent bypass from another device or app version.", 12f, yellow, false).apply { setPadding(0, dp(10), 0, 0) })
+        page.addView(label("Start and expiry dates are assigned by the administrator. Backend support is required for shared risk applications/payment status; a local application cannot itself notify the server administrator.", 12f, yellow, false).apply { setPadding(0, dp(10), 0, 0) })
     }
 
     private fun addTradingLogsScreen() {
@@ -2981,7 +2908,6 @@ private fun addTargetFilterAnalysis() {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7802)
         }
     }
-
     private fun recordExecutionStage(title: String, message: String, eventKey: String) {
         notifyEvent(title, message, eventKey)
     }
@@ -3266,7 +3192,6 @@ private fun addTargetFilterAnalysis() {
     private fun matchWrap(): LinearLayout.LayoutParams {
         return LinearLayout.LayoutParams(-1, -2)
     }
-
     private fun weighted(): LinearLayout.LayoutParams {
         return LinearLayout.LayoutParams(0, dp(52), 1f)
     }
@@ -3509,8 +3434,13 @@ private fun addTargetFilterAnalysis() {
                     val id = contract.optLong("contract_id", 0L)
                     val status = contract.optString("status", "")
                     if (id > 0L) {
-                        if (status == "sold" || status == "won" || status == "lost" || contract.optInt("is_sold", 0) == 1) liveContractProfits.remove(id)
-                        else liveContractProfits[id] = contract.optDouble("profit", contract.optDouble("profit_open", 0.0))
+                        if (status == "sold" || status == "won" || status == "lost" || contract.optInt("is_sold", 0) == 1) {
+                            liveContractProfits.remove(id)
+                            liveContractProfitModes.remove(id)
+                        } else {
+                            liveContractProfits[id] = contract.optDouble("profit", contract.optDouble("profit_open", 0.0))
+                            liveContractProfitModes[id] = "${accountId}_$executionMode"
+                        }
                     }
                     if (id > 0L) {
                         val liveProfit = contract.optDouble("profit", contract.optDouble("profit_open", liveContractProfits[id] ?: 0.0))
@@ -3525,12 +3455,12 @@ private fun addTargetFilterAnalysis() {
                             val expiryEpoch = contract.optLong("date_expiry", contract.optLong("expiry_time", 0L))
                             val expiryRemaining = if (expiryEpoch > 0L) (expiryEpoch - System.currentTimeMillis() / 1000L).coerceAtLeast(0L) else 0L
                             val expiryText = if (expiryEpoch > 0L) String.format(java.util.Locale.US, "%02d:%02d:%02d", expiryRemaining / 3600, (expiryRemaining % 3600) / 60, expiryRemaining % 60) else "—"
-                            views.barrierExpiry.text = "Barrier: $barrierValue   Expiry: $expiryText"
+                            views.barrierExpiry.text = "Expiry: $expiryText"
                             views.ptpe.text = "PTPE: ${String.format(java.util.Locale.US, "%.1f", views.probability)}%"
                         }
                     }
                     if (::openPlView.isInitialized) {
-                        val pl = liveContractProfits.values.sum()
+                        val pl = liveContractProfits.filterKeys { liveContractProfitModes[it] == "${accountId}_$executionMode" }.values.sum()
                         openPlView.text = "Open P/L:  ${formatMoney(pl)}"
                         openPlView.setTextColor(profitColor(pl))
                     }
