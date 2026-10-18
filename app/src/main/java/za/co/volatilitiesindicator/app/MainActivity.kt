@@ -347,6 +347,7 @@ private var drawerOpen = false
         if (samples == 0) return 0.0 to 0
         return (hits.toDouble() / samples.toDouble() * 100.0) to samples
     }
+
     /** Sole authority for trade approval. PTPE is always recorded for display, even when it fails. */
     private fun evaluateMasterDecision(symbol: String): MasterDecision? {
         val candles = analysisCompletedCandles(symbol)
@@ -1109,16 +1110,24 @@ private fun addUserProfileScreen(page: LinearLayout) {
         profileField("Risk plan", riskText)
         val riskKey = risk.lowercase().replace("_", " ").replace("-", " ")
         val subscriptionText = when (riskKey) {
-            "minimum" -> "R250"
-            "medium" -> "R750"
-            "maximum" -> "R1,000"
+            "minimum" -> "25% of capital"
+            "medium" -> "75% of capital"
+            "maximum" -> "100% of capital"
             "super maximum", "privilege" -> "As assigned by administrator"
             "trial" -> "Free"
             else -> "As assigned by administrator"
         }
         val periodText = if (riskKey == "trial") "7 days" else if (riskKey.isBlank() || riskKey == "null") "Not assigned" else "30 days"
-        profileField("Subscription", subscriptionText)
+        profileField("Interest per period", when (riskKey) {
+            "minimum" -> "50% per 30 days"
+            "medium" -> "100% per 30 days"
+            "maximum" -> "200% per 30 days"
+            "trial" -> "50% per 7 days"
+            else -> "As assigned by administrator"
+        })
+        profileField("Subscription amount", subscriptionText)
         profileField("Period", periodText)
+        profileField("Trading capital range", "R1,000 to R5,000")
         profileField("Target profit", "10% of stake")
         val riskLimitText = when (risk.lowercase()) {
             "minimum" -> "1 trade per day"
@@ -1137,16 +1146,16 @@ private fun addUserProfileScreen(page: LinearLayout) {
         profileField("Account status", status)
         if (connected && accountId.isNotBlank()) {
             profileCard.addView(label("APPLY FOR A RISK PLAN", 14f, green, true).apply { setPadding(0, dp(12), 0, dp(4)) })
-            val riskOptions = listOf("Minimum — R250 / 30 days", "Medium — R750 / 30 days", "Maximum — R1,000 / 30 days", "Super Maximum — 30 days", "Trial — Free / 7 days")
+            val riskOptions = listOf("Minimum — 25% of capital / 30 days", "Medium — 75% of capital / 30 days", "Maximum — 100% of capital / 30 days", "Super Maximum — 30 days", "Trial — Free / 7 days")
             val riskValues = listOf("minimum", "medium", "maximum", "super_maximum", "trial")
             val riskSpinner = Spinner(this).apply {
                 adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, riskOptions)
             }
             profileCard.addView(riskSpinner, matchWrap())
-            profileCard.addView(label("Stake: 20% of daily starting capital • Target profit: 10% of stake. Applying does not activate a plan; the administrator must verify payment where required and assign the plan and dates.", 12f, muted, false).apply { setPadding(0, dp(5), 0, dp(5)) })
+            profileCard.addView(label("Trading capital range: R1,000–R5,000 • Stake: 20% of daily starting capital • Target profit: 10% of stake. Applying does not activate a plan; the administrator must verify payment where required and assign the plan and dates.", 12f, muted, false).apply { setPadding(0, dp(5), 0, dp(5)) })
             profileCard.addView(button("SUBMIT RISK-PLAN APPLICATION", true) {
                 val chosen = riskValues[riskSpinner.selectedItemPosition]
-                val fee = when (chosen) { "minimum" -> "250"; "medium" -> "750"; "maximum" -> "1000"; "super_maximum" -> "0"; else -> "0" }
+                val fee = when (chosen) { "minimum" -> "25% of capital"; "medium" -> "75% of capital"; "maximum" -> "100% of capital"; "super_maximum" -> "0"; else -> "0" }
                 val days = if (chosen == "trial") "7" else "30"
                 val applicationFields = mapOf(
                     "risk_profile" to chosen,
@@ -1202,14 +1211,13 @@ private fun authRequest(
         }
     })
 }
-
 private fun refreshProfile(showMessage: Boolean) {
     if (authToken.isBlank()) {
         currentProfile = null
         selectedTab = "Login"
         render()
         return
-        }
+    }
     if (profileLoading) return
     val requestedToken = authToken
     val requestedGeneration = authSessionGeneration
@@ -1503,7 +1511,7 @@ private fun addHeader() {
         marketDataIndexes.forEach { symbol ->
             val accent = when (symbol) {
                 "R_10" -> cyan
-                     "R_25" -> green
+                "R_25" -> green
                 "R_50" -> yellow
                 "R_75" -> red
                 else -> Color.rgb(190, 75, 255)
@@ -1691,6 +1699,10 @@ private fun addTradeScreen() {
     accountCard.addView(label("Mode: $executionMode", 13f, white, true))
     accountCard.addView(label("Connection: ${if (connected) "CONNECTED" else "DISCONNECTED"}", 12f, if (connected) green else red, true))
     accountCard.addView(label("Account ID: ${accountId.ifBlank { "—" }}", 12f, muted, false))
+    if (platform == "ADMIN") {
+        val latestTarget = lastDecisionByIndex.values.lastOrNull()?.target
+        accountCard.addView(label("Target barrier: ${latestTarget?.let { formatMarketPrice(it) } ?: "Waiting for a qualifying Master Decision"}", 12f, yellow, true))
+    }
     page.addView(accountCard, matchWrap().apply { bottomMargin = dp(10) })
 
     val decisionCard = card().apply { orientation = LinearLayout.VERTICAL }
@@ -1730,10 +1742,12 @@ private fun addTradeScreen() {
         row.addView(label("Index: $symbol", 14f, green, true))
         row.addView(label("Contract number: $contractId", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
         row.addView(label("Stake: ${formatMoney(stake)}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
-        val pnlHidden = label("", 1f, white, false)
+        val initialPnl = liveContractProfits[contractId] ?: 0.0
+        val pnlHidden = label("P/L: ${formatMoney(initialPnl)}", 12f, profitColor(initialPnl), true).apply { setPadding(0, dp(4), 0, 0) }
         val spotView = label("Current value/spot: ${if (currentValue > 0) formatMoney(currentValue) else "—"}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val expiryView = label("Expiry: $expiryText", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val ptpeHidden = label("", 1f, white, false)
+        row.addView(pnlHidden)
         row.addView(spotView)
         row.addView(expiryView)
         contractLiveViews[contractId] = ContractLiveViews(stake, symbol, tracked?.target, tracked?.targetProbability ?: 0.0, pnlHidden, spotView, expiryView, ptpeHidden)
@@ -1755,11 +1769,12 @@ private fun addTradeScreen() {
         row.addView(label("Index: ${running.symbol}", 14f, green, true))
         row.addView(label("Contract number: ${running.contractId}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
         row.addView(label("Stake: ${formatMoney(running.stake)}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
-        val pnlHidden = label("", 1f, white, false)
+        val initialPnl = liveContractProfits[running.contractId] ?: 0.0
+        val pnlHidden = label("P/L: ${formatMoney(initialPnl)}", 12f, profitColor(initialPnl), true).apply { setPadding(0, dp(4), 0, 0) }
         val spotView = label("Current value/spot: —", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val expiryView = label("Expiry: —", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val ptpeHidden = label("", 1f, white, false)
-        row.addView(spotView); row.addView(expiryView)
+        row.addView(pnlHidden); row.addView(spotView); row.addView(expiryView)
         contractLiveViews[running.contractId] = ContractLiveViews(running.stake, running.symbol, running.target, running.targetProbability, pnlHidden, spotView, expiryView, ptpeHidden)
         row.addView(button("CLOSE TRADE", true) {
             if (connected) derivApiClient.send(JSONObject().put("sell", running.contractId).put("price", 0).put("req_id", nextTradeRequestId()))
@@ -1817,6 +1832,7 @@ private data class AnalysisMssEvent(
     val broken: AnalysisPivot,
     val confirmation: DerivApiClient.Candle
 )
+
 private data class AnalysisHistoricalOutcome(
     val direction: String,
     val pivot: AnalysisPivot,
@@ -2098,7 +2114,7 @@ private fun addMssChochAnalysis() {
             val event = analysisLatestMss(candles)
             card.addView(label("STRUCTURAL EVENT: ${event?.state ?: "WAITING FOR MSS / CHOCH"}", 13f, if (event?.direction == "BULLISH") green else if (event?.direction == "BEARISH") red else yellow, true))
             if (event != null) {
-               card.addView(label("DIRECTION: ${event.direction}", 13f, if (event.direction == "BULLISH") green else red, true))
+                card.addView(label("DIRECTION: ${event.direction}", 13f, if (event.direction == "BULLISH") green else red, true))
                 card.addView(label("BROKEN PIVOT: ${event.broken.label} ${formatMarketPrice(event.broken.price)}", 12f, white, false))
                 card.addView(label("PIVOT TIME: ${formatMarketTime(event.broken.epoch)}", 12f, muted, false))
                 card.addView(label("CONFIRMATION CLOSE: ${formatMarketPrice(event.confirmation.close)}", 12f, white, false))
@@ -2390,6 +2406,7 @@ private fun addQualificationAnalysis() {
         page.addView(qualificationCard, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
     }
 }
+
 private fun addTargetFilterAnalysis() {
     val header = card().apply { orientation = LinearLayout.VERTICAL }
     val row = horizontalRow()
@@ -2820,19 +2837,19 @@ private fun addTargetFilterAnalysis() {
     }
     private fun addRiskCategoriesScreen() {
         page.addView(sectionTitle("RISK CATEGORIES"))
-        page.addView(label("Interest is administrator-only. Users see plan, subscription, period, stake, target, trade limit, and assigned dates in My Profile.", 13f, muted, false))
+        page.addView(label("Trading capital range: R1,000 to R5,000. Interest is administrator-only. Users see plan name, interest period label only if permitted, subscription amount, period, trades used today, stake, target, trade limit, and assigned dates in My Profile.", 13f, muted, false))
         val rules = listOf(
-            listOf("MINIMUM RISK", "Interest: 50%", "Subscription: R250", "Period: 30 days", "Stake: 20% of capital", "Target profit: 10% of stake", "Trades per day: 1"),
-            listOf("MEDIUM RISK", "Interest: 100%", "Subscription: R750", "Period: 30 days", "Stake: 20% of capital", "Target profit: 10% of stake", "Trades per day: 2"),
-            listOf("MAXIMUM RISK", "Interest: 200%", "Subscription: R1,000", "Period: 30 days", "Stake: 20% of capital", "Target profit: 10% of stake", "Trades per day: 3"),
+            listOf("MINIMUM RISK", "Interest per 30 days: 50%", "Subscription: 25% of capital", "Period: 30 days", "Stake: 20% of capital", "Target profit: 10% of stake", "Trades per day: 1"),
+            listOf("MEDIUM RISK", "Interest per 30 days: 100%", "Subscription: 75% of capital", "Period: 30 days", "Stake: 20% of capital", "Target profit: 10% of stake", "Trades per day: 2"),
+            listOf("MAXIMUM RISK", "Interest per 30 days: 200%", "Subscription: 100% of capital", "Period: 30 days", "Stake: 20% of capital", "Target profit: 10% of stake", "Trades per day: 3"),
             listOf("SUPER MAXIMUM RISK", "Period: 30 days", "Stake: 20% of capital", "Target profit: 10% per stake", "Trades per day: Unlimited"),
-            listOf("TRIAL", "Interest: 50%", "Subscription: Free", "Period: 7 days", "Stake: 20% of capital", "Target profit: 10% per stake", "Trade limit: Not specified")
+            listOf("TRIAL", "Interest per 7 days: 50%", "Subscription: Free", "Period: 7 days", "Stake: 20% of capital", "Target profit: 10% per stake", "Trade limit: Not specified")
         )
         rules.forEach { details ->
             val ruleCard = card().apply { orientation = LinearLayout.VERTICAL }
             ruleCard.addView(label(details.first(), 16f, green, true))
             details.drop(1).forEach { detail ->
-                val adminOnlyInterest = detail.startsWith("Interest:")
+                val adminOnlyInterest = detail.startsWith("Interest:") || detail.startsWith("Interest per ")
                 if (platform == "ADMIN" || !adminOnlyInterest) ruleCard.addView(label(detail, 13f, if (adminOnlyInterest) yellow else white, adminOnlyInterest))
             }
             page.addView(ruleCard, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
@@ -2908,6 +2925,7 @@ private fun addTargetFilterAnalysis() {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7802)
         }
     }
+
     private fun recordExecutionStage(title: String, message: String, eventKey: String) {
         notifyEvent(title, message, eventKey)
     }
@@ -2955,7 +2973,6 @@ private fun addTargetFilterAnalysis() {
     // =========================================================
     // ADMIN PREVIEW
     // =========================================================
-
     private fun addAdminPreview() {
         page.addView(sectionTitle("ADMINISTRATION"))
 
@@ -3192,6 +3209,7 @@ private fun addTargetFilterAnalysis() {
     private fun matchWrap(): LinearLayout.LayoutParams {
         return LinearLayout.LayoutParams(-1, -2)
     }
+
     private fun weighted(): LinearLayout.LayoutParams {
         return LinearLayout.LayoutParams(0, dp(52), 1f)
     }
