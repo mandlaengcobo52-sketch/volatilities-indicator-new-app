@@ -25,12 +25,10 @@ jobs:
           java-version: '17'
 
       - name: Set up Android SDK
-        run: |
-          set -euo pipefail
-          echo "ANDROID_HOME=${ANDROID_HOME:-/usr/local/lib/android/sdk}" >> "$GITHUB_ENV"
-          echo "${ANDROID_HOME:-/usr/local/lib/android/sdk}/platform-tools" >> "$GITHUB_PATH"
-          test -d "${ANDROID_HOME:-/usr/local/lib/android/sdk}"
-          echo "Android SDK directory found."
+        uses: android-actions/setup-android@v3
+        with:
+          accept-android-sdk-licenses: true
+          packages: 'platform-tools, platforms;android-35, build-tools;35.0.0'
 
       - name: Check Android project
         run: |
@@ -38,26 +36,6 @@ jobs:
           test -f settings.gradle || test -f settings.gradle.kts
           test -d app
           echo "Android project structure verified."
-
-            - name: Install Android SDK packages
-        run: |
-          set -euo pipefail
-
-          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
-
-          if [ ! -x "$SDKMANAGER" ]; then
-            SDKMANAGER="$(find "${ANDROID_HOME}/cmdline-tools" -type f -name sdkmanager -print -quit)"
-          fi
-
-          test -n "$SDKMANAGER"
-          test -x "$SDKMANAGER"
-
-          yes | "$SDKMANAGER" --licenses || true
-
-          "$SDKMANAGER" \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -90,16 +68,9 @@ jobs:
           test -f "$APK"
 
           BUILD_TOOLS="${ANDROID_HOME}/build-tools/35.0.0"
+          "$BUILD_TOOLS/apksigner" sign             --ks "$RUNNER_TEMP/release.jks"             --ks-key-alias "$KEY_ALIAS"             --ks-pass env:KEYSTORE_PASSWORD             --out app/build/outputs/apk/release/app-release-signed.apk             "$APK"
 
-          "$BUILD_TOOLS/apksigner" sign \
-            --ks "$RUNNER_TEMP/release.jks" \
-            --ks-key-alias "$KEY_ALIAS" \
-            --ks-pass env:KEYSTORE_PASSWORD \
-            --out app/build/outputs/apk/release/app-release-signed.apk \
-            "$APK"
-
-          "$BUILD_TOOLS/apksigner" verify \
-            app/build/outputs/apk/release/app-release-signed.apk
+          "$BUILD_TOOLS/apksigner" verify             app/build/outputs/apk/release/app-release-signed.apk
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
@@ -114,3 +85,4 @@ jobs:
           name: volatilities-indicator-signed-release-apk
           path: app/build/outputs/apk/release/app-release-signed.apk
           if-no-files-found: error
+          
