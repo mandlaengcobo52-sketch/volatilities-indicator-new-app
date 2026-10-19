@@ -24,6 +24,7 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.os.Handler
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
@@ -79,6 +80,8 @@ private var drawerOpen = false
 
     private lateinit var page: LinearLayout
     private var mainScrollView: ScrollView? = null
+    private val analysisRenderHandler by lazy { Handler(mainLooper) }
+    private var pendingAnalysisRender: Runnable? = null
     private var lastRenderedTab: String? = null
     private lateinit var accountStatus: TextView
     private lateinit var accountIdView: TextView
@@ -388,7 +391,7 @@ private var drawerOpen = false
         val status = when {
             distance < 1.5 -> "WAIT — TARGET DISTANCE BELOW 1.5%"
             samples < 5 -> "WAIT — INSUFFICIENT PTPE SAMPLES"
-            probability < 80.0 -> "WAIT — PTPE BELOW 80%"
+            probability < 55.0 -> "WAIT — PTPE BELOW 55%"
             !priorOutcomeExists -> "WAIT — NO PRIOR SAME-DIRECTION OUTCOME"
             else -> "QUALIFIED"
         }
@@ -1310,7 +1313,6 @@ private fun addHeader() {
                 rightMargin = dp(8)
             }
         )
-
         val titles = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_VERTICAL
@@ -1612,7 +1614,7 @@ private fun addHeader() {
             weighted()
         )
         buttons.addView(
-            button("⟳  REFRESH", false) {
+          button("⟳  REFRESH", false) {
                 if (connected) {
                     derivApiClient.requestBalance()
                     derivApiClient.requestOpenTrades()
@@ -1662,7 +1664,7 @@ private fun addHeader() {
         status.contains("INVALID TARGET") -> "INVALID TARGET"
         status.contains("DISTANCE BELOW") -> "DISTANCE <1.5%"
         status.contains("INSUFFICIENT PTPE") -> "PTPE SAMPLES"
-        status.contains("PTPE BELOW") -> "PTPE <80%"
+        status.contains("PTPE BELOW") -> "PTPE <55%"
         status.contains("NO PRIOR") -> "NO PRIOR EVENT"
         status.contains("ERROR") -> "DATA ERROR"
         else -> "DATA WAIT"
@@ -2200,6 +2202,16 @@ private fun addMssChochBehaviourAnalysis() {
 // ANALYSIS — DIRECTION AND STRUCTURAL TARGET
 // =========================================================
 private fun addDirectionStructuralTargetAnalysis() {
+    val header = card().apply { orientation = LinearLayout.VERTICAL }
+    val row = horizontalRow()
+    row.addView(label("Analysis - Direction and Structural Target", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
+    row.addView(button(if (directionStructuralTargetExpanded) "▼ OPEN" else "▶ CLOSED", directionStructuralTargetExpanded) {
+        directionStructuralTargetExpanded = !directionStructuralTargetExpanded
+        render()
+    }, LinearLayout.LayoutParams(-2, dp(48)))
+    header.addView(row)
+    page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
+    if (!directionStructuralTargetExpanded) return
     page.addView(label("Direction is taken from the latest confirmed MSS/CHOCH. The structural target must lie beyond the current price in that direction.", 12f, muted, false))
     marketDataIndexes.forEach { symbol ->
         val candles = analysisCompletedCandles(symbol)
@@ -2423,7 +2435,7 @@ private fun addQualificationAnalysis() {
         val ptpeText = if (masterDecision != null) {
             String.format(java.util.Locale.US, "%.1f%%", masterDecision.targetProbability) +
                 " (${masterDecision.sampleCount} comparable 3-day samples)"
-        } else "WAIT — BELOW 80% OR INSUFFICIENT SAMPLES"
+        } else "WAIT — BELOW 55% OR INSUFFICIENT SAMPLES"
         qualificationCard.addView(label(
             "PTPE TARGET PROBABILITY: $ptpeText",
             12f, if (masterDecision != null) green else yellow, true
@@ -2450,22 +2462,20 @@ private fun addPtpeAnalysis() {
     if (!ptpeAnalysisExpanded) return
 
     page.addView(label(
-        "PTPE estimates how often a comparable historical MSS/CHOCH in the same direction reached the current target distance within three days. Qualification requires at least 80% probability and at least 5 comparable samples. This section reports the reason each index qualifies or waits.",
+        "PTPE estimates how often a comparable historical MSS/CHOCH in the same direction reached the current target distance within three days. Qualification requires at least 55% probability and at least 5 comparable samples. This section reports the reason each index qualifies or waits.",
         12f, muted, false
-    ).apply { setPadding(dp(12), dp(10), dp(12), dp(10)) })
+        ).apply { setPadding(dp(12), dp(10), dp(12), dp(10)) })
 
     marketDataIndexes.forEach { symbol ->
-        // Refresh the diagnostic state for this index before displaying its PTPE result.
-        evaluateMasterDecision(symbol)
         val ptpe = lastPtpeByIndex[symbol] ?: PtpeDisplay()
         val card = card().apply { orientation = LinearLayout.VERTICAL }
         card.addView(label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true))
         card.addView(label("DIRECTION: ${ptpe.direction}", 13f, if (ptpe.direction == "BUY") green else if (ptpe.direction == "SELL") red else yellow, true))
         card.addView(label("STRUCTURAL TARGET: ${ptpe.target?.let { formatMarketPrice(it) } ?: "—"}", 13f, white, false))
         card.addView(label("TARGET DISTANCE: ${ptpe.distancePercent?.let { String.format(java.util.Locale.US, "%.3f%%", it) } ?: "—"}", 13f, white, false))
-        card.addView(label("PTPE PROBABILITY: ${String.format(java.util.Locale.US, "%.1f%%", ptpe.probability)}", 14f, if (ptpe.probability >= 80.0 && ptpe.samples >= 5) green else yellow, true))
+        card.addView(label("PTPE PROBABILITY: ${String.format(java.util.Locale.US, "%.1f%%", ptpe.probability)}", 14f, if (ptpe.probability >= 55.0 && ptpe.samples >= 5) green else yellow, true))
         card.addView(label("COMPARABLE HISTORICAL SAMPLES: ${ptpe.samples} (minimum 5)", 12f, white, false))
-        card.addView(label("MINIMUM PROBABILITY: 80%", 12f, white, false))
+        card.addView(label("MINIMUM PROBABILITY: 55%", 12f, white, false))
         card.addView(label("STATUS: ${ptpe.status}", 13f, if (ptpe.status == "QUALIFIED") green else yellow, true))
         page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
     }
@@ -2688,7 +2698,6 @@ private fun addTargetFilterAnalysis() {
             page.addView(label("There are no pending registrations.", 14f, green, false))
         }
     }
-
     private fun showAdminUserViewDialog(user: JSONObject) {
         val fullName = user.optString("full_name", listOf(user.optString("first_name", ""), user.optString("surname", "")).filter { it.isNotBlank() }.joinToString(" "))
         val details = listOf(
@@ -3258,7 +3267,6 @@ private fun addTargetFilterAnalysis() {
             gravity = Gravity.CENTER_VERTICAL
                     }
     }
-
     private fun shape(
         color: Int,
         stroke: Int,
@@ -3572,7 +3580,13 @@ override fun onCandles(
         updatePtpeDisplay(symbol)
 
         if (selectedTab == "Analysis") {
-            render()
+            pendingAnalysisRender?.let { analysisRenderHandler.removeCallbacks(it) }
+            val refresh = Runnable {
+                pendingAnalysisRender = null
+                if (selectedTab == "Analysis") render()
+            }
+            pendingAnalysisRender = refresh
+            analysisRenderHandler.postDelayed(refresh, 450L)
         }
     }
 }
@@ -3612,4 +3626,3 @@ override fun onMarketDataError(
     }
 
                                         }
-            
