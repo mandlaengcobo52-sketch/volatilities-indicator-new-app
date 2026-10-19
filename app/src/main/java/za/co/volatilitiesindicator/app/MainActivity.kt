@@ -3547,9 +3547,9 @@ override fun onMarketDataError(
 ) {
     runOnUiThread {
         marketDataErrors[symbol] = message
-        dashboardStatusViews[symbol]?.apply {
-            text = "FEED ERROR"
-            setTextColor(red)
+        (dashboardStatusViews[symbol] as? TextView)?.apply {
+    text = "FEED ERROR"
+    setTextColor(red)
         }
         android.util.Log.e("DerivMarketData", "$symbol: $message")
     }
