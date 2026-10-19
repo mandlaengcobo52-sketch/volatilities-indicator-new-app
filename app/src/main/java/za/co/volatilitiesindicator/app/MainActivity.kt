@@ -675,6 +675,8 @@ private val marketDataPrices =
     mutableMapOf<String, Double>()
 private val marketDataPriceViews = mutableMapOf<String, TextView>()
 private val dashboardPriceViews = mutableMapOf<String, TextView>()
+private val currentPriceViews = mutableMapOf<String, MutableList<TextView>>()
+private val dashboardStatusViews = mutableMapOf<String, TextView>()
 private val marketDataErrors =
     mutableMapOf<String, String>()
 
@@ -1296,7 +1298,7 @@ private fun addHeader() {
                 green,
                 100,
                 2
-            )
+                )
 
             clipToOutline = true
         }
@@ -1644,9 +1646,9 @@ private fun addHeader() {
     val targetText = ptpe.target?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
     val distanceText = ptpe.distancePercent?.let { String.format(java.util.Locale.US, "%.2f%%", it) } ?: "—"
     return "$symbol • ${ptpe.direction} • Target $targetText • Distance $distanceText • PTPE ${String.format(java.util.Locale.US, "%.1f", ptpe.probability)}% (${ptpe.samples} samples) • ${ptpe.status}"
-}
+                            }
 
-private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
+                            private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
     val decision = lastDecisionByIndex[symbol]
     if (decision != null) return "QUALIFIED ${decision.direction}" to green
     if (marketDataErrors.containsKey(symbol) && marketDataPrices[symbol] == null) return "FEED ERROR" to red
@@ -2217,7 +2219,7 @@ private fun addDirectionStructuralTargetAnalysis() {
                 (direction == "DOWN" && target.price < current)
             )
 
-        val distance = if (
+            val distance = if (
             hasTarget && current != null && current != 0.0
         ) {
             kotlin.math.abs(target!!.price - current) /
@@ -3396,7 +3398,7 @@ private fun addTargetFilterAnalysis() {
         if (::accountIdView.isInitialized) accountIdView.text = "Account:  —"
         if (::balanceView.isInitialized) balanceView.text = "Balance:  —"
         toast("Deriv disconnected.")
-    }
+        }
 
     override fun onConnecting(message: String) {
         runOnUiThread {
@@ -3547,9 +3549,9 @@ override fun onMarketDataError(
 ) {
     runOnUiThread {
         marketDataErrors[symbol] = message
-        (dashboardStatusViews[symbol] as? TextView)?.apply {
-    text = "FEED ERROR"
-    setTextColor(red)
+        dashboardStatusViews[symbol]?.apply {
+            text = "FEED ERROR"
+            setTextColor(red)
         }
         android.util.Log.e("DerivMarketData", "$symbol: $message")
     }
@@ -3576,4 +3578,3 @@ override fun onMarketDataError(
     }
 
                                         }
-            
