@@ -676,7 +676,7 @@ private val marketDataCandles =
 
 private val marketDataPrices =
     mutableMapOf<String, Double>()
-private val marketDataPriceViews = mutableMapOf<String, TextView>()
+    private val marketDataPriceViews = mutableMapOf<String, TextView>()
 private val dashboardPriceViews = mutableMapOf<String, TextView>()
 private val currentPriceViews = mutableMapOf<String, MutableList<TextView>>()
 private val dashboardStatusViews = mutableMapOf<String, TextView>()
@@ -1270,7 +1270,6 @@ private fun performPlatformLogout() {
     if (token.isNotBlank()) authRequest("logout", token = token) { _, _ -> }
     toast("You have been signed out.")
 }
-
 private fun addHeader() {
     val row = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
@@ -2400,7 +2399,7 @@ private fun addQualificationAnalysis() {
                 12f, if (hasConfirmedEvent) green else yellow, true
             )
         )
-        // Keep the target-price value on the administrator interface only.
+           // Keep the target-price value on the administrator interface only.
         if (platform == "ADMIN") {
             qualificationCard.addView(
                 label(
@@ -3566,6 +3565,7 @@ private fun addTargetFilterAnalysis() {
         // Re-rendering here caused the ScrollView to reset/jump while users scrolled.
         // The explicit Refresh button requests fresh account/trade data when needed.
     }
+    }
 
     override fun onCandles(
     symbol: String,
@@ -3623,4 +3623,4 @@ override fun onMarketDataError(
         }
     }
 
-    }
+                                        }
