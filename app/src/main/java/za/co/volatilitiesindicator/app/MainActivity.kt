@@ -347,7 +347,6 @@ private var drawerOpen = false
         if (samples == 0) return 0.0 to 0
         return (hits.toDouble() / samples.toDouble() * 100.0) to samples
     }
-
     /** Sole authority for trade approval. PTPE is always recorded for display, even when it fails. */
     private fun evaluateMasterDecision(symbol: String): MasterDecision? {
         val candles = analysisCompletedCandles(symbol)
@@ -676,8 +675,6 @@ private val marketDataPrices =
     mutableMapOf<String, Double>()
 private val marketDataPriceViews = mutableMapOf<String, TextView>()
 private val dashboardPriceViews = mutableMapOf<String, TextView>()
-private val dashboardStatusViews = mutableMapOf<String, TextView>()
-private val currentPriceViews = mutableMapOf<String, MutableList<TextView>>()
 private val marketDataErrors =
     mutableMapOf<String, String>()
 
@@ -1144,72 +1141,38 @@ private fun addUserProfileScreen(page: LinearLayout) {
         profileField("Expiry of risk plan", u.optString("expiry_date", "").takeUnless { it == "null" }.orEmpty())
         val status = u.optString("status", "approved").uppercase()
         profileField("Account status", status)
-        val applicationStatus = u.optString("risk_application_status", "").lowercase()
-        val assignedPlanId = u.optString("plan_id", "").takeUnless { it == "null" }.orEmpty()
-        val startDate = u.optString("start_date", "").takeUnless { it == "null" }.orEmpty()
-        val expiryDate = u.optString("expiry_date", "").takeUnless { it == "null" }.orEmpty()
-        val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).apply {
-            isLenient = false
-            timeZone = dailyCapitalTimeZone
-        }
-        val today = dateFormat.format(java.util.Date())
-        val planActive = riskKey.isNotBlank() && riskKey != "null" &&
-            startDate.isNotBlank() && expiryDate.isNotBlank() &&
-            startDate <= today && expiryDate >= today
-
-        when {
-            applicationStatus == "pending" -> {
-                profileCard.addView(label("RISK-PLAN APPLICATION: PENDING", 14f, yellow, true).apply { setPadding(0, dp(12), 0, dp(4)) })
-                profileCard.addView(label("Your application is awaiting administrator review. You cannot submit another application while it is pending.", 12f, muted, false))
+        if (connected && accountId.isNotBlank()) {
+            profileCard.addView(label("APPLY FOR A RISK PLAN", 14f, green, true).apply { setPadding(0, dp(12), 0, dp(4)) })
+            val riskOptions = listOf("Minimum — 25% of capital / 30 days", "Medium — 75% of capital / 30 days", "Maximum — 100% of capital / 30 days", "Super Maximum — 30 days", "Trial — Free / 7 days")
+            val riskValues = listOf("minimum", "medium", "maximum", "super_maximum", "trial")
+            val riskSpinner = Spinner(this).apply {
+                adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, riskOptions)
             }
-            planActive -> {
-                profileCard.addView(label("RISK PLAN ACTIVE", 14f, green, true).apply { setPadding(0, dp(12), 0, dp(4)) })
-                profileCard.addView(label("Your current plan is active until $expiryDate. You may apply again after it expires or if the administrator changes your assigned plan.", 12f, muted, false))
-            }
-            riskKey.isBlank() || riskKey == "null" -> {
-                profileCard.addView(label("NO RISK PLAN ASSIGNED", 14f, yellow, true).apply { setPadding(0, dp(12), 0, dp(4)) })
-                profileCard.addView(label("An administrator must assign a risk plan before you can apply.", 12f, muted, false))
-            }
-            !connected || accountId.isBlank() -> {
-                profileCard.addView(label("Connect your Deriv account before submitting your risk-plan application.", 12f, yellow, false).apply { setPadding(0, dp(10), 0, dp(4)) })
-            }
-            else -> {
-                val assignedRiskValue = when (riskKey) {
-                    "super maximum", "privilege" -> "super_maximum"
-                    else -> riskKey.replace(" ", "_")
+            profileCard.addView(riskSpinner, matchWrap())
+            profileCard.addView(label("Trading capital range: R1,000–R5,000 • Stake: 20% of daily starting capital • Target profit: 10% of stake. Applying does not activate a plan; the administrator must verify payment where required and assign the plan and dates.", 12f, muted, false).apply { setPadding(0, dp(5), 0, dp(5)) })
+            profileCard.addView(button("SUBMIT RISK-PLAN APPLICATION", true) {
+                val chosen = riskValues[riskSpinner.selectedItemPosition]
+                val fee = when (chosen) { "minimum" -> "25% of capital"; "medium" -> "75% of capital"; "maximum" -> "100% of capital"; "super_maximum" -> "0"; else -> "0" }
+                val days = if (chosen == "trial") "7" else "30"
+                val applicationFields = mapOf(
+                    "risk_profile" to chosen,
+                    "plan_id" to "${chosen}_${days}_days",
+                    "period_days" to days,
+                    "subscription_amount" to fee,
+                    "deriv_account_id" to accountId,
+                    "payment_status" to if (fee == "0") "not_required_or_pending_admin_review" else "awaiting_payment"
+                )
+                authRequest("risk_application", applicationFields) { ok, result ->
+                    if (ok) {
+                        notifyEvent("Risk-plan application submitted", "Application submitted for ${riskOptions[riskSpinner.selectedItemPosition]}. The administrator must verify payment where required and assign the plan.")
+                        toast(result.optString("message", "Application submitted. Await administrator assignment."))
+                    } else {
+                        toast(result.optString("message", "Risk-plan applications are not yet enabled by the server. No plan has been activated."))
+                    }
                 }
-                val assignedPlanLabel = "${risk.replace('_', ' ').replaceFirstChar { it.uppercase() }} — $periodText"
-                profileCard.addView(label("APPLY FOR YOUR ASSIGNED RISK PLAN", 14f, green, true).apply { setPadding(0, dp(12), 0, dp(4)) })
-                profileCard.addView(label("Assigned plan: $assignedPlanLabel", 13f, yellow, true))
-                profileCard.addView(label("Trading capital range: R1,000–R5,000 • Stake: 20% of daily starting capital • Target profit: 10% of stake. Applying does not activate a plan; the administrator must review the application and assign the plan dates.", 12f, muted, false).apply { setPadding(0, dp(5), 0, dp(5)) })
-                profileCard.addView(button("SUBMIT APPLICATION", true) {
-                    val fee = when (riskKey) {
-                        "minimum" -> "25% of capital"
-                        "medium" -> "75% of capital"
-                        "maximum" -> "100% of capital"
-                        else -> "0"
-                    }
-                    val days = if (riskKey == "trial") "7" else "30"
-                    val applicationFields = mapOf(
-                        "risk_profile" to assignedRiskValue,
-                        "plan_id" to assignedPlanId.ifBlank { "${assignedRiskValue}_${days}_days" },
-                        "period_days" to days,
-                        "subscription_amount" to fee,
-                        "deriv_account_id" to accountId,
-                        "payment_status" to if (fee == "0") "not_required_or_pending_admin_review" else "awaiting_payment"
-                    )
-                    authRequest("risk_application", applicationFields) { ok, result ->
-                        if (ok) {
-                            notifyEvent("Risk-plan application submitted", "Your application for $assignedPlanLabel was submitted for administrator review.")
-                            toast(result.optString("message", "Application submitted. Await administrator review."))
-                            refreshProfile(showMessage = false)
-                        } else {
-                            toast(result.optString("message", "Unable to submit the risk-plan application."))
-                            refreshProfile(showMessage = false)
-                        }
-                    }
-                }, matchWrap().apply { topMargin = dp(6) })
-            }
+            }, matchWrap().apply { topMargin = dp(6) })
+        } else {
+            profileCard.addView(label("Connect your Deriv account to choose a risk plan.", 12f, yellow, false).apply { setPadding(0, dp(10), 0, dp(4)) })
         }
         profileCard.addView(button("REFRESH PROFILE", false) { refreshProfile(showMessage = true) }, matchWrap().apply { topMargin = dp(8) })
         profileCard.addView(button("LOG OUT", true) { performPlatformLogout() }, matchWrap().apply { topMargin = dp(8) })
@@ -1700,7 +1663,7 @@ private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
         status.contains("NO PRIOR") -> "NO PRIOR EVENT"
         status.contains("ERROR") -> "DATA ERROR"
         else -> "DATA WAIT"
-        }
+    }
     return shortStatus to yellow
 }
 
@@ -1778,18 +1741,30 @@ private fun addTradeScreen() {
         row.addView(label("Stake: ${formatMoney(stake)}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
         val initialPnl = liveContractProfits[contractId] ?: 0.0
         val pnlHidden = label("P/L: ${formatMoney(initialPnl)}", 12f, profitColor(initialPnl), true).apply { setPadding(0, dp(4), 0, 0) }
-        val spotView = label("Current value/spot: ${if (currentValue > 0) formatMoney(currentValue) else "—"}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
+        val targetPrice = tracked?.target
+        val targetView = label("Target price: ${targetPrice?.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
+        val spotView = label("Current value/spot: ${if (currentValue > 0) formatMarketPrice(currentValue) else "—"}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val expiryView = label("Expiry: $expiryText", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val ptpeHidden = label("", 1f, white, false)
         row.addView(pnlHidden)
+        row.addView(targetView)
         row.addView(spotView)
         row.addView(expiryView)
         contractLiveViews[contractId] = ContractLiveViews(stake, symbol, tracked?.target, tracked?.targetProbability ?: 0.0, pnlHidden, spotView, expiryView, ptpeHidden)
         row.addView(button("CLOSE TRADE", true) {
-            if (connected) {
-                val sent = derivApiClient.send(JSONObject().put("sell", contractId).put("price", 0).put("req_id", nextTradeRequestId()))
-                if (!sent) toast("Unable to send close request.") else toast("Close request sent for contract $contractId.")
-            } else toast("Connect to the account holding this contract.")
+            if (!connected) {
+                toast("Connect to the account holding this contract.")
+            } else {
+                android.app.AlertDialog.Builder(this)
+                    .setTitle("Confirm closing trade")
+                    .setMessage("Close contract $contractId for $symbol? The final sale value and profit/loss may differ from the current value.")
+                    .setNegativeButton("CANCEL", null)
+                    .setPositiveButton("CLOSE TRADE") { _, _ ->
+                        val sent = derivApiClient.send(JSONObject().put("sell", contractId).put("price", 0).put("req_id", nextTradeRequestId()))
+                        if (!sent) toast("Unable to send close request.") else toast("Close request sent for contract $contractId.")
+                    }
+                    .show()
+            }
         }, matchWrap().apply { topMargin = dp(8) })
         runningCard.addView(row, matchWrap().apply { topMargin = dp(7) })
         visibleRunning++
@@ -1805,14 +1780,26 @@ private fun addTradeScreen() {
         row.addView(label("Stake: ${formatMoney(running.stake)}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
         val initialPnl = liveContractProfits[running.contractId] ?: 0.0
         val pnlHidden = label("P/L: ${formatMoney(initialPnl)}", 12f, profitColor(initialPnl), true).apply { setPadding(0, dp(4), 0, 0) }
+        val targetView = label("Target price: ${running.target.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
         val spotView = label("Current value/spot: —", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val expiryView = label("Expiry: —", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val ptpeHidden = label("", 1f, white, false)
-        row.addView(pnlHidden); row.addView(spotView); row.addView(expiryView)
+        row.addView(pnlHidden); row.addView(targetView); row.addView(spotView); row.addView(expiryView)
         contractLiveViews[running.contractId] = ContractLiveViews(running.stake, running.symbol, running.target, running.targetProbability, pnlHidden, spotView, expiryView, ptpeHidden)
         row.addView(button("CLOSE TRADE", true) {
-            if (connected) derivApiClient.send(JSONObject().put("sell", running.contractId).put("price", 0).put("req_id", nextTradeRequestId()))
-            else toast("Connect to the account holding this contract.")
+            if (!connected) {
+                toast("Connect to the account holding this contract.")
+            } else {
+                android.app.AlertDialog.Builder(this)
+                    .setTitle("Confirm closing trade")
+                    .setMessage("Close contract ${running.contractId} for ${running.symbol}? The final sale value and profit/loss may differ from the current value.")
+                    .setNegativeButton("CANCEL", null)
+                    .setPositiveButton("CLOSE TRADE") { _, _ ->
+                        val sent = derivApiClient.send(JSONObject().put("sell", running.contractId).put("price", 0).put("req_id", nextTradeRequestId()))
+                        if (!sent) toast("Unable to send close request.") else toast("Close request sent for contract ${running.contractId}.")
+                    }
+                    .show()
+            }
         }, matchWrap().apply { topMargin = dp(8) })
         runningCard.addView(row, matchWrap().apply { topMargin = dp(7) })
         visibleRunning++
@@ -2286,17 +2273,20 @@ private fun addDirectionStructuralTargetAnalysis() {
             )
         )
 
-        indexCard.addView(
-            label(
-                "STRUCTURAL TARGET: ${
-                    if (hasTarget) formatMarketPrice(target?.price)
-                    else "WAITING"
-                }",
-                13f,
-                if (hasTarget) green else yellow,
-                true
+        // Target prices are confidential and must be visible to administrators only.
+        if (platform == "ADMIN") {
+            indexCard.addView(
+                label(
+                    "STRUCTURAL TARGET: ${
+                        if (hasTarget) formatMarketPrice(target?.price)
+                        else "WAITING"
+                    }",
+                    13f,
+                    if (hasTarget) green else yellow,
+                    true
+                )
             )
-        )
+        }
 
         indexCard.addView(
             label(
@@ -2396,12 +2386,15 @@ private fun addQualificationAnalysis() {
                 12f, if (hasConfirmedEvent) green else yellow, true
             )
         )
-        qualificationCard.addView(
-            label(
-                "STRUCTURAL TARGET: ${if (hasTarget) "PASS — ${formatMarketPrice(target?.price)}" else "WAIT — NO VALID TARGET"}",
-                12f, if (hasTarget) green else yellow, true
+        // Keep the target-price value on the administrator interface only.
+        if (platform == "ADMIN") {
+            qualificationCard.addView(
+                label(
+                    "STRUCTURAL TARGET: ${if (hasTarget) "PASS — ${formatMarketPrice(target?.price)}" else "WAIT — NO VALID TARGET"}",
+                    12f, if (hasTarget) green else yellow, true
+                )
             )
-        )
+        }
         qualificationCard.addView(
             label(
                 "HISTORICAL DIRECTION SAMPLE: ${if (hasHistory) "PASS — ${history.size} event(s)" else "WAIT — NO HISTORICAL SAMPLE"}",
@@ -2478,8 +2471,11 @@ private fun addTargetFilterAnalysis() {
              (direction == "DOWN" && targetPriceForDistance < currentPriceForDistance))
         card.addView(label("DIRECTION: ${direction.ifBlank { "WAITING" }}", 13f,
             if (direction == "UP") green else if (direction == "DOWN") red else yellow, true))
-        card.addView(label("TARGET PRICE: ${target?.let { formatMarketPrice(it.price) } ?: "REJECTED / NOT AVAILABLE"}", 13f,
-            if (target != null) blue else yellow, true))
+        // Never render the actual target price for a regular user.
+        if (platform == "ADMIN") {
+            card.addView(label("TARGET PRICE: ${target?.let { formatMarketPrice(it.price) } ?: "REJECTED / NOT AVAILABLE"}", 13f,
+                if (target != null) blue else yellow, true))
+        }
         card.addView(label("TARGET DISTANCE: ${distance?.let { String.format(java.util.Locale.US, "%.3f%%", it) } ?: "—"}", 12f, blue, false))
         card.addView(label("TARGET FILTER: ${if (passes) "PASS" else "WAIT — NO VALID TARGET"}", 13f,
             if (passes) green else yellow, true))
@@ -2703,7 +2699,7 @@ private fun addTargetFilterAnalysis() {
                         val values = mapOf(
                             "user_id" to userId,
                             "risk_profile" to risk,
-                            "risk_percent" to user.optString("risk_percent", "20").ifBlank { "20" },
+                                "risk_percent" to user.optString("risk_percent", "20").ifBlank { "20" },
                             "plan_id" to user.optString("plan_id", "${risk}_assigned"),
                             "start_date" to startDate,
                             "expiry_date" to expiryDate
@@ -3580,3 +3576,4 @@ override fun onMarketDataError(
     }
 
                                         }
+            
