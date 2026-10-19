@@ -1144,38 +1144,72 @@ private fun addUserProfileScreen(page: LinearLayout) {
         profileField("Expiry of risk plan", u.optString("expiry_date", "").takeUnless { it == "null" }.orEmpty())
         val status = u.optString("status", "approved").uppercase()
         profileField("Account status", status)
-        if (connected && accountId.isNotBlank()) {
-            profileCard.addView(label("APPLY FOR A RISK PLAN", 14f, green, true).apply { setPadding(0, dp(12), 0, dp(4)) })
-            val riskOptions = listOf("Minimum — 25% of capital / 30 days", "Medium — 75% of capital / 30 days", "Maximum — 100% of capital / 30 days", "Super Maximum — 30 days", "Trial — Free / 7 days")
-            val riskValues = listOf("minimum", "medium", "maximum", "super_maximum", "trial")
-            val riskSpinner = Spinner(this).apply {
-                adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, riskOptions)
+        val applicationStatus = u.optString("risk_application_status", "").lowercase()
+        val assignedPlanId = u.optString("plan_id", "").takeUnless { it == "null" }.orEmpty()
+        val startDate = u.optString("start_date", "").takeUnless { it == "null" }.orEmpty()
+        val expiryDate = u.optString("expiry_date", "").takeUnless { it == "null" }.orEmpty()
+        val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).apply {
+            isLenient = false
+            timeZone = dailyCapitalTimeZone
+        }
+        val today = dateFormat.format(java.util.Date())
+        val planActive = riskKey.isNotBlank() && riskKey != "null" &&
+            startDate.isNotBlank() && expiryDate.isNotBlank() &&
+            startDate <= today && expiryDate >= today
+
+        when {
+            applicationStatus == "pending" -> {
+                profileCard.addView(label("RISK-PLAN APPLICATION: PENDING", 14f, yellow, true).apply { setPadding(0, dp(12), 0, dp(4)) })
+                profileCard.addView(label("Your application is awaiting administrator review. You cannot submit another application while it is pending.", 12f, muted, false))
             }
-            profileCard.addView(riskSpinner, matchWrap())
-            profileCard.addView(label("Trading capital range: R1,000–R5,000 • Stake: 20% of daily starting capital • Target profit: 10% of stake. Applying does not activate a plan; the administrator must verify payment where required and assign the plan and dates.", 12f, muted, false).apply { setPadding(0, dp(5), 0, dp(5)) })
-            profileCard.addView(button("SUBMIT RISK-PLAN APPLICATION", true) {
-                val chosen = riskValues[riskSpinner.selectedItemPosition]
-                val fee = when (chosen) { "minimum" -> "25% of capital"; "medium" -> "75% of capital"; "maximum" -> "100% of capital"; "super_maximum" -> "0"; else -> "0" }
-                val days = if (chosen == "trial") "7" else "30"
-                val applicationFields = mapOf(
-                    "risk_profile" to chosen,
-                    "plan_id" to "${chosen}_${days}_days",
-                    "period_days" to days,
-                    "subscription_amount" to fee,
-                    "deriv_account_id" to accountId,
-                    "payment_status" to if (fee == "0") "not_required_or_pending_admin_review" else "awaiting_payment"
-                )
-                authRequest("risk_application", applicationFields) { ok, result ->
-                    if (ok) {
-                        notifyEvent("Risk-plan application submitted", "Application submitted for ${riskOptions[riskSpinner.selectedItemPosition]}. The administrator must verify payment where required and assign the plan.")
-                        toast(result.optString("message", "Application submitted. Await administrator assignment."))
-                    } else {
-                        toast(result.optString("message", "Risk-plan applications are not yet enabled by the server. No plan has been activated."))
-                    }
+            planActive -> {
+                profileCard.addView(label("RISK PLAN ACTIVE", 14f, green, true).apply { setPadding(0, dp(12), 0, dp(4)) })
+                profileCard.addView(label("Your current plan is active until $expiryDate. You may apply again after it expires or if the administrator changes your assigned plan.", 12f, muted, false))
+            }
+            riskKey.isBlank() || riskKey == "null" -> {
+                profileCard.addView(label("NO RISK PLAN ASSIGNED", 14f, yellow, true).apply { setPadding(0, dp(12), 0, dp(4)) })
+                profileCard.addView(label("An administrator must assign a risk plan before you can apply.", 12f, muted, false))
+            }
+            !connected || accountId.isBlank() -> {
+                profileCard.addView(label("Connect your Deriv account before submitting your risk-plan application.", 12f, yellow, false).apply { setPadding(0, dp(10), 0, dp(4)) })
+            }
+            else -> {
+                val assignedRiskValue = when (riskKey) {
+                    "super maximum", "privilege" -> "super_maximum"
+                    else -> riskKey.replace(" ", "_")
                 }
-            }, matchWrap().apply { topMargin = dp(6) })
-        } else {
-            profileCard.addView(label("Connect your Deriv account to choose a risk plan.", 12f, yellow, false).apply { setPadding(0, dp(10), 0, dp(4)) })
+                val assignedPlanLabel = "${risk.replace('_', ' ').replaceFirstChar { it.uppercase() }} — $periodText"
+                profileCard.addView(label("APPLY FOR YOUR ASSIGNED RISK PLAN", 14f, green, true).apply { setPadding(0, dp(12), 0, dp(4)) })
+                profileCard.addView(label("Assigned plan: $assignedPlanLabel", 13f, yellow, true))
+                profileCard.addView(label("Trading capital range: R1,000–R5,000 • Stake: 20% of daily starting capital • Target profit: 10% of stake. Applying does not activate a plan; the administrator must review the application and assign the plan dates.", 12f, muted, false).apply { setPadding(0, dp(5), 0, dp(5)) })
+                profileCard.addView(button("SUBMIT APPLICATION", true) {
+                    val fee = when (riskKey) {
+                        "minimum" -> "25% of capital"
+                        "medium" -> "75% of capital"
+                        "maximum" -> "100% of capital"
+                        else -> "0"
+                    }
+                    val days = if (riskKey == "trial") "7" else "30"
+                    val applicationFields = mapOf(
+                        "risk_profile" to assignedRiskValue,
+                        "plan_id" to assignedPlanId.ifBlank { "${assignedRiskValue}_${days}_days" },
+                        "period_days" to days,
+                        "subscription_amount" to fee,
+                        "deriv_account_id" to accountId,
+                        "payment_status" to if (fee == "0") "not_required_or_pending_admin_review" else "awaiting_payment"
+                    )
+                    authRequest("risk_application", applicationFields) { ok, result ->
+                        if (ok) {
+                            notifyEvent("Risk-plan application submitted", "Your application for $assignedPlanLabel was submitted for administrator review.")
+                            toast(result.optString("message", "Application submitted. Await administrator review."))
+                            refreshProfile(showMessage = false)
+                        } else {
+                            toast(result.optString("message", "Unable to submit the risk-plan application."))
+                            refreshProfile(showMessage = false)
+                        }
+                    }
+                }, matchWrap().apply { topMargin = dp(6) })
+            }
         }
         profileCard.addView(button("REFRESH PROFILE", false) { refreshProfile(showMessage = true) }, matchWrap().apply { topMargin = dp(8) })
         profileCard.addView(button("LOG OUT", true) { performPlatformLogout() }, matchWrap().apply { topMargin = dp(8) })
@@ -1666,7 +1700,7 @@ private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
         status.contains("NO PRIOR") -> "NO PRIOR EVENT"
         status.contains("ERROR") -> "DATA ERROR"
         else -> "DATA WAIT"
-    }
+        }
     return shortStatus to yellow
 }
 
