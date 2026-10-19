@@ -313,7 +313,6 @@ private var drawerOpen = false
         }
         return true
     }
-
     private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Long) {
         val accountKey = accountId.ifBlank { "unlinked" }.replace(Regex("[^A-Za-z0-9_-]"), "_")
         val key = "daily_trades_${accountKey}_${executionMode}_${saDayKey()}"
@@ -322,7 +321,7 @@ private var drawerOpen = false
     }
 
     /** Empirical PTPE: among prior same-direction MSS events, how often was an equivalent
- * percentage target touched within the following 3-day (72-hour) window? */
+ * percentage target touched within the following 24-hour window? */
     private fun targetProbabilityPercent(
         candles: List<DerivApiClient.Candle>, direction: String, targetDistancePercent: Double
     ): Pair<Double, Int> {
@@ -332,8 +331,8 @@ private var drawerOpen = false
         var hits = 0
         for (outcome in outcomes) {
             val start = candles.indexOfFirst { it.epoch == outcome.confirmation.epoch }
-            val evaluationCandles = 3 * 24
-            if (start < 0 || start + evaluationCandles >= candles.size) continue // require a full 72-hour forward window
+            val evaluationCandles = 24
+            if (start < 0 || start + evaluationCandles >= candles.size) continue // require a full 24-hour forward window
             val entry = outcome.confirmation.close
             if (entry <= 0.0 || !entry.isFinite()) continue
             val target = if (direction == "BULLISH") entry * (1.0 + targetDistancePercent / 100.0)
@@ -401,7 +400,7 @@ private var drawerOpen = false
             return null
         }
         val decision = MasterDecision(symbol, decisionDirection, current, target, distance, probability, samples,
-            "Confirmed MSS/CHOCH + structural target + empirical 3-day PTPE")
+            "Confirmed MSS/CHOCH + structural barrier + empirical 24-hour PTPE")
         lastDecisionByIndex[symbol] = decision
         notifyEvent(
             "Trade qualified",
@@ -1499,7 +1498,6 @@ private fun addHeader() {
 },
     weighted()
 )
-
         page.addView(row)
     }
 
@@ -1747,11 +1745,12 @@ private fun addTradeScreen() {
         val initialPnl = liveContractProfits[contractId] ?: 0.0
         val pnlHidden = label("P/L: ${formatMoney(initialPnl)}", 12f, profitColor(initialPnl), true).apply { setPadding(0, dp(4), 0, 0) }
         val targetPrice = tracked?.target
-        val targetView = label("Target price: ${targetPrice?.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
+        val targetView = label("Contract barrier (expiry target): ${targetPrice?.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
         val spotView = label("Current value/spot: ${if (currentValue > 0) formatMarketPrice(currentValue) else "—"}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val expiryView = label("Expiry: $expiryText", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val ptpeHidden = label("", 1f, white, false)
         row.addView(pnlHidden)
+        row.addView(label("Auto-close profit target: ${formatMoney(stake * 0.10)} (10% of stake)", 12f, green, true).apply { setPadding(0, dp(4), 0, 0) })
         row.addView(targetView)
         row.addView(spotView)
         row.addView(expiryView)
@@ -1785,11 +1784,11 @@ private fun addTradeScreen() {
         row.addView(label("Stake: ${formatMoney(running.stake)}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
         val initialPnl = liveContractProfits[running.contractId] ?: 0.0
         val pnlHidden = label("P/L: ${formatMoney(initialPnl)}", 12f, profitColor(initialPnl), true).apply { setPadding(0, dp(4), 0, 0) }
-        val targetView = label("Target price: ${running.target.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
+        val targetView = label("Contract barrier (expiry target): ${running.target.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
         val spotView = label("Current value/spot: —", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val expiryView = label("Expiry: —", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val ptpeHidden = label("", 1f, white, false)
-        row.addView(pnlHidden); row.addView(targetView); row.addView(spotView); row.addView(expiryView)
+        row.addView(pnlHidden); row.addView(label("Auto-close profit target: ${formatMoney(running.stake * 0.10)} (10% of stake)", 12f, green, true).apply { setPadding(0, dp(4), 0, 0) }); row.addView(targetView); row.addView(spotView); row.addView(expiryView)
         contractLiveViews[running.contractId] = ContractLiveViews(running.stake, running.symbol, running.target, running.targetProbability, pnlHidden, spotView, expiryView, ptpeHidden)
         row.addView(button("CLOSE TRADE", true) {
             if (!connected) {
@@ -2109,8 +2108,7 @@ private fun addMarketStructureAnalysis() {
         }
         page.addView(structureCard, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
     }
-}
-// =========================================================
+      // =========================================================
 // ANALYSIS — MSS / CHOCH CONFIRMATION
 // =========================================================
 private fun addMssChochAnalysis() {
@@ -2401,7 +2399,7 @@ private fun addQualificationAnalysis() {
                 12f, if (hasConfirmedEvent) green else yellow, true
             )
         )
-        // Keep the target-price value on the administrator interface only.
+       // Keep the target-price value on the administrator interface only.
         if (platform == "ADMIN") {
             qualificationCard.addView(
                 label(
@@ -2462,7 +2460,7 @@ private fun addPtpeAnalysis() {
     if (!ptpeAnalysisExpanded) return
 
     page.addView(label(
-        "PTPE estimates how often a comparable historical MSS/CHOCH in the same direction reached the current target distance within three days. Qualification requires at least 55% probability and at least 5 comparable samples. This section reports the reason each index qualifies or waits.",
+        "PTPE estimates how often a comparable historical MSS/CHOCH in the same direction reached the current target distance within 24 hours. Qualification requires at least 55% probability and at least 5 comparable samples. This section reports the reason each index qualifies or waits.",
         12f, muted, false
         ).apply { setPadding(dp(12), dp(10), dp(12), dp(10)) })
 
@@ -3001,7 +2999,6 @@ private fun addTargetFilterAnalysis() {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7802)
         }
     }
-
     private fun recordExecutionStage(title: String, message: String, eventKey: String) {
         notifyEvent(title, message, eventKey)
     }
