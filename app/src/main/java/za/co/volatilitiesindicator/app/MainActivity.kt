@@ -687,6 +687,7 @@ private var marketDataExpanded = true
 private var mssChochBehaviourExpanded = true
 private var directionStructuralTargetExpanded = true
 private var qualificationExpanded = true
+private var ptpeAnalysisExpanded = true
 private var targetFilterExpanded = true
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -784,6 +785,7 @@ when (selectedTab) {
     addMssChochBehaviourAnalysis()
     addDirectionStructuralTargetAnalysis()
     addQualificationAnalysis()
+    addPtpeAnalysis()
     addTargetFilterAnalysis()
                 }
 
@@ -1078,7 +1080,7 @@ private fun addUserProfileScreen(page: LinearLayout) {
             gravity = Gravity.CENTER_HORIZONTAL
             bottomMargin = dp(12)
         }
-    )
+        )
     profileCard.addView(label("MY PROFILE", 22f, green, true).apply {
         gravity = Gravity.CENTER
         setPadding(0, 0, 0, dp(16))
@@ -1292,7 +1294,6 @@ private fun addHeader() {
             scaleType = ImageView.ScaleType.CENTER_CROP
 
             contentDescription = "Volatilities Indicator logo"
-
             background = shape(
                 Color.rgb(0, 22, 12),
                 green,
@@ -1572,7 +1573,7 @@ private fun addHeader() {
     14f,
     if (connected) green else red,
     true
-)
+            )
 
         val statusLine = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -2078,7 +2079,7 @@ private fun addMarketStructureAnalysis() {
         if (candles.size < 20) {
             structureCard.addView(label("STATUS: WAITING FOR SUFFICIENT COMPLETED H1 HISTORY", 12f, yellow, true))
         } else {
-            // Match Webtrader: display only the latest 40 pivots in Market Structure.
+               // Match Webtrader: display only the latest 40 pivots in Market Structure.
             // This cap is local to this display; MSS/CHOCH, behaviour, and structural
             // target calculations continue using their full analysis pivot history.
             val pivots = analysisPivots(candles).takeLast(40)
@@ -2436,6 +2437,40 @@ private fun addQualificationAnalysis() {
     }
 }
 
+private fun addPtpeAnalysis() {
+    val header = card().apply { orientation = LinearLayout.VERTICAL }
+    val row = horizontalRow()
+    row.addView(label("Analysis - PTPE Target Probability", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
+    row.addView(button(if (ptpeAnalysisExpanded) "▼ OPEN" else "▶ CLOSED", ptpeAnalysisExpanded) {
+        ptpeAnalysisExpanded = !ptpeAnalysisExpanded
+        render()
+    }, LinearLayout.LayoutParams(-2, dp(48)))
+    header.addView(row)
+    page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
+    if (!ptpeAnalysisExpanded) return
+
+    page.addView(label(
+        "PTPE estimates how often a comparable historical MSS/CHOCH in the same direction reached the current target distance within three days. Qualification requires at least 80% probability and at least 5 comparable samples. This section reports the reason each index qualifies or waits.",
+        12f, muted, false
+    ).apply { setPadding(dp(12), dp(10), dp(12), dp(10)) })
+
+    marketDataIndexes.forEach { symbol ->
+        // Refresh the diagnostic state for this index before displaying its PTPE result.
+        evaluateMasterDecision(symbol)
+        val ptpe = lastPtpeByIndex[symbol] ?: PtpeDisplay()
+        val card = card().apply { orientation = LinearLayout.VERTICAL }
+        card.addView(label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true))
+        card.addView(label("DIRECTION: ${ptpe.direction}", 13f, if (ptpe.direction == "BUY") green else if (ptpe.direction == "SELL") red else yellow, true))
+        card.addView(label("STRUCTURAL TARGET: ${ptpe.target?.let { formatMarketPrice(it) } ?: "—"}", 13f, white, false))
+        card.addView(label("TARGET DISTANCE: ${ptpe.distancePercent?.let { String.format(java.util.Locale.US, "%.3f%%", it) } ?: "—"}", 13f, white, false))
+        card.addView(label("PTPE PROBABILITY: ${String.format(java.util.Locale.US, "%.1f%%", ptpe.probability)}", 14f, if (ptpe.probability >= 80.0 && ptpe.samples >= 5) green else yellow, true))
+        card.addView(label("COMPARABLE HISTORICAL SAMPLES: ${ptpe.samples} (minimum 5)", 12f, white, false))
+        card.addView(label("MINIMUM PROBABILITY: 80%", 12f, white, false))
+        card.addView(label("STATUS: ${ptpe.status}", 13f, if (ptpe.status == "QUALIFIED") green else yellow, true))
+        page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
+    }
+}
+
 private fun addTargetFilterAnalysis() {
     val header = card().apply { orientation = LinearLayout.VERTICAL }
     val row = horizontalRow()
@@ -2642,7 +2677,7 @@ private fun addTargetFilterAnalysis() {
                                     toast(result.optString("message", "Unable to approve this user."))
                                 }
                             }
-                        }
+                            }
                     },
                     matchWrap().apply { topMargin = dp(8) }
                 )
@@ -3145,7 +3180,6 @@ private fun addTargetFilterAnalysis() {
                     Typeface.BOLD
                 )
             }
-
             gravity = Gravity.CENTER_VERTICAL
             includeFontPadding = true
         }
@@ -3367,7 +3401,7 @@ private fun addTargetFilterAnalysis() {
 
     connected = false
     marketDataRequested = false
-    accountId = ""
+        accountId = ""
     accountType = ""
     accountBalance = 0.0
     accountCurrency = ""
@@ -3578,3 +3612,4 @@ override fun onMarketDataError(
     }
 
                                         }
+            
