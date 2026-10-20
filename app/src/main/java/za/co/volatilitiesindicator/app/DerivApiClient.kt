@@ -343,7 +343,6 @@ private val candleIndexes = listOf(
     fun connect(
         token: String
     ) {
-
         connectWithAccessToken(
             token,
             "DEMO"
@@ -701,8 +700,7 @@ private val candleIndexes = listOf(
                             callback.onError(
                                 "Deriv WebSocket authentication failed: $message"
                             )
-
-                            /*
+                                 /*
                              * Authentication/account errors should not
                              * hammer the API with automatic retries.
                              */
@@ -1337,7 +1335,6 @@ fun refreshHistoricalCandles() {
     private fun handleWebSocketMessage(
         text: String
     ) {
-
         try {
 
             val json =
@@ -1953,7 +1950,7 @@ candleRequestSymbols.clear()
     }
 
     /*
-     * Return whether the client is currently trying
+    * Return whether the client is currently trying
      * to establish a connection.
      */
     fun isConnecting(): Boolean {
@@ -2224,7 +2221,6 @@ candleRequestSymbols.clear()
         }
 
         try {
-
             webSocketClient
                 .dispatcher
                 .executorService
@@ -2236,3 +2232,4 @@ candleRequestSymbols.clear()
         }
     }
 }
+        
