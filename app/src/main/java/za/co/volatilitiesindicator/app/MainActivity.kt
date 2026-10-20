@@ -332,7 +332,6 @@ private var drawerOpen = false
         appPrefs.edit().putInt(key, dailyTradeCount() + 1).apply()
         notifyEvent("Touch trade opened", "$symbol · Contract $contractId · Stake ${String.format(java.util.Locale.US, "%.2f", stake)} ${accountCurrency.ifBlank { "USD" }}")
     }
-
     /** Empirical PTPE: among prior same-direction MSS events, how often was an equivalent
  * percentage target touched within the following 24-hour window? */
     private fun targetProbabilityPercent(
@@ -941,21 +940,7 @@ when (selectedTab) {
                 }
             }
 }
-addBottomNavigation(outer)
-
-        // Restore the previous position after layout settles. Live account callbacks can
-        // trigger repeated renders; a delayed restore prevents the REAL account screen jumping.
-        scroll.post {
-            scroll.postDelayed({
-                if (lastRenderedTab == selectedTab && mainScrollView === scroll) {
-                    val maxScroll = (page.height - scroll.height).coerceAtLeast(0)
-                    scroll.scrollTo(0, previousScrollY.coerceIn(0, maxScroll))
-                }
-                lastRenderedTab = selectedTab
-            }, 120L)
-        }
-    }
-    // =========================================================
+// =========================================================
 // HEADER: EXISTING LOGO AND NOTIFICATION BELL
 // =========================================================
 // ==========================================
@@ -1242,7 +1227,22 @@ private fun addUserProfileScreen(page: LinearLayout) {
                     "deriv_account_id" to accountId,
                     "payment_status" to if (fee == "0") "not_required_or_pending_admin_review" else "awaiting_payment"
                 )
-                authRequest("risk_application", applicationFields) { ok, result ->
+                
+        addBottomNavigation(outer)
+
+        // Restore the previous position after layout settles. Live account callbacks can
+        // trigger repeated renders; a delayed restore prevents the REAL account screen jumping.
+        scroll.post {
+            scroll.postDelayed({
+                if (lastRenderedTab == selectedTab && mainScrollView === scroll) {
+                    val maxScroll = (page.height - scroll.height).coerceAtLeast(0)
+                    scroll.scrollTo(0, previousScrollY.coerceIn(0, maxScroll))
+                }
+                lastRenderedTab = selectedTab
+            }, 120L)
+        }
+    }
+    authRequest("risk_application", applicationFields) { ok, result ->
                     if (ok) {
                         notifyEvent("Risk-plan application submitted", "Application submitted for ${riskOptions[riskSpinner.selectedItemPosition]}. The administrator must verify payment where required and assign the plan.")
                         toast(result.optString("message", "Application submitted. Await administrator assignment."))
@@ -1511,6 +1511,7 @@ private fun addHeader() {
         },
         weighted()
     )
+
     row.addView(space(dp(8)))
 
     row.addView(
@@ -1538,7 +1539,6 @@ private fun addHeader() {
 
     private fun formatMoney(value: Double): String = String.format(java.util.Locale.US, "%.2f", value)
     private fun profitColor(value: Double): Int = when { value > 0.000001 -> green; value < -0.000001 -> red; else -> white }
-
     // =========================================================
     // EXECUTION MODE SELECTOR
     // =========================================================
@@ -1830,8 +1830,6 @@ private fun addTradeScreen() {
         val initialPnl = liveContractProfits[contractId] ?: 0.0
         val pnlHidden = label("P/L: ${formatMoney(initialPnl)}", 12f, profitColor(initialPnl), true).apply { setPadding(0, dp(4), 0, 0) }
         val actualTargetView = label("Actual target price: ${actualTargetPrices[contractId]?.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, blue, true).apply { setPadding(0, dp(4), 0, 0) }
-        val targetPrice = tracked?.target
-        val targetView = label("Structural target: ${targetPrice?.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
         val profitTargetView = label("10% profit target (amount): ${formatMoney(stake * 0.10)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
         val trailView = label("Trailing stop: ${if (tracked?.trailingActivated == true) "ACTIVATED" else if (trailingStopEnabled) "ARMED" else "OFF"}", 12f, if (trailingStopEnabled) green else muted, true).apply { setPadding(0, dp(4), 0, 0) }
         val spotView = label("Current value/spot: ${if (currentValue > 0) formatMarketPrice(currentValue) else "—"}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
@@ -1840,7 +1838,6 @@ private fun addTradeScreen() {
         row.addView(pnlHidden)
         row.addView(actualTargetView)
         row.addView(profitTargetView)
-        row.addView(targetView)
         row.addView(trailView)
         row.addView(spotView)
         row.addView(expiryView)
@@ -1875,13 +1872,12 @@ private fun addTradeScreen() {
         val initialPnl = liveContractProfits[running.contractId] ?: 0.0
         val pnlHidden = label("P/L: ${formatMoney(initialPnl)}", 12f, profitColor(initialPnl), true).apply { setPadding(0, dp(4), 0, 0) }
         val actualTargetView = label("Actual target price: ${actualTargetPrices[running.contractId]?.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, blue, true).apply { setPadding(0, dp(4), 0, 0) }
-        val targetView = label("Structural target: ${running.target.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
         val profitTargetView = label("10% profit target (amount): ${formatMoney(running.stake * 0.10)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
         val trailView = label("Trailing stop: ${if (running.trailingActivated) "ACTIVATED" else if (trailingStopEnabled) "ARMED" else "OFF"}", 12f, if (trailingStopEnabled) green else muted, true).apply { setPadding(0, dp(4), 0, 0) }
         val spotView = label("Current value/spot: —", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val expiryView = label("Expiry: —", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val ptpeHidden = label("", 1f, white, false)
-        row.addView(pnlHidden); row.addView(actualTargetView); row.addView(profitTargetView); row.addView(targetView); row.addView(trailView); row.addView(spotView); row.addView(expiryView)
+        row.addView(pnlHidden); row.addView(actualTargetView); row.addView(profitTargetView); row.addView(trailView); row.addView(spotView); row.addView(expiryView)
         contractLiveViews[running.contractId] = ContractLiveViews(running.stake, running.symbol, running.target, running.targetProbability, pnlHidden, spotView, expiryView, ptpeHidden, actualTargetView)
         row.addView(button("CLOSE TRADE", true) {
             if (!connected) {
@@ -2110,7 +2106,6 @@ private fun analysisStructuralTarget(
         else -> null
     }
 }
-
 // =========================================================
 // ANALYSIS — MARKET DATA
 // =========================================================
@@ -2317,7 +2312,7 @@ private fun addDirectionStructuralTargetAnalysis() {
             "BULLISH" -> "UP"
             "BEARISH" -> "DOWN"
             else -> ""
-            }
+        }
         val target = if (event != null && current != null && direction.isNotBlank()) {
             analysisStructuralTarget(candles, current, direction, event.confirmation.epoch)
         } else null
@@ -2398,7 +2393,6 @@ private fun addDirectionStructuralTargetAnalysis() {
                 )
             )
         }
-
         indexCard.addView(
             label(
                 "TARGET DISTANCE: ${
@@ -2575,6 +2569,7 @@ private fun addPtpeAnalysis() {
         page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
     }
 }
+
 private fun addTargetFilterAnalysis() {
     val header = card().apply { orientation = LinearLayout.VERTICAL }
     val row = horizontalRow()
@@ -3003,7 +2998,7 @@ private fun addTargetFilterAnalysis() {
                 if (selectedTab == "User Accounts") render()
                 toast(result.optString("message", "Unable to load users."))
             }
-        }
+            }
     }
     private fun addRiskCategoriesScreen() {
         page.addView(sectionTitle("RISK CATEGORIES"))
@@ -3295,6 +3290,7 @@ private fun addTargetFilterAnalysis() {
             this.text = text
             textSize = 13f
             isAllCaps = false
+
             typeface = Typeface.create(
                 "sans-serif",
                 Typeface.BOLD
@@ -3304,7 +3300,7 @@ private fun addTargetFilterAnalysis() {
                     Color.rgb(0, 25, 12)
                 } else {
                     white
-                }
+                    }
             )
             background = shape(
                 if (active) green else panel2,
