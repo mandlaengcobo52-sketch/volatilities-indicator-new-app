@@ -89,6 +89,7 @@ private var drawerOpen = false
     private lateinit var openPlView: TextView
     private val liveContractProfits = mutableMapOf<Long, Double>()
     private val liveContractProfitModes = mutableMapOf<Long, String>()
+    private var runningTotalPlView: TextView? = null
     private var historyAccountKey: String = ""
     private var connected = false
     private var accountId = ""
@@ -151,7 +152,12 @@ private var drawerOpen = false
         val targetProbability: Double,
         val mode: String,
         var takeProfitRequested: Boolean = false,
-        var openContractConfirmed: Boolean = false
+        var openContractConfirmed: Boolean = false,
+        var targetNotified: Boolean = false,
+        var trailingActivated: Boolean = false,
+        var peakProfit: Double = 0.0,
+        var closeRequested: Boolean = false,
+        var closeReason: String = ""
     )
     private data class ContractLiveViews(
         val stake: Double,
@@ -186,6 +192,9 @@ private var drawerOpen = false
     private var notificationId = 4200
     private val notificationsEnabled: Boolean
         get() = appPrefs.getBoolean("notificationsEnabled", false)
+    private var trailingStopEnabled: Boolean
+        get() = appPrefs.getBoolean("trailingStopEnabled", false)
+        set(value) { appPrefs.edit().putBoolean("trailingStopEnabled", value).apply() }
     private val dailyCapitalTimeZone = java.util.TimeZone.getTimeZone("Africa/Johannesburg")
 
     private fun nextTradeRequestId(): Int = ++nextTradeRequestId
@@ -649,15 +658,79 @@ private var drawerOpen = false
                     "open_contract_confirmed_${accountId}_${executionMode}_$contractId")
             }
             val profitOpen = contract.optDouble("profit", contract.optDouble("profit_open", 0.0))
-            if (!running.takeProfitRequested && status != "sold" && status != "won" && status != "lost" &&
-                profitOpen >= running.stake * 0.10) {
-                running.takeProfitRequested = true
-                derivApiClient.send(JSONObject().put("sell", contractId).put("price", 0).put("req_id", nextTradeRequestId()))
+            val trailStateKey = "trail_state_${accountId}_${executionMode}_$contractId"
+            if (!running.trailingActivated) {
+                running.trailingActivated = appPrefs.getBoolean("${trailStateKey}_activated", false)
+                running.peakProfit = appPrefs.getString("${trailStateKey}_peak", "0")?.toDoubleOrNull() ?: 0.0
+                running.targetNotified = appPrefs.getBoolean("${trailStateKey}_target_notified", false)
             }
-            if (status == "sold" || status == "won" || status == "lost" || contract.optInt("is_sold", 0) == 1) {
+            val isClosed = status in setOf("sold", "won", "lost", "expired") || contract.optInt("is_sold", 0) == 1
+            if (!isClosed) {
+                liveContractProfits[contractId] = profitOpen
+                liveContractProfitModes[contractId] = "${accountId}_$executionMode"
+                val tenPercentTarget = running.stake * 0.10
+                if (!running.targetNotified && profitOpen >= tenPercentTarget) {
+                    running.targetNotified = true
+                    running.trailingActivated = true
+                    running.peakProfit = profitOpen
+                    appPrefs.edit().putBoolean("${trailStateKey}_target_notified", true).putBoolean("${trailStateKey}_activated", true).putString("${trailStateKey}_peak", running.peakProfit.toString()).apply()
+                    notifyEvent("10% Profit Target Reached", "${running.symbol} · Contract $contractId · Stake ${formatMoney(running.stake)} · Target ${formatMoney(tenPercentTarget)} · Current P/L ${formatMoney(profitOpen)}. Trailing stop ${if (trailingStopEnabled) "ACTIVE" else "READY — currently OFF"}.",
+                        "profit_10pct_reached_${accountId}_${executionMode}_$contractId")
+                }
+                if (running.trailingActivated) {
+                    running.peakProfit = maxOf(running.peakProfit, profitOpen)
+                    appPrefs.edit().putBoolean("${trailStateKey}_activated", true).putString("${trailStateKey}_peak", running.peakProfit.toString()).apply()
+                }
+
+                // The structural price target is distinct from the 10% monetary profit target.
+                // Close only when a known target from the Master Decision is crossed.
+                val currentSpot = contract.optDouble("current_spot", contract.optDouble("current_spot_display_value", 0.0))
+                val structureReached = running.target > 0.0 && currentSpot > 0.0 &&
+                    ((running.direction.equals("BUY", true) && currentSpot >= running.target) ||
+                     (running.direction.equals("SELL", true) && currentSpot <= running.target))
+                if (structureReached && !running.closeRequested) {
+                    running.closeRequested = true
+                    running.closeReason = "Structure Target Reached"
+                    val sent = derivApiClient.send(JSONObject().put("sell", contractId).put("price", 0).put("req_id", nextTradeRequestId()))
+                    if (!sent) {
+                        running.closeRequested = false
+                        running.closeReason = ""
+                        notifyEvent("Structure Target Close Failed", "${running.symbol} · Contract $contractId · Close request could not be sent; monitoring continues.",
+                            "structure_close_failed_${accountId}_${executionMode}_$contractId")
+                    } else {
+                        notifyEvent("Structure Target Reached", "${running.symbol} · Contract $contractId · Spot ${formatMarketPrice(currentSpot)} reached structure target ${formatMarketPrice(running.target)}. Waiting for Deriv confirmation.",
+                            "structure_target_reached_${accountId}_${executionMode}_$contractId")
+                    }
+                }
+
+                // Standalone true trailing stop: activate at +10% of original stake,
+                // then trail the peak profit by 10% of original stake, with a break-even floor.
+                val trailingGap = tenPercentTarget
+                val protectedProfit = maxOf(0.0, running.peakProfit - trailingGap)
+                if (trailingStopEnabled && running.trailingActivated && !running.closeRequested &&
+                    profitOpen <= protectedProfit && running.peakProfit > tenPercentTarget) {
+                    running.closeRequested = true
+                    running.closeReason = "Trailing Stop Triggered"
+                    val sent = derivApiClient.send(JSONObject().put("sell", contractId).put("price", 0).put("req_id", nextTradeRequestId()))
+                    if (!sent) {
+                        running.closeRequested = false
+                        running.closeReason = ""
+                        notifyEvent("Trailing Stop Close Failed", "${running.symbol} · Contract $contractId · Deriv close request could not be sent; monitoring continues.",
+                            "trailing_close_failed_${accountId}_${executionMode}_$contractId")
+                    } else {
+                        notifyEvent("Trailing Stop Triggered", "${running.symbol} · Contract $contractId · Peak P/L ${formatMoney(running.peakProfit)} · Protected level ${formatMoney(protectedProfit)}. Waiting for Deriv confirmation.",
+                            "trailing_stop_triggered_${accountId}_${executionMode}_$contractId")
+                    }
+                }
+            } else {
+                val finalProfit = contract.optDouble("profit", contract.optDouble("profit_open", liveContractProfits[contractId] ?: 0.0))
+                val reason = running.closeReason.ifBlank { if (status == "expired") "Contract Expired" else if (running.takeProfitRequested) "Target Close" else "Contract Closed" }
                 runningContracts.remove(contractId)
                 pendingIndexSymbols.remove(running.symbol)
-                notifyEvent("Trade closed", "${running.symbol} · Contract $contractId · Final status: ${status.uppercase()}.",
+                liveContractProfits.remove(contractId)
+                liveContractProfitModes.remove(contractId)
+                appPrefs.edit().remove("${trailStateKey}_activated").remove("${trailStateKey}_peak").remove("${trailStateKey}_target_notified").apply()
+                notifyEvent("Trade Closed", "${running.symbol} · Contract $contractId · Final P/L ${formatMoney(finalProfit)} · Reason: $reason · Deriv status: ${status.uppercase()}.",
                     "trade_closed_${accountId}_${executionMode}_$contractId")
             }
         }
@@ -880,8 +953,7 @@ when (selectedTab) {
             }, 120L)
         }
     }
-
-// =========================================================
+    // =========================================================
 // HEADER: EXISTING LOGO AND NOTIFICATION BELL
 // =========================================================
 // ==========================================
@@ -1714,6 +1786,18 @@ private fun addTradeScreen() {
     }, matchWrap().apply { topMargin = dp(8) })
     page.addView(decisionCard, matchWrap().apply { bottomMargin = dp(10) })
 
+    val trailingCard = card().apply { orientation = LinearLayout.VERTICAL }
+    trailingCard.addView(label("STANDALONE TRAILING STOP", 15f, green, true))
+    trailingCard.addView(label("Activation: +10% of original stake · Trailing gap: 10% of original stake · Break-even floor before trailing gains", 12f, muted, false).apply { setPadding(0, dp(5), 0, dp(5)) })
+    trailingCard.addView(label("Status: ${if (trailingStopEnabled) "ON — managing eligible open trades" else "OFF — monitoring only"}", 12f, if (trailingStopEnabled) green else yellow, true))
+    trailingCard.addView(button(if (trailingStopEnabled) "TURN TRAILING STOP OFF" else "TURN TRAILING STOP ON", trailingStopEnabled) {
+        trailingStopEnabled = !trailingStopEnabled
+        if (trailingStopEnabled) notifyEvent("Trailing Stop Enabled", "Standalone trailing stop is ON. It will manage eligible open trades after the 10% activation threshold.", "trailing_stop_enabled_${accountId}_${executionMode}")
+        else notifyEvent("Trailing Stop Disabled", "Standalone trailing stop is OFF. Open trades will remain open unless closed manually or by another applicable contract rule.", "trailing_stop_disabled_${accountId}_${executionMode}_${System.currentTimeMillis()}")
+        render()
+    }, matchWrap().apply { topMargin = dp(8) })
+    page.addView(trailingCard, matchWrap().apply { bottomMargin = dp(10) })
+
     page.addView(sectionTitle("RUNNING TRADES"))
     val runningCard = card().apply { orientation = LinearLayout.VERTICAL }
     val portfolioArray = openTradesResponse?.optJSONObject("portfolio")?.optJSONArray("contracts")
@@ -1745,12 +1829,16 @@ private fun addTradeScreen() {
         val initialPnl = liveContractProfits[contractId] ?: 0.0
         val pnlHidden = label("P/L: ${formatMoney(initialPnl)}", 12f, profitColor(initialPnl), true).apply { setPadding(0, dp(4), 0, 0) }
         val targetPrice = tracked?.target
-        val targetView = label("Target price: ${targetPrice?.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
+        val targetView = label("Structure target: ${targetPrice?.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
+        val profitTargetView = label("10% profit target: ${formatMoney(stake * 0.10)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
+        val trailView = label("Trailing stop: ${if (tracked?.trailingActivated == true) "ACTIVATED" else if (trailingStopEnabled) "ARMED" else "OFF"}", 12f, if (trailingStopEnabled) green else muted, true).apply { setPadding(0, dp(4), 0, 0) }
         val spotView = label("Current value/spot: ${if (currentValue > 0) formatMarketPrice(currentValue) else "—"}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val expiryView = label("Expiry: $expiryText", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val ptpeHidden = label("", 1f, white, false)
         row.addView(pnlHidden)
+        row.addView(profitTargetView)
         row.addView(targetView)
+        row.addView(trailView)
         row.addView(spotView)
         row.addView(expiryView)
         contractLiveViews[contractId] = ContractLiveViews(stake, symbol, tracked?.target, tracked?.targetProbability ?: 0.0, pnlHidden, spotView, expiryView, ptpeHidden)
@@ -1783,11 +1871,13 @@ private fun addTradeScreen() {
         row.addView(label("Stake: ${formatMoney(running.stake)}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
         val initialPnl = liveContractProfits[running.contractId] ?: 0.0
         val pnlHidden = label("P/L: ${formatMoney(initialPnl)}", 12f, profitColor(initialPnl), true).apply { setPadding(0, dp(4), 0, 0) }
-        val targetView = label("Target price: ${running.target.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
+        val targetView = label("Structure target: ${running.target.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
+        val profitTargetView = label("10% profit target: ${formatMoney(running.stake * 0.10)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
+        val trailView = label("Trailing stop: ${if (running.trailingActivated) "ACTIVATED" else if (trailingStopEnabled) "ARMED" else "OFF"}", 12f, if (trailingStopEnabled) green else muted, true).apply { setPadding(0, dp(4), 0, 0) }
         val spotView = label("Current value/spot: —", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val expiryView = label("Expiry: —", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val ptpeHidden = label("", 1f, white, false)
-        row.addView(pnlHidden); row.addView(targetView); row.addView(spotView); row.addView(expiryView)
+        row.addView(pnlHidden); row.addView(profitTargetView); row.addView(targetView); row.addView(trailView); row.addView(spotView); row.addView(expiryView)
         contractLiveViews[running.contractId] = ContractLiveViews(running.stake, running.symbol, running.target, running.targetProbability, pnlHidden, spotView, expiryView, ptpeHidden)
         row.addView(button("CLOSE TRADE", true) {
             if (!connected) {
@@ -1808,6 +1898,10 @@ private fun addTradeScreen() {
         visibleRunning++
     }
     if (visibleRunning == 0) runningCard.addView(label("No open contracts for the selected account.", 12f, yellow, false))
+    val totalOpenPl = liveContractProfits.filterKeys { liveContractProfitModes[it] == "${accountId}_$executionMode" }.values.sum()
+    val totalPlView = label("TOTAL OPEN P/L: ${formatMoney(totalOpenPl)}", 15f, profitColor(totalOpenPl), true).apply { setPadding(0, dp(10), 0, dp(4)) }
+    runningTotalPlView = totalPlView
+    runningCard.addView(totalPlView)
     runningCard.addView(button("REFRESH RUNNING TRADES AND HISTORY", false) {
         if (connected) { derivApiClient.requestOpenTrades(); derivApiClient.requestTradeHistory() } else toast("Connect to Deriv first.")
     }, matchWrap().apply { topMargin = dp(8) })
@@ -2373,7 +2467,6 @@ private fun addQualificationAnalysis() {
                     (event == null || it.confirmation.epoch != event.confirmation.epoch)
             }.takeLast(20)
         } else emptyList()
-
         val hasConfirmedEvent = event != null
         val hasTarget = target != null && current != null &&
             ((direction == "UP" && target.price > current) ||
@@ -2677,7 +2770,7 @@ private fun addTargetFilterAnalysis() {
                         if (id.isBlank()) {
                             toast("This user record has no ID. Please manage it in WebTrader.")
                         } else {
-                            authRequest("admin_approve_user", mapOf("user_id" to id)) { ok, result ->
+                           authRequest("admin_approve_user", mapOf("user_id" to id)) { ok, result ->
                                 if (ok) {
                                     toast(result.optString("message", "User approved."))
                                     loadAdminUsers()
@@ -2931,7 +3024,6 @@ private fun addTargetFilterAnalysis() {
         page.addView(button("ASSIGN / EDIT A USER'S RISK PLAN", true) { selectedTab = "User Accounts"; loadAdminUsers() }, matchWrap().apply { topMargin = dp(8) })
         page.addView(label("Start and expiry dates are assigned by the administrator. Backend support is required for shared risk applications/payment status; a local application cannot itself notify the server administrator.", 12f, yellow, false).apply { setPadding(0, dp(10), 0, 0) })
     }
-
     private fun addTradingLogsScreen() {
         page.addView(sectionTitle("TRADING LOGS"))
         val card = card().apply { orientation = LinearLayout.VERTICAL }
@@ -3512,7 +3604,19 @@ private fun addTargetFilterAnalysis() {
                 if (contracts != null) for (i in 0 until contracts.length()) {
                     val c = contracts.optJSONObject(i) ?: continue
                     val id = c.optLong("contract_id", 0L)
-                    if (id > 0L) derivApiClient.send(JSONObject().put("proposal_open_contract", 1).put("contract_id", id).put("subscribe", 1))
+                    if (id > 0L) {
+                        if (!runningContracts.containsKey(id)) {
+                            val symbol = normalizedSymbol(c).ifBlank { "UNKNOWN" }
+                            val stake = c.optDouble("buy_price", c.optDouble("purchase_price", 0.0))
+                            // An execution barrier is not necessarily the technical structure target.
+                            // Keep the structure target unknown unless Master Decision supplied it.
+                            val barrier = 0.0
+                            val contractType = c.optString("contract_type", "").uppercase()
+                            val direction = if (contractType.contains("PUT") || contractType.contains("FALL")) "SELL" else "BUY"
+                            if (stake > 0.0) runningContracts[id] = RunningContract(id, symbol, direction, stake, barrier, 0.0, executionMode)
+                        }
+                        derivApiClient.send(JSONObject().put("proposal_open_contract", 1).put("contract_id", id).put("subscribe", 1))
+                    }
                 }
                 if (selectedTab == "Trade") render()
             }
@@ -3548,10 +3652,14 @@ private fun addTargetFilterAnalysis() {
                             views.ptpe.text = "PTPE: ${String.format(java.util.Locale.US, "%.1f", views.probability)}%"
                         }
                     }
+                    val pl = liveContractProfits.filterKeys { liveContractProfitModes[it] == "${accountId}_$executionMode" }.values.sum()
                     if (::openPlView.isInitialized) {
-                        val pl = liveContractProfits.filterKeys { liveContractProfitModes[it] == "${accountId}_$executionMode" }.values.sum()
                         openPlView.text = "Open P/L:  ${formatMoney(pl)}"
                         openPlView.setTextColor(profitColor(pl))
+                    }
+                    runningTotalPlView?.apply {
+                        text = "TOTAL OPEN P/L: ${formatMoney(pl)}"
+                        setTextColor(profitColor(pl))
                     }
                     if ((status == "sold" || status == "won" || status == "lost" || contract.optInt("is_sold", 0) == 1) && selectedTab == "Trade") render()
                 }
@@ -3624,3 +3732,4 @@ override fun onMarketDataError(
     }
 
                                         }
+                
