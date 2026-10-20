@@ -316,7 +316,6 @@ private val candleIndexes = listOf(
 
         manuallyDisconnected =
             false
-
         marketDataReconnectFuture?.cancel(false)
         marketDataReconnectFuture = null
         cancelReconnect()
@@ -328,6 +327,7 @@ private val candleIndexes = listOf(
         callback.onConnecting(
             "Connecting to Deriv account..."
         )
+
         /*
          * First obtain the account belonging to
          * the requested mode.
@@ -696,10 +696,10 @@ private val candleIndexes = listOf(
                                     response.code,
                                     body
                                 )
-                                callback.onError(
+
+                            callback.onError(
                                 "Deriv WebSocket authentication failed: $message"
                             )
-
                             /*
                              * Authentication/account errors should not
                              * hammer the API with automatic retries.
@@ -1038,6 +1038,7 @@ private val candleIndexes = listOf(
 
                                 return
                             }
+
                             connected =
                                 false
 
@@ -1325,6 +1326,7 @@ fun refreshHistoricalCandles() {
             )
         }
     }
+
     android.util.Log.d(
         "DerivCandles",
         "Historical candle refresh requested for all indexes"
@@ -1593,13 +1595,13 @@ if (tick != null) {
         if (
             socket == null
         ) {
-            callback.onError(
-                "Deriv WebSocket is unavailable."
-            )
-
+            // Treat a missing socket as a transient connection failure. Do not
+            // surface a misleading one-off error to the user; reconnect automatically.
+            connected = false
+            callback.onDisconnected()
+            if (!manuallyDisconnected) scheduleReconnect()
             return
         }
-
         requestBalance(
             socket
         )
@@ -1899,6 +1901,7 @@ if (tick != null) {
         marketDataReconnectFuture = null
 
         stopHeartbeat()
+
         try {
 
             webSocket
@@ -2073,37 +2076,35 @@ candleRequestSymbols.clear()
         if (
             socket == null
         ) {
-
-            callback.onError(
-                "Deriv WebSocket is unavailable."
-            )
-
+            // The connection can briefly lose its socket while recovering.
+            // Start recovery instead of repeatedly showing "WebSocket unavailable".
+            connected = false
+            callback.onDisconnected()
+            if (!manuallyDisconnected) scheduleReconnect()
             return false
         }
 
         return try {
-
-            socket.send(
-                request.toString()
-            )
-
-        } catch (
-            e: Exception
-        ) {
-
+            val accepted = socket.send(request.toString())
+            if (!accepted) {
+                connected = false
+                callback.onDisconnected()
+                if (!manuallyDisconnected) scheduleReconnect()
+            }
+            accepted
+        } catch (e: Exception) {
+            connected = false
+            callback.onDisconnected()
+            if (!manuallyDisconnected) scheduleReconnect()
             callback.onError(
-                "Unable to send Deriv request: ${
-                    e.message
-                        ?: "send failed"
-                }"
+                "Unable to send Deriv request: ${e.message ?: "send failed"}"
             )
-
             false
         }
     }
 
     /*
-    * Request a fresh balance manually.
+     * Request a fresh balance manually.
      */
      fun requestTradeHistory() {
     val request = JSONObject()
@@ -2114,7 +2115,7 @@ candleRequestSymbols.clear()
 
     send(request)
      }
-         fun requestOpenTrades() {
+     fun requestOpenTrades() {
     if (!connected) {
         callback.onError("Cannot request open trades: Deriv is not connected.")
         return
