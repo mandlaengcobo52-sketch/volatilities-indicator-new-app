@@ -325,13 +325,13 @@ private var drawerOpen = false
         }
         return true
     }
-
     private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Long) {
         val accountKey = accountId.ifBlank { "unlinked" }.replace(Regex("[^A-Za-z0-9_-]"), "_")
         val key = "daily_trades_${accountKey}_${executionMode}_${saDayKey()}"
         appPrefs.edit().putInt(key, dailyTradeCount() + 1).apply()
         notifyEvent("Touch trade opened", "$symbol · Contract $contractId · Stake ${String.format(java.util.Locale.US, "%.2f", stake)} ${accountCurrency.ifBlank { "USD" }}")
     }
+
     /** Empirical PTPE: among prior same-direction MSS events, how often was an equivalent
  * percentage target touched within the following 24-hour window? */
     private fun targetProbabilityPercent(
@@ -940,7 +940,21 @@ when (selectedTab) {
                 }
             }
 }
-// =========================================================
+addBottomNavigation(outer)
+
+        // Restore the previous position after layout settles. Live account callbacks can
+        // trigger repeated renders; a delayed restore prevents the REAL account screen jumping.
+        scroll.post {
+            scroll.postDelayed({
+                if (lastRenderedTab == selectedTab && mainScrollView === scroll) {
+                    val maxScroll = (page.height - scroll.height).coerceAtLeast(0)
+                    scroll.scrollTo(0, previousScrollY.coerceIn(0, maxScroll))
+                }
+                lastRenderedTab = selectedTab
+            }, 120L)
+        }
+    }
+    // =========================================================
 // HEADER: EXISTING LOGO AND NOTIFICATION BELL
 // =========================================================
 // ==========================================
@@ -1215,7 +1229,7 @@ private fun addUserProfileScreen(page: LinearLayout) {
             }
             profileCard.addView(riskSpinner, matchWrap())
             profileCard.addView(label("Trading capital range: R1,000–R5,000 • Stake: 20% of daily starting capital • Target profit: 10% of stake. Applying does not activate a plan; the administrator must verify payment where required and assign the plan and dates.", 12f, muted, false).apply { setPadding(0, dp(5), 0, dp(5)) })
-            profileCard.addView(button("SUBMIT RISK-PLAN APPLICATION", true) {
+            profileCard.addView(button("SUBMIT RISK-PLAN APPLICATION", true, action = {
                 val chosen = riskValues[riskSpinner.selectedItemPosition]
                 val fee = when (chosen) { "minimum" -> "25% of capital"; "medium" -> "75% of capital"; "maximum" -> "100% of capital"; "super_maximum" -> "0"; else -> "0" }
                 val days = if (chosen == "trial") "7" else "30"
@@ -1227,22 +1241,7 @@ private fun addUserProfileScreen(page: LinearLayout) {
                     "deriv_account_id" to accountId,
                     "payment_status" to if (fee == "0") "not_required_or_pending_admin_review" else "awaiting_payment"
                 )
-                
-        addBottomNavigation(outer)
-
-        // Restore the previous position after layout settles. Live account callbacks can
-        // trigger repeated renders; a delayed restore prevents the REAL account screen jumping.
-        scroll.post {
-            scroll.postDelayed({
-                if (lastRenderedTab == selectedTab && mainScrollView === scroll) {
-                    val maxScroll = (page.height - scroll.height).coerceAtLeast(0)
-                    scroll.scrollTo(0, previousScrollY.coerceIn(0, maxScroll))
-                }
-                lastRenderedTab = selectedTab
-            }, 120L)
-        }
-    }
-    authRequest("risk_application", applicationFields) { ok, result ->
+                authRequest("risk_application", applicationFields) { ok, result ->
                     if (ok) {
                         notifyEvent("Risk-plan application submitted", "Application submitted for ${riskOptions[riskSpinner.selectedItemPosition]}. The administrator must verify payment where required and assign the plan.")
                         toast(result.optString("message", "Application submitted. Await administrator assignment."))
@@ -1250,7 +1249,7 @@ private fun addUserProfileScreen(page: LinearLayout) {
                         toast(result.optString("message", "Risk-plan applications are not yet enabled by the server. No plan has been activated."))
                     }
                 }
-            }, matchWrap().apply { topMargin = dp(6) })
+            }), matchWrap().apply { topMargin = dp(6) })
         } else {
             profileCard.addView(label("Connect your Deriv account to choose a risk plan.", 12f, yellow, false).apply { setPadding(0, dp(10), 0, dp(4)) })
         }
@@ -1536,9 +1535,9 @@ private fun addHeader() {
         liveContractProfitModes.clear()
         historyAccountKey = ""
     }
-
     private fun formatMoney(value: Double): String = String.format(java.util.Locale.US, "%.2f", value)
     private fun profitColor(value: Double): Int = when { value > 0.000001 -> green; value < -0.000001 -> red; else -> white }
+
     // =========================================================
     // EXECUTION MODE SELECTOR
     // =========================================================
@@ -2106,6 +2105,7 @@ private fun analysisStructuralTarget(
         else -> null
     }
 }
+
 // =========================================================
 // ANALYSIS — MARKET DATA
 // =========================================================
@@ -2393,6 +2393,7 @@ private fun addDirectionStructuralTargetAnalysis() {
                 )
             )
         }
+
         indexCard.addView(
             label(
                 "TARGET DISTANCE: ${
@@ -2416,7 +2417,6 @@ private fun addDirectionStructuralTargetAnalysis() {
         )
     }
 }
-
 // =========================================================
 // label("Analysis - Qualification", 17f, green, true)
 // =========================================================
@@ -2998,7 +2998,7 @@ private fun addTargetFilterAnalysis() {
                 if (selectedTab == "User Accounts") render()
                 toast(result.optString("message", "Unable to load users."))
             }
-            }
+        }
     }
     private fun addRiskCategoriesScreen() {
         page.addView(sectionTitle("RISK CATEGORIES"))
