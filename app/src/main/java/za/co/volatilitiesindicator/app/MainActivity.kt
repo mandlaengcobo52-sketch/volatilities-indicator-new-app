@@ -319,7 +319,7 @@ private var drawerOpen = false
                     "daily_limit_${accountId}_${executionMode}_${saDayKey()}")
             }
             return false
-        }
+            }
         return true
     }
 
@@ -925,7 +925,7 @@ when (selectedTab) {
                                 } catch (e: Exception) {
                                     toast("Unable to open Deriv registration. Please try again.")
                                 }
-                            },
+                                },
                             matchWrap()
                         )
                     }
@@ -1509,7 +1509,6 @@ private fun addHeader() {
         },
         weighted()
     )
-
     row.addView(space(dp(8)))
 
     row.addView(
@@ -1829,13 +1828,17 @@ private fun addTradeScreen() {
         val initialPnl = liveContractProfits[contractId] ?: 0.0
         val pnlHidden = label("P/L: ${formatMoney(initialPnl)}", 12f, profitColor(initialPnl), true).apply { setPadding(0, dp(4), 0, 0) }
         val targetPrice = tracked?.target
-        val targetView = label("Structure target: ${targetPrice?.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
-        val profitTargetView = label("10% profit target: ${formatMoney(stake * 0.10)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
+        // Keep the absolute Deriv barrier, monetary profit objective and technical structure target separately labelled.
+        val actualBarrier = item.optString("barrier", "").toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 } ?: targetPrice?.takeIf { it.isFinite() && it > 0.0 }
+        val actualTargetView = label("Actual target price: ${actualBarrier?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, blue, true).apply { setPadding(0, dp(4), 0, 0) }
+        val targetView = label("Structural target: ${targetPrice?.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
+        val profitTargetView = label("10% profit target (amount): ${formatMoney(stake * 0.10)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
         val trailView = label("Trailing stop: ${if (tracked?.trailingActivated == true) "ACTIVATED" else if (trailingStopEnabled) "ARMED" else "OFF"}", 12f, if (trailingStopEnabled) green else muted, true).apply { setPadding(0, dp(4), 0, 0) }
         val spotView = label("Current value/spot: ${if (currentValue > 0) formatMarketPrice(currentValue) else "—"}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val expiryView = label("Expiry: $expiryText", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val ptpeHidden = label("", 1f, white, false)
         row.addView(pnlHidden)
+        row.addView(actualTargetView)
         row.addView(profitTargetView)
         row.addView(targetView)
         row.addView(trailView)
@@ -1871,13 +1874,14 @@ private fun addTradeScreen() {
         row.addView(label("Stake: ${formatMoney(running.stake)}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
         val initialPnl = liveContractProfits[running.contractId] ?: 0.0
         val pnlHidden = label("P/L: ${formatMoney(initialPnl)}", 12f, profitColor(initialPnl), true).apply { setPadding(0, dp(4), 0, 0) }
-        val targetView = label("Structure target: ${running.target.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
-        val profitTargetView = label("10% profit target: ${formatMoney(running.stake * 0.10)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
+        val actualTargetView = label("Actual target price: ${running.target.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, blue, true).apply { setPadding(0, dp(4), 0, 0) }
+        val targetView = label("Structural target: ${running.target.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
+        val profitTargetView = label("10% profit target (amount): ${formatMoney(running.stake * 0.10)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
         val trailView = label("Trailing stop: ${if (running.trailingActivated) "ACTIVATED" else if (trailingStopEnabled) "ARMED" else "OFF"}", 12f, if (trailingStopEnabled) green else muted, true).apply { setPadding(0, dp(4), 0, 0) }
         val spotView = label("Current value/spot: —", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val expiryView = label("Expiry: —", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val ptpeHidden = label("", 1f, white, false)
-        row.addView(pnlHidden); row.addView(profitTargetView); row.addView(targetView); row.addView(trailView); row.addView(spotView); row.addView(expiryView)
+        row.addView(pnlHidden); row.addView(actualTargetView); row.addView(profitTargetView); row.addView(targetView); row.addView(trailView); row.addView(spotView); row.addView(expiryView)
         contractLiveViews[running.contractId] = ContractLiveViews(running.stake, running.symbol, running.target, running.targetProbability, pnlHidden, spotView, expiryView, ptpeHidden)
         row.addView(button("CLOSE TRADE", true) {
             if (!connected) {
@@ -3292,7 +3296,6 @@ private fun addTargetFilterAnalysis() {
             this.text = text
             textSize = 13f
             isAllCaps = false
-
             typeface = Typeface.create(
                 "sans-serif",
                 Typeface.BOLD
@@ -3732,4 +3735,3 @@ override fun onMarketDataError(
     }
 
                                         }
-                
