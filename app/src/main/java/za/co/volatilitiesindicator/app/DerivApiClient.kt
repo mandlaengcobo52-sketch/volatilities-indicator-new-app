@@ -328,7 +328,6 @@ private val candleIndexes = listOf(
         callback.onConnecting(
             "Connecting to Deriv account..."
         )
-
         /*
          * First obtain the account belonging to
          * the requested mode.
@@ -343,6 +342,7 @@ private val candleIndexes = listOf(
     fun connect(
         token: String
     ) {
+
         connectWithAccessToken(
             token,
             "DEMO"
@@ -696,11 +696,11 @@ private val candleIndexes = listOf(
                                     response.code,
                                     body
                                 )
-
-                            callback.onError(
+                                callback.onError(
                                 "Deriv WebSocket authentication failed: $message"
                             )
-                                 /*
+
+                            /*
                              * Authentication/account errors should not
                              * hammer the API with automatic retries.
                              */
@@ -1038,7 +1038,6 @@ private val candleIndexes = listOf(
 
                                 return
                             }
-
                             connected =
                                 false
 
@@ -1326,7 +1325,6 @@ fun refreshHistoricalCandles() {
             )
         }
     }
-
     android.util.Log.d(
         "DerivCandles",
         "Historical candle refresh requested for all indexes"
@@ -1335,6 +1333,7 @@ fun refreshHistoricalCandles() {
     private fun handleWebSocketMessage(
         text: String
     ) {
+
         try {
 
             val json =
@@ -1594,7 +1593,6 @@ if (tick != null) {
         if (
             socket == null
         ) {
-
             callback.onError(
                 "Deriv WebSocket is unavailable."
             )
@@ -1901,7 +1899,6 @@ if (tick != null) {
         marketDataReconnectFuture = null
 
         stopHeartbeat()
-
         try {
 
             webSocket
@@ -1950,7 +1947,7 @@ candleRequestSymbols.clear()
     }
 
     /*
-    * Return whether the client is currently trying
+     * Return whether the client is currently trying
      * to establish a connection.
      */
     fun isConnecting(): Boolean {
@@ -2106,7 +2103,7 @@ candleRequestSymbols.clear()
     }
 
     /*
-     * Request a fresh balance manually.
+    * Request a fresh balance manually.
      */
      fun requestTradeHistory() {
     val request = JSONObject()
@@ -2221,6 +2218,7 @@ candleRequestSymbols.clear()
         }
 
         try {
+
             webSocketClient
                 .dispatcher
                 .executorService
@@ -2232,4 +2230,3 @@ candleRequestSymbols.clear()
         }
     }
 }
-        
