@@ -88,8 +88,6 @@ private var drawerOpen = false
     private lateinit var balanceView: TextView
     private lateinit var openPlView: TextView
     private val liveContractProfits = mutableMapOf<Long, Double>()
-    // Absolute execution barriers reported by Deriv, keyed by contract ID.
-    private val actualTargetPrices = mutableMapOf<Long, Double>()
     private val liveContractProfitModes = mutableMapOf<Long, String>()
     private var runningTotalPlView: TextView? = null
     private var historyAccountKey: String = ""
@@ -169,8 +167,7 @@ private var drawerOpen = false
         val pnl: TextView,
         val spot: TextView,
         val barrierExpiry: TextView,
-        val ptpe: TextView,
-        val actualTarget: TextView
+        val ptpe: TextView
     )
     private val contractLiveViews = mutableMapOf<Long, ContractLiveViews>()
 
@@ -325,36 +322,49 @@ private var drawerOpen = false
         }
         return true
     }
+
     private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Long) {
         val accountKey = accountId.ifBlank { "unlinked" }.replace(Regex("[^A-Za-z0-9_-]"), "_")
         val key = "daily_trades_${accountKey}_${executionMode}_${saDayKey()}"
         appPrefs.edit().putInt(key, dailyTradeCount() + 1).apply()
         notifyEvent("Touch trade opened", "$symbol · Contract $contractId · Stake ${String.format(java.util.Locale.US, "%.2f", stake)} ${accountCurrency.ifBlank { "USD" }}")
     }
-
-    /** Empirical PTPE: among prior same-direction MSS events, how often was an equivalent
- * percentage target touched within the following 24-hour window? */
+    /**
+     * PTPE estimates whether the required price distance from the CURRENT live entry price
+     * is historically reachable in the next 24 completed hourly candles. The caller supplies
+     * the percentage distance from the current spot to the proposed absolute barrier; this
+     * function applies that same percentage to each prior same-direction MSS event's close.
+     * It does not calculate continuation from the original signal price or treat any tiny
+     * favourable movement as a successful historical continuation.
+     */
     private fun targetProbabilityPercent(
         candles: List<DerivApiClient.Candle>, direction: String, targetDistancePercent: Double
     ): Pair<Double, Int> {
-        if (candles.size < 100 || targetDistancePercent <= 0.0) return 0.0 to 0
+        if (candles.size < 100 || !targetDistancePercent.isFinite() || targetDistancePercent <= 0.0 ||
+            (direction != "BULLISH" && direction != "BEARISH")) return 0.0 to 0
         val outcomes = analysisHistoricalOutcomes(candles).filter { it.direction == direction }
         var samples = 0
         var hits = 0
+        val evaluationCandles = 24
         for (outcome in outcomes) {
             val start = candles.indexOfFirst { it.epoch == outcome.confirmation.epoch }
-            val evaluationCandles = 24
-            if (start < 0 || start + evaluationCandles >= candles.size) continue // require a full 24-hour forward window
-            val entry = outcome.confirmation.close
-            if (entry <= 0.0 || !entry.isFinite()) continue
-            val target = if (direction == "BULLISH") entry * (1.0 + targetDistancePercent / 100.0)
-                         else entry * (1.0 - targetDistancePercent / 100.0)
+            // Require 24 subsequent candles, and never count a partial forward window.
+            if (start < 0 || start + evaluationCandles >= candles.size) continue
+            val historicalEntry = outcome.confirmation.close
+            if (!historicalEntry.isFinite() || historicalEntry <= 0.0) continue
+            val historicalTarget = if (direction == "BULLISH")
+                historicalEntry * (1.0 + targetDistancePercent / 100.0)
+            else historicalEntry * (1.0 - targetDistancePercent / 100.0)
+            if (!historicalTarget.isFinite() || historicalTarget <= 0.0) continue
             samples++
             var touched = false
             for (i in (start + 1)..(start + evaluationCandles)) {
                 val candle = candles[i]
-                if ((direction == "BULLISH" && candle.high >= target) ||
-                    (direction == "BEARISH" && candle.low <= target)) { touched = true; break }
+                if ((direction == "BULLISH" && candle.high >= historicalTarget) ||
+                    (direction == "BEARISH" && candle.low <= historicalTarget)) {
+                    touched = true
+                    break
+                }
             }
             if (touched) hits++
         }
@@ -578,30 +588,39 @@ private var drawerOpen = false
             // then ensure the target still offers the required minimum distance and is still
             // the same structural target/direction that generated this proposal.
             val freshDecision = evaluateMasterDecision(pending.symbol)
+            // Execution must use a live quote, not the candle-close fallback used for analysis.
+            // PTPE is recalculated by evaluateMasterDecision() from this latest quote to the
+            // absolute barrier. Never submit a proposal if the quote/target/probability changed.
             val livePrice = marketDataPrices[pending.symbol]
-            val freshDistance = if (livePrice != null && livePrice.isFinite() && livePrice > 0.0)
-                kotlin.math.abs(pending.target - livePrice) / livePrice * 100.0 else 0.0
-            val targetStillAhead = livePrice != null && when (pending.direction) {
-                "BUY" -> pending.target > livePrice
-                "SELL" -> pending.target < livePrice
+            val liveSpot = livePrice?.takeIf { it.isFinite() && it > 0.0 }
+            val livePriceValid = liveSpot != null
+            val freshDistance = if (liveSpot != null)
+                kotlin.math.abs(pending.target - liveSpot) / liveSpot * 100.0 else 0.0
+            val targetStillAhead = liveSpot != null && when (pending.direction) {
+                "BUY" -> pending.target > liveSpot
+                "SELL" -> pending.target < liveSpot
                 else -> false
             }
             val sameSignal = freshDecision != null && freshDecision.direction == pending.direction &&
                 kotlin.math.abs(freshDecision.target - pending.target) <= kotlin.math.max(0.0000001, kotlin.math.abs(pending.target) * 0.0000001)
-            if (freshDecision == null || !sameSignal || !targetStillAhead || freshDistance < 1.5) {
+            val freshPtpeQualifies = freshDecision != null && freshDecision.targetProbability >= 55.0 &&
+                freshDecision.sampleCount >= 5 && freshDecision.targetDistancePercent >= 1.5
+            if (freshDecision == null || !livePriceValid || !sameSignal || !targetStillAhead ||
+                freshDistance < 1.5 || !freshPtpeQualifies) {
                 pendingOrdersByRequest.remove(reqId)
                 pendingIndexSymbols.remove(pending.symbol)
                 val reason = when {
                     freshDecision == null -> "Master Decision no longer qualifies at the latest price."
-                    !sameSignal -> "The qualifying direction or structural target changed while requesting the proposal."
+                    !livePriceValid -> "No valid live price is available for final PTPE validation."
+                    !sameSignal -> "The qualifying direction or absolute structural barrier changed while requesting the proposal."
                     !targetStillAhead -> "The target is no longer ahead of the current entry price."
+                    !freshPtpeQualifies -> "Fresh PTPE no longer meets the 55% probability, 5-sample, and 1.50% minimum-distance requirements."
                     else -> "Remaining target distance is ${String.format(java.util.Locale.US, "%.2f", freshDistance)}%; minimum required is 1.50%."
                 }
                 notifyEvent("Execution rejected", "${pending.symbol} · Fresh-entry validation failed. $reason No purchase submitted.",
                     "fresh_entry_rejected_${accountId}_${executionMode}_$reqId")
                 return
             }
-
             val requiredPayout = pending.stake * 1.10
             if (payout + 1e-8 < requiredPayout) {
                 pendingOrdersByRequest.remove(reqId)
@@ -910,7 +929,7 @@ when (selectedTab) {
 "Logout" -> {
     performPlatformLogout()
 }
-            "Login" -> {
+"Login" -> {
     addLoginScreen()
             }
                     else -> {
@@ -940,7 +959,8 @@ when (selectedTab) {
                 }
             }
 }
-addBottomNavigation(outer)
+
+        addBottomNavigation(outer)
 
         // Restore the previous position after layout settles. Live account callbacks can
         // trigger repeated renders; a delayed restore prevents the REAL account screen jumping.
@@ -1229,7 +1249,7 @@ private fun addUserProfileScreen(page: LinearLayout) {
             }
             profileCard.addView(riskSpinner, matchWrap())
             profileCard.addView(label("Trading capital range: R1,000–R5,000 • Stake: 20% of daily starting capital • Target profit: 10% of stake. Applying does not activate a plan; the administrator must verify payment where required and assign the plan and dates.", 12f, muted, false).apply { setPadding(0, dp(5), 0, dp(5)) })
-            profileCard.addView(button("SUBMIT RISK-PLAN APPLICATION", true, action = {
+            profileCard.addView(button("SUBMIT RISK-PLAN APPLICATION", true) {
                 val chosen = riskValues[riskSpinner.selectedItemPosition]
                 val fee = when (chosen) { "minimum" -> "25% of capital"; "medium" -> "75% of capital"; "maximum" -> "100% of capital"; "super_maximum" -> "0"; else -> "0" }
                 val days = if (chosen == "trial") "7" else "30"
@@ -1249,7 +1269,7 @@ private fun addUserProfileScreen(page: LinearLayout) {
                         toast(result.optString("message", "Risk-plan applications are not yet enabled by the server. No plan has been activated."))
                     }
                 }
-            }), matchWrap().apply { topMargin = dp(6) })
+            }, matchWrap().apply { topMargin = dp(6) })
         } else {
             profileCard.addView(label("Connect your Deriv account to choose a risk plan.", 12f, yellow, false).apply { setPadding(0, dp(10), 0, dp(4)) })
         }
@@ -1512,7 +1532,6 @@ private fun addHeader() {
     )
 
     row.addView(space(dp(8)))
-
     row.addView(
         button("♟♟ ADMIN", platform == "ADMIN") {
             platform = "ADMIN"
@@ -1535,6 +1554,7 @@ private fun addHeader() {
         liveContractProfitModes.clear()
         historyAccountKey = ""
     }
+
     private fun formatMoney(value: Double): String = String.format(java.util.Locale.US, "%.2f", value)
     private fun profitColor(value: Double): Int = when { value > 0.000001 -> green; value < -0.000001 -> red; else -> white }
 
@@ -1828,19 +1848,20 @@ private fun addTradeScreen() {
         row.addView(label("Stake: ${formatMoney(stake)}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
         val initialPnl = liveContractProfits[contractId] ?: 0.0
         val pnlHidden = label("P/L: ${formatMoney(initialPnl)}", 12f, profitColor(initialPnl), true).apply { setPadding(0, dp(4), 0, 0) }
-        val actualTargetView = label("Actual target price: ${actualTargetPrices[contractId]?.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, blue, true).apply { setPadding(0, dp(4), 0, 0) }
-        val profitTargetView = label("10% profit target (amount): ${formatMoney(stake * 0.10)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
+        val targetPrice = tracked?.target
+        val targetView = label("Structure target: ${targetPrice?.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
+        val profitTargetView = label("10% profit target: ${formatMoney(stake * 0.10)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
         val trailView = label("Trailing stop: ${if (tracked?.trailingActivated == true) "ACTIVATED" else if (trailingStopEnabled) "ARMED" else "OFF"}", 12f, if (trailingStopEnabled) green else muted, true).apply { setPadding(0, dp(4), 0, 0) }
         val spotView = label("Current value/spot: ${if (currentValue > 0) formatMarketPrice(currentValue) else "—"}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val expiryView = label("Expiry: $expiryText", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val ptpeHidden = label("", 1f, white, false)
         row.addView(pnlHidden)
-        row.addView(actualTargetView)
         row.addView(profitTargetView)
+        row.addView(targetView)
         row.addView(trailView)
         row.addView(spotView)
         row.addView(expiryView)
-        contractLiveViews[contractId] = ContractLiveViews(stake, symbol, tracked?.target, tracked?.targetProbability ?: 0.0, pnlHidden, spotView, expiryView, ptpeHidden, actualTargetView)
+        contractLiveViews[contractId] = ContractLiveViews(stake, symbol, tracked?.target, tracked?.targetProbability ?: 0.0, pnlHidden, spotView, expiryView, ptpeHidden)
         row.addView(button("CLOSE TRADE", true) {
             if (!connected) {
                 toast("Connect to the account holding this contract.")
@@ -1870,14 +1891,14 @@ private fun addTradeScreen() {
         row.addView(label("Stake: ${formatMoney(running.stake)}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
         val initialPnl = liveContractProfits[running.contractId] ?: 0.0
         val pnlHidden = label("P/L: ${formatMoney(initialPnl)}", 12f, profitColor(initialPnl), true).apply { setPadding(0, dp(4), 0, 0) }
-        val actualTargetView = label("Actual target price: ${actualTargetPrices[running.contractId]?.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, blue, true).apply { setPadding(0, dp(4), 0, 0) }
-        val profitTargetView = label("10% profit target (amount): ${formatMoney(running.stake * 0.10)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
+        val targetView = label("Structure target: ${running.target.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
+        val profitTargetView = label("10% profit target: ${formatMoney(running.stake * 0.10)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
         val trailView = label("Trailing stop: ${if (running.trailingActivated) "ACTIVATED" else if (trailingStopEnabled) "ARMED" else "OFF"}", 12f, if (trailingStopEnabled) green else muted, true).apply { setPadding(0, dp(4), 0, 0) }
         val spotView = label("Current value/spot: —", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val expiryView = label("Expiry: —", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val ptpeHidden = label("", 1f, white, false)
-        row.addView(pnlHidden); row.addView(actualTargetView); row.addView(profitTargetView); row.addView(trailView); row.addView(spotView); row.addView(expiryView)
-        contractLiveViews[running.contractId] = ContractLiveViews(running.stake, running.symbol, running.target, running.targetProbability, pnlHidden, spotView, expiryView, ptpeHidden, actualTargetView)
+        row.addView(pnlHidden); row.addView(profitTargetView); row.addView(targetView); row.addView(trailView); row.addView(spotView); row.addView(expiryView)
+        contractLiveViews[running.contractId] = ContractLiveViews(running.stake, running.symbol, running.target, running.targetProbability, pnlHidden, spotView, expiryView, ptpeHidden)
         row.addView(button("CLOSE TRADE", true) {
             if (!connected) {
                 toast("Connect to the account holding this contract.")
@@ -2105,7 +2126,6 @@ private fun analysisStructuralTarget(
         else -> null
     }
 }
-
 // =========================================================
 // ANALYSIS — MARKET DATA
 // =========================================================
@@ -3300,7 +3320,7 @@ private fun addTargetFilterAnalysis() {
                     Color.rgb(0, 25, 12)
                 } else {
                     white
-                    }
+                }
             )
             background = shape(
                 if (active) green else panel2,
@@ -3606,12 +3626,12 @@ private fun addTargetFilterAnalysis() {
                         if (!runningContracts.containsKey(id)) {
                             val symbol = normalizedSymbol(c).ifBlank { "UNKNOWN" }
                             val stake = c.optDouble("buy_price", c.optDouble("purchase_price", 0.0))
-                            // Restore the structural target only from an existing Master Decision.
-                            // The absolute execution target is read separately from Deriv's contract response.
-                            val structuralTarget = lastDecisionByIndex[symbol]?.target ?: 0.0
+                            // An execution barrier is not necessarily the technical structure target.
+                            // Keep the structure target unknown unless Master Decision supplied it.
+                            val barrier = 0.0
                             val contractType = c.optString("contract_type", "").uppercase()
                             val direction = if (contractType.contains("PUT") || contractType.contains("FALL")) "SELL" else "BUY"
-                            if (stake > 0.0) runningContracts[id] = RunningContract(id, symbol, direction, stake, structuralTarget, 0.0, executionMode)
+                            if (stake > 0.0) runningContracts[id] = RunningContract(id, symbol, direction, stake, barrier, 0.0, executionMode)
                         }
                         derivApiClient.send(JSONObject().put("proposal_open_contract", 1).put("contract_id", id).put("subscribe", 1))
                     }
@@ -3634,15 +3654,9 @@ private fun addTargetFilterAnalysis() {
                         }
                     }
                     if (id > 0L) {
-                        // Deriv returns the contract's absolute barrier as a string. Keep it distinct
-                        // from the technical structural target supplied by Master Decision.
-                        val barrierText = contract.optString("barrier", "").trim()
-                        val barrierPrice = barrierText.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 }
-                        if (barrierPrice != null) actualTargetPrices[id] = barrierPrice
                         val liveProfit = contract.optDouble("profit", contract.optDouble("profit_open", liveContractProfits[id] ?: 0.0))
                         val views = contractLiveViews[id]
                         if (views != null) {
-                            views.actualTarget.text = "Actual target price: ${actualTargetPrices[id]?.let { formatMarketPrice(it) } ?: "Not available"}"
                             views.pnl.text = "Stake: ${formatMoney(views.stake)}   P/L: ${formatMoney(liveProfit)}"
                             views.pnl.setTextColor(profitColor(liveProfit))
                             val spot = contract.optDouble("current_spot", contract.optDouble("current_spot_display_value", 0.0))
