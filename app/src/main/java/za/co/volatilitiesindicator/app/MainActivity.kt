@@ -88,6 +88,8 @@ private var drawerOpen = false
     private lateinit var balanceView: TextView
     private lateinit var openPlView: TextView
     private val liveContractProfits = mutableMapOf<Long, Double>()
+    // Absolute execution barriers reported by Deriv, keyed by contract ID.
+    private val actualTargetPrices = mutableMapOf<Long, Double>()
     private val liveContractProfitModes = mutableMapOf<Long, String>()
     private var runningTotalPlView: TextView? = null
     private var historyAccountKey: String = ""
@@ -167,7 +169,8 @@ private var drawerOpen = false
         val pnl: TextView,
         val spot: TextView,
         val barrierExpiry: TextView,
-        val ptpe: TextView
+        val ptpe: TextView,
+        val actualTarget: TextView
     )
     private val contractLiveViews = mutableMapOf<Long, ContractLiveViews>()
 
@@ -319,7 +322,7 @@ private var drawerOpen = false
                     "daily_limit_${accountId}_${executionMode}_${saDayKey()}")
             }
             return false
-            }
+        }
         return true
     }
 
@@ -925,7 +928,7 @@ when (selectedTab) {
                                 } catch (e: Exception) {
                                     toast("Unable to open Deriv registration. Please try again.")
                                 }
-                                },
+                            },
                             matchWrap()
                         )
                     }
@@ -938,8 +941,7 @@ when (selectedTab) {
                 }
             }
 }
-
-        addBottomNavigation(outer)
+addBottomNavigation(outer)
 
         // Restore the previous position after layout settles. Live account callbacks can
         // trigger repeated renders; a delayed restore prevents the REAL account screen jumping.
@@ -1827,10 +1829,8 @@ private fun addTradeScreen() {
         row.addView(label("Stake: ${formatMoney(stake)}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
         val initialPnl = liveContractProfits[contractId] ?: 0.0
         val pnlHidden = label("P/L: ${formatMoney(initialPnl)}", 12f, profitColor(initialPnl), true).apply { setPadding(0, dp(4), 0, 0) }
+        val actualTargetView = label("Actual target price: ${actualTargetPrices[contractId]?.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, blue, true).apply { setPadding(0, dp(4), 0, 0) }
         val targetPrice = tracked?.target
-        // Keep the absolute Deriv barrier, monetary profit objective and technical structure target separately labelled.
-        val actualBarrier = item.optString("barrier", "").toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 } ?: targetPrice?.takeIf { it.isFinite() && it > 0.0 }
-        val actualTargetView = label("Actual target price: ${actualBarrier?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, blue, true).apply { setPadding(0, dp(4), 0, 0) }
         val targetView = label("Structural target: ${targetPrice?.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
         val profitTargetView = label("10% profit target (amount): ${formatMoney(stake * 0.10)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
         val trailView = label("Trailing stop: ${if (tracked?.trailingActivated == true) "ACTIVATED" else if (trailingStopEnabled) "ARMED" else "OFF"}", 12f, if (trailingStopEnabled) green else muted, true).apply { setPadding(0, dp(4), 0, 0) }
@@ -1844,7 +1844,7 @@ private fun addTradeScreen() {
         row.addView(trailView)
         row.addView(spotView)
         row.addView(expiryView)
-        contractLiveViews[contractId] = ContractLiveViews(stake, symbol, tracked?.target, tracked?.targetProbability ?: 0.0, pnlHidden, spotView, expiryView, ptpeHidden)
+        contractLiveViews[contractId] = ContractLiveViews(stake, symbol, tracked?.target, tracked?.targetProbability ?: 0.0, pnlHidden, spotView, expiryView, ptpeHidden, actualTargetView)
         row.addView(button("CLOSE TRADE", true) {
             if (!connected) {
                 toast("Connect to the account holding this contract.")
@@ -1874,7 +1874,7 @@ private fun addTradeScreen() {
         row.addView(label("Stake: ${formatMoney(running.stake)}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
         val initialPnl = liveContractProfits[running.contractId] ?: 0.0
         val pnlHidden = label("P/L: ${formatMoney(initialPnl)}", 12f, profitColor(initialPnl), true).apply { setPadding(0, dp(4), 0, 0) }
-        val actualTargetView = label("Actual target price: ${running.target.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, blue, true).apply { setPadding(0, dp(4), 0, 0) }
+        val actualTargetView = label("Actual target price: ${actualTargetPrices[running.contractId]?.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, blue, true).apply { setPadding(0, dp(4), 0, 0) }
         val targetView = label("Structural target: ${running.target.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
         val profitTargetView = label("10% profit target (amount): ${formatMoney(running.stake * 0.10)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
         val trailView = label("Trailing stop: ${if (running.trailingActivated) "ACTIVATED" else if (trailingStopEnabled) "ARMED" else "OFF"}", 12f, if (trailingStopEnabled) green else muted, true).apply { setPadding(0, dp(4), 0, 0) }
@@ -1882,7 +1882,7 @@ private fun addTradeScreen() {
         val expiryView = label("Expiry: —", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val ptpeHidden = label("", 1f, white, false)
         row.addView(pnlHidden); row.addView(actualTargetView); row.addView(profitTargetView); row.addView(targetView); row.addView(trailView); row.addView(spotView); row.addView(expiryView)
-        contractLiveViews[running.contractId] = ContractLiveViews(running.stake, running.symbol, running.target, running.targetProbability, pnlHidden, spotView, expiryView, ptpeHidden)
+        contractLiveViews[running.contractId] = ContractLiveViews(running.stake, running.symbol, running.target, running.targetProbability, pnlHidden, spotView, expiryView, ptpeHidden, actualTargetView)
         row.addView(button("CLOSE TRADE", true) {
             if (!connected) {
                 toast("Connect to the account holding this contract.")
@@ -2317,7 +2317,7 @@ private fun addDirectionStructuralTargetAnalysis() {
             "BULLISH" -> "UP"
             "BEARISH" -> "DOWN"
             else -> ""
-        }
+            }
         val target = if (event != null && current != null && direction.isNotBlank()) {
             analysisStructuralTarget(candles, current, direction, event.confirmation.epoch)
         } else null
@@ -2575,7 +2575,6 @@ private fun addPtpeAnalysis() {
         page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
     }
 }
-
 private fun addTargetFilterAnalysis() {
     val header = card().apply { orientation = LinearLayout.VERTICAL }
     val row = horizontalRow()
@@ -3611,12 +3610,12 @@ private fun addTargetFilterAnalysis() {
                         if (!runningContracts.containsKey(id)) {
                             val symbol = normalizedSymbol(c).ifBlank { "UNKNOWN" }
                             val stake = c.optDouble("buy_price", c.optDouble("purchase_price", 0.0))
-                            // An execution barrier is not necessarily the technical structure target.
-                            // Keep the structure target unknown unless Master Decision supplied it.
-                            val barrier = 0.0
+                            // Restore the structural target only from an existing Master Decision.
+                            // The absolute execution target is read separately from Deriv's contract response.
+                            val structuralTarget = lastDecisionByIndex[symbol]?.target ?: 0.0
                             val contractType = c.optString("contract_type", "").uppercase()
                             val direction = if (contractType.contains("PUT") || contractType.contains("FALL")) "SELL" else "BUY"
-                            if (stake > 0.0) runningContracts[id] = RunningContract(id, symbol, direction, stake, barrier, 0.0, executionMode)
+                            if (stake > 0.0) runningContracts[id] = RunningContract(id, symbol, direction, stake, structuralTarget, 0.0, executionMode)
                         }
                         derivApiClient.send(JSONObject().put("proposal_open_contract", 1).put("contract_id", id).put("subscribe", 1))
                     }
@@ -3639,9 +3638,15 @@ private fun addTargetFilterAnalysis() {
                         }
                     }
                     if (id > 0L) {
+                        // Deriv returns the contract's absolute barrier as a string. Keep it distinct
+                        // from the technical structural target supplied by Master Decision.
+                        val barrierText = contract.optString("barrier", "").trim()
+                        val barrierPrice = barrierText.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 }
+                        if (barrierPrice != null) actualTargetPrices[id] = barrierPrice
                         val liveProfit = contract.optDouble("profit", contract.optDouble("profit_open", liveContractProfits[id] ?: 0.0))
                         val views = contractLiveViews[id]
                         if (views != null) {
+                            views.actualTarget.text = "Actual target price: ${actualTargetPrices[id]?.let { formatMarketPrice(it) } ?: "Not available"}"
                             views.pnl.text = "Stake: ${formatMoney(views.stake)}   P/L: ${formatMoney(liveProfit)}"
                             views.pnl.setTextColor(profitColor(liveProfit))
                             val spot = contract.optDouble("current_spot", contract.optDouble("current_spot_display_value", 0.0))
