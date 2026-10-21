@@ -816,7 +816,7 @@ private val candleIndexes = listOf(
                 data.optString(
                     "websocket_url",
                     ""
-                ).trim()
+                    ).trim()
 
             if (
                 websocketUrl.isNotEmpty()
@@ -1390,8 +1390,7 @@ if (tick != null) {
                 tradeMessageType == "profit_table" ||
                 tradeMessageType == "proposal_open_contract" ||
                 tradeMessageType == "proposal" ||
-                tradeMessageType == "buy" ||
-                json.has("error")
+                    json.has("error")
             ) {
                 callback.onTradeData(json)
             }
@@ -1972,6 +1971,28 @@ candleRequestSymbols.clear()
         return connected
     }
 
+    /**
+     * Recheck the authenticated Deriv connection when the Activity returns to
+     * the foreground. A socket can appear connected after Android has suspended
+     * the app/network, so also check the age of the last authenticated message.
+     * This does not reconnect after an intentional manual disconnect.
+     */
+    fun ensureConnectedOnResume(token: String, selectedAccountType: String) {
+        if (manuallyDisconnected || token.isBlank() || connecting) return
+
+        val socket = webSocket
+        val lastMessageAt = lastAuthenticatedMessageAt
+        val stale = lastMessageAt > 0L &&
+            System.currentTimeMillis() - lastMessageAt > 65_000L
+
+        if (connected && socket != null && !stale) return
+
+        // Resume recovery should not wait behind a delayed retry scheduled while
+        // the app was backgrounded. connectWithAccessToken cancels old work safely.
+        cancelReconnect()
+        connectWithAccessToken(token, selectedAccountType)
+    }
+
     /*
      * Return whether the client is currently trying
      * to establish a connection.
@@ -2015,7 +2036,7 @@ candleRequestSymbols.clear()
     ) {
 
         val normalized =
-            if (
+        if (
                 newAccountType.equals(
                     "REAL",
                     ignoreCase = true
