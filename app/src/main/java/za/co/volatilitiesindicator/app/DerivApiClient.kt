@@ -225,6 +225,9 @@ class DerivApiClient(
     private var webSocket:
         WebSocket? = null
 
+    @Volatile
+    private var lastAuthenticatedMessageAt: Long = 0L
+
     private var marketDataSocket: WebSocket? = null
     private var marketDataEndpointIndex = 0
     private var marketDataAttempt = 0
@@ -316,6 +319,7 @@ private val candleIndexes = listOf(
 
         manuallyDisconnected =
             false
+
         marketDataReconnectFuture?.cancel(false)
         marketDataReconnectFuture = null
         cancelReconnect()
@@ -700,6 +704,7 @@ private val candleIndexes = listOf(
                             callback.onError(
                                 "Deriv WebSocket authentication failed: $message"
                             )
+
                             /*
                              * Authentication/account errors should not
                              * hammer the API with automatic retries.
@@ -914,6 +919,7 @@ private val candleIndexes = listOf(
 
                             connected =
                                 true
+                            lastAuthenticatedMessageAt = System.currentTimeMillis()
 
                             reconnectScheduled =
                                 false
@@ -952,6 +958,7 @@ private val candleIndexes = listOf(
                                 return
                             }
 
+                            lastAuthenticatedMessageAt = System.currentTimeMillis()
                             handleWebSocketMessage(
                                 text
                             )
@@ -1103,7 +1110,6 @@ fun subscribeToLiveTicks() {
         )
         return
     }
-
     for (symbol in liveIndexes) {
 
         val request = JSONObject().apply {
@@ -1398,7 +1404,7 @@ if (tick != null) {
             if (json.has("error")) {
                 val error = json.optJSONObject("error")
                 val message = error
-                    ?.optString("message", "")
+                ?.optString("message", "")
                     ?.takeIf { it.isNotBlank() }
                     ?: "Unknown Deriv WebSocket error"
 
@@ -1595,13 +1601,14 @@ if (tick != null) {
         if (
             socket == null
         ) {
-            // Treat a missing socket as a transient connection failure. Do not
-            // surface a misleading one-off error to the user; reconnect automatically.
-            connected = false
-            callback.onDisconnected()
-            if (!manuallyDisconnected) scheduleReconnect()
+
+            callback.onError(
+                "Deriv WebSocket is unavailable."
+            )
+
             return
         }
+
         requestBalance(
             socket
         )
@@ -1618,10 +1625,26 @@ if (tick != null) {
                     if (manuallyDisconnected || !connected) {
                         return@scheduleAtFixedRate
                     }
-                    val socket = webSocket ?: return@scheduleAtFixedRate
+                    val socket = webSocket ?: run {
+                        scheduleReconnect()
+                        return@scheduleAtFixedRate
+                    }
+                    val now = System.currentTimeMillis()
+                    val lastMessage = lastAuthenticatedMessageAt
+                    if (lastMessage > 0L && now - lastMessage > 65_000L) {
+                        // A half-open network can leave OkHttp's socket reference present without useful traffic.
+                        connected = false
+                        connecting = false
+                        stopHeartbeat()
+                        try { socket.cancel() } catch (_: Exception) {}
+                        if (webSocket === socket) webSocket = null
+                        callback.onDisconnected()
+                        scheduleReconnect()
+                        return@scheduleAtFixedRate
+                    }
                     requestBalance(socket)
                 } catch (_: Exception) {
-                    // WebSocket callbacks report connection failures.
+                    // The WebSocket listener or stale-connection watchdog will retry safely.
                 }
             },
             20,
@@ -1681,7 +1704,6 @@ if (tick != null) {
                 errors != null &&
                 errors.length() > 0
             ) {
-
                 val first =
                     errors.optJSONObject(
                         0
@@ -1880,6 +1902,7 @@ if (tick != null) {
 
         connected =
             false
+        lastAuthenticatedMessageAt = 0L
 
         connecting =
             false
@@ -1982,7 +2005,6 @@ candleRequestSymbols.clear()
 
         return manuallyDisconnected
     }
-
     /*
      * Change between DEMO and REAL.
      *
@@ -2076,29 +2098,31 @@ candleRequestSymbols.clear()
         if (
             socket == null
         ) {
-            // The connection can briefly lose its socket while recovering.
-            // Start recovery instead of repeatedly showing "WebSocket unavailable".
-            connected = false
-            callback.onDisconnected()
-            if (!manuallyDisconnected) scheduleReconnect()
+
+            callback.onError(
+                "Deriv WebSocket is unavailable."
+            )
+
             return false
         }
 
         return try {
-            val accepted = socket.send(request.toString())
-            if (!accepted) {
-                connected = false
-                callback.onDisconnected()
-                if (!manuallyDisconnected) scheduleReconnect()
-            }
-            accepted
-        } catch (e: Exception) {
-            connected = false
-            callback.onDisconnected()
-            if (!manuallyDisconnected) scheduleReconnect()
-            callback.onError(
-                "Unable to send Deriv request: ${e.message ?: "send failed"}"
+
+            socket.send(
+                request.toString()
             )
+
+        } catch (
+            e: Exception
+        ) {
+
+            callback.onError(
+                "Unable to send Deriv request: ${
+                    e.message
+                        ?: "send failed"
+                }"
+            )
+
             false
         }
     }
@@ -2115,7 +2139,7 @@ candleRequestSymbols.clear()
 
     send(request)
      }
-     fun requestOpenTrades() {
+         fun requestOpenTrades() {
     if (!connected) {
         callback.onError("Cannot request open trades: Deriv is not connected.")
         return
