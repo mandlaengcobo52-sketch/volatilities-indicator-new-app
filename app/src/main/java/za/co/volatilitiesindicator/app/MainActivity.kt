@@ -329,6 +329,7 @@ private var drawerOpen = false
         appPrefs.edit().putInt(key, dailyTradeCount() + 1).apply()
         notifyEvent("Touch trade opened", "$symbol · Contract $contractId · Stake ${String.format(java.util.Locale.US, "%.2f", stake)} ${accountCurrency.ifBlank { "USD" }}")
     }
+
     /**
      * PTPE estimates whether the required price distance from the CURRENT live entry price
      * is historically reachable in the next 24 completed hourly candles. The caller supplies
@@ -572,7 +573,7 @@ private var drawerOpen = false
             val proposal = json.optJSONObject("proposal")
             val proposalId = proposal?.optString("id", "").orEmpty()
             // Deriv's proposal payout is the total return (stake + profit) for a winning
-            // ONETOUCH contract. Therefore payout must be at least 110% of stake to offer
+            // ONETOUCH contract. Therefore payout must be at least 120% of stake to offer
             // the required 10% profit on stake.
             val payout = proposal?.optDouble("payout", 0.0) ?: 0.0
             if (proposalId.isBlank() || payout <= 0.0) {
@@ -621,16 +622,17 @@ private var drawerOpen = false
                     "fresh_entry_rejected_${accountId}_${executionMode}_$reqId")
                 return
             }
-            val requiredPayout = pending.stake * 1.10
+
+            val requiredPayout = pending.stake * 1.20
             if (payout + 1e-8 < requiredPayout) {
                 pendingOrdersByRequest.remove(reqId)
                 pendingIndexSymbols.remove(pending.symbol)
                 val potentialProfit = payout - pending.stake
-                notifyEvent("Execution rejected", "${pending.symbol} · Insufficient remaining target profit. Deriv proposal payout ${formatMoney(payout)}; stake ${formatMoney(pending.stake)}; potential profit ${formatMoney(potentialProfit)}; required profit ${formatMoney(pending.stake * 0.10)} (10% of stake). No purchase submitted.",
+                notifyEvent("Execution rejected", "${pending.symbol} · Insufficient remaining target profit. Deriv proposal payout ${formatMoney(payout)}; stake ${formatMoney(pending.stake)}; potential profit ${formatMoney(potentialProfit)}; required profit ${formatMoney(pending.stake * 0.20)} (20% of stake). No purchase submitted.",
                     "profit_target_rejected_${accountId}_${executionMode}_$reqId")
                 return
             }
-            notifyEvent("Profit target eligibility passed", "${pending.symbol} · Current proposal supports at least 10% potential profit on stake; fresh target distance ${String.format(java.util.Locale.US, "%.2f", freshDistance)}%.",
+            notifyEvent("Profit target eligibility passed", "${pending.symbol} · Current proposal supports at least 20% potential profit on stake; fresh target distance ${String.format(java.util.Locale.US, "%.2f", freshDistance)}%.",
                 "profit_target_passed_${accountId}_${executionMode}_$reqId")
             val buyReqId = nextTradeRequestId()
             pendingOrdersByRequest.remove(reqId)
@@ -690,13 +692,18 @@ private var drawerOpen = false
                 liveContractProfits[contractId] = profitOpen
                 liveContractProfitModes[contractId] = "${accountId}_$executionMode"
                 val tenPercentTarget = running.stake * 0.10
-                if (!running.targetNotified && profitOpen >= tenPercentTarget) {
+                val twentyPercentTarget = running.stake * 0.20
+                // The monetary profit target is 20%; trailing activation remains a separate 10% rule.
+                if (!running.targetNotified && profitOpen >= twentyPercentTarget) {
                     running.targetNotified = true
+                    appPrefs.edit().putBoolean("${trailStateKey}_target_notified", true).apply()
+                    notifyEvent("20% Profit Target Reached", "${running.symbol} · Contract $contractId · Stake ${formatMoney(running.stake)} · Target ${formatMoney(twentyPercentTarget)} · Current P/L ${formatMoney(profitOpen)}. Trailing stop ${if (trailingStopEnabled) "ACTIVE" else "READY — currently OFF"}.",
+                        "profit_20pct_reached_${accountId}_${executionMode}_$contractId")
+                }
+                if (!running.trailingActivated && profitOpen >= tenPercentTarget) {
                     running.trailingActivated = true
                     running.peakProfit = profitOpen
-                    appPrefs.edit().putBoolean("${trailStateKey}_target_notified", true).putBoolean("${trailStateKey}_activated", true).putString("${trailStateKey}_peak", running.peakProfit.toString()).apply()
-                    notifyEvent("10% Profit Target Reached", "${running.symbol} · Contract $contractId · Stake ${formatMoney(running.stake)} · Target ${formatMoney(tenPercentTarget)} · Current P/L ${formatMoney(profitOpen)}. Trailing stop ${if (trailingStopEnabled) "ACTIVE" else "READY — currently OFF"}.",
-                        "profit_10pct_reached_${accountId}_${executionMode}_$contractId")
+                    appPrefs.edit().putBoolean("${trailStateKey}_activated", true).putString("${trailStateKey}_peak", running.peakProfit.toString()).apply()
                 }
                 if (running.trailingActivated) {
                     running.peakProfit = maxOf(running.peakProfit, profitOpen)
@@ -719,14 +726,9 @@ private var drawerOpen = false
                         notifyEvent("Structure Target Close Failed", "${running.symbol} · Contract $contractId · Close request could not be sent; monitoring continues.",
                             "structure_close_failed_${accountId}_${executionMode}_$contractId")
                     } else {
-                        notifyEvent("Structure Target Reached", "${running.symbol} · Contract $contractId · Spot ${formatMarketPrice(currentSpot)} reached structure target ${formatMarketPrice(running.target)}. Waiting for Deriv confirmation.",
-                            "structure_target_reached_${accountId}_${executionMode}_$contractId")
-                    }
-                }
+                        notifyEvent("Structure Target Reached", "${running.symbol} · Contract $contractId · Spot ${formatMarketPrice(currentSpot)} reached structure target ${formatMarketPrice(running.target)}. Waiting for Deriv confirmation."
 
-                // Standalone true trailing stop: activate at +10% of original stake,
-                // then trail the peak profit by 10% of original stake, with a break-even floor.
-                val trailingGap = tenPercentTarget
+                                    val trailingGap = tenPercentTarget
                 val protectedProfit = maxOf(0.0, running.peakProfit - trailingGap)
                 if (trailingStopEnabled && running.trailingActivated && !running.closeRequested &&
                     profitOpen <= protectedProfit && running.peakProfit > tenPercentTarget) {
@@ -929,7 +931,7 @@ when (selectedTab) {
 "Logout" -> {
     performPlatformLogout()
 }
-"Login" -> {
+            "Login" -> {
     addLoginScreen()
             }
                     else -> {
@@ -1027,7 +1029,6 @@ private fun addRegistrationScreen() {
         registrationCard.addView(row)
         return Pair(row, input)
     }
-
     val (_, passwordInput) = addPasswordField("Password")
     val (_, confirmPasswordInput) = addPasswordField("Confirm password")
     val submit = button("CREATE ACCOUNT", true)
@@ -1224,7 +1225,7 @@ private fun addUserProfileScreen(page: LinearLayout) {
         profileField("Subscription amount", subscriptionText)
         profileField("Period", periodText)
         profileField("Trading capital range", "R1,000 to R5,000")
-        profileField("Target profit", "10% of stake")
+        profileField("Target profit", "20% of stake")
         val riskLimitText = when (risk.lowercase()) {
             "minimum" -> "1 trade per day"
             "medium" -> "2 trades per day"
@@ -1248,7 +1249,7 @@ private fun addUserProfileScreen(page: LinearLayout) {
                 adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, riskOptions)
             }
             profileCard.addView(riskSpinner, matchWrap())
-            profileCard.addView(label("Trading capital range: R1,000–R5,000 • Stake: 20% of daily starting capital • Target profit: 10% of stake. Applying does not activate a plan; the administrator must verify payment where required and assign the plan and dates.", 12f, muted, false).apply { setPadding(0, dp(5), 0, dp(5)) })
+            profileCard.addView(label("Trading capital range: R1,000–R5,000 • Stake: 20% of daily starting capital • Target profit: 20% of stake. Applying does not activate a plan; the administrator must verify payment where required and assign the plan and dates.", 12f, muted, false).apply { setPadding(0, dp(5), 0, dp(5)) })
             profileCard.addView(button("SUBMIT RISK-PLAN APPLICATION", true) {
                 val chosen = riskValues[riskSpinner.selectedItemPosition]
                 val fee = when (chosen) { "minimum" -> "25% of capital"; "medium" -> "75% of capital"; "maximum" -> "100% of capital"; "super_maximum" -> "0"; else -> "0" }
@@ -1532,6 +1533,7 @@ private fun addHeader() {
     )
 
     row.addView(space(dp(8)))
+
     row.addView(
         button("♟♟ ADMIN", platform == "ADMIN") {
             platform = "ADMIN"
@@ -1850,7 +1852,7 @@ private fun addTradeScreen() {
         val pnlHidden = label("P/L: ${formatMoney(initialPnl)}", 12f, profitColor(initialPnl), true).apply { setPadding(0, dp(4), 0, 0) }
         val targetPrice = tracked?.target
         val targetView = label("Structure target: ${targetPrice?.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
-        val profitTargetView = label("10% profit target: ${formatMoney(stake * 0.10)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
+        val profitTargetView = label("20% profit target: ${formatMoney(stake * 0.20)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
         val trailView = label("Trailing stop: ${if (tracked?.trailingActivated == true) "ACTIVATED" else if (trailingStopEnabled) "ARMED" else "OFF"}", 12f, if (trailingStopEnabled) green else muted, true).apply { setPadding(0, dp(4), 0, 0) }
         val spotView = label("Current value/spot: ${if (currentValue > 0) formatMarketPrice(currentValue) else "—"}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val expiryView = label("Expiry: $expiryText", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
@@ -1892,7 +1894,7 @@ private fun addTradeScreen() {
         val initialPnl = liveContractProfits[running.contractId] ?: 0.0
         val pnlHidden = label("P/L: ${formatMoney(initialPnl)}", 12f, profitColor(initialPnl), true).apply { setPadding(0, dp(4), 0, 0) }
         val targetView = label("Structure target: ${running.target.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
-        val profitTargetView = label("10% profit target: ${formatMoney(running.stake * 0.10)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
+        val profitTargetView = label("20% profit target: ${formatMoney(running.stake * 0.20)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
         val trailView = label("Trailing stop: ${if (running.trailingActivated) "ACTIVATED" else if (trailingStopEnabled) "ARMED" else "OFF"}", 12f, if (trailingStopEnabled) green else muted, true).apply { setPadding(0, dp(4), 0, 0) }
         val spotView = label("Current value/spot: —", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val expiryView = label("Expiry: —", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
@@ -2126,6 +2128,7 @@ private fun analysisStructuralTarget(
         else -> null
     }
 }
+
 // =========================================================
 // ANALYSIS — MARKET DATA
 // =========================================================
@@ -2192,7 +2195,7 @@ private fun addMarketStructureAnalysis() {
         if (candles.size < 20) {
             structureCard.addView(label("STATUS: WAITING FOR SUFFICIENT COMPLETED H1 HISTORY", 12f, yellow, true))
         } else {
-               // Match Webtrader: display only the latest 40 pivots in Market Structure.
+            // Match Webtrader: display only the latest 40 pivots in Market Structure.
             // This cap is local to this display; MSS/CHOCH, behaviour, and structural
             // target calculations continue using their full analysis pivot history.
             val pivots = analysisPivots(candles).takeLast(40)
@@ -2437,6 +2440,7 @@ private fun addDirectionStructuralTargetAnalysis() {
         )
     }
 }
+
 // =========================================================
 // label("Analysis - Qualification", 17f, green, true)
 // =========================================================
@@ -2458,7 +2462,6 @@ private fun addQualificationAnalysis() {
     header.addView(row)
     page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
     if (!qualificationExpanded) return
-
     page.addView(
         label(
             "Qualification checks the same index for a confirmed MSS/CHOCH, a valid structural target in the confirmed direction, and available historical MSS behaviour for that direction. It reports evidence only and does not execute a trade.",
@@ -3024,11 +3027,11 @@ private fun addTargetFilterAnalysis() {
         page.addView(sectionTitle("RISK CATEGORIES"))
         page.addView(label("Trading capital range: R1,000 to R5,000. Interest is administrator-only. Users see plan name, interest period label only if permitted, subscription amount, period, trades used today, stake, target, trade limit, and assigned dates in My Profile.", 13f, muted, false))
         val rules = listOf(
-            listOf("MINIMUM RISK", "Interest per 30 days: 50%", "Subscription: 25% of capital", "Period: 30 days", "Stake: 20% of capital", "Target profit: 10% of stake", "Trades per day: 1"),
-            listOf("MEDIUM RISK", "Interest per 30 days: 100%", "Subscription: 75% of capital", "Period: 30 days", "Stake: 20% of capital", "Target profit: 10% of stake", "Trades per day: 2"),
-            listOf("MAXIMUM RISK", "Interest per 30 days: 200%", "Subscription: 100% of capital", "Period: 30 days", "Stake: 20% of capital", "Target profit: 10% of stake", "Trades per day: 3"),
-            listOf("SUPER MAXIMUM RISK", "Period: 30 days", "Stake: 20% of capital", "Target profit: 10% per stake", "Trades per day: Unlimited"),
-            listOf("TRIAL", "Interest per 7 days: 50%", "Subscription: Free", "Period: 7 days", "Stake: 20% of capital", "Target profit: 10% per stake", "Trade limit: Not specified")
+            listOf("MINIMUM RISK", "Interest per 30 days: 50%", "Subscription: 25% of capital", "Period: 30 days", "Stake: 20% of capital", "Target profit: 20% of stake", "Trades per day: 1"),
+            listOf("MEDIUM RISK", "Interest per 30 days: 100%", "Subscription: 75% of capital", "Period: 30 days", "Stake: 20% of capital", "Target profit: 20% of stake", "Trades per day: 2"),
+            listOf("MAXIMUM RISK", "Interest per 30 days: 200%", "Subscription: 100% of capital", "Period: 30 days", "Stake: 20% of capital", "Target profit: 20% of stake", "Trades per day: 3"),
+            listOf("SUPER MAXIMUM RISK", "Period: 30 days", "Stake: 20% of capital", "Target profit: 20% per stake", "Trades per day: Unlimited"),
+            listOf("TRIAL", "Interest per 7 days: 50%", "Subscription: Free", "Period: 7 days", "Stake: 20% of capital", "Target profit: 20% per stake", "Trade limit: Not specified")
         )
         rules.forEach { details ->
             val ruleCard = card().apply { orientation = LinearLayout.VERTICAL }
