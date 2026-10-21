@@ -397,7 +397,7 @@ private var drawerOpen = false
             lastPtpeByIndex[symbol] = PtpeDisplay(direction = if (direction == "BULLISH") "BUY" else "SELL", status = "WAITING FOR STRUCTURAL TARGET")
             lastDecisionByIndex.remove(symbol)
             return null
-        }
+            }
         val target = targetPivot.price
         if (!target.isFinite() || (direction == "BULLISH" && target <= current) || (direction == "BEARISH" && target >= current)) {
             lastPtpeByIndex[symbol] = PtpeDisplay(direction = if (direction == "BULLISH") "BUY" else "SELL", target = target, status = "INVALID TARGET DIRECTION")
@@ -434,10 +434,6 @@ private var drawerOpen = false
         // This decision was evaluated from the latest tick immediately before this call.
         // The proposal-response path still performs its own fresh validation before purchase.
         val signalKey = "${accountId}_${executionMode}_${symbol}_${decision.direction}_${String.format(java.util.Locale.US, "%.3f", decision.target)}"
-        // Suppress repeat proposal attempts for a signal that just failed the 20% payout gate.
-        // The signal can be reconsidered after the short cooldown, without flooding Notifications.
-        val profitRejectCooldownKey = "profit_reject_cooldown_until_${signalKey}"
-        if (System.currentTimeMillis() < appPrefs.getLong(profitRejectCooldownKey, 0L)) return
         if (!autoTradeEnabled) {
             recordExecutionStage("Execution blocked", "$symbol · Auto Trade is OFF.", "blocked_auto_$signalKey")
             return
@@ -527,10 +523,10 @@ private var drawerOpen = false
             pendingOrdersByRequest.remove(reqId)
             pendingIndexSymbols.remove(symbol)
             notifyEvent("Execution rejected", "$symbol · Unable to send the proposal request; Deriv connection/client did not accept the request.",
-                "trade_open_failed_${accountId}_${executionMode}_$reqId")
+                "trade_open_failed_$signalKey")
         } else {
             notifyEvent("Execution requested", "$symbol · ${decision.direction} · Proposal request sent to Deriv. Stake ${formatMoney(stake)}; target ${formatMarketPrice(absoluteBarrier)}.",
-                "execution_requested_${accountId}_${executionMode}_$reqId")
+                "execution_requested_$signalKey")
             // A proposal timeout is safe to release because no purchase request has been sent.
             // Do not leave the index locked indefinitely if Deriv never answers the proposal.
             android.os.Handler(mainLooper).postDelayed({
@@ -544,7 +540,7 @@ private var drawerOpen = false
                     notifyEvent(
                         "Execution rejected",
                         "${stillWaiting.symbol} · No proposal response was received from Deriv within 15 seconds. No purchase was submitted; the index lock was released safely.",
-                        "proposal_timeout_${accountId}_${executionMode}_$reqId"
+                        "proposal_timeout_${accountId}_${executionMode}_${stillWaiting.symbol}_${stillWaiting.direction}_${String.format(java.util.Locale.US, "%.3f", stillWaiting.target)}"
                     )
                 }
             }, 15000L)
@@ -565,7 +561,7 @@ private var drawerOpen = false
                 notifyEvent(
                     if (insufficientFunds) "Execution rejected" else "Execution rejected",
                     "${failed.symbol} · Deriv rejected ${failed.stage.lowercase()} request: $errorMessage",
-                    "trade_open_failed_${accountId}_${executionMode}_$reqId"
+                    "trade_open_failed_${accountId}_${executionMode}_${failed.symbol}_${failed.direction}_${String.format(java.util.Locale.US, "%.3f", failed.target)}"
                 )
             }
             return
@@ -582,7 +578,7 @@ private var drawerOpen = false
                 pendingOrdersByRequest.remove(reqId)
                 pendingIndexSymbols.remove(pending.symbol)
                 notifyEvent("Execution rejected", "${pending.symbol} · Deriv returned an invalid proposal (missing proposal ID or non-positive payout).",
-                    "trade_open_failed_${accountId}_${executionMode}_$reqId")
+                    "trade_open_failed_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
                 return
             }
 
@@ -611,7 +607,7 @@ private var drawerOpen = false
                     else -> "Remaining target distance is ${String.format(java.util.Locale.US, "%.2f", freshDistance)}%; minimum required is 1.50%."
                 }
                 notifyEvent("Execution rejected", "${pending.symbol} · Fresh-entry validation failed. $reason No purchase submitted.",
-                    "fresh_entry_rejected_${accountId}_${executionMode}_$reqId")
+                    "fresh_entry_rejected_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
                 return
             }
 
@@ -620,14 +616,12 @@ private var drawerOpen = false
                 pendingOrdersByRequest.remove(reqId)
                 pendingIndexSymbols.remove(pending.symbol)
                 val potentialProfit = payout - pending.stake
-                val rejectedSignalKey = "${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}"
-                appPrefs.edit().putLong("profit_reject_cooldown_until_${rejectedSignalKey}", System.currentTimeMillis() + 60_000L).apply()
-                notifyEvent("Execution rejected", "${pending.symbol} · Insufficient remaining target profit. Deriv proposal payout ${formatMoney(payout)}; stake ${formatMoney(pending.stake)}; potential profit ${formatMoney(potentialProfit)}; required profit ${formatMoney(pending.stake * 0.20)} (20% of stake). No purchase submitted. Further attempts for this same signal are paused for 60 seconds.",
-                    "profit_target_rejected_${rejectedSignalKey}")
+                notifyEvent("Execution rejected", "${pending.symbol} · Insufficient remaining target profit. Deriv proposal payout ${formatMoney(payout)}; stake ${formatMoney(pending.stake)}; potential profit ${formatMoney(potentialProfit)}; required profit ${formatMoney(pending.stake * 0.20)} (20% of stake). No purchase submitted.",
+                    "profit_target_rejected_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
                 return
             }
             notifyEvent("Profit target eligibility passed", "${pending.symbol} · Current proposal supports at least 20% potential profit on stake; fresh target distance ${String.format(java.util.Locale.US, "%.2f", freshDistance)}%.",
-                "profit_target_passed_${accountId}_${executionMode}_$reqId")
+                "profit_target_passed_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
             val buyReqId = nextTradeRequestId()
             pendingOrdersByRequest.remove(reqId)
             pendingOrdersByRequest[buyReqId] = pending.copy(stage = "BUY")
@@ -635,10 +629,10 @@ private var drawerOpen = false
                 pendingOrdersByRequest.remove(buyReqId)
                 pendingIndexSymbols.remove(pending.symbol)
                 notifyEvent("Execution rejected", "${pending.symbol} · Proposal received, but the purchase request could not be sent.",
-                    "trade_open_failed_${accountId}_${executionMode}_$buyReqId")
+                    "trade_open_failed_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
             } else {
                 notifyEvent("Execution requested", "${pending.symbol} · Deriv returned a valid proposal; purchase request sent.",
-                    "buy_requested_${accountId}_${executionMode}_$buyReqId")
+                    "buy_requested_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
             }
             return
         }
@@ -977,7 +971,6 @@ when (selectedTab) {
 // ==========================================
 // CREATE ACCOUNT — VOLATILITIES INDICATOR
 // ==========================================
-
 private fun addRegistrationScreen() {
     page.addView(sectionTitle("CREATE ACCOUNT"))
 
@@ -1275,7 +1268,6 @@ private fun addUserProfileScreen(page: LinearLayout) {
     }
     page.addView(profileCard, matchWrap())
 }
-
 private fun authRequest(
     action: String,
     fields: Map<String, String> = emptyMap(),
@@ -1584,7 +1576,7 @@ private fun addHeader() {
         render()
         beginDerivConnection()
     }
-},
+    },
     weighted()
 )
 
@@ -2124,7 +2116,6 @@ private fun analysisStructuralTarget(
         else -> null
     }
 }
-
 // =========================================================
 // ANALYSIS — MARKET DATA
 // =========================================================
@@ -3118,7 +3109,7 @@ private fun addTargetFilterAnalysis() {
             ensureNotificationPermission()
             addNotificationFeedItem("Price alert armed: $selectedSymbol ${if (selectedCondition == "below") "at or below" else "at or above"} ${formatMarketPrice(target)}")
             render()
-            }, matchWrap().apply { topMargin = dp(8) })
+        }, matchWrap().apply { topMargin = dp(8) })
         if (priceAlertActive) {
             card.addView(button("CANCEL PRICE ALERT", false) {
                 appPrefs.edit().putBoolean("priceAlertActive", false).apply()
@@ -3726,4 +3717,99 @@ private fun addTargetFilterAnalysis() {
                     }
                     if (id > 0L) {
                         val liveProfit = contract.optDouble("profit", contract.optDouble("profit_open", liveContractProfits[id] ?: 0.0))
-                        val views = contractLive
+                        val views = contractLiveViews[id]
+                        if (views != null) {
+                            views.pnl.text = "Stake: ${formatMoney(views.stake)}   P/L: ${formatMoney(liveProfit)}"
+                            views.pnl.setTextColor(profitColor(liveProfit))
+                            val spot = contract.optDouble("current_spot", contract.optDouble("current_spot_display_value", 0.0))
+                            views.spot.text = "Current value/spot: ${if (spot > 0.0) formatMoney(spot) else "—"}"
+                            val barrierValue = contract.optString("barrier", "").takeIf { it.isNotBlank() && it != "null" }
+                                ?: views.target?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
+                            val expiryEpoch = contract.optLong("date_expiry", contract.optLong("expiry_time", 0L))
+                            val expiryRemaining = if (expiryEpoch > 0L) (expiryEpoch - System.currentTimeMillis() / 1000L).coerceAtLeast(0L) else 0L
+                            val expiryText = if (expiryEpoch > 0L) String.format(java.util.Locale.US, "%02d:%02d:%02d", expiryRemaining / 3600, (expiryRemaining % 3600) / 60, expiryRemaining % 60) else "—"
+                            views.barrierExpiry.text = "Expiry: $expiryText"
+                            views.ptpe.text = "PTPE: ${String.format(java.util.Locale.US, "%.1f", views.probability)}%"
+                        }
+                    }
+                    val pl = liveContractProfits.filterKeys { liveContractProfitModes[it] == "${accountId}_$executionMode" }.values.sum()
+                    if (::openPlView.isInitialized) {
+                        openPlView.text = "Open P/L:  ${formatMoney(pl)}"
+                        openPlView.setTextColor(profitColor(pl))
+                    }
+                    runningTotalPlView?.apply {
+                        text = "TOTAL OPEN P/L: ${formatMoney(pl)}"
+                        setTextColor(profitColor(pl))
+                    }
+                    if ((status == "sold" || status == "won" || status == "lost" || contract.optInt("is_sold", 0) == 1) && selectedTab == "Trade") render()
+                }
+            }
+            "profit_table" -> {
+                if (connected && accountId.isNotBlank()) tradeHistoryResponse = json
+            }
+        }
+
+        // Do not rebuild the entire Trade view for every live quote/contract update.
+        // Re-rendering here caused the ScrollView to reset/jump while users scrolled.
+        // The explicit Refresh button requests fresh account/trade data when needed.
+    }
+    }
+
+    override fun onCandles(
+    symbol: String,
+    candles: List<DerivApiClient.Candle>
+) {
+    runOnUiThread {
+        marketDataCandles[symbol] = candles
+        marketDataErrors.remove(symbol)
+        evaluateMasterDecision(symbol)
+        updatePtpeDisplay(symbol)
+
+        if (selectedTab == "Analysis") {
+            pendingAnalysisRender?.let { analysisRenderHandler.removeCallbacks(it) }
+            val refresh = Runnable {
+                pendingAnalysisRender = null
+                if (selectedTab == "Analysis") render()
+            }
+            pendingAnalysisRender = refresh
+            analysisRenderHandler.postDelayed(refresh, 450L)
+        }
+    }
+}
+
+override fun onMarketDataError(
+    symbol: String,
+    message: String
+) {
+    runOnUiThread {
+        marketDataErrors[symbol] = message
+        dashboardStatusViews[symbol]?.apply {
+            text = "FEED ERROR"
+            setTextColor(red)
+        }
+        android.util.Log.e("DerivMarketData", "$symbol: $message")
+    }
+}
+
+    override fun onError(message: String) {
+    runOnUiThread {
+        if (!connected && ::accountStatus.isInitialized) {
+            accountStatus.text = "●  CONNECTION ERROR"
+            accountStatus.setTextColor(red)
+        }
+        toast("Deriv: $message")
+    }
+    }
+    override fun onDisconnected() {
+        runOnUiThread {
+            connected = false
+            marketDataRequested = false
+            if (::accountStatus.isInitialized) {
+                accountStatus.text = "●  NOT CONNECTED"
+                accountStatus.setTextColor(red)
+            }
+        }
+    }
+
+                                        }
+    
