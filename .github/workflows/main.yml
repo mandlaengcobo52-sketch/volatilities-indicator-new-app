@@ -104,3 +104,4 @@ jobs:
           name: volatilities-indicator-signed-release-apk
           path: release-apk/volatilities-indicator-release.apk
           if-no-files-found: error
+          
