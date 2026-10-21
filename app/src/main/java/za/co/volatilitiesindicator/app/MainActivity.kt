@@ -666,7 +666,7 @@ private var drawerOpen = false
             pendingOrdersByRequest.remove(reqId)
             derivApiClient.send(JSONObject().put("proposal_open_contract", 1).put("contract_id", contractId).put("subscribe", 1))
             derivApiClient.requestOpenTrades()
-         derivApiClient.requestTradeHistory()
+            derivApiClient.requestTradeHistory()
             if (selectedTab == "Trade") render()
             return
         }
@@ -727,8 +727,7 @@ private var drawerOpen = false
                             "structure_close_failed_${accountId}_${executionMode}_$contractId")
                     } else {
                         notifyEvent("Structure Target Reached", "${running.symbol} · Contract $contractId · Spot ${formatMarketPrice(currentSpot)} reached structure target ${formatMarketPrice(running.target)}. Waiting for Deriv confirmation."
-
-                                    val trailingGap = tenPercentTarget
+                       val trailingGap = tenPercentTarget
                 val protectedProfit = maxOf(0.0, running.peakProfit - trailingGap)
                 if (trailingStopEnabled && running.trailingActivated && !running.closeRequested &&
                     profitOpen <= protectedProfit && running.peakProfit > tenPercentTarget) {
@@ -1635,7 +1634,6 @@ private fun addHeader() {
             derivApiClient.requestHistoricalCandles()
         }
     }
-
     // =========================================================
     // DERIV ACCOUNT CARD — VISUAL PLACEHOLDER ONLY
     // =========================================================
@@ -1819,6 +1817,7 @@ private fun addTradeScreen() {
         render()
     }, matchWrap().apply { topMargin = dp(8) })
     page.addView(trailingCard, matchWrap().apply { bottomMargin = dp(10) })
+
     page.addView(sectionTitle("RUNNING TRADES"))
     val runningCard = card().apply { orientation = LinearLayout.VERTICAL }
     val portfolioArray = openTradesResponse?.optJSONObject("portfolio")?.optJSONArray("contracts")
@@ -2428,7 +2427,7 @@ private fun addDirectionStructuralTargetAnalysis() {
                     } ?: "—"
                 }",
                 12f, blue, false
-                )
+            )
         )
         page.addView(
             indexCard,
@@ -2721,6 +2720,7 @@ private fun addTargetFilterAnalysis() {
                 userCard.addView(button("ASSIGN START / EXPIRY DATES", true) { showAssignPlanDatesDialog(user) },
                     matchWrap().apply { topMargin = dp(6) })
             }
+
             // User-management actions are handled by the server against the shared users.json.
             val userId = user.optString("id", "")
             if (userId.isNotBlank()) {
@@ -3329,6 +3329,7 @@ private fun addTargetFilterAnalysis() {
                 12,
                 1
             )
+
             minHeight = dp(48)
             minimumHeight = dp(48)
             stateListAnimator = null
@@ -3430,7 +3431,6 @@ private fun addTargetFilterAnalysis() {
             Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
         )
     }
-
     private fun createCodeChallenge(verifier: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
             .digest(verifier.toByteArray(Charsets.US_ASCII))
@@ -3607,7 +3607,8 @@ private fun addTargetFilterAnalysis() {
             }
         }
     }
-    }
+}
+
     override fun onTradeData(json: JSONObject) {
     runOnUiThread {
         handleMasterDecisionTradeResponse(json)
@@ -3690,6 +3691,7 @@ private fun addTargetFilterAnalysis() {
         // Re-rendering here caused the ScrollView to reset/jump while users scrolled.
         // The explicit Refresh button requests fresh account/trade data when needed.
     }
+    }
 
     override fun onCandles(
     symbol: String,
@@ -3747,5 +3749,4 @@ override fun onMarketDataError(
         }
     }
 
-    }
-    
+                                        }
