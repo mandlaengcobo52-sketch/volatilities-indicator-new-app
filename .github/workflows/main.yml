@@ -65,7 +65,7 @@ jobs:
         env:
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD || secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
           set -euo pipefail
           test -n "$KEYSTORE_PASSWORD"
@@ -104,4 +104,3 @@ jobs:
           name: volatilities-indicator-signed-release-apk
           path: release-apk/volatilities-indicator-release.apk
           if-no-files-found: error
-          
