@@ -1352,7 +1352,7 @@ fun refreshHistoricalCandles() {
     "DerivLiveFeed",
     "WebSocket response: $text"
 )
-// =============================================================
+                // =============================================================
 // PROCESS LIVE TICK RESPONSES
 // =============================================================
 
@@ -1390,7 +1390,8 @@ if (tick != null) {
                 tradeMessageType == "profit_table" ||
                 tradeMessageType == "proposal_open_contract" ||
                 tradeMessageType == "proposal" ||
-                    json.has("error")
+                tradeMessageType == "buy" ||
+                json.has("error")
             ) {
                 callback.onTradeData(json)
             }
@@ -2022,7 +2023,7 @@ candleRequestSymbols.clear()
      * Return whether the disconnect was deliberately
      * requested by the user.
      */
-    fun isManuallyDisconnected(): Boolean {
+     fun isManuallyDisconnected(): Boolean {
 
         return manuallyDisconnected
     }
@@ -2036,7 +2037,7 @@ candleRequestSymbols.clear()
     ) {
 
         val normalized =
-        if (
+            if (
                 newAccountType.equals(
                     "REAL",
                     ignoreCase = true
