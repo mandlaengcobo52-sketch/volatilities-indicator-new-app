@@ -93,6 +93,9 @@ private var drawerOpen = false
     private var runningTotalPlView: TextView? = null
     private var historyAccountKey: String = ""
     private var connected = false
+    // onCreate already initiates the first connection; only run the recovery check
+    // on later returns to the foreground.
+    private var hasResumedOnce = false
     private var accountId = ""
     private var accountType = ""
     private var accountBalance = 0.0
@@ -429,7 +432,7 @@ private var drawerOpen = false
             "qualified_${symbol}_${decision.direction}_${event.confirmation.epoch}_${executionMode}_${accountId}"
         )
         return decision
-    }
+        }
     private fun attemptMasterDecisionExecution(symbol: String, decision: MasterDecision) {
         // This decision was evaluated from the latest tick immediately before this call.
         // The proposal-response path still performs its own fresh validation before purchase.
@@ -806,6 +809,27 @@ if (authToken.isNotBlank() && savedToken.isNotBlank() &&
 }
     }
 
+    override fun onResume() {
+        super.onResume()
+
+        // onCreate handles the initial launch. Avoid starting a second connection
+        // during the first resume while OAuth/account lookup may still be running.
+        if (!hasResumedOnce) {
+            hasResumedOnce = true
+            return
+        }
+
+        if (authToken.isBlank() || appPrefs.getBoolean("deriv_manually_disconnected", false)) {
+            return
+        }
+
+        val tokenKey = if (executionMode == "REAL") "real_token" else "demo_token"
+        val savedToken = prefs.getString(tokenKey, "").orEmpty()
+        if (savedToken.isNotBlank()) {
+            derivApiClient.ensureConnectedOnResume(savedToken, executionMode)
+        }
+    }
+
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         if (intent != null) {
@@ -973,7 +997,6 @@ when (selectedTab) {
 // ==========================================
 private fun addRegistrationScreen() {
     page.addView(sectionTitle("CREATE ACCOUNT"))
-
     val registrationCard = card().apply { orientation = LinearLayout.VERTICAL }
     registrationCard.addView(label("Register your Volatilities Indicator account", 17f, white, true))
     registrationCard.addView(label("Your application will remain pending until an administrator approves it.", 14f, yellow, false))
@@ -1575,7 +1598,7 @@ private fun addHeader() {
         executionMode = "REAL"
         render()
         beginDerivConnection()
-    }
+        }
     },
     weighted()
 )
@@ -1787,26 +1810,6 @@ private fun addTradeScreen() {
     }
     page.addView(accountCard, matchWrap().apply { bottomMargin = dp(10) })
 
-    val decisionCard = card().apply { orientation = LinearLayout.VERTICAL }
-    decisionCard.addView(label(if (autoTradeEnabled) "MASTER DECISION: ON" else "MASTER DECISION: OFF", 15f, if (autoTradeEnabled) green else red, true))
-    decisionCard.addView(button(if (autoTradeEnabled) "TURN MASTER DECISION OFF" else "TURN MASTER DECISION ON", autoTradeEnabled) {
-        autoTradeEnabled = !autoTradeEnabled
-        if (autoTradeEnabled && !connected) toast("Master Decision is ON, but execution waits until Deriv is connected.")
-        render()
-    }, matchWrap().apply { topMargin = dp(8) })
-    page.addView(decisionCard, matchWrap().apply { bottomMargin = dp(10) })
-
-    val trailingCard = card().apply { orientation = LinearLayout.VERTICAL }
-    trailingCard.addView(label("STANDALONE TRAILING STOP", 15f, green, true))
-    trailingCard.addView(label("Activation: +10% of original stake · Trailing gap: 10% of original stake · Break-even floor before trailing gains", 12f, muted, false).apply { setPadding(0, dp(5), 0, dp(5)) })
-    trailingCard.addView(label("Status: ${if (trailingStopEnabled) "ON — managing eligible open trades" else "OFF — monitoring only"}", 12f, if (trailingStopEnabled) green else yellow, true))
-    trailingCard.addView(button(if (trailingStopEnabled) "TURN TRAILING STOP OFF" else "TURN TRAILING STOP ON", trailingStopEnabled) {
-        trailingStopEnabled = !trailingStopEnabled
-        if (trailingStopEnabled) notifyEvent("Trailing Stop Enabled", "Standalone trailing stop is ON. It will manage eligible open trades after the 10% activation threshold.", "trailing_stop_enabled_${accountId}_${executionMode}")
-        else notifyEvent("Trailing Stop Disabled", "Standalone trailing stop is OFF. Open trades will remain open unless closed manually or by another applicable contract rule.", "trailing_stop_disabled_${accountId}_${executionMode}_${System.currentTimeMillis()}")
-        render()
-    }, matchWrap().apply { topMargin = dp(8) })
-    page.addView(trailingCard, matchWrap().apply { bottomMargin = dp(10) })
 
     page.addView(sectionTitle("RUNNING TRADES"))
     val runningCard = card().apply { orientation = LinearLayout.VERTICAL }
@@ -3064,6 +3067,20 @@ private fun addTargetFilterAnalysis() {
             render()
         }, matchWrap().apply { topMargin = dp(10) })
         card.addView(label("────────────────────────", 10f, muted, false))
+        card.addView(button("CLEAR NOTIFICATION FEED", false) {
+            appPrefs.edit().remove("notification_feed").apply()
+            render()
+        }, matchWrap().apply { topMargin = dp(6) })
+        page.addView(card, matchWrap().apply { bottomMargin = dp(10) })
+        page.addView(sectionTitle("RECENT NOTIFICATIONS"))
+        val saved = appPrefs.getString("notification_feed", "").orEmpty().lines().filter { it.isNotBlank() }
+        if (saved.isEmpty()) page.addView(label("No notifications yet.", 13f, yellow, false))
+        else saved.take(50).forEach { item ->
+            val row = card().apply { addView(label(item, 12f, white, false)) }
+            page.addView(row, matchWrap().apply { bottomMargin = dp(5) })
+        }
+    }
+    private fun addPriceAlertControls(card: LinearLayout) {
         card.addView(label("PRICE ALERT WITH VIBRATION", 16f, green, true).apply { setPadding(0, dp(12), 0, dp(5)) })
         card.addView(label("Choose an index and target price. When the live Deriv price reaches the selected condition, the app sends one notification with vibration. The app must remain connected to Deriv to receive live prices.", 12f, muted, false))
         val alertIndexSpinner = Spinner(this)
@@ -3118,21 +3135,35 @@ private fun addTargetFilterAnalysis() {
             }, matchWrap().apply { topMargin = dp(6) })
         }
         card.addView(label("Notification permission: ${if (Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) "GRANTED / NOT REQUIRED" else "NOT GRANTED — allow it in Android settings"}", 12f, yellow, false).apply { setPadding(0, dp(8), 0, dp(4)) })
-        card.addView(button("CLEAR NOTIFICATION FEED", false) {
-            appPrefs.edit().remove("notification_feed").apply()
-            render()
-        }, matchWrap().apply { topMargin = dp(6) })
-        page.addView(card, matchWrap().apply { bottomMargin = dp(10) })
-        page.addView(sectionTitle("RECENT NOTIFICATIONS"))
-        val saved = appPrefs.getString("notification_feed", "").orEmpty().lines().filter { it.isNotBlank() }
-        if (saved.isEmpty()) page.addView(label("No notifications yet.", 13f, yellow, false))
-        else saved.take(50).forEach { item ->
-            val row = card().apply { addView(label(item, 12f, white, false)) }
-            page.addView(row, matchWrap().apply { bottomMargin = dp(5) })
-        }
     }
+
     private fun addSettingsScreen() {
         page.addView(sectionTitle("SETTINGS"))
+        // Trading controls are deliberately housed in Settings; their state remains persisted in appPrefs.
+        val decisionCard = card().apply { orientation = LinearLayout.VERTICAL }
+        decisionCard.addView(label(if (autoTradeEnabled) "MASTER DECISION: ON" else "MASTER DECISION: OFF", 15f, if (autoTradeEnabled) green else red, true))
+        decisionCard.addView(button(if (autoTradeEnabled) "TURN MASTER DECISION OFF" else "TURN MASTER DECISION ON", autoTradeEnabled) {
+            autoTradeEnabled = !autoTradeEnabled
+            if (autoTradeEnabled && !connected) toast("Master Decision is ON, but execution waits until Deriv is connected.")
+            render()
+        }, matchWrap().apply { topMargin = dp(8) })
+        page.addView(decisionCard, matchWrap().apply { bottomMargin = dp(10) })
+
+        val trailingCard = card().apply { orientation = LinearLayout.VERTICAL }
+        trailingCard.addView(label("STANDALONE TRAILING STOP", 15f, green, true))
+        trailingCard.addView(label("Activation: +10% of original stake · Trailing gap: 10% of original stake · Break-even floor before trailing gains", 12f, muted, false).apply { setPadding(0, dp(5), 0, dp(5)) })
+        trailingCard.addView(label("Status: ${if (trailingStopEnabled) "ON — managing eligible open trades" else "OFF — monitoring only"}", 12f, if (trailingStopEnabled) green else yellow, true))
+        trailingCard.addView(button(if (trailingStopEnabled) "TURN TRAILING STOP OFF" else "TURN TRAILING STOP ON", trailingStopEnabled) {
+            trailingStopEnabled = !trailingStopEnabled
+            if (trailingStopEnabled) notifyEvent("Trailing Stop Enabled", "Standalone trailing stop is ON. It will manage eligible open trades after the 10% activation threshold.", "trailing_stop_enabled_${accountId}_${executionMode}")
+            else notifyEvent("Trailing Stop Disabled", "Standalone trailing stop is OFF. Open trades will remain open unless closed manually or by another applicable contract rule.", "trailing_stop_disabled_${accountId}_${executionMode}_${System.currentTimeMillis()}")
+            render()
+        }, matchWrap().apply { topMargin = dp(8) })
+        page.addView(trailingCard, matchWrap().apply { bottomMargin = dp(10) })
+
+        val priceAlertCard = card().apply { orientation = LinearLayout.VERTICAL }
+        addPriceAlertControls(priceAlertCard)
+        page.addView(priceAlertCard, matchWrap().apply { bottomMargin = dp(10) })
         val card = card().apply { orientation = LinearLayout.VERTICAL }
         card.addView(label("Account and notification settings", 16f, green, true))
         card.addView(button("OPEN NOTIFICATIONS", true) { selectedTab = "Notifications"; render() }, matchWrap())
@@ -3568,7 +3599,6 @@ private fun addTargetFilterAnalysis() {
     render()
     derivApiClient.connectWithAccessToken(token, executionMode)
     }
-
     private fun disconnectDeriv(clearSavedTokens: Boolean = false) {
         try { derivApiClient.disconnect() } catch (_: Exception) {}
         appPrefs.edit().putBoolean("deriv_manually_disconnected", true).apply()
