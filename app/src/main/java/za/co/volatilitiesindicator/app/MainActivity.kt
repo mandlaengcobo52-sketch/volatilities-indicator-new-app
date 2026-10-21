@@ -666,7 +666,7 @@ private var drawerOpen = false
             pendingOrdersByRequest.remove(reqId)
             derivApiClient.send(JSONObject().put("proposal_open_contract", 1).put("contract_id", contractId).put("subscribe", 1))
             derivApiClient.requestOpenTrades()
-            derivApiClient.requestTradeHistory()
+         derivApiClient.requestTradeHistory()
             if (selectedTab == "Trade") render()
             return
         }
@@ -1819,7 +1819,6 @@ private fun addTradeScreen() {
         render()
     }, matchWrap().apply { topMargin = dp(8) })
     page.addView(trailingCard, matchWrap().apply { bottomMargin = dp(10) })
-
     page.addView(sectionTitle("RUNNING TRADES"))
     val runningCard = card().apply { orientation = LinearLayout.VERTICAL }
     val portfolioArray = openTradesResponse?.optJSONObject("portfolio")?.optJSONArray("contracts")
@@ -2429,7 +2428,7 @@ private fun addDirectionStructuralTargetAnalysis() {
                     } ?: "—"
                 }",
                 12f, blue, false
-            )
+                )
         )
         page.addView(
             indexCard,
@@ -2722,7 +2721,6 @@ private fun addTargetFilterAnalysis() {
                 userCard.addView(button("ASSIGN START / EXPIRY DATES", true) { showAssignPlanDatesDialog(user) },
                     matchWrap().apply { topMargin = dp(6) })
             }
-
             // User-management actions are handled by the server against the shared users.json.
             val userId = user.optString("id", "")
             if (userId.isNotBlank()) {
@@ -3331,7 +3329,6 @@ private fun addTargetFilterAnalysis() {
                 12,
                 1
             )
-
             minHeight = dp(48)
             minimumHeight = dp(48)
             stateListAnimator = null
@@ -3610,8 +3607,7 @@ private fun addTargetFilterAnalysis() {
             }
         }
     }
-}
-
+    }
     override fun onTradeData(json: JSONObject) {
     runOnUiThread {
         handleMasterDecisionTradeResponse(json)
@@ -3751,4 +3747,5 @@ override fun onMarketDataError(
         }
     }
 
-                                        }
+    }
+    
