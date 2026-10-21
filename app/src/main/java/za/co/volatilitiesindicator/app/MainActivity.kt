@@ -432,7 +432,7 @@ private var drawerOpen = false
             "qualified_${symbol}_${decision.direction}_${event.confirmation.epoch}_${executionMode}_${accountId}"
         )
         return decision
-        }
+    }
     private fun attemptMasterDecisionExecution(symbol: String, decision: MasterDecision) {
         // This decision was evaluated from the latest tick immediately before this call.
         // The proposal-response path still performs its own fresh validation before purchase.
@@ -718,7 +718,7 @@ private var drawerOpen = false
                     }
                 }
 
-                // Standalone true trailing stop: activate at +10% of original stake,
+               // Standalone true trailing stop: activate at +10% of original stake,
                 // then trail the peak profit by 10% of original stake, with a break-even floor.
                 val trailingGap = tenPercentTarget
                 val protectedProfit = maxOf(0.0, running.peakProfit - trailingGap)
@@ -997,6 +997,7 @@ when (selectedTab) {
 // ==========================================
 private fun addRegistrationScreen() {
     page.addView(sectionTitle("CREATE ACCOUNT"))
+
     val registrationCard = card().apply { orientation = LinearLayout.VERTICAL }
     registrationCard.addView(label("Register your Volatilities Indicator account", 17f, white, true))
     registrationCard.addView(label("Your application will remain pending until an administrator approves it.", 14f, yellow, false))
@@ -1138,7 +1139,6 @@ private fun addLoginScreen() {
                 val loginGeneration = authSessionGeneration
                 authRequest("login", mapOf("email" to email, "password" to password), token = "") { ok, result ->
                     if (loginGeneration != authSessionGeneration) return@authRequest
-                    signIn.isEnabled = true
                     signIn.text = "SIGN IN"
                     if (ok) {
                         // Invalidate any profile/admin response from the previous user.
@@ -1598,7 +1598,7 @@ private fun addHeader() {
         executionMode = "REAL"
         render()
         beginDerivConnection()
-        }
+    }
     },
     weighted()
 )
@@ -3599,6 +3599,7 @@ private fun addTargetFilterAnalysis() {
     render()
     derivApiClient.connectWithAccessToken(token, executionMode)
     }
+
     private fun disconnectDeriv(clearSavedTokens: Boolean = false) {
         try { derivApiClient.disconnect() } catch (_: Exception) {}
         appPrefs.edit().putBoolean("deriv_manually_disconnected", true).apply()
@@ -3842,4 +3843,3 @@ override fun onMarketDataError(
     }
 
                                         }
-    
