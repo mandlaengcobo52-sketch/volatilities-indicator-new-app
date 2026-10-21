@@ -28,6 +28,7 @@ import android.os.Handler
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
+import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -192,6 +193,16 @@ private var drawerOpen = false
     private var notificationId = 4200
     private val notificationsEnabled: Boolean
         get() = appPrefs.getBoolean("notificationsEnabled", false)
+    private val priceAlertActive: Boolean
+        get() = appPrefs.getBoolean("priceAlertActive", false)
+    private val priceAlertSymbol: String
+        get() = appPrefs.getString("priceAlertSymbol", "R_10").orEmpty()
+    private val priceAlertTarget: Double
+        get() = appPrefs.getString("priceAlertTarget", "")?.toDoubleOrNull() ?: 0.0
+    private val priceAlertCondition: String
+        get() = appPrefs.getString("priceAlertCondition", "above").orEmpty()
+    private val priceAlertArmedAt: Long
+        get() = appPrefs.getLong("priceAlertArmedAt", 0L)
     private var trailingStopEnabled: Boolean
         get() = appPrefs.getBoolean("trailingStopEnabled", false)
         set(value) { appPrefs.edit().putBoolean("trailingStopEnabled", value).apply() }
@@ -1615,7 +1626,7 @@ private fun addHeader() {
         }
     }
 
-    // =========================================================
+        // =========================================================
     // DERIV ACCOUNT CARD — VISUAL PLACEHOLDER ONLY
     // =========================================================
 
@@ -2738,7 +2749,7 @@ private fun addTargetFilterAnalysis() {
                                         toast(result.optString("message", if (ok) "User suspended." else "Unable to suspend user."))
                                         if (ok) loadAdminUsers()
                                     }
-                                    }.show()
+                                }.show()
                         },
                         matchWrap().apply { topMargin = dp(6) }
                     )
@@ -2820,7 +2831,7 @@ private fun addTargetFilterAnalysis() {
             addView(label("PLAN START DATE", 12f, green, true)); addView(startInput, matchWrap())
             addView(label("PLAN EXPIRY DATE", 12f, green, true).apply { setPadding(0, dp(8), 0, 0) }); addView(expiryInput, matchWrap())
             addView(label("Use yyyy-MM-dd. Expiry must be on or after start.", 12f, muted, false).apply { setPadding(0, dp(8), 0, 0) })
-        }
+    }
         android.app.AlertDialog.Builder(this).setTitle("Assign plan dates").setView(fields)
             .setNegativeButton("CANCEL", null).setPositiveButton("ASSIGN", null).create().apply {
                 setOnShowListener {
@@ -3038,6 +3049,7 @@ private fun addTargetFilterAnalysis() {
         }, matchWrap().apply { topMargin = dp(8) })
         page.addView(card, matchWrap())
     }
+
     private fun addNotificationsScreen() {
         page.addView(sectionTitle("NOTIFICATIONS"))
         val card = card().apply { orientation = LinearLayout.VERTICAL }
@@ -3054,6 +3066,60 @@ private fun addTargetFilterAnalysis() {
             }
             render()
         }, matchWrap().apply { topMargin = dp(10) })
+        card.addView(label("────────────────────────", 10f, muted, false))
+        card.addView(label("PRICE ALERT WITH VIBRATION", 16f, green, true).apply { setPadding(0, dp(12), 0, dp(5)) })
+        card.addView(label("Choose an index and target price. When the live Deriv price reaches the selected condition, the app sends one notification with vibration. The app must remain connected to Deriv to receive live prices.", 12f, muted, false))
+        val alertIndexSpinner = Spinner(this)
+        alertIndexSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, marketDataIndexes)
+        alertIndexSpinner.setSelection(marketDataIndexes.indexOf(priceAlertSymbol).coerceAtLeast(0))
+        card.addView(alertIndexSpinner, matchWrap().apply { topMargin = dp(7) })
+        val targetInput = EditText(this).apply {
+            setSingleLine(true)
+            hint = "Target price (e.g. 1234.500)"
+            setText(if (priceAlertTarget > 0.0) priceAlertTarget.toString() else "")
+            setTextColor(white)
+            setHintTextColor(muted)
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            background = shape(panel2, greenDark, 8, 1)
+        }
+        card.addView(targetInput, matchWrap().apply { topMargin = dp(7) })
+        val alertConditionSpinner = Spinner(this)
+        alertConditionSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, listOf("Price reaches target or higher", "Price reaches target or lower"))
+        alertConditionSpinner.setSelection(if (priceAlertCondition == "below") 1 else 0)
+        card.addView(alertConditionSpinner, matchWrap().apply { topMargin = dp(7) })
+        card.addView(label(
+            if (priceAlertActive) "Alert status: ARMED — $priceAlertSymbol ${if (priceAlertCondition == "below") "≤" else "≥"} ${formatMarketPrice(priceAlertTarget)}"
+            else "Alert status: NOT ARMED",
+            12f, if (priceAlertActive) green else yellow, true
+        ).apply { setPadding(0, dp(8), 0, dp(4)) })
+        card.addView(button("ARM PRICE ALERT", true) {
+            val target = targetInput.text.toString().trim().replace(',', '.').toDoubleOrNull()
+            if (target == null || !target.isFinite() || target <= 0.0) {
+                targetInput.error = "Enter a valid target price greater than zero"
+                return@button
+            }
+            val selectedSymbol = alertIndexSpinner.selectedItem?.toString() ?: "R_10"
+            val selectedCondition = if (alertConditionSpinner.selectedItemPosition == 1) "below" else "above"
+            appPrefs.edit()
+                .putBoolean("priceAlertActive", true)
+                .putString("priceAlertSymbol", selectedSymbol)
+                .putString("priceAlertTarget", target.toString())
+                .putString("priceAlertCondition", selectedCondition)
+                .putLong("priceAlertArmedAt", System.currentTimeMillis())
+                .putBoolean("notificationsEnabled", true)
+                .apply()
+            ensureNotificationPermission()
+            addNotificationFeedItem("Price alert armed: $selectedSymbol ${if (selectedCondition == "below") "at or below" else "at or above"} ${formatMarketPrice(target)}")
+            render()
+        }, matchWrap().apply { topMargin = dp(8) })
+        if (priceAlertActive) {
+            card.addView(button("CANCEL PRICE ALERT", false) {
+                appPrefs.edit().putBoolean("priceAlertActive", false).apply()
+                addNotificationFeedItem("Price alert cancelled.")
+                render()
+            }, matchWrap().apply { topMargin = dp(6) })
+        }
         card.addView(label("Notification permission: ${if (Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) "GRANTED / NOT REQUIRED" else "NOT GRANTED — allow it in Android settings"}", 12f, yellow, false).apply { setPadding(0, dp(8), 0, dp(4)) })
         card.addView(button("CLEAR NOTIFICATION FEED", false) {
             appPrefs.edit().remove("notification_feed").apply()
@@ -3368,7 +3434,6 @@ private fun addTargetFilterAnalysis() {
             setStroke(dp(strokeDp), stroke)
         }
     }
-
     private fun matchWrap(): LinearLayout.LayoutParams {
         return LinearLayout.LayoutParams(-1, -2)
     }
@@ -3568,9 +3633,27 @@ private fun addTargetFilterAnalysis() {
             }
         }
     }
+    private fun checkPriceAlert(symbol: String, quote: Double) {
+        if (!priceAlertActive || symbol != priceAlertSymbol || !quote.isFinite() || priceAlertTarget <= 0.0) return
+        val reached = if (priceAlertCondition == "below") quote <= priceAlertTarget else quote >= priceAlertTarget
+        if (!reached) return
+        val armedAt = priceAlertArmedAt
+        val target = priceAlertTarget
+        val conditionText = if (priceAlertCondition == "below") "at or below" else "at or above"
+        // Disarm before notifying so a stream of ticks cannot produce repeated alerts.
+        appPrefs.edit().putBoolean("priceAlertActive", false).apply()
+        notifyEvent(
+            "PRICE ALERT — $symbol",
+            "$symbol reached ${formatMarketPrice(quote)} ($conditionText target ${formatMarketPrice(target)}).",
+            "price_alert_${symbol}_${target}_$armedAt"
+        )
+        if (selectedTab == "Notifications") render()
+    }
+
     override fun onTick(symbol: String, quote: Double, epoch: Long) {
     runOnUiThread {
         if (symbol in marketDataIndexes && quote.isFinite()) {
+            checkPriceAlert(symbol, quote)
             marketDataPrices[symbol] = quote
             marketDataErrors.remove(symbol)
             dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
@@ -3732,4 +3815,3 @@ override fun onMarketDataError(
     }
 
                                         }
-        
