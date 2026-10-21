@@ -1021,7 +1021,6 @@ private fun addRegistrationScreen() {
     registrationCard.addView(surnameInput)
     registrationCard.addView(emailInput)
     registrationCard.addView(phoneInput)
-
     fun addPasswordField(title: String): Pair<LinearLayout, android.widget.EditText> {
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         val input = textInput(title, android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD).apply {
@@ -2196,33 +2195,23 @@ private fun addMarketStructureAnalysis() {
                 else if (last.size == 2 && last[0].type == "HIGH" && last[1].type == "LOW") "BEARISH LEG" else "UNCLEAR"
             structureCard.addView(label("STRUCTURAL PIVOTS: ${pivots.size}", 12f, white, false))
             structureCard.addView(label("CURRENT STRUCTURAL LEG: $leg", 13f, if (leg == "BULLISH LEG") green else if (leg == "BEARISH LEG") red else yellow, true))
-            --- a/app/src/main/java/za/co/volatilitiesindicator/app/MainActivity.kt
-+++ b/app/src/main/java/za/co/volatilitiesindicator/app/MainActivity.kt
-@@ -2193,6 +2193,23 @@
-                 else if (last.size == 2 && last[0].type == "HIGH" && last[1].type == "LOW") "BEARISH LEG" else "UNCLEAR"
-             structureCard.addView(label("STRUCTURAL PIVOTS: ${pivots.size}", 12f, white, false))
-             structureCard.addView(label("CURRENT STRUCTURAL LEG: $leg", 13f, if (leg == "BULLISH LEG") green else if (leg == "BEARISH LEG") red else yellow, true))
-+            val latestHigh = highs.lastOrNull()
-+            val latestLow = lows.lastOrNull()
-+            val overallStructure = when {
-+                latestHigh?.label == "HH" && latestLow?.label == "HL" -> "BULLISH STRUCTURE"
-+                latestHigh?.label == "LH" && latestLow?.label == "LL" -> "BEARISH STRUCTURE"
-+                else -> "MIXED / TRANSITION"
-+            }
-+            val structureSummary = when (overallStructure) {
-+                "BULLISH STRUCTURE" -> "Latest high and low are both higher; bullish structure is present. Wait for the existing confirmation rules before trading."
-+                "BEARISH STRUCTURE" -> "Latest high and low are both lower; bearish structure is present. Wait for the existing confirmation rules before trading."
-+                else -> "Latest high/low pivots disagree or are not aligned; structure is mixed. Wait for clearer confirmation."
-+            }
-+            structureCard.addView(label("OVERALL MARKET STRUCTURE: $overallStructure", 13f, if (overallStructure == "BULLISH STRUCTURE") green else if (overallStructure == "BEARISH STRUCTURE") red else yellow, true))
-+            if (latestHigh != null && latestLow != null) {
-+                structureCard.addView(label("KEY LEVELS: HIGH ${formatMarketPrice(latestHigh.price)} (${latestHigh.label}) | LOW ${formatMarketPrice(latestLow.price)} (${latestLow.label})", 12f, white, false))
-+            }
-+            structureCard.addView(label("STRUCTURE SUMMARY: $structureSummary", 12f, white, false))
-             if (last.size == 2) structureCard.addView(label("LEG: ${last[0].type} ${formatMarketPrice(last[0].price)} (${formatMarketTime(last[0].epoch)}) → ${last[1].type} ${formatMarketPrice(last[1].price)} (${formatMarketTime(last[1].epoch)})", 12f, white, false))
-             structureCard.addView(label("LATEST STRUCTURAL PIVOTS", 13f, green, true))
-             pivots.takeLast(10).forEach { pivot ->
-                 
+            val latestHigh = highs.lastOrNull()
+            val latestLow = lows.lastOrNull()
+            val overallStructure = when {
+                latestHigh?.label == "HH" && latestLow?.label == "HL" -> "BULLISH STRUCTURE"
+                latestHigh?.label == "LH" && latestLow?.label == "LL" -> "BEARISH STRUCTURE"
+                else -> "MIXED / TRANSITION"
+            }
+            val structureSummary = when (overallStructure) {
+                "BULLISH STRUCTURE" -> "Latest high and low are both higher; bullish structure is present. Wait for the existing confirmation rules before trading."
+                "BEARISH STRUCTURE" -> "Latest high and low are both lower; bearish structure is present. Wait for the existing confirmation rules before trading."
+                else -> "Latest high/low pivots disagree or are not aligned; structure is mixed. Wait for clearer confirmation."
+            }
+            structureCard.addView(label("OVERALL MARKET STRUCTURE: $overallStructure", 13f, if (overallStructure == "BULLISH STRUCTURE") green else if (overallStructure == "BEARISH STRUCTURE") red else yellow, true))
+            if (latestHigh != null && latestLow != null) {
+                structureCard.addView(label("KEY LEVELS: HIGH ${formatMarketPrice(latestHigh.price)} (${latestHigh.label}) | LOW ${formatMarketPrice(latestLow.price)} (${latestLow.label})", 12f, white, false))
+            }
+            structureCard.addView(label("STRUCTURE SUMMARY: $structureSummary", 12f, white, false))
             if (last.size == 2) structureCard.addView(label("LEG: ${last[0].type} ${formatMarketPrice(last[0].price)} (${formatMarketTime(last[0].epoch)}) → ${last[1].type} ${formatMarketPrice(last[1].price)} (${formatMarketTime(last[1].epoch)})", 12f, white, false))
             structureCard.addView(label("LATEST STRUCTURAL PIVOTS", 13f, green, true))
             pivots.takeLast(10).forEach { pivot ->
@@ -3443,7 +3432,6 @@ private fun addTargetFilterAnalysis() {
                 dp(4)
             )
         }
-
         if (action != null) {
             b.setOnClickListener {
                 action()
