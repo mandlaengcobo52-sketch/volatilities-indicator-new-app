@@ -1,4 +1,4 @@
-name: Build and Sign Volatilities Indicator APK
+name: Build Volatilities Indicator APK
 
 on:
   workflow_dispatch:
@@ -6,16 +6,13 @@ on:
     branches:
       - main
 
-permissions:
-  contents: read
-
 jobs:
   build:
-    name: Build and Sign APK
+    name: Build APK
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
@@ -39,68 +36,22 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Check Android project
+      - name: Check project
         run: |
+          echo "Java:"
           java -version
+          echo "Gradle:"
           gradle --version
-          test -f settings.gradle || test -f settings.gradle.kts
-          test -d app
+          echo "Project files:"
+          find . -maxdepth 4 -type f | sort
 
-      - name: Build Debug APK
-        run: gradle --no-daemon assembleDebug
-
-      - name: Build Release APK
-        run: gradle --no-daemon assembleRelease
-
-      - name: Prepare signing keystore
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      - name: Build APK
         run: |
-          set -euo pipefail
-          test -n "$ANDROID_KEYSTORE_BASE64"
-          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
-          test -s "$RUNNER_TEMP/release.jks"
+          gradle --no-daemon assembleDebug
 
-      - name: Sign and verify release APK
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD || secrets.ANDROID_KEYSTORE_PASSWORD }}
-        run: |
-          set -euo pipefail
-          test -n "$KEYSTORE_PASSWORD"
-          test -n "$KEY_ALIAS"
-          test -n "$KEY_PASSWORD"
-
-          APK="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' ! -name '*signed*' -print -quit)"
-          if [ -z "$APK" ]; then
-            echo "ERROR: No unsigned/unprocessed release APK found."
-            find app/build/outputs/apk -type f -name '*.apk' -print
-            exit 1
-          fi
-
-          mkdir -p release-apk
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign \
-            --ks "$RUNNER_TEMP/release.jks" \
-            --ks-key-alias "$KEY_ALIAS" \
-            --ks-pass env:KEYSTORE_PASSWORD \
-            --key-pass env:KEY_PASSWORD \
-            --out release-apk/volatilities-indicator-release.apk \
-            "$APK"
-
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose \
-            release-apk/volatilities-indicator-release.apk
-
-      - name: Upload Debug APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: volatilities-indicator-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
-
-      - name: Upload Signed Release APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: volatilities-indicator-signed-release-apk
-          path: release-apk/volatilities-indicator-release.apk
-          if-no-files-found: error
+          path: '**/build/outputs/apk/debug/*.apk'
+          
