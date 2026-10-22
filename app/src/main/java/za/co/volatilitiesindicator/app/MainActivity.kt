@@ -577,7 +577,7 @@ private var drawerOpen = false
             .put("duration", 3)
             .put("duration_unit", "d")
             .put("underlying_symbol", symbol)
-            .put("barrier", relativeBarrier)
+            .put("barrier", String.format(Locale.US, "%.3f", targetPrice))
             .put("req_id", reqId)
         if (!derivApiClient.send(proposal)) {
             pendingOrdersByRequest.remove(reqId)
