@@ -93,6 +93,9 @@ private var drawerOpen = false
     private var runningTotalPlView: TextView? = null
     private var historyAccountKey: String = ""
     private var connected = false
+    // onCreate already initiates the first connection; only run the recovery check
+    // on later returns to the foreground.
+    private var hasResumedOnce = false
     private var accountId = ""
     private var accountType = ""
     private var accountBalance = 0.0
@@ -204,7 +207,7 @@ private var drawerOpen = false
     private val priceAlertArmedAt: Long
         get() = appPrefs.getLong("priceAlertArmedAt", 0L)
     private var trailingStopEnabled: Boolean
-        get() = appPrefs.getBoolean("trailingStopEnabled", true)
+        get() = appPrefs.getBoolean("trailingStopEnabled", false)
         set(value) { appPrefs.edit().putBoolean("trailingStopEnabled", value).apply() }
     private val dailyCapitalTimeZone = java.util.TimeZone.getTimeZone("Africa/Johannesburg")
 
@@ -333,7 +336,6 @@ private var drawerOpen = false
         }
         return true
     }
-
     private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Long) {
         val accountKey = accountId.ifBlank { "unlinked" }.replace(Regex("[^A-Za-z0-9_-]"), "_")
         val key = "daily_trades_${accountKey}_${executionMode}_${saDayKey()}"
@@ -370,105 +372,58 @@ private var drawerOpen = false
         if (samples == 0) return 0.0 to 0
         return (hits.toDouble() / samples.toDouble() * 100.0) to samples
     }
-    /** Sole authority for trade approval. PTPE lifecycle is checked in order on every fresh evaluation. */
+    /** Sole authority for trade approval. PTPE is always recorded for display, even when it fails. */
     private fun evaluateMasterDecision(symbol: String): MasterDecision? {
         val candles = analysisCompletedCandles(symbol)
         if (candles.size < 100) {
-            lastPtpeByIndex[symbol] = PtpeDisplay(status = "WAITING — INSUFFICIENT CANDLE HISTORY")
+            lastPtpeByIndex[symbol] = PtpeDisplay(status = "WAITING FOR 100+ CANDLES")
             lastDecisionByIndex.remove(symbol)
             return null
         }
         val current = marketDataPrices[symbol] ?: candles.lastOrNull()?.close
         if (current == null || !current.isFinite() || current <= 0.0) {
-            lastPtpeByIndex[symbol] = PtpeDisplay(status = "WAITING — NO LIVE PRICE")
+            lastPtpeByIndex[symbol] = PtpeDisplay(status = "WAITING FOR LIVE PRICE")
             lastDecisionByIndex.remove(symbol)
             return null
         }
-        val pivots = analysisPivots(candles)
-        val pivot = pivots.lastOrNull()
-        if (pivot == null || pivot.price <= 0.0) {
-            lastPtpeByIndex[symbol] = PtpeDisplay(status = "WAITING — NO CONFIRMED PIVOT")
-            lastDecisionByIndex.remove(symbol)
-            return null
-        }
-        val developingDirection = when {
-            pivot.type == "LOW" && current > pivot.price -> "BULLISH"
-            pivot.type == "HIGH" && current < pivot.price -> "BEARISH"
-            else -> ""
-        }
-        val pivotDistancePercent = kotlin.math.abs(current - pivot.price) / pivot.price * 100.0
-        if (developingDirection.isBlank() || pivotDistancePercent < 2.0) {
-            lastPtpeByIndex[symbol] = PtpeDisplay(
-                direction = if (developingDirection == "BULLISH") "BUY" else if (developingDirection == "BEARISH") "SELL" else "—",
-                distancePercent = pivotDistancePercent,
-                status = "WAITING — PRICE MUST REVERSE 2% FROM CONFIRMED PIVOT"
-            )
-            lastDecisionByIndex.remove(symbol)
-            return null
-        }
-        // PTPE moves to BUILDING UP after the 2% pivot-reversal distance only.
         val event = analysisLatestMss(candles)
-        val decisionDirection = if (developingDirection == "BULLISH") "BUY" else "SELL"
-        if (event == null || event.direction != developingDirection || event.confirmation.epoch <= pivot.epoch) {
-            lastPtpeByIndex[symbol] = PtpeDisplay(direction = decisionDirection, distancePercent = pivotDistancePercent,
-                status = "BUILDING UP — WAITING FOR MATCHING CHOCH/MSS")
+        if (event == null) {
+            lastPtpeByIndex[symbol] = PtpeDisplay(status = "WAITING FOR CONFIRMED MSS/CHOCH")
             lastDecisionByIndex.remove(symbol)
             return null
         }
-        // BOS must be a subsequent completed-candle close beyond a confirmed pivot formed
-        // after the MSS event. A live touch alone is not a confirmed BOS.
-        val eventIndex = candles.indexOfFirst { it.epoch == event.confirmation.epoch }
-        val laterPivots = pivots.filter { it.index > eventIndex && it.confirmedEpoch > event.confirmation.epoch }
-        val bosConfirmed = if (developingDirection == "BULLISH") {
-            laterPivots.filter { it.type == "HIGH" }.any { level ->
-                candles.any { it.epoch > level.confirmedEpoch && it.close > level.price }
-            }
-        } else {
-            laterPivots.filter { it.type == "LOW" }.any { level ->
-                candles.any { it.epoch > level.confirmedEpoch && it.close < level.price }
-            }
-        }
-        if (!bosConfirmed) {
-            lastPtpeByIndex[symbol] = PtpeDisplay(direction = decisionDirection, distancePercent = pivotDistancePercent,
-                status = "GET READY — CHOCH/MSS CONFIRMED; WAITING FOR BOS")
-            lastDecisionByIndex.remove(symbol)
-            return null
-        }
-        val targetDirection = if (developingDirection == "BULLISH") "UP" else "DOWN"
+        val direction = event.direction
+        val targetDirection = if (direction == "BULLISH") "UP" else "DOWN"
         val targetPivot = analysisStructuralTarget(candles, current, targetDirection, event.confirmation.epoch)
         if (targetPivot == null) {
-            lastPtpeByIndex[symbol] = PtpeDisplay(direction = decisionDirection, distancePercent = pivotDistancePercent,
-                status = "GET READY — BOS CONFIRMED; WAITING FOR VALID TARGET")
+            lastPtpeByIndex[symbol] = PtpeDisplay(direction = if (direction == "BULLISH") "BUY" else "SELL", status = "WAITING FOR STRUCTURAL TARGET")
             lastDecisionByIndex.remove(symbol)
             return null
-        }
+            }
         val target = targetPivot.price
-        if (!target.isFinite() || (developingDirection == "BULLISH" && target <= current) ||
-            (developingDirection == "BEARISH" && target >= current)) {
-            lastPtpeByIndex[symbol] = PtpeDisplay(direction = decisionDirection, target = target,
-                distancePercent = pivotDistancePercent, status = "GET READY — INVALID TARGET DIRECTION")
+        if (!target.isFinite() || (direction == "BULLISH" && target <= current) || (direction == "BEARISH" && target >= current)) {
+            lastPtpeByIndex[symbol] = PtpeDisplay(direction = if (direction == "BULLISH") "BUY" else "SELL", target = target, status = "INVALID TARGET DIRECTION")
             lastDecisionByIndex.remove(symbol)
             return null
         }
         val distance = kotlin.math.abs(target - current) / current * 100.0
-        val (probability, samples) = targetProbabilityPercent(candles, developingDirection, distance)
-        val priorOutcomeExists = analysisHistoricalOutcomes(candles).any {
-            it.direction == developingDirection && it.confirmation.epoch != event.confirmation.epoch
-        }
-        val qualified = samples >= 5 && probability > 55.0 && priorOutcomeExists
+        val (probability, samples) = targetProbabilityPercent(candles, direction, distance)
+        val decisionDirection = if (direction == "BULLISH") "BUY" else "SELL"
+        val priorOutcomeExists = analysisHistoricalOutcomes(candles).any { it.direction == direction && it.confirmation.epoch != event.confirmation.epoch }
         val status = when {
-            samples < 5 -> "QUALIFYING NOW — REJECTED: INSUFFICIENT PTPE SAMPLES"
-            probability <= 55.0 -> "QUALIFYING NOW — REJECTED: PROBABILITY MUST EXCEED 55%"
-            !priorOutcomeExists -> "QUALIFYING NOW — REJECTED: NO PRIOR SAME-DIRECTION OUTCOME"
-            else -> "QUALIFYING NOW — APPROVED"
+            distance < 1.5 -> "WAIT — TARGET DISTANCE BELOW 1.5%"
+            samples < 5 -> "WAIT — INSUFFICIENT PTPE SAMPLES"
+            probability < 55.0 -> "WAIT — PTPE BELOW 55%"
+            !priorOutcomeExists -> "WAIT — NO PRIOR SAME-DIRECTION OUTCOME"
+            else -> "QUALIFIED"
         }
         lastPtpeByIndex[symbol] = PtpeDisplay(decisionDirection, target, distance, probability, samples, status)
-        if (!qualified) {
+        if (status != "QUALIFIED") {
             lastDecisionByIndex.remove(symbol)
             return null
         }
         val decision = MasterDecision(symbol, decisionDirection, current, target, distance, probability, samples,
-            "2% pivot reversal + matching CHOCH/MSS + subsequent BOS + target probability >55%; 20% stake-profit proposal gate; 3-day contract")
+            "Confirmed MSS/CHOCH + structural target + empirical 24-hour PTPE; 3-day contract timeframe")
         lastDecisionByIndex[symbol] = decision
         notifyEvent(
             "Trade qualified",
@@ -727,20 +682,21 @@ private var drawerOpen = false
                 liveContractProfits[contractId] = profitOpen
                 liveContractProfitModes[contractId] = "${accountId}_$executionMode"
                 val twentyPercentTarget = running.stake * 0.20
+                val tenPercentTarget = running.stake * 0.10 // Preserve the existing trailing-stop threshold.
                 if (!running.targetNotified && profitOpen >= twentyPercentTarget) {
                     running.targetNotified = true
                     running.trailingActivated = true
                     running.peakProfit = profitOpen
                     appPrefs.edit().putBoolean("${trailStateKey}_target_notified", true).putBoolean("${trailStateKey}_activated", true).putString("${trailStateKey}_peak", running.peakProfit.toString()).apply()
                     notifyEvent("20% Profit Target Reached", "${running.symbol} · Contract $contractId · Stake ${formatMoney(running.stake)} · Target ${formatMoney(twentyPercentTarget)} · Current P/L ${formatMoney(profitOpen)}. Trailing stop ${if (trailingStopEnabled) "ACTIVE" else "READY — currently OFF"}.",
-                        "profit_20pct_reached_${accountId}_${executionMode}_$contractId")
+                        "profit_10pct_reached_${accountId}_${executionMode}_$contractId")
                 }
                 if (running.trailingActivated) {
                     running.peakProfit = maxOf(running.peakProfit, profitOpen)
                     appPrefs.edit().putBoolean("${trailStateKey}_activated", true).putString("${trailStateKey}_peak", running.peakProfit.toString()).apply()
                 }
 
-                // The structural price target is distinct from the 20% monetary profit target.
+                // The structural price target is distinct from the 10% monetary profit target.
                 // Close only when a known target from the Master Decision is crossed.
                 val currentSpot = contract.optDouble("current_spot", contract.optDouble("current_spot_display_value", 0.0))
                 val structureReached = running.target > 0.0 && currentSpot > 0.0 &&
@@ -761,14 +717,12 @@ private var drawerOpen = false
                     }
                 }
 
-                // App-managed stepped trailing stop: every completed +20% of original stake
-                // locks the corresponding profit level. The protected level never moves back.
-                val profitStep = running.stake * 0.20
-                val protectedProfit = if (profitStep > 0.0) {
-                    kotlin.math.floor(running.peakProfit / profitStep) * profitStep
-                } else 0.0
+               // Standalone true trailing stop: activate at +10% of original stake,
+                // then trail the peak profit by 10% of original stake, with a break-even floor.
+                val trailingGap = tenPercentTarget
+                val protectedProfit = maxOf(0.0, running.peakProfit - trailingGap)
                 if (trailingStopEnabled && running.trailingActivated && !running.closeRequested &&
-                    protectedProfit >= profitStep && profitOpen <= protectedProfit) {
+                    profitOpen <= protectedProfit && running.peakProfit > tenPercentTarget) {
                     running.closeRequested = true
                     running.closeReason = "Trailing Stop Triggered"
                     val sent = derivApiClient.send(JSONObject().put("sell", contractId).put("price", 0).put("req_id", nextTradeRequestId()))
@@ -778,7 +732,7 @@ private var drawerOpen = false
                         notifyEvent("Trailing Stop Close Failed", "${running.symbol} · Contract $contractId · Deriv close request could not be sent; monitoring continues.",
                             "trailing_close_failed_${accountId}_${executionMode}_$contractId")
                     } else {
-                        notifyEvent("Trailing Stop Triggered", "${running.symbol} · Contract $contractId · Peak P/L ${formatMoney(running.peakProfit)} · Protected 20% step ${formatMoney(protectedProfit)} (${String.format(java.util.Locale.US, "%.0f", protectedProfit / running.stake * 100.0)}% of stake). Waiting for Deriv confirmation.",
+                        notifyEvent("Trailing Stop Triggered", "${running.symbol} · Contract $contractId · Peak P/L ${formatMoney(running.peakProfit)} · Protected level ${formatMoney(protectedProfit)}. Waiting for Deriv confirmation.",
                             "trailing_stop_triggered_${accountId}_${executionMode}_$contractId")
                     }
                 }
@@ -812,15 +766,12 @@ private val marketDataPrices =
     private val marketDataPriceViews = mutableMapOf<String, TextView>()
 private val dashboardPriceViews = mutableMapOf<String, TextView>()
 private val currentPriceViews = mutableMapOf<String, MutableList<TextView>>()
-private val developingLegViews = mutableMapOf<String, TextView>()
-private val developingLegDistanceViews = mutableMapOf<String, TextView>()
 private val dashboardStatusViews = mutableMapOf<String, TextView>()
 private val marketDataErrors =
     mutableMapOf<String, String>()
 
 private var marketDataRequested = false
 private var marketStructureExpanded = true
-    private var liquidityAnalysisExpanded = false
 private var mssChochExpanded = true
 private var marketDataExpanded = true
 private var mssChochBehaviourExpanded = true
@@ -831,7 +782,7 @@ private var targetFilterExpanded = true
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-    window.statusBarColor = bg
+        window.statusBarColor = bg
 window.navigationBarColor = bg
 window.decorView.systemUiVisibility = 0
 
@@ -855,6 +806,27 @@ if (authToken.isNotBlank() && savedToken.isNotBlank() &&
     intent?.data?.host != "oauth-callback") {
     connectWithToken(savedToken)
 }
+    }
+
+    override fun onResume() {
+        super.onResume()
+
+        // onCreate handles the initial launch. Avoid starting a second connection
+        // during the first resume while OAuth/account lookup may still be running.
+        if (!hasResumedOnce) {
+            hasResumedOnce = true
+            return
+        }
+
+        if (authToken.isBlank() || appPrefs.getBoolean("deriv_manually_disconnected", false)) {
+            return
+        }
+
+        val tokenKey = if (executionMode == "REAL") "real_token" else "demo_token"
+        val savedToken = prefs.getString(tokenKey, "").orEmpty()
+        if (savedToken.isNotBlank()) {
+            derivApiClient.ensureConnectedOnResume(savedToken, executionMode)
+        }
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -915,14 +887,11 @@ mainScrollView = scroll
 if (selectedTab == "Analysis") {
     currentPriceViews.clear()
     marketDataPriceViews.clear()
-    developingLegViews.clear()
-    developingLegDistanceViews.clear()
 }
 when (selectedTab) {
                 "Analysis" -> {
     addMarketDataAnalysis()
     addMarketStructureAnalysis()
-    addLiquidityAnalysis()
     addMssChochAnalysis()
     addMssChochBehaviourAnalysis()
     addDirectionStructuralTargetAnalysis()
@@ -1169,7 +1138,6 @@ private fun addLoginScreen() {
                 val loginGeneration = authSessionGeneration
                 authRequest("login", mapOf("email" to email, "password" to password), token = "") { ok, result ->
                     if (loginGeneration != authSessionGeneration) return@authRequest
-                    signIn.isEnabled = true
                     signIn.text = "SIGN IN"
                     if (ok) {
                         // Invalidate any profile/admin response from the previous user.
@@ -1621,6 +1589,7 @@ private fun addHeader() {
 )
         
         row.addView(space(dp(8)))
+
         row.addView(
     button("▥  REAL", executionMode == "REAL") {
     if (executionMode != "REAL") {
@@ -1726,6 +1695,7 @@ private fun addHeader() {
                 topMargin = dp(4)
             }
         )
+
         accountIdView = label("Account:  ${if (accountId.isBlank()) "—" else accountId}", 14f, white, false)
         card.addView(accountIdView, matchWrap().apply { topMargin = dp(7) })
 
@@ -1789,16 +1759,14 @@ private fun addHeader() {
     if (marketDataErrors.containsKey(symbol) && marketDataPrices[symbol] == null) return "FEED ERROR" to red
     val status = lastPtpeByIndex[symbol]?.status ?: "WAITING FOR MARKET DATA"
     val shortStatus = when {
-        status.contains("CANDLE HISTORY") -> "HISTORY WAIT"
+        status.contains("100+ CANDLES") -> "HISTORY WAIT"
         status.contains("LIVE PRICE") -> "PRICE WAIT"
-        status.contains("2% FROM CONFIRMED PIVOT") -> "PIVOT REVERSAL WAIT"
-        status.contains("BUILDING UP") -> "BUILDING UP"
-        status.contains("CHOCH/MSS") -> "MSS WAIT"
-        status.contains("WAITING FOR BOS") -> "BOS WAIT"
-        status.contains("STRUCTURAL TARGET") || status.contains("VALID TARGET") -> "TARGET WAIT"
+        status.contains("MSS/CHOCH") -> "MSS WAIT"
+        status.contains("STRUCTURAL TARGET") -> "TARGET WAIT"
         status.contains("INVALID TARGET") -> "INVALID TARGET"
+        status.contains("DISTANCE BELOW") -> "DISTANCE <1.5%"
         status.contains("INSUFFICIENT PTPE") -> "PTPE SAMPLES"
-        status.contains("PROBABILITY MUST EXCEED 55%") -> "PTPE ≤55%"
+        status.contains("PTPE BELOW") -> "PTPE <55%"
         status.contains("NO PRIOR") -> "NO PRIOR EVENT"
         status.contains("ERROR") -> "DATA ERROR"
         else -> "DATA WAIT"
@@ -1841,26 +1809,6 @@ private fun addTradeScreen() {
     }
     page.addView(accountCard, matchWrap().apply { bottomMargin = dp(10) })
 
-    val decisionCard = card().apply { orientation = LinearLayout.VERTICAL }
-    decisionCard.addView(label(if (autoTradeEnabled) "MASTER DECISION: ON" else "MASTER DECISION: OFF", 15f, if (autoTradeEnabled) green else red, true))
-    decisionCard.addView(button(if (autoTradeEnabled) "TURN MASTER DECISION OFF" else "TURN MASTER DECISION ON", autoTradeEnabled) {
-        autoTradeEnabled = !autoTradeEnabled
-        if (autoTradeEnabled && !connected) toast("Master Decision is ON, but execution waits until Deriv is connected.")
-        render()
-    }, matchWrap().apply { topMargin = dp(8) })
-    page.addView(decisionCard, matchWrap().apply { bottomMargin = dp(10) })
-
-    val trailingCard = card().apply { orientation = LinearLayout.VERTICAL }
-    trailingCard.addView(label("STANDALONE TRAILING STOP", 15f, green, true))
-    trailingCard.addView(label("Activation: +20% of original stake · Profit lock advances in 20% stake increments (20%, 40%, 60%...)", 12f, muted, false).apply { setPadding(0, dp(5), 0, dp(5)) })
-    trailingCard.addView(label("Status: ${if (trailingStopEnabled) "ON — managing eligible open trades" else "OFF — monitoring only"}", 12f, if (trailingStopEnabled) green else yellow, true))
-    trailingCard.addView(button(if (trailingStopEnabled) "TURN TRAILING STOP OFF" else "TURN TRAILING STOP ON", trailingStopEnabled) {
-        trailingStopEnabled = !trailingStopEnabled
-        if (trailingStopEnabled) notifyEvent("Trailing Stop Enabled", "App-managed trailing stop is ON. It locks profit in 20% increments of original stake after the first +20% level.", "trailing_stop_enabled_${accountId}_${executionMode}")
-        else notifyEvent("Trailing Stop Disabled", "Standalone trailing stop is OFF. Open trades will remain open unless closed manually or by another applicable contract rule.", "trailing_stop_disabled_${accountId}_${executionMode}_${System.currentTimeMillis()}")
-        render()
-    }, matchWrap().apply { topMargin = dp(8) })
-    page.addView(trailingCard, matchWrap().apply { bottomMargin = dp(10) })
 
     page.addView(sectionTitle("RUNNING TRADES"))
     val runningCard = card().apply { orientation = LinearLayout.VERTICAL }
@@ -1920,7 +1868,7 @@ private fun addTradeScreen() {
                     }
                     .show()
             }
-            }, matchWrap().apply { topMargin = dp(8) })
+        }, matchWrap().apply { topMargin = dp(8) })
         runningCard.addView(row, matchWrap().apply { topMargin = dp(7) })
         visibleRunning++
     }
@@ -2236,35 +2184,33 @@ private fun addMarketStructureAnalysis() {
         if (candles.size < 20) {
             structureCard.addView(label("STATUS: WAITING FOR SUFFICIENT COMPLETED H1 HISTORY", 12f, yellow, true))
         } else {
-               // Match Webtrader: display only the latest 40 pivots in Market Structure.
-            // This cap is local to this display; MSS/CHOCH, behaviour, and structural
-            // target calculations continue using their full analysis pivot history.
+            // Limit only this display to the latest 40 pivots; other analysis retains full history.
             val pivots = analysisPivots(candles).takeLast(40)
             val highs = pivots.filter { it.type == "HIGH" }
             val lows = pivots.filter { it.type == "LOW" }
             val last = pivots.takeLast(2)
-            val latestPivot = pivots.lastOrNull()
-            val livePrice = marketDataPrices[symbol] ?: candles.lastOrNull()?.close
-            // The completed leg is historical. The developing leg is based on the latest
-            // confirmed pivot and the live price, so it does not wait for another pivot.
-            val completedLeg = if (last.size == 2 && last[0].type == "LOW" && last[1].type == "HIGH") "BULLISH LEG"
+            val leg = if (last.size == 2 && last[0].type == "LOW" && last[1].type == "HIGH") "BULLISH LEG"
                 else if (last.size == 2 && last[0].type == "HIGH" && last[1].type == "LOW") "BEARISH LEG" else "UNCLEAR"
-            val developingLeg = when {
-                latestPivot == null || livePrice == null -> "UNCLEAR"
-                latestPivot.type == "LOW" && livePrice > latestPivot.price -> "BULLISH DEVELOPING LEG"
-                latestPivot.type == "HIGH" && livePrice < latestPivot.price -> "BEARISH DEVELOPING LEG"
-                else -> "WAITING FOR PRICE TO MOVE AWAY FROM PIVOT"
+            val latestHigh = highs.lastOrNull()
+            val latestLow = lows.lastOrNull()
+            val overallStructure = when {
+                latestHigh?.label == "HH" && latestLow?.label == "HL" -> "BULLISH STRUCTURE"
+                latestHigh?.label == "LH" && latestLow?.label == "LL" -> "BEARISH STRUCTURE"
+                else -> "MIXED / TRANSITION"
+            }
+            val structureSummary = when (overallStructure) {
+                "BULLISH STRUCTURE" -> "Latest high and low are both higher; bullish structure is present. Wait for the existing confirmation rules before trading."
+                "BEARISH STRUCTURE" -> "Latest high and low are both lower; bearish structure is present. Wait for the existing confirmation rules before trading."
+                else -> "Latest high/low pivots disagree or are not aligned; structure is mixed. Wait for clearer confirmation."
             }
             structureCard.addView(label("STRUCTURAL PIVOTS: ${pivots.size}", 12f, white, false))
-            val developingLegView = label("CURRENT DEVELOPING LEG: $developingLeg", 13f, if (developingLeg.startsWith("BULLISH")) green else if (developingLeg.startsWith("BEARISH")) red else yellow, true)
-            developingLegViews[symbol] = developingLegView
-            structureCard.addView(developingLegView)
-            val distanceFromPivot = if (latestPivot != null && livePrice != null && latestPivot.price > 0.0) kotlin.math.abs(livePrice - latestPivot.price) / latestPivot.price * 100.0 else null
-            val legDistanceView = label("DEVELOPING LEG FROM ${latestPivot?.type ?: "—"} ${latestPivot?.let { formatMarketPrice(it.price) } ?: "—"} (${latestPivot?.let { formatMarketTime(it.epoch) } ?: "—"}) · LIVE DISTANCE ${distanceFromPivot?.let { String.format(java.util.Locale.US, "%.3f%%", it) } ?: "—"}", 12f, white, false)
-            developingLegDistanceViews[symbol] = legDistanceView
-            structureCard.addView(legDistanceView)
-            structureCard.addView(label("LAST COMPLETED LEG: $completedLeg", 12f, muted, true))
-            if (last.size == 2) structureCard.addView(label("COMPLETED LEG: ${last[0].type} ${formatMarketPrice(last[0].price)} (${formatMarketTime(last[0].epoch)}) → ${last[1].type} ${formatMarketPrice(last[1].price)} (${formatMarketTime(last[1].epoch)})", 12f, white, false))
+            structureCard.addView(label("CURRENT STRUCTURAL LEG: $leg", 13f, if (leg == "BULLISH LEG") green else if (leg == "BEARISH LEG") red else yellow, true))
+            structureCard.addView(label("OVERALL MARKET STRUCTURE: $overallStructure", 13f, if (overallStructure == "BULLISH STRUCTURE") green else if (overallStructure == "BEARISH STRUCTURE") red else yellow, true))
+            if (latestHigh != null && latestLow != null) {
+                structureCard.addView(label("KEY LEVELS: HIGH ${formatMarketPrice(latestHigh.price)} (${latestHigh.label}) | LOW ${formatMarketPrice(latestLow.price)} (${latestLow.label})", 12f, white, false))
+            }
+            structureCard.addView(label("STRUCTURE SUMMARY: $structureSummary", 12f, white, false))
+            if (last.size == 2) structureCard.addView(label("LEG: ${last[0].type} ${formatMarketPrice(last[0].price)} (${formatMarketTime(last[0].epoch)}) → ${last[1].type} ${formatMarketPrice(last[1].price)} (${formatMarketTime(last[1].epoch)})", 12f, white, false))
             structureCard.addView(label("LATEST STRUCTURAL PIVOTS", 13f, green, true))
             pivots.takeLast(10).forEach { pivot ->
                 val sequence = if (pivot.type == "HIGH") highs else lows
@@ -2280,41 +2226,6 @@ private fun addMarketStructureAnalysis() {
             structureCard.addView(label("LOW STRUCTURE: ${lows.takeLast(4).joinToString("  |  ") { "${it.label} ${formatMarketPrice(it.price)}" }.ifBlank { "WAITING" }}", 12f, muted, false))
         }
         page.addView(structureCard, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
-    }
-}
-// =========================================================
-// ANALYSIS — LIQUIDITY AND LIQUIDITY SWEEPS
-// =========================================================
-
-private fun addLiquidityAnalysis() {
-    val header = card().apply { orientation = LinearLayout.VERTICAL }
-    val row = horizontalRow()
-    row.addView(label("Analysis - Liquidity & Liquidity Sweep", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
-    row.addView(button(if (liquidityAnalysisExpanded) "▼ OPEN" else "▶ CLOSED", liquidityAnalysisExpanded) {
-        liquidityAnalysisExpanded = !liquidityAnalysisExpanded
-        render()
-    }, LinearLayout.LayoutParams(-2, dp(48)))
-    header.addView(row)
-    page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
-    if (!liquidityAnalysisExpanded) return
-    page.addView(label("Potential buy-side liquidity is identified around prior swing highs; sell-side liquidity around prior swing lows. A sweep is flagged when a completed candle trades beyond a confirmed pivot and closes back across that level. A sweep is evidence, not a trade signal by itself.", 12f, muted, false).apply {
-        setPadding(dp(12), dp(10), dp(12), dp(10))
-    })
-    marketDataIndexes.forEach { symbol ->
-        val candles = analysisCompletedCandles(symbol)
-        val pivots = analysisPivots(candles)
-        val recentCandles = candles.takeLast(3)
-        val lastHigh = pivots.lastOrNull { it.type == "HIGH" }
-        val lastLow = pivots.lastOrNull { it.type == "LOW" }
-        val highSweep = lastHigh != null && recentCandles.any { it.high > lastHigh.price && it.close < lastHigh.price }
-        val lowSweep = lastLow != null && recentCandles.any { it.low < lastLow.price && it.close > lastLow.price }
-        val card = card().apply { orientation = LinearLayout.VERTICAL }
-        card.addView(label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true))
-        card.addView(label("BUY-SIDE LIQUIDITY: ${lastHigh?.let { formatMarketPrice(it.price) } ?: "WAITING FOR CONFIRMED HIGH"}", 12f, white, false))
-        card.addView(label("SELL-SIDE LIQUIDITY: ${lastLow?.let { formatMarketPrice(it.price) } ?: "WAITING FOR CONFIRMED LOW"}", 12f, white, false))
-        card.addView(label("BUY-SIDE SWEEP: ${if (highSweep) "DETECTED — completed candle swept above the latest confirmed high and closed back below" else "NOT CONFIRMED"}", 12f, if (highSweep) yellow else muted, true))
-        card.addView(label("SELL-SIDE SWEEP: ${if (lowSweep) "DETECTED — completed candle swept below the latest confirmed low and closed back above" else "NOT CONFIRMED"}", 12f, if (lowSweep) yellow else muted, true))
-        page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
     }
 }
 // =========================================================
@@ -2628,19 +2539,19 @@ private fun addQualificationAnalysis() {
         } else {
             null
         }
-        val targetEligibilityText = if (targetDistance != null) {
+        val targetEligibilityText = if (targetDistance != null && targetDistance >= 1.5) {
             "PASS — " + String.format(java.util.Locale.US, "%.3f%%", targetDistance)
         } else {
-            "WAIT — NO VALID TARGET"
+            "WAIT — " + (targetDistance?.let { String.format(java.util.Locale.US, "%.3f%%", it) } ?: "NO TARGET")
         }
         qualificationCard.addView(label(
-            "STRUCTURAL TARGET DISTANCE: $targetEligibilityText",
-            12f, if (targetDistance != null) green else yellow, true
+            "TARGET ELIGIBILITY ≥ 1.5%: $targetEligibilityText",
+            12f, if (targetDistance != null && targetDistance >= 1.5) green else yellow, true
         ))
         val ptpeText = if (masterDecision != null) {
             String.format(java.util.Locale.US, "%.1f%%", masterDecision.targetProbability) +
                 " (${masterDecision.sampleCount} comparable 3-day samples)"
-        } else "WAIT — PROBABILITY MUST EXCEED 55% AND SAMPLES MUST BE SUFFICIENT"
+        } else "WAIT — BELOW 55% OR INSUFFICIENT SAMPLES"
         qualificationCard.addView(label(
             "PTPE TARGET PROBABILITY: $ptpeText",
             12f, if (masterDecision != null) green else yellow, true
@@ -2667,7 +2578,7 @@ private fun addPtpeAnalysis() {
     if (!ptpeAnalysisExpanded) return
 
     page.addView(label(
-        "PTPE estimates how often a comparable historical MSS/CHOCH in the same direction reached the current target distance within 24 hours. The contract timeframe remains three days. Qualification requires probability strictly greater than 55% and at least 5 comparable samples. This section reports the reason each index qualifies or waits.",
+        "PTPE estimates how often a comparable historical MSS/CHOCH in the same direction reached the current target distance within 24 hours. The contract timeframe remains three days. Qualification requires at least 55% probability and at least 5 comparable samples. This section reports the reason each index qualifies or waits.",
         12f, muted, false
         ).apply { setPadding(dp(12), dp(10), dp(12), dp(10)) })
 
@@ -2678,7 +2589,8 @@ private fun addPtpeAnalysis() {
         card.addView(label("DIRECTION: ${ptpe.direction}", 13f, if (ptpe.direction == "BUY") green else if (ptpe.direction == "SELL") red else yellow, true))
         card.addView(label("STRUCTURAL TARGET: ${ptpe.target?.let { formatMarketPrice(it) } ?: "—"}", 13f, white, false))
         card.addView(label("TARGET DISTANCE: ${ptpe.distancePercent?.let { String.format(java.util.Locale.US, "%.3f%%", it) } ?: "—"}", 13f, white, false))
-        card.addView(label("PTPE PROBABILITY: ${String.format(java.util.Locale.US, "%.1f%%", ptpe.probability)}", 14f, if (ptpe.probability > 55.0 && ptpe.samples >= 5) green else yellow, true))
+        val probabilityText = if (ptpe.samples <= 0) "N/A — INSUFFICIENT DATA" else String.format(java.util.Locale.US, "%.1f%%", ptpe.probability)
+        card.addView(label("PTPE PROBABILITY: $probabilityText", 14f, if (ptpe.probability >= 55.0 && ptpe.samples >= 5) green else yellow, true))
         card.addView(label("COMPARABLE HISTORICAL SAMPLES: ${ptpe.samples} (minimum 5)", 12f, white, false))
         card.addView(label("MINIMUM PROBABILITY: 55%", 12f, white, false))
         card.addView(label("STATUS: ${ptpe.status}", 13f, if (ptpe.status == "QUALIFIED") green else yellow, true))
@@ -2815,6 +2727,7 @@ private fun addTargetFilterAnalysis() {
                 userCard.addView(button("ASSIGN START / EXPIRY DATES", true) { showAssignPlanDatesDialog(user) },
                     matchWrap().apply { topMargin = dp(6) })
             }
+
             // User-management actions are handled by the server against the shared users.json.
             val userId = user.optString("id", "")
             if (userId.isNotBlank()) {
@@ -3168,6 +3081,20 @@ private fun addTargetFilterAnalysis() {
             render()
         }, matchWrap().apply { topMargin = dp(10) })
         card.addView(label("────────────────────────", 10f, muted, false))
+        card.addView(button("CLEAR NOTIFICATION FEED", false) {
+            appPrefs.edit().remove("notification_feed").apply()
+            render()
+        }, matchWrap().apply { topMargin = dp(6) })
+        page.addView(card, matchWrap().apply { bottomMargin = dp(10) })
+        page.addView(sectionTitle("RECENT NOTIFICATIONS"))
+        val saved = appPrefs.getString("notification_feed", "").orEmpty().lines().filter { it.isNotBlank() }
+        if (saved.isEmpty()) page.addView(label("No notifications yet.", 13f, yellow, false))
+        else saved.take(50).forEach { item ->
+            val row = card().apply { addView(label(item, 12f, white, false)) }
+            page.addView(row, matchWrap().apply { bottomMargin = dp(5) })
+        }
+    }
+    private fun addPriceAlertControls(card: LinearLayout) {
         card.addView(label("PRICE ALERT WITH VIBRATION", 16f, green, true).apply { setPadding(0, dp(12), 0, dp(5)) })
         card.addView(label("Choose an index and target price. When the live Deriv price reaches the selected condition, the app sends one notification with vibration. The app must remain connected to Deriv to receive live prices.", 12f, muted, false))
         val alertIndexSpinner = Spinner(this)
@@ -3222,21 +3149,35 @@ private fun addTargetFilterAnalysis() {
             }, matchWrap().apply { topMargin = dp(6) })
         }
         card.addView(label("Notification permission: ${if (Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) "GRANTED / NOT REQUIRED" else "NOT GRANTED — allow it in Android settings"}", 12f, yellow, false).apply { setPadding(0, dp(8), 0, dp(4)) })
-        card.addView(button("CLEAR NOTIFICATION FEED", false) {
-            appPrefs.edit().remove("notification_feed").apply()
-            render()
-        }, matchWrap().apply { topMargin = dp(6) })
-        page.addView(card, matchWrap().apply { bottomMargin = dp(10) })
-        page.addView(sectionTitle("RECENT NOTIFICATIONS"))
-        val saved = appPrefs.getString("notification_feed", "").orEmpty().lines().filter { it.isNotBlank() }
-        if (saved.isEmpty()) page.addView(label("No notifications yet.", 13f, yellow, false))
-        else saved.take(50).forEach { item ->
-            val row = card().apply { addView(label(item, 12f, white, false)) }
-            page.addView(row, matchWrap().apply { bottomMargin = dp(5) })
-        }
     }
+
     private fun addSettingsScreen() {
         page.addView(sectionTitle("SETTINGS"))
+        // Trading controls are deliberately housed in Settings; their state remains persisted in appPrefs.
+        val decisionCard = card().apply { orientation = LinearLayout.VERTICAL }
+        decisionCard.addView(label(if (autoTradeEnabled) "MASTER DECISION: ON" else "MASTER DECISION: OFF", 15f, if (autoTradeEnabled) green else red, true))
+        decisionCard.addView(button(if (autoTradeEnabled) "TURN MASTER DECISION OFF" else "TURN MASTER DECISION ON", autoTradeEnabled) {
+            autoTradeEnabled = !autoTradeEnabled
+            if (autoTradeEnabled && !connected) toast("Master Decision is ON, but execution waits until Deriv is connected.")
+            render()
+        }, matchWrap().apply { topMargin = dp(8) })
+        page.addView(decisionCard, matchWrap().apply { bottomMargin = dp(10) })
+
+        val trailingCard = card().apply { orientation = LinearLayout.VERTICAL }
+        trailingCard.addView(label("STANDALONE TRAILING STOP", 15f, green, true))
+        trailingCard.addView(label("Activation: +10% of original stake · Trailing gap: 10% of original stake · Break-even floor before trailing gains", 12f, muted, false).apply { setPadding(0, dp(5), 0, dp(5)) })
+        trailingCard.addView(label("Status: ${if (trailingStopEnabled) "ON — managing eligible open trades" else "OFF — monitoring only"}", 12f, if (trailingStopEnabled) green else yellow, true))
+        trailingCard.addView(button(if (trailingStopEnabled) "TURN TRAILING STOP OFF" else "TURN TRAILING STOP ON", trailingStopEnabled) {
+            trailingStopEnabled = !trailingStopEnabled
+            if (trailingStopEnabled) notifyEvent("Trailing Stop Enabled", "Standalone trailing stop is ON. It will manage eligible open trades after the 10% activation threshold.", "trailing_stop_enabled_${accountId}_${executionMode}")
+            else notifyEvent("Trailing Stop Disabled", "Standalone trailing stop is OFF. Open trades will remain open unless closed manually or by another applicable contract rule.", "trailing_stop_disabled_${accountId}_${executionMode}_${System.currentTimeMillis()}")
+            render()
+        }, matchWrap().apply { topMargin = dp(8) })
+        page.addView(trailingCard, matchWrap().apply { bottomMargin = dp(10) })
+
+        val priceAlertCard = card().apply { orientation = LinearLayout.VERTICAL }
+        addPriceAlertControls(priceAlertCard)
+        page.addView(priceAlertCard, matchWrap().apply { bottomMargin = dp(10) })
         val card = card().apply { orientation = LinearLayout.VERTICAL }
         card.addView(label("Account and notification settings", 16f, green, true))
         card.addView(button("OPEN NOTIFICATIONS", true) { selectedTab = "Notifications"; render() }, matchWrap())
@@ -3305,8 +3246,48 @@ private fun addTargetFilterAnalysis() {
     // =========================================================
     // ADMIN PREVIEW
     // =========================================================
+    private fun addAdminPreview() {
+        page.addView(sectionTitle("ADMINISTRATION"))
 
-      // =========================================================
+        val card = card()
+
+        card.orientation = LinearLayout.VERTICAL
+
+        listOf(
+            "Dashboard",
+            "Risk Categories",
+            "User Accounts",
+            "Notifications",
+            "Trading Logs",
+            "System Settings"
+        ).forEach { item ->
+            card.addView(
+                button("⚙  $item", false) {
+                    selectedTab = when (item) {
+                        "Risk Categories" -> "Risk Categories"
+                        "User Accounts" -> "User Accounts"
+                        "Notifications" -> "Notifications"
+                        "Trading Logs" -> "Trading Logs"
+                        "System Settings" -> "Settings"
+                        else -> "Dashboard"
+                    }
+                    if (selectedTab == "User Accounts") loadAdminUsers() else render()
+                },
+                matchWrap().apply {
+                    bottomMargin = dp(5)
+                }
+            )
+        }
+
+        page.addView(
+            card,
+            matchWrap().apply {
+                topMargin = dp(4)
+            }
+        )
+    }
+
+    // =========================================================
     // BOTTOM NAVIGATION
     // =========================================================
 
@@ -3332,7 +3313,6 @@ private fun addTargetFilterAnalysis() {
         } else {
             listOf("⌂" to "Home", "▥" to "Trade", "🔔" to "Notifications", "♙" to "My profile")
         }
-
         tabs.forEach { (icon, name) ->
             val selected = selectedTab == name
             val item = LinearLayout(this).apply {
@@ -3628,8 +3608,7 @@ private fun addTargetFilterAnalysis() {
     accountType = ""
     accountBalance = 0.0
     accountCurrency = ""
-
-    render()
+        render()
     derivApiClient.connectWithAccessToken(token, executionMode)
     }
 
@@ -3711,29 +3690,11 @@ private fun addTargetFilterAnalysis() {
         if (selectedTab == "Notifications") render()
     }
 
-    private fun updateDevelopingLegViews(symbol: String, quote: Double) {
-        val candles = analysisCompletedCandles(symbol)
-        val pivot = analysisPivots(candles).lastOrNull() ?: return
-        if (pivot.price <= 0.0) return
-        val direction = when {
-            pivot.type == "LOW" && quote > pivot.price -> "BULLISH DEVELOPING LEG"
-            pivot.type == "HIGH" && quote < pivot.price -> "BEARISH DEVELOPING LEG"
-            else -> "WAITING FOR PRICE TO MOVE AWAY FROM PIVOT"
-        }
-        developingLegViews[symbol]?.apply {
-            text = "CURRENT DEVELOPING LEG: $direction"
-            setTextColor(if (direction.startsWith("BULLISH")) green else if (direction.startsWith("BEARISH")) red else yellow)
-        }
-        val distance = kotlin.math.abs(quote - pivot.price) / pivot.price * 100.0
-        developingLegDistanceViews[symbol]?.text = "DEVELOPING LEG FROM ${pivot.type} ${formatMarketPrice(pivot.price)} (${formatMarketTime(pivot.epoch)}) · LIVE DISTANCE ${String.format(java.util.Locale.US, "%.3f%%", distance)}"
-    }
-
     override fun onTick(symbol: String, quote: Double, epoch: Long) {
     runOnUiThread {
         if (symbol in marketDataIndexes && quote.isFinite()) {
             checkPriceAlert(symbol, quote)
             marketDataPrices[symbol] = quote
-            updateDevelopingLegViews(symbol, quote)
             marketDataErrors.remove(symbol)
             dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
             currentPriceViews[symbol]?.forEach { priceView ->
@@ -3751,7 +3712,7 @@ private fun addTargetFilterAnalysis() {
             }
         }
     }
-    }
+}
 
     override fun onTradeData(json: JSONObject) {
     runOnUiThread {
@@ -3893,4 +3854,4 @@ override fun onMarketDataError(
         }
     }
 
-    }
+                                        }
