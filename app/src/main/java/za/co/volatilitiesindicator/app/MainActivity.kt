@@ -401,7 +401,6 @@ private var drawerOpen = false
         val movementDirection = if (fromPivot > 0.0) "UP" else "DOWN"
         return if (movementDirection == previousDirection) "CONTINUATION" else "BUILDING UP"
     }
-
     /** Sole authority for trade approval. PTPE is always recorded for display, even when it fails. */
     private fun evaluateMasterDecision(symbol: String): MasterDecision? {
         val candles = analysisCompletedCandles(symbol)
@@ -999,7 +998,7 @@ when (selectedTab) {
         addExecutionSelector()
         addAccountCard()
         addDashboardIndexMonitor()
-    } else {
+        } else {
         page.addView(label("Sign in to access your dashboard.", 14f, yellow, false))
         page.addView(button("SIGN IN", true) { selectedTab = "Login"; render() }, matchWrap())
     }
@@ -2500,7 +2499,7 @@ private fun addDirectionStructuralTargetAnalysis() {
                 }",
                 12f, blue, false
             )
-        )
+            )
         page.addView(
             indexCard,
             matchWrap().apply {
@@ -2800,7 +2799,7 @@ private fun addTargetFilterAnalysis() {
                         button("REACTIVATE USER", true) {
                             android.app.AlertDialog.Builder(this@MainActivity)
                                 .setTitle("Reactivate user")
-                                .setMessage("Allow this user to log in again?")
+                                    .setMessage("Allow this user to log in again?")
                                 .setNegativeButton("CANCEL", null)
                                 .setPositiveButton("REACTIVATE") { _, _ ->
                                     authRequest("admin_reactivate_user", mapOf("user_id" to userId)) { ok, result ->
@@ -3916,3 +3915,4 @@ override fun onMarketDataError(
     }
 
                                         }
+        
