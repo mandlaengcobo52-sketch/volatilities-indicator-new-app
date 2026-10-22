@@ -816,7 +816,7 @@ private val candleIndexes = listOf(
                 data.optString(
                     "websocket_url",
                     ""
-                    ).trim()
+                   ).trim()
 
             if (
                 websocketUrl.isNotEmpty()
@@ -937,7 +937,13 @@ private val candleIndexes = listOf(
                             requestBalance(
                                 socket
                             )
-                                                        /*
+
+                            // connectWithAccessToken() closes both sockets before reconnecting.
+                            // Restore the separate public market-data socket after the
+                            // authenticated session is back, so live prices/candles resume too.
+                            requestHistoricalCandles()
+
+                            /*
                              * Immediately request the current
                              * account balance after connection.
                              */
@@ -1519,8 +1525,7 @@ if (tick != null) {
                     "currency",
                     ""
                 ).trim()
-
-            callback.onBalance(
+                callback.onBalance(
                 directBalance,
                 currency
             )
