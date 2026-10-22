@@ -3751,6 +3751,7 @@ private fun addTargetFilterAnalysis() {
             }
         }
     }
+    }
 
     override fun onTradeData(json: JSONObject) {
     runOnUiThread {
