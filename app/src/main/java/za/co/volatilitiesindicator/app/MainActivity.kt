@@ -545,7 +545,11 @@ private var drawerOpen = false
         // Build the ONETOUCH barrier from the latest spot as a signed relative offset.
         // This also prevents sending a stale absolute target after the market has moved.
         val proposalSpot = marketDataPrices[symbol] ?: decision.entry
-        val targetPrice = decision.target
+        val targetPrice = when (decision.direction) {
+    "BUY" -> maxOf(decision.target, proposalSpot * 1.05)
+    "SELL" -> minOf(decision.target, proposalSpot * 0.95)
+    else -> decision.target
+        }
         val barrierOffset = targetPrice - proposalSpot
         val targetIsAhead = when (decision.direction) {
             "BUY" -> barrierOffset > 0.0
