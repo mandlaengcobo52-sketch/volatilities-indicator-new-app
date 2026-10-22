@@ -309,7 +309,6 @@ private var drawerOpen = false
             !today.before(startDate) && !today.after(expiryDate)
         } catch (_: Exception) { false }
     }
-
     private fun dailyTradeCount(): Int {
         val accountKey = accountId.ifBlank { "unlinked" }.replace(Regex("[^A-Za-z0-9_-]"), "_")
         return appPrefs.getInt("daily_trades_${accountKey}_${executionMode}_${saDayKey()}", 0)
@@ -1212,7 +1211,6 @@ platform = if (role.equals("admin", ignoreCase = true)) "ADMIN" else "USER"
     loginCard.addView(button("BACK TO HOME", false) { selectedTab = "Home"; render() }, matchWrap().apply { topMargin = dp(6) })
     page.addView(loginCard, matchWrap())
 }
-
 private fun addUserProfileScreen(page: LinearLayout) {
     val profileCard = card().apply {
         orientation = LinearLayout.VERTICAL
@@ -1516,7 +1514,7 @@ private fun addHeader() {
                 "User Accounts",
                 "Notifications",
                 "Trading Logs",
-                "System Settings",
+                    "System Settings",
                 "Logout"
             )
             } else {
@@ -2404,8 +2402,7 @@ private fun addDirectionStructuralTargetAnalysis() {
         } else {
             null
         }
-
-        val indexCard = card().apply {
+            val indexCard = card().apply {
             orientation = LinearLayout.VERTICAL
         }
 
@@ -2702,7 +2699,6 @@ private fun addTargetFilterAnalysis() {
         return java.text.SimpleDateFormat("yyyy/MM/dd, HH:mm:ss", java.util.Locale("en", "ZA"))
             .format(java.util.Date(epoch * 1000L))
     }
-
     // =========================================================
     // ADMIN USER APPROVAL — server verifies administrator role
     // =========================================================
@@ -3007,7 +3003,7 @@ private fun addTargetFilterAnalysis() {
                             "first_name" to first,
                             "surname" to last,
                             "email" to mail,
-                            "phone" to contact,
+                               "phone" to contact,
                             "risk_profile" to selectedRisk.lowercase(),
                             "risk_trades_per_day" to tradesPerDay,
                             "risk_period_days" to planDays.toString(),
@@ -3305,7 +3301,7 @@ private fun addTargetFilterAnalysis() {
             card.addView(
                 button("⚙  $item", false) {
                     selectedTab = when (item) {
-                        "Risk Categories" -> "Risk Categories"
+                           "Risk Categories" -> "Risk Categories"
                         "User Accounts" -> "User Accounts"
                         "Notifications" -> "Notifications"
                         "Trading Logs" -> "Trading Logs"
@@ -3542,7 +3538,7 @@ private fun addTargetFilterAnalysis() {
             Toast.LENGTH_SHORT
         ).show()
     }
-    // =========================================================
+       // =========================================================
     // DERIV OAUTH CONNECTION (existing OAuth + PKCE flow)
     // =========================================================
     private fun beginDerivConnection() {
