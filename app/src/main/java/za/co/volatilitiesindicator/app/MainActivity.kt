@@ -831,7 +831,7 @@ private var targetFilterExpanded = true
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        window.statusBarColor = bg
+    window.statusBarColor = bg
 window.navigationBarColor = bg
 window.decorView.systemUiVisibility = 0
 
@@ -1726,7 +1726,6 @@ private fun addHeader() {
                 topMargin = dp(4)
             }
         )
-
         accountIdView = label("Account:  ${if (accountId.isBlank()) "—" else accountId}", 14f, white, false)
         card.addView(accountIdView, matchWrap().apply { topMargin = dp(7) })
 
@@ -2318,7 +2317,6 @@ private fun addLiquidityAnalysis() {
         page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
     }
 }
-
 // =========================================================
 // ANALYSIS — MSS / CHOCH CONFIRMATION
 // =========================================================
@@ -3117,6 +3115,197 @@ private fun addTargetFilterAnalysis() {
             }
         }
     }
+    private fun addRiskCategoriesScreen() {
+        page.addView(sectionTitle("RISK CATEGORIES"))
+        page.addView(label("Trading capital range: R1,000 to R5,000. Interest is administrator-only. Users see plan name, interest period label only if permitted, subscription amount, period, trades used today, stake, target, trade limit, and assigned dates in My Profile.", 13f, muted, false))
+        val rules = listOf(
+            listOf("MINIMUM RISK", "Interest per 30 days: 50%", "Subscription: 25% of capital", "Period: 30 days", "Stake: 20% of capital", "Target profit: 20% of stake", "Trades per day: 1"),
+            listOf("MEDIUM RISK", "Interest per 30 days: 100%", "Subscription: 75% of capital", "Period: 30 days", "Stake: 20% of capital", "Target profit: 20% of stake", "Trades per day: 2"),
+            listOf("MAXIMUM RISK", "Interest per 30 days: 200%", "Subscription: 100% of capital", "Period: 30 days", "Stake: 20% of capital", "Target profit: 20% of stake", "Trades per day: 3"),
+            listOf("SUPER MAXIMUM RISK", "Period: 30 days", "Stake: 20% of capital", "Target profit: 20% per stake", "Trades per day: Unlimited"),
+            listOf("TRIAL", "Interest per 7 days: 50%", "Subscription: Free", "Period: 7 days", "Stake: 20% of capital", "Target profit: 20% per stake", "Trade limit: Not specified")
+        )
+        rules.forEach { details ->
+            val ruleCard = card().apply { orientation = LinearLayout.VERTICAL }
+            ruleCard.addView(label(details.first(), 16f, green, true))
+            details.drop(1).forEach { detail ->
+                val adminOnlyInterest = detail.startsWith("Interest:") || detail.startsWith("Interest per ")
+                if (platform == "ADMIN" || !adminOnlyInterest) ruleCard.addView(label(detail, 13f, if (adminOnlyInterest) yellow else white, adminOnlyInterest))
+            }
+            page.addView(ruleCard, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
+        }
+        page.addView(button("ASSIGN / EDIT A USER'S RISK PLAN", true) { selectedTab = "User Accounts"; loadAdminUsers() }, matchWrap().apply { topMargin = dp(8) })
+        page.addView(label("Start and expiry dates are assigned by the administrator. Backend support is required for shared risk applications/payment status; a local application cannot itself notify the server administrator.", 12f, yellow, false).apply { setPadding(0, dp(10), 0, 0) })
+    }
+    private fun addTradingLogsScreen() {
+        page.addView(sectionTitle("TRADING LOGS"))
+        val card = card().apply { orientation = LinearLayout.VERTICAL }
+        card.addView(label("Recent local trading events", 16f, green, true))
+        val logs = appPrefs.getString("notification_feed", "").orEmpty().lines().filter { it.isNotBlank() }
+        if (logs.isEmpty()) card.addView(label("No local events recorded yet.", 13f, yellow, false))
+        else logs.take(50).forEach { card.addView(label(it, 12f, white, false).apply { setPadding(0, dp(5), 0, dp(5)) }) }
+        card.addView(button("REFRESH DERIV TRADES", false) {
+            if (connected) { derivApiClient.requestOpenTrades(); derivApiClient.requestTradeHistory(); toast("Refreshing open trades and history.") }
+            else toast("Connect to Deriv first.")
+        }, matchWrap().apply { topMargin = dp(8) })
+        page.addView(card, matchWrap())
+    }
+
+    private fun addNotificationsScreen() {
+        page.addView(sectionTitle("NOTIFICATIONS"))
+        val card = card().apply { orientation = LinearLayout.VERTICAL }
+        card.addView(label("Trade and risk notifications", 18f, green, true))
+        card.addView(label("Notifications are off until you activate them here. When enabled, the app records trade events in this feed and posts Android notifications when permission is granted.", 13f, muted, false))
+        card.addView(button(if (notificationsEnabled) "TURN NOTIFICATIONS OFF" else "ACTIVATE NOTIFICATIONS", notificationsEnabled) {
+            if (!notificationsEnabled) {
+                appPrefs.edit().putBoolean("notificationsEnabled", true).apply()
+                ensureNotificationPermission()
+                notifyEvent("Notifications activated", "Trade and risk event notifications are now enabled.")
+            } else {
+                appPrefs.edit().putBoolean("notificationsEnabled", false).apply()
+                addNotificationFeedItem("Notifications deactivated")
+            }
+            render()
+        }, matchWrap().apply { topMargin = dp(10) })
+        card.addView(label("────────────────────────", 10f, muted, false))
+        card.addView(label("PRICE ALERT WITH VIBRATION", 16f, green, true).apply { setPadding(0, dp(12), 0, dp(5)) })
+        card.addView(label("Choose an index and target price. When the live Deriv price reaches the selected condition, the app sends one notification with vibration. The app must remain connected to Deriv to receive live prices.", 12f, muted, false))
+        val alertIndexSpinner = Spinner(this)
+        alertIndexSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, marketDataIndexes)
+        alertIndexSpinner.setSelection(marketDataIndexes.indexOf(priceAlertSymbol).coerceAtLeast(0))
+        card.addView(alertIndexSpinner, matchWrap().apply { topMargin = dp(7) })
+        val targetInput = EditText(this).apply {
+            setSingleLine(true)
+            hint = "Target price (e.g. 1234.500)"
+            setText(if (priceAlertTarget > 0.0) priceAlertTarget.toString() else "")
+            setTextColor(white)
+            setHintTextColor(muted)
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            background = shape(panel2, greenDark, 8, 1)
+        }
+        card.addView(targetInput, matchWrap().apply { topMargin = dp(7) })
+        val alertConditionSpinner = Spinner(this)
+        alertConditionSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, listOf("Price reaches target or higher", "Price reaches target or lower"))
+        alertConditionSpinner.setSelection(if (priceAlertCondition == "below") 1 else 0)
+        card.addView(alertConditionSpinner, matchWrap().apply { topMargin = dp(7) })
+        card.addView(label(
+            if (priceAlertActive) "Alert status: ARMED — $priceAlertSymbol ${if (priceAlertCondition == "below") "≤" else "≥"} ${formatMarketPrice(priceAlertTarget)}"
+            else "Alert status: NOT ARMED",
+            12f, if (priceAlertActive) green else yellow, true
+        ).apply { setPadding(0, dp(8), 0, dp(4)) })
+        card.addView(button("ARM PRICE ALERT", true) {
+            val target = targetInput.text.toString().trim().replace(',', '.').toDoubleOrNull()
+            if (target == null || !target.isFinite() || target <= 0.0) {
+                targetInput.error = "Enter a valid target price greater than zero"
+                return@button
+            }
+            val selectedSymbol = alertIndexSpinner.selectedItem?.toString() ?: "R_10"
+            val selectedCondition = if (alertConditionSpinner.selectedItemPosition == 1) "below" else "above"
+            appPrefs.edit()
+                .putBoolean("priceAlertActive", true)
+                .putString("priceAlertSymbol", selectedSymbol)
+                .putString("priceAlertTarget", target.toString())
+                .putString("priceAlertCondition", selectedCondition)
+                .putLong("priceAlertArmedAt", System.currentTimeMillis())
+                .putBoolean("notificationsEnabled", true)
+                .apply()
+            ensureNotificationPermission()
+            addNotificationFeedItem("Price alert armed: $selectedSymbol ${if (selectedCondition == "below") "at or below" else "at or above"} ${formatMarketPrice(target)}")
+            render()
+        }, matchWrap().apply { topMargin = dp(8) })
+        if (priceAlertActive) {
+            card.addView(button("CANCEL PRICE ALERT", false) {
+                appPrefs.edit().putBoolean("priceAlertActive", false).apply()
+                addNotificationFeedItem("Price alert cancelled.")
+                render()
+            }, matchWrap().apply { topMargin = dp(6) })
+        }
+        card.addView(label("Notification permission: ${if (Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) "GRANTED / NOT REQUIRED" else "NOT GRANTED — allow it in Android settings"}", 12f, yellow, false).apply { setPadding(0, dp(8), 0, dp(4)) })
+        card.addView(button("CLEAR NOTIFICATION FEED", false) {
+            appPrefs.edit().remove("notification_feed").apply()
+            render()
+        }, matchWrap().apply { topMargin = dp(6) })
+        page.addView(card, matchWrap().apply { bottomMargin = dp(10) })
+        page.addView(sectionTitle("RECENT NOTIFICATIONS"))
+        val saved = appPrefs.getString("notification_feed", "").orEmpty().lines().filter { it.isNotBlank() }
+        if (saved.isEmpty()) page.addView(label("No notifications yet.", 13f, yellow, false))
+        else saved.take(50).forEach { item ->
+            val row = card().apply { addView(label(item, 12f, white, false)) }
+            page.addView(row, matchWrap().apply { bottomMargin = dp(5) })
+        }
+    }
+    private fun addSettingsScreen() {
+        page.addView(sectionTitle("SETTINGS"))
+        val card = card().apply { orientation = LinearLayout.VERTICAL }
+        card.addView(label("Account and notification settings", 16f, green, true))
+        card.addView(button("OPEN NOTIFICATIONS", true) { selectedTab = "Notifications"; render() }, matchWrap())
+        card.addView(button("MY PROFILE", false) { selectedTab = "My profile"; render() }, matchWrap().apply { topMargin = dp(6) })
+        card.addView(button("SIGN OUT", false) { performPlatformLogout() }, matchWrap().apply { topMargin = dp(6) })
+        page.addView(card, matchWrap())
+    }
+
+    private fun addNotificationFeedItem(message: String) {
+        val stamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).apply { timeZone = dailyCapitalTimeZone }.format(java.util.Date())
+        val entry = "$stamp · $message"
+        val current = appPrefs.getString("notification_feed", "").orEmpty().lines().filter { it.isNotBlank() }.toMutableList()
+        current.add(0, entry)
+        appPrefs.edit().putString("notification_feed", current.take(50).joinToString("\n")).apply()
+    }
+
+    private fun ensureNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7802)
+        }
+    }
+    private fun recordExecutionStage(title: String, message: String, eventKey: String) {
+        notifyEvent(title, message, eventKey)
+    }
+    private fun notifyEvent(title: String, message: String, eventKey: String = "") {
+        val stableKey = eventKey.ifBlank {
+            "${saDayKey()}_${accountId}_${executionMode}_${title}_${message}".hashCode().toString()
+        }
+        val seen = appPrefs.getStringSet("notification_seen_keys", emptySet()).orEmpty().toMutableSet()
+        if (!seen.add(stableKey)) return
+        appPrefs.edit().putStringSet("notification_seen_keys", seen.toList().takeLast(500).toSet()).apply()
+        addNotificationFeedItem("$title — $message")
+        if (!notificationsEnabled) return
+        try {
+            val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+            val channelId = "vi_trade_events_v2"
+            val vibrationPattern = longArrayOf(0L, 250L, 150L, 250L, 150L, 250L)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = NotificationChannel(channelId, "Trading notifications", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                    enableVibration(true)
+                    setVibrationPattern(vibrationPattern)
+                }
+                manager.createNotificationChannel(channel)
+            }
+            if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+            val intent = Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            val pendingIntent = PendingIntent.getActivity(this, 7803, intent, PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0))
+            val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Notification.Builder(this, channelId).setSmallIcon(R.drawable.volatilities_indicator_logo)
+                    .setContentTitle(title).setContentText(message)
+                    .setStyle(Notification.BigTextStyle().bigText(message)).setContentIntent(pendingIntent)
+                    .setAutoCancel(true).setVibrate(vibrationPattern).build()
+            } else {
+                @Suppress("DEPRECATION")
+                Notification.Builder(this).setSmallIcon(R.drawable.volatilities_indicator_logo)
+                    .setContentTitle(title).setContentText(message).setContentIntent(pendingIntent)
+                    .setAutoCancel(true).setVibrate(vibrationPattern).build()
+            }
+            val notificationId = 4200 + (stableKey.hashCode() and 0x7fffffff) % 100000
+            manager.notify(notificationId, notification)
+        } catch (_: Exception) {
+            // The in-app notification feed remains available if Android notification delivery fails.
+        }
+    }
+
+    // =========================================================
+    // ADMIN PREVIEW
+    // =========================================================
+
       // =========================================================
     // BOTTOM NAVIGATION
     // =========================================================
@@ -3562,7 +3751,6 @@ private fun addTargetFilterAnalysis() {
             }
         }
     }
-}
 
     override fun onTradeData(json: JSONObject) {
     runOnUiThread {
@@ -3704,4 +3892,4 @@ override fun onMarketDataError(
         }
     }
 
-                                        }
+    }
