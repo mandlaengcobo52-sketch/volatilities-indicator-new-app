@@ -1610,6 +1610,7 @@ private fun addHeader() {
     page.addView(sectionTitle("PLATFORM"))
 
     val row = horizontalRow()
+
     row.addView(
         button("♟ USER", platform == "USER") {
             platform = "USER"
@@ -1886,6 +1887,7 @@ private fun addTradeScreen() {
         accountCard.addView(label("Target barrier: ${latestTarget?.let { formatMarketPrice(it) } ?: "Waiting for a qualifying Master Decision"}", 12f, yellow, true))
     }
     page.addView(accountCard, matchWrap().apply { bottomMargin = dp(10) })
+
 
     page.addView(sectionTitle("RUNNING TRADES"))
     val runningCard = card().apply { orientation = LinearLayout.VERTICAL }
@@ -2488,7 +2490,7 @@ private fun addDirectionStructuralTargetAnalysis() {
                     else -> yellow
                 },
                 true
-                )
+            )
         )
 
         indexCard.addView(
@@ -2786,7 +2788,8 @@ private fun addTargetFilterAnalysis() {
         if (adminUsersLoading && users == null) {
             page.addView(label("Loading registrations…", 14f, yellow, false))
             return
-            if (users == null) {
+            }
+        if (users == null) {
             page.addView(label("Tap REFRESH PENDING USERS to load registrations.", 14f, muted, false))
             return
         }
@@ -3376,6 +3379,7 @@ private fun addTargetFilterAnalysis() {
             }
         )
     }
+
     // =========================================================
     // BOTTOM NAVIGATION
     // =========================================================
@@ -3402,7 +3406,6 @@ private fun addTargetFilterAnalysis() {
         } else {
             listOf("⌂" to "Home", "▥" to "Trade", "🔔" to "Notifications", "♙" to "My profile")
         }
-
         tabs.forEach { (icon, name) ->
             val selected = selectedTab == name
             val item = LinearLayout(this).apply {
@@ -3680,6 +3683,7 @@ private fun addTargetFilterAnalysis() {
             }
         })
     }
+
     private fun oauthError(body: String): String = try {
         val j = JSONObject(body); val err = j.optJSONObject("error")
         err?.optString("message")?.takeIf { !it.isNullOrBlank() } ?: j.optString("message", body.take(180))
@@ -3944,4 +3948,4 @@ override fun onMarketDataError(
         }
     }
 
-    }
+                                        }
