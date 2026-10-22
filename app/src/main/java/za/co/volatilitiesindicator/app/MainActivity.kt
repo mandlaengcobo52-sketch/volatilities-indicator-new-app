@@ -738,7 +738,7 @@ private var drawerOpen = false
                 running.peakProfit = appPrefs.getString("${trailStateKey}_peak", "0")?.toDoubleOrNull() ?: 0.0
                 running.targetNotified = appPrefs.getBoolean("${trailStateKey}_target_notified", false)
             }
-            val isClosed = status in setOf("sold", "won", "lost",
+            val isClosed = status in setOf("sold", "won", "lost", "expired")
              if (!isClosed) {
                 liveContractProfits[contractId] = profitOpen
                 liveContractProfitModes[contractId] = "${accountId}_$executionMode"
