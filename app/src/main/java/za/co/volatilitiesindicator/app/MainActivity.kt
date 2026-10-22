@@ -387,7 +387,7 @@ private var drawerOpen = false
         return pivot.takeIf { it.isFinite() && it > 0.0 }
     }
 
-    /** Classify a 2% move from the daily pivot against the recent pre-move direction. */
+    /** Classify a 0.5% move from the daily pivot against the recent pre-move direction. */
     private fun pivotLifecycleStatus(candles: List<DerivApiClient.Candle>, current: Double, pivot: Double): String {
         if (candles.size < 4) return "WAITING — ESTABLISHING PREVIOUS DIRECTION"
         val recent = candles.takeLast(4).map { it.close }
@@ -397,7 +397,7 @@ private var drawerOpen = false
             else -> return "WAITING — PREVIOUS DIRECTION UNCLEAR"
         }
         val fromPivot = (current - pivot) / pivot * 100.0
-        if (kotlin.math.abs(fromPivot) < 2.0) return "WAITING — LESS THAN 2% FROM DAILY PIVOT"
+        if (kotlin.math.abs(fromPivot) < 1.5) return "WAITING — LESS THAN 1.5% FROM DAILY PIVOT"
         val movementDirection = if (fromPivot > 0.0) "UP" else "DOWN"
         return if (movementDirection == previousDirection) "CONTINUATION" else "BUILDING UP"
     }
@@ -746,14 +746,14 @@ private var drawerOpen = false
                 liveContractProfits[contractId] = profitOpen
                 liveContractProfitModes[contractId] = "${accountId}_$executionMode"
                 val twentyPercentTarget = running.stake * 0.20
-                val tenPercentTarget = running.stake * 0.10 // Preserve the existing trailing-stop threshold.
+                val tenPercentTarget = running.stake * 0.20 // Preserve the existing trailing-stop threshold.
                 if (!running.targetNotified && profitOpen >= twentyPercentTarget) {
                     running.targetNotified = true
                     running.trailingActivated = true
                     running.peakProfit = profitOpen
                     appPrefs.edit().putBoolean("${trailStateKey}_target_notified", true).putBoolean("${trailStateKey}_activated", true).putString("${trailStateKey}_peak", running.peakProfit.toString()).apply()
                     notifyEvent("20% Profit Target Reached", "${running.symbol} · Contract $contractId · Stake ${formatMoney(running.stake)} · Target ${formatMoney(twentyPercentTarget)} · Current P/L ${formatMoney(profitOpen)}. Trailing stop ${if (trailingStopEnabled) "ACTIVE" else "READY — currently OFF"}.",
-                        "profit_10pct_reached_${accountId}_${executionMode}_$contractId")
+                        "profit_20pct_reached_${accountId}_${executionMode}_$contractId")
                 }
                 if (running.trailingActivated) {
                     running.peakProfit = maxOf(running.peakProfit, profitOpen)
