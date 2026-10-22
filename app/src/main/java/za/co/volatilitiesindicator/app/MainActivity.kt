@@ -83,6 +83,13 @@ private var drawerOpen = false
     private var mainScrollView: ScrollView? = null
     private val analysisRenderHandler by lazy { Handler(mainLooper) }
     private var pendingAnalysisRender: Runnable? = null
+    private val profileRefreshHandler by lazy { Handler(mainLooper) }
+    private val profileRefreshRunnable = object : Runnable {
+        override fun run() {
+            if (authToken.isNotBlank() && platform != "ADMIN") refreshProfile(showMessage = false)
+            profileRefreshHandler.postDelayed(this, 15_000L)
+        }
+    }
     private var lastRenderedTab: String? = null
     private lateinit var accountStatus: TextView
     private lateinit var accountIdView: TextView
@@ -397,10 +404,11 @@ private var drawerOpen = false
             else -> return "WAITING — PREVIOUS DIRECTION UNCLEAR"
         }
         val fromPivot = (current - pivot) / pivot * 100.0
-        if (kotlin.math.abs(fromPivot) < 1.5) return "WAITING — LESS THAN 1.5% FROM DAILY PIVOT"
+        if (kotlin.math.abs(fromPivot) < 0.5) return "WAITING — LESS THAN 0.5% FROM DAILY PIVOT"
         val movementDirection = if (fromPivot > 0.0) "UP" else "DOWN"
         return if (movementDirection == previousDirection) "CONTINUATION" else "BUILDING UP"
     }
+
     /** Sole authority for trade approval. PTPE is always recorded for display, even when it fails. */
     private fun evaluateMasterDecision(symbol: String): MasterDecision? {
         val candles = analysisCompletedCandles(symbol)
@@ -467,7 +475,7 @@ private var drawerOpen = false
             return null
         }
         val decision = MasterDecision(symbol, decisionDirection, current, target, distance, probability, samples,
-            "Daily pivot 2% reversal classification + confirmed MSS/CHOCH/BOS + structural target + PTPE >55%; 3-day contract timeframe")
+            "Daily pivot 0.5% reversal classification + confirmed MSS/CHOCH/BOS + structural target + PTPE >55%; 3-day contract timeframe")
         lastDecisionByIndex[symbol] = decision
         notifyEvent("Trade qualified", "$symbol · ${decision.direction} · Target ${formatMarketPrice(decision.target)} · PTPE ${String.format(java.util.Locale.US, "%.1f", decision.targetProbability)}%",
             "qualified_${symbol}_${decision.direction}_${event.confirmation.epoch}_${executionMode}_${accountId}")
@@ -544,11 +552,7 @@ private var drawerOpen = false
         // Build the ONETOUCH barrier from the latest spot as a signed relative offset.
         // This also prevents sending a stale absolute target after the market has moved.
         val proposalSpot = marketDataPrices[symbol] ?: decision.entry
-        val targetPrice = when (decision.direction) {
-    "BUY" -> maxOf(decision.target, proposalSpot * 1.05)
-    "SELL" -> minOf(decision.target, proposalSpot * 0.95)
-    else -> decision.target
-        }
+        val targetPrice = decision.target
         val barrierOffset = targetPrice - proposalSpot
         val targetIsAhead = when (decision.direction) {
             "BUY" -> barrierOffset > 0.0
@@ -580,7 +584,7 @@ private var drawerOpen = false
             .put("duration", 3)
             .put("duration_unit", "d")
             .put("underlying_symbol", symbol)
-            .put("barrier", String.format(java.util.Locale.US, "%.3f", targetPrice))
+            .put("barrier", relativeBarrier)
             .put("req_id", reqId)
         if (!derivApiClient.send(proposal)) {
             pendingOrdersByRequest.remove(reqId)
@@ -742,18 +746,18 @@ private var drawerOpen = false
                 running.targetNotified = appPrefs.getBoolean("${trailStateKey}_target_notified", false)
             }
             val isClosed = status in setOf("sold", "won", "lost", "expired")
-             if (!isClosed) {
+            if (!isClosed) {
                 liveContractProfits[contractId] = profitOpen
                 liveContractProfitModes[contractId] = "${accountId}_$executionMode"
                 val twentyPercentTarget = running.stake * 0.20
-                val tenPercentTarget = running.stake * 0.20 // Preserve the existing trailing-stop threshold.
+                val tenPercentTarget = running.stake * 0.10 // Preserve the existing trailing-stop threshold.
                 if (!running.targetNotified && profitOpen >= twentyPercentTarget) {
                     running.targetNotified = true
                     running.trailingActivated = true
                     running.peakProfit = profitOpen
                     appPrefs.edit().putBoolean("${trailStateKey}_target_notified", true).putBoolean("${trailStateKey}_activated", true).putString("${trailStateKey}_peak", running.peakProfit.toString()).apply()
                     notifyEvent("20% Profit Target Reached", "${running.symbol} · Contract $contractId · Stake ${formatMoney(running.stake)} · Target ${formatMoney(twentyPercentTarget)} · Current P/L ${formatMoney(profitOpen)}. Trailing stop ${if (trailingStopEnabled) "ACTIVE" else "READY — currently OFF"}.",
-                        "profit_20pct_reached_${accountId}_${executionMode}_$contractId")
+                        "profit_10pct_reached_${accountId}_${executionMode}_$contractId")
                 }
                 if (running.trailingActivated) {
                     running.peakProfit = maxOf(running.peakProfit, profitOpen)
@@ -877,6 +881,12 @@ if (authToken.isNotBlank() && savedToken.isNotBlank() &&
 
         // onCreate handles the initial launch. Avoid starting a second connection
         // during the first resume while OAuth/account lookup may still be running.
+        profileRefreshHandler.removeCallbacks(profileRefreshRunnable)
+        if (authToken.isNotBlank()) {
+            refreshProfile(showMessage = false)
+            profileRefreshHandler.postDelayed(profileRefreshRunnable, 15_000L)
+        }
+
         if (!hasResumedOnce) {
             hasResumedOnce = true
             return
@@ -891,6 +901,11 @@ if (authToken.isNotBlank() && savedToken.isNotBlank() &&
         if (savedToken.isNotBlank()) {
             derivApiClient.ensureConnectedOnResume(savedToken, executionMode)
         }
+    }
+
+    override fun onPause() {
+        profileRefreshHandler.removeCallbacks(profileRefreshRunnable)
+        super.onPause()
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -998,7 +1013,7 @@ when (selectedTab) {
         addExecutionSelector()
         addAccountCard()
         addDashboardIndexMonitor()
-        } else {
+    } else {
         page.addView(label("Sign in to access your dashboard.", 14f, yellow, false))
         page.addView(button("SIGN IN", true) { selectedTab = "Login"; render() }, matchWrap())
     }
@@ -1595,7 +1610,6 @@ private fun addHeader() {
     page.addView(sectionTitle("PLATFORM"))
 
     val row = horizontalRow()
-
     row.addView(
         button("♟ USER", platform == "USER") {
             platform = "USER"
@@ -1873,7 +1887,6 @@ private fun addTradeScreen() {
     }
     page.addView(accountCard, matchWrap().apply { bottomMargin = dp(10) })
 
-
     page.addView(sectionTitle("RUNNING TRADES"))
     val runningCard = card().apply { orientation = LinearLayout.VERTICAL }
     val portfolioArray = openTradesResponse?.optJSONObject("portfolio")?.optJSONArray("contracts")
@@ -1991,15 +2004,35 @@ private fun addTradeScreen() {
     var historyCount = 0
     if (historyArray != null) for (i in 0 until minOf(historyArray.length(), 20)) {
         val item = historyArray.optJSONObject(i) ?: continue
-        val symbol = item.optString("underlying", item.optString("symbol", "—"))
-        val contractId = item.optLong("contract_id", 0L)
+        val contractId = item.optLong("contract_id", item.optLong("transaction_id", 0L))
+        val rawSymbol = listOf("underlying_symbol", "underlying", "symbol")
+            .asSequence()
+            .map { item.optString(it, "").trim() }
+            .firstOrNull { it.isNotBlank() && it != "null" && it != "—" }
+            .orEmpty()
+        val historyDescription = listOf("longcode", "shortcode", "description")
+            .asSequence()
+            .map { item.optString(it, "").trim() }
+            .firstOrNull { it.isNotBlank() && it != "null" }
+            .orEmpty()
+        val symbol = rawSymbol.ifBlank {
+            runningContracts[contractId]?.symbol
+                ?: when {
+                    historyDescription.contains("Volatility 10 Index", true) -> "R_10"
+                    historyDescription.contains("Volatility 25 Index", true) -> "R_25"
+                    historyDescription.contains("Volatility 50 Index", true) -> "R_50"
+                    historyDescription.contains("Volatility 75 Index", true) -> "R_75"
+                    historyDescription.contains("Volatility 100 Index", true) -> "R_100"
+                    else -> "INDEX UNAVAILABLE"
+                }
+        }
         val buyPrice = item.optDouble("buy_price", 0.0)
         val sellPrice = item.optDouble("sell_price", 0.0)
         val profit = sellPrice - buyPrice
         val epoch = item.optLong("purchase_time", item.optLong("date_start", 0L))
         val timeText = if (epoch > 0) java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(epoch * 1000L)) else "Time unavailable"
         val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(10), dp(9), dp(10), dp(9)); background = shape(panel, greenDark, 7, 1) }
-        row.addView(label("$symbol • Contract $contractId", 12f, white, true))
+        row.addView(label("Index: $symbol • Contract $contractId", 12f, white, true))
         row.addView(label("$timeText • Stake ${formatMoney(buyPrice)} • P/L ${formatMoney(profit)}", 11f, profitColor(profit), false).apply { setPadding(0, dp(4), 0, 0) })
         historyCard.addView(row, matchWrap().apply { topMargin = dp(6) }); historyCount++
     }
@@ -2455,7 +2488,7 @@ private fun addDirectionStructuralTargetAnalysis() {
                     else -> yellow
                 },
                 true
-            )
+                )
         )
 
         indexCard.addView(
@@ -2499,7 +2532,7 @@ private fun addDirectionStructuralTargetAnalysis() {
                 }",
                 12f, blue, false
             )
-            )
+        )
         page.addView(
             indexCard,
             matchWrap().apply {
@@ -2638,7 +2671,7 @@ private fun addPtpeAnalysis() {
     if (!ptpeAnalysisExpanded) return
 
     page.addView(label(
-        "PTPE starts from the previous completed day's pivot (high + low + close / 3). A move of about 2% from the pivot in the previous direction is marked CONTINUATION; a move of about 2% in the opposite direction starts BUILDING UP. CHOCH, MSS and BOS must confirm before GET READY. QUALIFYING NOW requires target probability strictly greater than 55% and at least 5 comparable historical samples. Contract timeframe remains three days.",
+        "PTPE starts from the previous completed day's pivot (high + low + close / 3). A move of about 0.5% from the pivot in the previous direction is marked CONTINUATION; a move of about 0.5% in the opposite direction starts BUILDING UP. CHOCH, MSS and BOS must confirm before GET READY. QUALIFYING NOW requires target probability strictly greater than 55% and at least 5 comparable historical samples. Contract timeframe remains three days.",
         12f, muted, false
         ).apply { setPadding(dp(12), dp(10), dp(12), dp(10)) })
 
@@ -2753,8 +2786,7 @@ private fun addTargetFilterAnalysis() {
         if (adminUsersLoading && users == null) {
             page.addView(label("Loading registrations…", 14f, yellow, false))
             return
-            }
-        if (users == null) {
+            if (users == null) {
             page.addView(label("Tap REFRESH PENDING USERS to load registrations.", 14f, muted, false))
             return
         }
@@ -2799,7 +2831,7 @@ private fun addTargetFilterAnalysis() {
                         button("REACTIVATE USER", true) {
                             android.app.AlertDialog.Builder(this@MainActivity)
                                 .setTitle("Reactivate user")
-                                    .setMessage("Allow this user to log in again?")
+                                .setMessage("Allow this user to log in again?")
                                 .setNegativeButton("CANCEL", null)
                                 .setPositiveButton("REACTIVATE") { _, _ ->
                                     authRequest("admin_reactivate_user", mapOf("user_id" to userId)) { ok, result ->
@@ -3344,7 +3376,6 @@ private fun addTargetFilterAnalysis() {
             }
         )
     }
-
     // =========================================================
     // BOTTOM NAVIGATION
     // =========================================================
@@ -3649,7 +3680,6 @@ private fun addTargetFilterAnalysis() {
             }
         })
     }
-
     private fun oauthError(body: String): String = try {
         val j = JSONObject(body); val err = j.optJSONObject("error")
         err?.optString("message")?.takeIf { !it.isNullOrBlank() } ?: j.optString("message", body.take(180))
@@ -3914,5 +3944,4 @@ override fun onMarketDataError(
         }
     }
 
-                                        }
-        
+    }
