@@ -187,7 +187,8 @@ private var drawerOpen = false
         val distancePercent: Double? = null,
         val probability: Double = 0.0,
         val samples: Int = 0,
-        val status: String = "WAITING FOR MARKET DATA"
+        val status: String = "WAITING FOR MARKET DATA",
+        val pivot: Double? = null
     )
     private val lastPtpeByIndex = mutableMapOf<String, PtpeDisplay>()
     private val lastPtpeEvaluationAt = mutableMapOf<String, Long>()
@@ -336,6 +337,7 @@ private var drawerOpen = false
         }
         return true
     }
+
     private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Long) {
         val accountKey = accountId.ifBlank { "unlinked" }.replace(Regex("[^A-Za-z0-9_-]"), "_")
         val key = "daily_trades_${accountKey}_${executionMode}_${saDayKey()}"
@@ -372,6 +374,35 @@ private var drawerOpen = false
         if (samples == 0) return 0.0 to 0
         return (hits.toDouble() / samples.toDouble() * 100.0) to samples
     }
+    /** Daily pivot uses the previous completed UTC calendar day's high, low and close. */
+    private fun previousDayPivot(candles: List<DerivApiClient.Candle>): Double? {
+        if (candles.isEmpty()) return null
+        val daySeconds = 24L * 60L * 60L
+        val latestDay = candles.maxOf { it.epoch } / daySeconds
+        val previousDayCandles = candles.filter { it.epoch / daySeconds == latestDay - 1L }
+        if (previousDayCandles.isEmpty()) return null
+        val high = previousDayCandles.maxOf { it.high }
+        val low = previousDayCandles.minOf { it.low }
+        val close = previousDayCandles.maxByOrNull { it.epoch }?.close ?: return null
+        val pivot = (high + low + close) / 3.0
+        return pivot.takeIf { it.isFinite() && it > 0.0 }
+    }
+
+    /** Classify a 2% move from the daily pivot against the recent pre-move direction. */
+    private fun pivotLifecycleStatus(candles: List<DerivApiClient.Candle>, current: Double, pivot: Double): String {
+        if (candles.size < 4) return "WAITING — ESTABLISHING PREVIOUS DIRECTION"
+        val recent = candles.takeLast(4).map { it.close }
+        val previousDirection = when {
+            recent.last() > recent.first() -> "UP"
+            recent.last() < recent.first() -> "DOWN"
+            else -> return "WAITING — PREVIOUS DIRECTION UNCLEAR"
+        }
+        val fromPivot = (current - pivot) / pivot * 100.0
+        if (kotlin.math.abs(fromPivot) < 2.0) return "WAITING — LESS THAN 2% FROM DAILY PIVOT"
+        val movementDirection = if (fromPivot > 0.0) "UP" else "DOWN"
+        return if (movementDirection == previousDirection) "CONTINUATION" else "BUILDING UP"
+    }
+
     /** Sole authority for trade approval. PTPE is always recorded for display, even when it fails. */
     private fun evaluateMasterDecision(symbol: String): MasterDecision? {
         val candles = analysisCompletedCandles(symbol)
@@ -386,9 +417,25 @@ private var drawerOpen = false
             lastDecisionByIndex.remove(symbol)
             return null
         }
+        val pivot = previousDayPivot(candles)
+        if (pivot == null) {
+            lastPtpeByIndex[symbol] = PtpeDisplay(status = "WAITING FOR PREVIOUS DAY HIGH/LOW/CLOSE")
+            lastDecisionByIndex.remove(symbol)
+            return null
+        }
+        val lifecycle = pivotLifecycleStatus(candles, current, pivot)
+        if (lifecycle != "BUILDING UP") {
+            lastPtpeByIndex[symbol] = PtpeDisplay(
+                direction = "WAIT", probability = 0.0, samples = 0,
+                status = if (lifecycle == "CONTINUATION") "CONTINUATION — NO REVERSAL SETUP" else lifecycle,
+                pivot = pivot
+            )
+            lastDecisionByIndex.remove(symbol)
+            return null
+        }
         val event = analysisLatestMss(candles)
         if (event == null) {
-            lastPtpeByIndex[symbol] = PtpeDisplay(status = "WAITING FOR CONFIRMED MSS/CHOCH")
+            lastPtpeByIndex[symbol] = PtpeDisplay(status = "BUILDING UP — WAITING FOR CHOCH/MSS AND BOS", pivot = pivot)
             lastDecisionByIndex.remove(symbol)
             return null
         }
@@ -396,13 +443,13 @@ private var drawerOpen = false
         val targetDirection = if (direction == "BULLISH") "UP" else "DOWN"
         val targetPivot = analysisStructuralTarget(candles, current, targetDirection, event.confirmation.epoch)
         if (targetPivot == null) {
-            lastPtpeByIndex[symbol] = PtpeDisplay(direction = if (direction == "BULLISH") "BUY" else "SELL", status = "WAITING FOR STRUCTURAL TARGET")
+            lastPtpeByIndex[symbol] = PtpeDisplay(direction = if (direction == "BULLISH") "BUY" else "SELL", status = "GET READY — WAITING FOR STRUCTURAL TARGET", pivot = pivot)
             lastDecisionByIndex.remove(symbol)
             return null
-            }
+        }
         val target = targetPivot.price
         if (!target.isFinite() || (direction == "BULLISH" && target <= current) || (direction == "BEARISH" && target >= current)) {
-            lastPtpeByIndex[symbol] = PtpeDisplay(direction = if (direction == "BULLISH") "BUY" else "SELL", target = target, status = "INVALID TARGET DIRECTION")
+            lastPtpeByIndex[symbol] = PtpeDisplay(direction = if (direction == "BULLISH") "BUY" else "SELL", target = target, status = "GET READY — INVALID TARGET DIRECTION", pivot = pivot)
             lastDecisionByIndex.remove(symbol)
             return null
         }
@@ -411,27 +458,24 @@ private var drawerOpen = false
         val decisionDirection = if (direction == "BULLISH") "BUY" else "SELL"
         val priorOutcomeExists = analysisHistoricalOutcomes(candles).any { it.direction == direction && it.confirmation.epoch != event.confirmation.epoch }
         val status = when {
-            distance < 1.5 -> "WAIT — TARGET DISTANCE BELOW 1.5%"
-            samples < 5 -> "WAIT — INSUFFICIENT PTPE SAMPLES"
-            probability < 55.0 -> "WAIT — PTPE BELOW 55%"
-            !priorOutcomeExists -> "WAIT — NO PRIOR SAME-DIRECTION OUTCOME"
-            else -> "QUALIFIED"
+            samples < 5 -> "GET READY — INSUFFICIENT PTPE SAMPLES"
+            probability <= 55.0 -> "GET READY — PTPE PROBABILITY MUST BE GREATER THAN 55%"
+            !priorOutcomeExists -> "GET READY — NO PRIOR SAME-DIRECTION OUTCOME"
+            else -> "QUALIFYING NOW"
         }
-        lastPtpeByIndex[symbol] = PtpeDisplay(decisionDirection, target, distance, probability, samples, status)
-        if (status != "QUALIFIED") {
+        lastPtpeByIndex[symbol] = PtpeDisplay(decisionDirection, target, distance, probability, samples, status, pivot)
+        if (status != "QUALIFYING NOW") {
             lastDecisionByIndex.remove(symbol)
             return null
         }
         val decision = MasterDecision(symbol, decisionDirection, current, target, distance, probability, samples,
-            "Confirmed MSS/CHOCH + structural target + empirical 24-hour PTPE; 3-day contract timeframe")
+            "Daily pivot 2% reversal classification + confirmed MSS/CHOCH/BOS + structural target + PTPE >55%; 3-day contract timeframe")
         lastDecisionByIndex[symbol] = decision
-        notifyEvent(
-            "Trade qualified",
-            "$symbol · ${decision.direction} · Target ${formatMarketPrice(decision.target)} · PTPE ${String.format(java.util.Locale.US, "%.1f", decision.targetProbability)}%",
-            "qualified_${symbol}_${decision.direction}_${event.confirmation.epoch}_${executionMode}_${accountId}"
-        )
+        notifyEvent("Trade qualified", "$symbol · ${decision.direction} · Target ${formatMarketPrice(decision.target)} · PTPE ${String.format(java.util.Locale.US, "%.1f", decision.targetProbability)}%",
+            "qualified_${symbol}_${decision.direction}_${event.confirmation.epoch}_${executionMode}_${accountId}")
         return decision
     }
+
     private fun attemptMasterDecisionExecution(symbol: String, decision: MasterDecision) {
         // This decision was evaluated from the latest tick immediately before this call.
         // The proposal-response path still performs its own fresh validation before purchase.
@@ -583,7 +627,6 @@ private var drawerOpen = false
                     "trade_open_failed_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
                 return
             }
-
             // Fresh-entry gate: the original signal may have become stale while the proposal
             // was in flight. Recalculate the full Master Decision using the latest live price,
             // then ensure the target still offers the required minimum distance and is still
@@ -599,14 +642,13 @@ private var drawerOpen = false
             }
             val sameSignal = freshDecision != null && freshDecision.direction == pending.direction &&
                 kotlin.math.abs(freshDecision.target - pending.target) <= kotlin.math.max(0.0000001, kotlin.math.abs(pending.target) * 0.0000001)
-            if (freshDecision == null || !sameSignal || !targetStillAhead || freshDistance < 1.5) {
+            if (freshDecision == null || !sameSignal || !targetStillAhead) {
                 pendingOrdersByRequest.remove(reqId)
                 pendingIndexSymbols.remove(pending.symbol)
                 val reason = when {
                     freshDecision == null -> "Master Decision no longer qualifies at the latest price."
                     !sameSignal -> "The qualifying direction or structural target changed while requesting the proposal."
-                    !targetStillAhead -> "The target is no longer ahead of the current entry price."
-                    else -> "Remaining target distance is ${String.format(java.util.Locale.US, "%.2f", freshDistance)}%; minimum required is 1.50%."
+                    else -> "The target is no longer ahead of the current entry price."
                 }
                 notifyEvent("Execution rejected", "${pending.symbol} · Fresh-entry validation failed. $reason No purchase submitted.",
                     "fresh_entry_rejected_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
@@ -884,7 +926,7 @@ mainScrollView = scroll
         if (drawerOpen) {
             addDrawer()
         }
-if (selectedTab == "Analysis") {
+        if (selectedTab == "Analysis") {
     currentPriceViews.clear()
     marketDataPriceViews.clear()
 }
@@ -1477,7 +1519,7 @@ private fun addHeader() {
                 "System Settings",
                 "Logout"
             )
-        } else {
+            } else {
             listOf(
                 "Home",
                 "Trade",
@@ -1764,7 +1806,10 @@ private fun addHeader() {
         status.contains("MSS/CHOCH") -> "MSS WAIT"
         status.contains("STRUCTURAL TARGET") -> "TARGET WAIT"
         status.contains("INVALID TARGET") -> "INVALID TARGET"
-        status.contains("DISTANCE BELOW") -> "DISTANCE <1.5%"
+        status.contains("CONTINUATION") -> "CONTINUATION"
+        status.contains("BUILDING UP") -> "BUILDING UP"
+        status.contains("GET READY") -> "GET READY"
+        status.contains("QUALIFYING NOW") -> "QUALIFYING NOW"
         status.contains("INSUFFICIENT PTPE") -> "PTPE SAMPLES"
         status.contains("PTPE BELOW") -> "PTPE <55%"
         status.contains("NO PRIOR") -> "NO PRIOR EVENT"
@@ -1772,9 +1817,8 @@ private fun addHeader() {
         else -> "DATA WAIT"
     }
     return shortStatus to yellow
-}
-
-private fun updatePtpeDisplay(symbol: String) {
+                            }
+                            private fun updatePtpeDisplay(symbol: String) {
     val qualified = lastDecisionByIndex.containsKey(symbol)
     ptpeStatusViews[symbol]?.apply {
         text = ptpeDisplayText(symbol)
@@ -2184,13 +2228,17 @@ private fun addMarketStructureAnalysis() {
         if (candles.size < 20) {
             structureCard.addView(label("STATUS: WAITING FOR SUFFICIENT COMPLETED H1 HISTORY", 12f, yellow, true))
         } else {
-            // Limit only this display to the latest 40 pivots; other analysis retains full history.
+               // Match Webtrader: display only the latest 40 pivots in Market Structure.
+            // This cap is local to this display; MSS/CHOCH, behaviour, and structural
+            // target calculations continue using their full analysis pivot history.
             val pivots = analysisPivots(candles).takeLast(40)
             val highs = pivots.filter { it.type == "HIGH" }
             val lows = pivots.filter { it.type == "LOW" }
             val last = pivots.takeLast(2)
             val leg = if (last.size == 2 && last[0].type == "LOW" && last[1].type == "HIGH") "BULLISH LEG"
                 else if (last.size == 2 && last[0].type == "HIGH" && last[1].type == "LOW") "BEARISH LEG" else "UNCLEAR"
+            structureCard.addView(label("STRUCTURAL PIVOTS: ${pivots.size}", 12f, white, false))
+            structureCard.addView(label("CURRENT STRUCTURAL LEG: $leg", 13f, if (leg == "BULLISH LEG") green else if (leg == "BEARISH LEG") red else yellow, true))
             val latestHigh = highs.lastOrNull()
             val latestLow = lows.lastOrNull()
             val overallStructure = when {
@@ -2203,8 +2251,6 @@ private fun addMarketStructureAnalysis() {
                 "BEARISH STRUCTURE" -> "Latest high and low are both lower; bearish structure is present. Wait for the existing confirmation rules before trading."
                 else -> "Latest high/low pivots disagree or are not aligned; structure is mixed. Wait for clearer confirmation."
             }
-            structureCard.addView(label("STRUCTURAL PIVOTS: ${pivots.size}", 12f, white, false))
-            structureCard.addView(label("CURRENT STRUCTURAL LEG: $leg", 13f, if (leg == "BULLISH LEG") green else if (leg == "BEARISH LEG") red else yellow, true))
             structureCard.addView(label("OVERALL MARKET STRUCTURE: $overallStructure", 13f, if (overallStructure == "BULLISH STRUCTURE") green else if (overallStructure == "BEARISH STRUCTURE") red else yellow, true))
             if (latestHigh != null && latestLow != null) {
                 structureCard.addView(label("KEY LEVELS: HIGH ${formatMarketPrice(latestHigh.price)} (${latestHigh.label}) | LOW ${formatMarketPrice(latestLow.price)} (${latestLow.label})", 12f, white, false))
@@ -2420,6 +2466,7 @@ private fun addDirectionStructuralTargetAnalysis() {
                 )
             )
         }
+
         indexCard.addView(
             label(
                 "TARGET DISTANCE: ${
@@ -2539,14 +2586,9 @@ private fun addQualificationAnalysis() {
         } else {
             null
         }
-        val targetEligibilityText = if (targetDistance != null && targetDistance >= 1.5) {
-            "PASS — " + String.format(java.util.Locale.US, "%.3f%%", targetDistance)
-        } else {
-            "WAIT — " + (targetDistance?.let { String.format(java.util.Locale.US, "%.3f%%", it) } ?: "NO TARGET")
-        }
         qualificationCard.addView(label(
-            "TARGET ELIGIBILITY ≥ 1.5%: $targetEligibilityText",
-            12f, if (targetDistance != null && targetDistance >= 1.5) green else yellow, true
+            "TARGET DISTANCE (INFORMATION ONLY): ${targetDistance?.let { String.format(java.util.Locale.US, "%.3f%%", it) } ?: "NO TARGET"}",
+            12f, if (targetDistance != null) white else yellow, true
         ))
         val ptpeText = if (masterDecision != null) {
             String.format(java.util.Locale.US, "%.1f%%", masterDecision.targetProbability) +
@@ -2578,7 +2620,7 @@ private fun addPtpeAnalysis() {
     if (!ptpeAnalysisExpanded) return
 
     page.addView(label(
-        "PTPE estimates how often a comparable historical MSS/CHOCH in the same direction reached the current target distance within 24 hours. The contract timeframe remains three days. Qualification requires at least 55% probability and at least 5 comparable samples. This section reports the reason each index qualifies or waits.",
+        "PTPE starts from the previous completed day's pivot (high + low + close / 3). A move of about 2% from the pivot in the previous direction is marked CONTINUATION; a move of about 2% in the opposite direction starts BUILDING UP. CHOCH, MSS and BOS must confirm before GET READY. QUALIFYING NOW requires target probability strictly greater than 55% and at least 5 comparable historical samples. Contract timeframe remains three days.",
         12f, muted, false
         ).apply { setPadding(dp(12), dp(10), dp(12), dp(10)) })
 
@@ -2587,13 +2629,13 @@ private fun addPtpeAnalysis() {
         val card = card().apply { orientation = LinearLayout.VERTICAL }
         card.addView(label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true))
         card.addView(label("DIRECTION: ${ptpe.direction}", 13f, if (ptpe.direction == "BUY") green else if (ptpe.direction == "SELL") red else yellow, true))
+        card.addView(label("DAILY PIVOT: ${ptpe.pivot?.let { formatMarketPrice(it) } ?: "—"}", 13f, white, false))
         card.addView(label("STRUCTURAL TARGET: ${ptpe.target?.let { formatMarketPrice(it) } ?: "—"}", 13f, white, false))
         card.addView(label("TARGET DISTANCE: ${ptpe.distancePercent?.let { String.format(java.util.Locale.US, "%.3f%%", it) } ?: "—"}", 13f, white, false))
-        val probabilityText = if (ptpe.samples <= 0) "N/A — INSUFFICIENT DATA" else String.format(java.util.Locale.US, "%.1f%%", ptpe.probability)
-        card.addView(label("PTPE PROBABILITY: $probabilityText", 14f, if (ptpe.probability >= 55.0 && ptpe.samples >= 5) green else yellow, true))
+        card.addView(label("PTPE PROBABILITY: ${String.format(java.util.Locale.US, "%.1f%%", ptpe.probability)}", 14f, if (ptpe.probability >= 55.0 && ptpe.samples >= 5) green else yellow, true))
         card.addView(label("COMPARABLE HISTORICAL SAMPLES: ${ptpe.samples} (minimum 5)", 12f, white, false))
         card.addView(label("MINIMUM PROBABILITY: 55%", 12f, white, false))
-        card.addView(label("STATUS: ${ptpe.status}", 13f, if (ptpe.status == "QUALIFIED") green else yellow, true))
+        card.addView(label("STATUS: ${ptpe.status}", 13f, if (ptpe.status == "QUALIFYING NOW") green else yellow, true))
         page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
     }
 }
@@ -3193,7 +3235,6 @@ private fun addTargetFilterAnalysis() {
         current.add(0, entry)
         appPrefs.edit().putString("notification_feed", current.take(50).joinToString("\n")).apply()
     }
-
     private fun ensureNotificationPermission() {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7802)
@@ -3313,6 +3354,7 @@ private fun addTargetFilterAnalysis() {
         } else {
             listOf("⌂" to "Home", "▥" to "Trade", "🔔" to "Notifications", "♙" to "My profile")
         }
+
         tabs.forEach { (icon, name) ->
             val selected = selectedTab == name
             val item = LinearLayout(this).apply {
@@ -3608,7 +3650,8 @@ private fun addTargetFilterAnalysis() {
     accountType = ""
     accountBalance = 0.0
     accountCurrency = ""
-        render()
+
+    render()
     derivApiClient.connectWithAccessToken(token, executionMode)
     }
 
