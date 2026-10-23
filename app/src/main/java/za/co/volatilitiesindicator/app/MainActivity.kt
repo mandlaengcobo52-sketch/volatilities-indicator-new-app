@@ -1526,7 +1526,6 @@ private fun addHeader() {
         card.addView(
             label("NAVIGATION", 13f, green, true)
         )
-
         val items = if (platform == "ADMIN") {
             listOf(
                 "Dashboard",
@@ -1847,9 +1846,8 @@ private fun addHeader() {
         text = statusText
         setTextColor(statusColor)
     }
-}
-
-// =========================================================
+                            }
+                            // =========================================================
 // TRADE SCREEN
 // =========================================================
 private fun addTradeScreen() {
@@ -2135,7 +2133,6 @@ private fun analysisPivots(candles: List<DerivApiClient.Candle>): List<AnalysisP
     lows.forEachIndexed { i, pivot -> pivot.label = if (i > 0 && pivot.price > lows[i-1].price) "HL" else "LL" }
     return collapsed
 }
-
 private fun analysisMssEvents(candles: List<DerivApiClient.Candle>): List<AnalysisMssEvent> {
     if (candles.size < 20) return emptyList()
     val pivots = analysisPivots(candles)
@@ -2406,6 +2403,15 @@ private fun addMssChochBehaviourAnalysis() {
         if (candles.size < 30) {
             card.addView(label("STATUS: WAITING FOR AT LEAST 30 COMPLETED H1 CANDLES", 12f, yellow, true))
         } else {
+            val allOutcomes = analysisHistoricalOutcomes(candles)
+            val currentEvent = analysisLatestMss(candles)
+            val history = allOutcomes.filterNot { currentEvent != null && it.confirmation.epoch == currentEvent.confirmation.epoch }.takeLast(20)
+            val direction = currentEvent?.direction
+            val sample = when (direction) {
+                "BULLISH" -> history.filter { it.direction == "BULLISH" }
+                "BEARISH" -> history.filter { it.direction == "BEARISH" }
+                else -> history
+            }
             val allOutcomes = analysisHistoricalOutcomes(candles)
             val currentEvent = analysisLatestMss(candles)
             val history = allOutcomes.filterNot { currentEvent != null && it.confirmation.epoch == currentEvent.confirmation.epoch }.takeLast(20)
@@ -2703,7 +2709,6 @@ private fun addPtpeAnalysis() {
         page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
     }
 }
-
 private fun addTargetFilterAnalysis() {
     val header = card().apply { orientation = LinearLayout.VERTICAL }
     val row = horizontalRow()
@@ -2982,7 +2987,6 @@ private fun addTargetFilterAnalysis() {
                 show()
             }
     }
-
     private fun showEditUserDialog(user: JSONObject) {
         val firstName = android.widget.EditText(this).apply {
             hint = "First name"
@@ -3279,7 +3283,6 @@ private fun addTargetFilterAnalysis() {
             render()
         }, matchWrap().apply { topMargin = dp(8) })
         page.addView(trailingCard, matchWrap().apply { bottomMargin = dp(10) })
-
         val priceAlertCard = card().apply { orientation = LinearLayout.VERTICAL }
         addPriceAlertControls(priceAlertCard)
         page.addView(priceAlertCard, matchWrap().apply { bottomMargin = dp(10) })
