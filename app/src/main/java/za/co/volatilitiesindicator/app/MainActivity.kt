@@ -342,7 +342,7 @@ private var drawerOpen = false
             return false
         }
         return true
-    }
+        }
 
     private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Long) {
         val accountKey = accountId.ifBlank { "unlinked" }.replace(Regex("[^A-Za-z0-9_-]"), "_")
@@ -898,6 +898,7 @@ if (authToken.isNotBlank() && savedToken.isNotBlank() &&
             handleOAuthCallback(intent)
         }
     }
+
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 7802) {
@@ -917,7 +918,7 @@ if (authToken.isNotBlank() && savedToken.isNotBlank() &&
     } else {
         0
     }
-        val outer = LinearLayout(this).apply {
+    val outer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(bg)
         }
@@ -1496,6 +1497,7 @@ private fun addHeader() {
             titles,
             LinearLayout.LayoutParams(0, -2, 1f)
         )
+
         val bell = TextView(this).apply {
             text = if (notificationsEnabled) "🔔" else "♧"
             textSize = 25f
@@ -1511,9 +1513,8 @@ private fun addHeader() {
         )
 
         page.addView(row)
-    }
-
-    // =========================================================
+}
+// =========================================================
     // NAVIGATION DRAWER
     // =========================================================
 
@@ -1810,7 +1811,6 @@ private fun addHeader() {
     val distanceText = ptpe.distancePercent?.let { String.format(java.util.Locale.US, "%.2f%%", it) } ?: "—"
     return "$symbol • ${ptpe.direction} • Target $targetText • Distance $distanceText • PTPE ${String.format(java.util.Locale.US, "%.1f", ptpe.probability)}% (${ptpe.samples} samples) • ${ptpe.status}"
                             }
-
                             private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
     val decision = lastDecisionByIndex[symbol]
     if (decision != null) return "QUALIFIED ${decision.direction}" to green
@@ -2101,6 +2101,7 @@ private fun analysisCompletedCandles(symbol: String): List<DerivApiClient.Candle
     val completed = all.filter { now - it.epoch >= 3600L }
     return if (completed.size >= 2) completed else all.dropLast(1)
 }
+
 /* L=2/R=2 pivots and same-type collapse match WebTrader. Left comparisons
    are strict; right comparisons permit equality, exactly as mssDetect(). */
 private fun analysisPivots(candles: List<DerivApiClient.Candle>): List<AnalysisPivot> {
@@ -2395,8 +2396,15 @@ private fun addMssChochBehaviourAnalysis() {
         mssChochBehaviourExpanded = !mssChochBehaviourExpanded; render()
     }, LinearLayout.LayoutParams(-2, dp(48)))
     header.addView(row)
-    page.addView(header, matchWrap().apply 
-                 card.addView(label("STATUS: WAITING FOR AT LEAST 30 COMPLETED H1 CANDLES", 12f, yellow, true))
+    page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
+    if (!mssChochBehaviourExpanded) return
+    page.addView(label("Uses the same completed-H1 MSS event rules. The latest current event is excluded from historical samples. The last 20 historical events are measured until an opposite MSS or the end of loaded history. Continuation is the percentage with favourable movement greater than zero; averages are directional favourable/adverse extremes.", 12f, muted, false).apply { setPadding(dp(12), dp(10), dp(12), dp(10)) })
+    marketDataIndexes.forEach { symbol ->
+        val candles = analysisCompletedCandles(symbol)
+        val card = card().apply { orientation = LinearLayout.VERTICAL }
+        card.addView(label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true))
+        if (candles.size < 30) {
+            card.addView(label("STATUS: WAITING FOR AT LEAST 30 COMPLETED H1 CANDLES", 12f, yellow, true))
         } else {
             val allOutcomes = analysisHistoricalOutcomes(candles)
             val currentEvent = analysisLatestMss(candles)
@@ -2670,7 +2678,7 @@ private fun addPtpeAnalysis() {
     row.addView(button(if (ptpeAnalysisExpanded) "▼ OPEN" else "▶ CLOSED", ptpeAnalysisExpanded) {
         ptpeAnalysisExpanded = !ptpeAnalysisExpanded
         render()
-    }, LinearLayout.LayoutParams(-2, dp(48)))
+        }, LinearLayout.LayoutParams(-2, dp(48)))
     header.addView(row)
     page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
     if (!ptpeAnalysisExpanded) return
@@ -2695,6 +2703,7 @@ private fun addPtpeAnalysis() {
         page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
     }
 }
+
 private fun addTargetFilterAnalysis() {
     val header = card().apply { orientation = LinearLayout.VERTICAL }
     val row = horizontalRow()
@@ -3290,7 +3299,7 @@ private fun addTargetFilterAnalysis() {
         appPrefs.edit().putString("notification_feed", current.take(50).joinToString("\n")).apply()
     }
     private fun ensureNotificationPermission() {
-    if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7802)
         }
     }
@@ -3622,7 +3631,6 @@ private fun addTargetFilterAnalysis() {
             Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
         )
     }
-
     private fun startDerivOAuth() {
         val state = "android-" + UUID.randomUUID().toString()
         val verifier = createCodeVerifier()
@@ -3725,7 +3733,7 @@ private fun addTargetFilterAnalysis() {
         // Analysis and other tabs can be active while Deriv callbacks arrive.
         if (::accountStatus.isInitialized) {
             accountStatus.text = "●  NOT CONNECTED"
-            accountStatus.setTextColor(red)
+            accountStatus.setTextColor(Color.RED)
         }
         if (::accountIdView.isInitialized) accountIdView.text = "Account:  —"
         if (::balanceView.isInitialized) balanceView.text = "Balance:  —"
@@ -3892,7 +3900,6 @@ private fun addTargetFilterAnalysis() {
         // Re-rendering here caused the ScrollView to reset/jump while users scrolled.
         // The explicit Refresh button requests fresh account/trade data when needed.
     }
-    }
 
     override fun onCandles(
     symbol: String,
@@ -3924,7 +3931,7 @@ override fun onMarketDataError(
         marketDataErrors[symbol] = message
         dashboardStatusViews[symbol]?.apply {
             text = "FEED ERROR"
-            setTextColor(red)
+            setTextColor(Color.RED)
         }
         android.util.Log.e("DerivMarketData", "$symbol: $message")
     }
@@ -3934,7 +3941,7 @@ override fun onMarketDataError(
     runOnUiThread {
         if (!connected && ::accountStatus.isInitialized) {
             accountStatus.text = "●  CONNECTION ERROR"
-            accountStatus.setTextColor(red)
+            accountStatus.setTextColor(Color.RED)
         }
       toast("Deriv: $message")
     }
@@ -3945,9 +3952,9 @@ override fun onMarketDataError(
             marketDataRequested = false
             if (::accountStatus.isInitialized) {
                 accountStatus.text = "●  NOT CONNECTED"
-                accountStatus.setTextColor(red)
+                accountStatus.setTextColor(Color.RED)
             }
         }
     }
 
-                                        }
+    }
