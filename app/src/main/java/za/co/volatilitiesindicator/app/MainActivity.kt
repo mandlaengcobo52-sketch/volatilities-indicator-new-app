@@ -1886,6 +1886,36 @@ private fun addTradeScreen() {
 
 
     page.addView(sectionTitle("RUNNING TRADES"))
+    val masterDecisionCard = card().apply {
+    orientation = LinearLayout.VERTICAL
+}
+masterDecisionCard.addView(
+    label(
+        if (autoTradeEnabled) "MASTER DECISION: ON"
+        else "MASTER DECISION: OFF",
+        15f,
+        if (autoTradeEnabled) green else red,
+        true
+    )
+)
+masterDecisionCard.addView(
+    button(
+        if (autoTradeEnabled) "TURN MASTER DECISION OFF"
+        else "TURN MASTER DECISION ON",
+        autoTradeEnabled
+    ) {
+        autoTradeEnabled = !autoTradeEnabled
+        if (autoTradeEnabled && !connected) {
+            toast("Master Decision is ON, but execution waits until Deriv is connected.")
+        }
+        render()
+    },
+    matchWrap().apply { topMargin = dp(8) }
+)
+page.addView(
+    masterDecisionCard,
+    matchWrap().apply { bottomMargin = dp(10) }
+)
     val runningCard = card().apply { orientation = LinearLayout.VERTICAL }
     val portfolioArray = openTradesResponse?.optJSONObject("portfolio")?.optJSONArray("contracts")
         ?: openTradesResponse?.optJSONArray("contracts")
