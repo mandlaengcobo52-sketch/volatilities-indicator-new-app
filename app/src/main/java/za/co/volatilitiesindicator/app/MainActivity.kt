@@ -1300,7 +1300,7 @@ private fun addUserProfileScreen(page: LinearLayout) {
         val riskLimitText = when (risk.lowercase()) {
             "minimum" -> "1 trade per day"
             "medium" -> "2 trades per day"
-            "maximum" -> "3 trades per day"
+                        "maximum" -> "3 trades per day"
             "super maximum", "super_maximum", "super-maximum", "privilege" -> "Unlimited trades per day"
             "trial" -> "Trade limit not configured"
             else -> "Trading disabled until assigned"
@@ -1601,7 +1601,6 @@ private fun addHeader() {
     )
 
     row.addView(space(dp(8)))
-
     row.addView(
         button("♟♟ ADMIN", platform == "ADMIN") {
             platform = "ADMIN"
@@ -1896,8 +1895,6 @@ page.addView(
         accountCard.addView(label("Target barrier: ${latestTarget?.let { formatMarketPrice(it) } ?: "Waiting for a qualifying Master Decision"}", 12f, yellow, true))
     }
     page.addView(accountCard, matchWrap().apply { bottomMargin = dp(10) })
-
-
     page.addView(sectionTitle("RUNNING TRADES"))
     val runningCard = card().apply { orientation = LinearLayout.VERTICAL }
     val portfolioArray = openTradesResponse?.optJSONObject("portfolio")?.optJSONArray("contracts")
@@ -2501,7 +2498,6 @@ private fun addDirectionStructuralTargetAnalysis() {
                 true
             )
         )
-
         indexCard.addView(
             label(
                 "DIRECTION: ${direction.ifBlank { "WAITING" }}",
@@ -3105,7 +3101,6 @@ private fun addTargetFilterAnalysis() {
                 show()
             }
     }
-
     private fun loadAdminUsers() {
         if (authToken.isBlank()) {
             toast("Sign in with the administrator account first.")
@@ -3406,7 +3401,6 @@ private fun addTargetFilterAnalysis() {
                 1
             )
         }
-
         val tabs = if (authToken.isBlank()) {
             listOf("⌂" to "Home", "↪" to "Login", "+" to "Register")
         } else if (platform == "ADMIN") {
@@ -3701,7 +3695,6 @@ private fun addTargetFilterAnalysis() {
         toast("Deriv access token is empty.")
         return
     }
-
     connected = false
     marketDataRequested = false
         accountId = ""
@@ -3955,4 +3948,4 @@ override fun onMarketDataError(
         }
     }
 
-    }
+                                        }
