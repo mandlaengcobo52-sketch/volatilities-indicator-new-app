@@ -320,6 +320,7 @@ private var drawerOpen = false
         val accountKey = accountId.ifBlank { "unlinked" }.replace(Regex("[^A-Za-z0-9_-]"), "_")
         return appPrefs.getInt("daily_trades_${accountKey}_${executionMode}_${saDayKey()}", 0)
     }
+
     private fun canPlaceTrade(showToast: Boolean = true): Boolean {
         if (!riskPlanIsActive()) {
             if (showToast) toast("Trading is locked: an active risk plan must be assigned by the administrator.")
@@ -341,7 +342,7 @@ private var drawerOpen = false
             return false
         }
         return true
-    }
+        }
 
     private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Long) {
         val accountKey = accountId.ifBlank { "unlinked" }.replace(Regex("[^A-Za-z0-9_-]"), "_")
@@ -464,8 +465,7 @@ private var drawerOpen = false
         val priorOutcomeExists = analysisHistoricalOutcomes(candles).any { it.direction == direction && it.confirmation.epoch != event.confirmation.epoch }
         val status = when {
             samples < 5 -> "GET READY — INSUFFICIENT PTPE SAMPLES"
-            probability <= 55.0 -> "GET READY — PTPE PROBABILITY MUST BE GREATER THAN 55%"
-            !priorOutcomeExists -> "GET READY — NO PRIOR SAME-DIRECTION OUTCOME"
+            probability < 55.0 -> "GET READY — PTPE PROBABILITY BELOW 55%"
             else -> "QUALIFYING NOW"
         }
         lastPtpeByIndex[symbol] = PtpeDisplay(decisionDirection, target, distance, probability, samples, status, pivot)
@@ -474,7 +474,7 @@ private var drawerOpen = false
             return null
         }
         val decision = MasterDecision(symbol, decisionDirection, current, target, distance, probability, samples,
-            "Daily pivot 0.5% reversal classification + confirmed MSS/CHOCH/BOS + structural target + PTPE >55%; 3-day contract timeframe")
+            "Stage 1: pivot reversal of at least 0.5% to BUILDING UP; Stage 2: CHOCH + MSS + BOS to GET READY; Stage 3: PTPE >=55% from qualifying price to structural profit barrier, then QUALIFYING NOW; potential profit must be >=15% of stake (20% preferred); 3-day contract timeframe")
         lastDecisionByIndex[symbol] = decision
         notifyEvent("Trade qualified", "$symbol · ${decision.direction} · Target ${formatMarketPrice(decision.target)} · PTPE ${String.format(java.util.Locale.US, "%.1f", decision.targetProbability)}%",
             "qualified_${symbol}_${decision.direction}_${event.confirmation.epoch}_${executionMode}_${accountId}")
@@ -548,7 +548,8 @@ private var drawerOpen = false
                 "insufficient_funds_${accountId}_${executionMode}_${saDayKey()}_$symbol")
             return
         }
-        // Three-day ONETOUCH contracts require an absolute barrier price.
+        // Build the ONETOUCH barrier from the latest spot as a signed relative offset.
+        // This also prevents sending a stale absolute target after the market has moved.
         val proposalSpot = marketDataPrices[symbol] ?: decision.entry
         val targetPrice = decision.target
         val barrierOffset = targetPrice - proposalSpot
@@ -568,7 +569,7 @@ private var drawerOpen = false
             )
             return
         }
-        val absoluteBarrier = String.format(java.util.Locale.US, "%.3f", targetPrice)
+        val relativeBarrier = String.format(java.util.Locale.US, "%+.5f", barrierOffset)
         val reqId = nextTradeRequestId()
         pendingIndexSymbols.add(symbol)
         pendingOrdersByRequest[reqId] = PendingOrder(symbol, decision.direction, decision.entry,
@@ -582,7 +583,7 @@ private var drawerOpen = false
             .put("duration", 3)
             .put("duration_unit", "d")
             .put("underlying_symbol", symbol)
-            .put("barrier", absoluteBarrier)
+            .put("barrier", String.format(java.util.Locale.US, "%.3f", targetPrice))
             .put("req_id", reqId)
         if (!derivApiClient.send(proposal)) {
             pendingOrdersByRequest.remove(reqId)
@@ -590,8 +591,7 @@ private var drawerOpen = false
             notifyEvent("Execution rejected", "$symbol · Unable to send the proposal request; Deriv connection/client did not accept the request.",
                 "trade_open_failed_$signalKey")
         } else {
-            notifyEvent("Execution requested", "$symbol · ${decision.direction} · Proposal request sent to Deriv. Stake ${formatMoney(stake)}; absolute barrier $absoluteBarrier.",
-                "execution_requested_$signalKey")
+            // Keep proposal-stage messages out of Notifications. Only a confirmed purchase is reported.
             // A proposal timeout is safe to release because no purchase request has been sent.
             // Do not leave the index locked indefinitely if Deriv never answers the proposal.
             android.os.Handler(mainLooper).postDelayed({
@@ -602,11 +602,7 @@ private var drawerOpen = false
                         runningContracts.values.none { it.symbol == stillWaiting.symbol && it.mode == stillWaiting.mode }) {
                         pendingIndexSymbols.remove(stillWaiting.symbol)
                     }
-                    notifyEvent(
-                        "Execution rejected",
-                        "${stillWaiting.symbol} · No proposal response was received from Deriv within 15 seconds. No purchase was submitted; the index lock was released safely.",
-                        "proposal_timeout_${accountId}_${executionMode}_${stillWaiting.symbol}_${stillWaiting.direction}_${String.format(java.util.Locale.US, "%.3f", stillWaiting.target)}"
-                    )
+                    // No notification for a proposal timeout; no trade was executed.
                 }
             }, 15000L)
         }
@@ -626,12 +622,9 @@ private var drawerOpen = false
                 val diagnostic = if (errorCode.isNotBlank()) "$errorMessage (code: $errorCode; req_id: $reqId)" else "$errorMessage (req_id: $reqId)"
                 val insufficientFunds = errorMessage.contains("balance", true) ||
                     errorMessage.contains("fund", true) || errorMessage.contains("insufficient", true)
-                notifyEvent(
-                    if (insufficientFunds) "Execution rejected" else "Execution rejected",
-                    "${failed.symbol} · Deriv rejected ${failed.stage.lowercase()} request: $diagnostic",
-                    "trade_open_failed_${accountId}_${executionMode}_${failed.symbol}_${failed.direction}_${String.format(java.util.Locale.US, "%.3f", failed.target)}"
-                )
-                }
+                // Do not repeat proposal/buy rejection messages in Notifications. Only confirmed
+                // purchases are reported; failed requests are released silently.
+            }
             return
         }
         val pending = pendingOrdersByRequest[reqId]
@@ -645,8 +638,7 @@ private var drawerOpen = false
             if (proposalId.isBlank() || payout <= 0.0) {
                 pendingOrdersByRequest.remove(reqId)
                 pendingIndexSymbols.remove(pending.symbol)
-                notifyEvent("Execution rejected", "${pending.symbol} · Deriv returned an invalid proposal (missing proposal ID or non-positive payout).",
-                    "trade_open_failed_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
+                // Invalid/no-return proposals are rejected silently; no purchase is submitted.
                 return
             }
             // Fresh-entry gate: the original signal may have become stale while the proposal
@@ -672,8 +664,7 @@ private var drawerOpen = false
                     !sameSignal -> "The qualifying direction or structural target changed while requesting the proposal."
                     else -> "The target is no longer ahead of the current entry price."
                 }
-                notifyEvent("Execution rejected", "${pending.symbol} · Fresh-entry validation failed. $reason No purchase submitted.",
-                    "fresh_entry_rejected_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
+                // Stale signals are rejected silently; only completed executions are notified.
                 return
             }
 
@@ -683,24 +674,18 @@ private var drawerOpen = false
             if (payout + 1e-8 < minimumRequiredPayout) {
                 pendingOrdersByRequest.remove(reqId)
                 pendingIndexSymbols.remove(pending.symbol)
-                notifyEvent("Execution rejected", "${pending.symbol} · Potential profit is below the 15% minimum. Deriv proposal payout ${formatMoney(payout)}; stake ${formatMoney(pending.stake)}; potential profit ${formatMoney(potentialProfit)}; minimum required profit ${formatMoney(pending.stake * 0.15)} (15% of stake). No purchase submitted.",
-                    "profit_target_rejected_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
+                // Profit below 15%: reject silently, without a repeated notification.
                 return
             }
             val profitBand = if (payout + 1e-8 >= preferredPayout) "preferred 20% target" else "accepted reduced target (15% to below 20%)"
-            notifyEvent("Profit target eligibility passed", "${pending.symbol} · $profitBand; potential profit ${formatMoney(potentialProfit)} (${String.format(java.util.Locale.US, "%.2f", potentialProfit / pending.stake * 100.0)}% of stake); fresh target distance ${String.format(java.util.Locale.US, "%.2f", freshDistance)}%.",
-                "profit_target_passed_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
+            // Do not announce eligibility until Deriv confirms the purchase.
             val buyReqId = nextTradeRequestId()
             pendingOrdersByRequest.remove(reqId)
             pendingOrdersByRequest[buyReqId] = pending.copy(stage = "BUY")
             if (!derivApiClient.send(JSONObject().put("buy", proposalId).put("price", pending.stake).put("req_id", buyReqId))) {
                 pendingOrdersByRequest.remove(buyReqId)
                 pendingIndexSymbols.remove(pending.symbol)
-                notifyEvent("Execution rejected", "${pending.symbol} · Proposal received, but the purchase request could not be sent.",
-                    "trade_open_failed_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
-            } else {
-                notifyEvent("Execution requested", "${pending.symbol} · Deriv returned a valid proposal; purchase request sent.",
-                    "buy_requested_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
+                // Failed purchase request: no notification because no contract was opened.
             }
             return
         }
@@ -710,8 +695,7 @@ private var drawerOpen = false
             if (contractId <= 0L) {
                 pendingOrdersByRequest.remove(reqId)
                 pendingIndexSymbols.remove(pending.symbol)
-                notifyEvent("Execution rejected", "${pending.symbol} · Deriv buy response did not include a valid contract ID.",
-                    "trade_open_failed_${accountId}_${executionMode}_$reqId")
+                // No valid contract ID means no confirmed execution; stay silent.
                 return
             }
             runningContracts[contractId] = RunningContract(contractId, pending.symbol, pending.direction,
@@ -941,8 +925,8 @@ if (authToken.isNotBlank() && savedToken.isNotBlank() &&
     isFillViewport = true
     overScrollMode = View.OVER_SCROLL_NEVER
     isSmoothScrollingEnabled = true
-}
-mainScrollView = scroll
+        }
+        mainScrollView = scroll
 
         page = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1227,7 +1211,7 @@ private fun addLoginScreen() {
                         authPrefs.edit().putString("mobile_auth_token", authToken).apply()
                         currentProfile = result.optJSONObject("user")
                         val role = currentProfile?.optString("role", "user") ?: "user"
-                        platform = if (role.equals("admin", ignoreCase = true)) "ADMIN" else "USER"
+platform = if (role.equals("admin", ignoreCase = true)) "ADMIN" else "USER"
                         selectedTab = "My profile"
                         drawerOpen = false
                         render()
@@ -1537,7 +1521,6 @@ private fun addHeader() {
         val card = card()
 
         card.orientation = LinearLayout.VERTICAL
-
         card.addView(
             label("NAVIGATION", 13f, green, true)
         )
@@ -1872,20 +1855,6 @@ private fun addTradeScreen() {
     contractLiveViews.clear()
     marketDataIndexes.forEach { evaluateMasterDecision(it) }
     page.addView(sectionTitle("TRADE"))
-
-    val accountCard = card().apply { orientation = LinearLayout.VERTICAL }
-    accountCard.addView(label("EXECUTION ACCOUNT", 14f, green, true))
-    accountCard.addView(label("Mode: $executionMode", 13f, white, true))
-    accountCard.addView(label("Connection: ${if (connected) "CONNECTED" else "DISCONNECTED"}", 12f, if (connected) green else red, true))
-    accountCard.addView(label("Account ID: ${accountId.ifBlank { "—" }}", 12f, muted, false))
-    if (platform == "ADMIN") {
-        val latestTarget = lastDecisionByIndex.values.lastOrNull()?.target
-        accountCard.addView(label("Target barrier: ${latestTarget?.let { formatMarketPrice(it) } ?: "Waiting for a qualifying Master Decision"}", 12f, yellow, true))
-    }
-    page.addView(accountCard, matchWrap().apply { bottomMargin = dp(10) })
-
-
-    page.addView(sectionTitle("RUNNING TRADES"))
     val masterDecisionCard = card().apply {
     orientation = LinearLayout.VERTICAL
 }
@@ -1916,6 +1885,20 @@ page.addView(
     masterDecisionCard,
     matchWrap().apply { bottomMargin = dp(10) }
 )
+
+    val accountCard = card().apply { orientation = LinearLayout.VERTICAL }
+    accountCard.addView(label("EXECUTION ACCOUNT", 14f, green, true))
+    accountCard.addView(label("Mode: $executionMode", 13f, white, true))
+    accountCard.addView(label("Connection: ${if (connected) "CONNECTED" else "DISCONNECTED"}", 12f, if (connected) green else red, true))
+    accountCard.addView(label("Account ID: ${accountId.ifBlank { "—" }}", 12f, muted, false))
+    if (platform == "ADMIN") {
+        val latestTarget = lastDecisionByIndex.values.lastOrNull()?.target
+        accountCard.addView(label("Target barrier: ${latestTarget?.let { formatMarketPrice(it) } ?: "Waiting for a qualifying Master Decision"}", 12f, yellow, true))
+    }
+    page.addView(accountCard, matchWrap().apply { bottomMargin = dp(10) })
+
+
+    page.addView(sectionTitle("RUNNING TRADES"))
     val runningCard = card().apply { orientation = LinearLayout.VERTICAL }
     val portfolioArray = openTradesResponse?.optJSONObject("portfolio")?.optJSONArray("contracts")
         ?: openTradesResponse?.optJSONArray("contracts")
@@ -2150,6 +2133,7 @@ private fun analysisPivots(candles: List<DerivApiClient.Candle>): List<AnalysisP
     lows.forEachIndexed { i, pivot -> pivot.label = if (i > 0 && pivot.price > lows[i-1].price) "HL" else "LL" }
     return collapsed
 }
+
 private fun analysisMssEvents(candles: List<DerivApiClient.Candle>): List<AnalysisMssEvent> {
     if (candles.size < 20) return emptyList()
     val pivots = analysisPivots(candles)
@@ -2692,13 +2676,13 @@ private fun addPtpeAnalysis() {
     row.addView(button(if (ptpeAnalysisExpanded) "▼ OPEN" else "▶ CLOSED", ptpeAnalysisExpanded) {
         ptpeAnalysisExpanded = !ptpeAnalysisExpanded
         render()
-    }, LinearLayout.LayoutParams(-2, dp(48)))
+        }, LinearLayout.LayoutParams(-2, dp(48)))
     header.addView(row)
     page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
     if (!ptpeAnalysisExpanded) return
 
     page.addView(label(
-        "PTPE starts from the previous completed day's pivot (high + low + close / 3). A move of about 0.5% from the pivot in the previous direction is marked CONTINUATION; a move of about 0.5% in the opposite direction starts BUILDING UP. CHOCH, MSS and BOS must confirm before GET READY. QUALIFYING NOW requires target probability strictly greater than 55% and at least 5 comparable historical samples. Contract timeframe remains three days.",
+        "STAGE 1 — PIVOT TO BUILDING UP: price reaches the previous completed day's pivot (high + low + close / 3), reverses, and moves at least 0.5% in that reversal direction. A 0.5% move continuing the prior direction is CONTINUATION, not BUILDING UP. STAGE 2 — BUILDING UP TO GET READY: CHOCH, MSS and BOS must all be confirmed. STAGE 3 — GET READY TO QUALIFYING NOW: PTPE must be at least 55% for price to reach the structural profit barrier from the qualifying price, with at least 5 comparable historical samples. Auto trade also requires Deriv's quoted potential profit to be at least 15% of stake; 20% is preferred. Contract timeframe remains three days.",
         12f, muted, false
         ).apply { setPadding(dp(12), dp(10), dp(12), dp(10)) })
 
@@ -2995,6 +2979,7 @@ private fun addTargetFilterAnalysis() {
                 show()
             }
     }
+
     private fun showEditUserDialog(user: JSONObject) {
         val firstName = android.widget.EditText(this).apply {
             hint = "First name"
@@ -3017,7 +3002,7 @@ private fun addTargetFilterAnalysis() {
             inputType = android.text.InputType.TYPE_CLASS_PHONE
             setSingleLine(true)
             setText(user.optString("phone", ""))
-            }
+        }
         val password = android.widget.EditText(this).apply {
             hint = "New password (leave blank to keep current password)"
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
@@ -3429,7 +3414,6 @@ private fun addTargetFilterAnalysis() {
         } else {
             listOf("⌂" to "Home", "▥" to "Trade", "🔔" to "Notifications", "♙" to "My profile")
         }
-
         tabs.forEach { (icon, name) ->
             val selected = selectedTab == name
             val item = LinearLayout(this).apply {
@@ -3617,7 +3601,7 @@ private fun addTargetFilterAnalysis() {
             Toast.LENGTH_SHORT
         ).show()
     }
-       // =========================================================
+    // =========================================================
     // DERIV OAUTH CONNECTION (existing OAuth + PKCE flow)
     // =========================================================
     private fun beginDerivConnection() {
@@ -3644,7 +3628,6 @@ private fun addTargetFilterAnalysis() {
             Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
         )
     }
-
     private fun startDerivOAuth() {
         val state = "android-" + UUID.randomUUID().toString()
         val verifier = createCodeVerifier()
@@ -3747,12 +3730,13 @@ private fun addTargetFilterAnalysis() {
         // Analysis and other tabs can be active while Deriv callbacks arrive.
         if (::accountStatus.isInitialized) {
             accountStatus.text = "●  NOT CONNECTED"
-            accountStatus.setTextColor(red)
+            accountStatus.setTextColor(Color.RED)
         }
         if (::accountIdView.isInitialized) accountIdView.text = "Account:  —"
         if (::balanceView.isInitialized) balanceView.text = "Balance:  —"
         toast("Deriv disconnected.")
-    }
+        }
+
     override fun onConnecting(message: String) {
         runOnUiThread {
             if (::accountStatus.isInitialized) {
@@ -3913,7 +3897,6 @@ private fun addTargetFilterAnalysis() {
         // Re-rendering here caused the ScrollView to reset/jump while users scrolled.
         // The explicit Refresh button requests fresh account/trade data when needed.
     }
-    }
 
     override fun onCandles(
     symbol: String,
@@ -3945,7 +3928,7 @@ override fun onMarketDataError(
         marketDataErrors[symbol] = message
         dashboardStatusViews[symbol]?.apply {
             text = "FEED ERROR"
-            setTextColor(red)
+            setTextColor(Color.RED)
         }
         android.util.Log.e("DerivMarketData", "$symbol: $message")
     }
@@ -3955,7 +3938,7 @@ override fun onMarketDataError(
     runOnUiThread {
         if (!connected && ::accountStatus.isInitialized) {
             accountStatus.text = "●  CONNECTION ERROR"
-            accountStatus.setTextColor(red)
+            accountStatus.setTextColor(Color.RED)
         }
       toast("Deriv: $message")
     }
@@ -3966,9 +3949,9 @@ override fun onMarketDataError(
             marketDataRequested = false
             if (::accountStatus.isInitialized) {
                 accountStatus.text = "●  NOT CONNECTED"
-                accountStatus.setTextColor(red)
+                accountStatus.setTextColor(Color.RED)
             }
         }
     }
 
-                                        }
+    }
