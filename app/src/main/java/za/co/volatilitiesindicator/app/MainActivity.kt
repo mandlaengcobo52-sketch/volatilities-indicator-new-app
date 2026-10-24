@@ -393,7 +393,6 @@ private var drawerOpen = false
         val pivot = (high + low + close) / 3.0
         return pivot.takeIf { it.isFinite() && it > 0.0 }
     }
-
     /** Classify a 0.5% move from the daily pivot against the recent pre-move direction. */
     private fun pivotLifecycleStatus(candles: List<DerivApiClient.Candle>, current: Double, pivot: Double): String {
         if (candles.size < 4) return "WAITING — ESTABLISHING PREVIOUS DIRECTION"
@@ -1007,7 +1006,7 @@ when (selectedTab) {
             "Login" -> {
     addLoginScreen()
             }
-                    else -> {
+            else -> {
                 if (authToken.isNotBlank()) {
                     addPlatformSelector()
                     addExecutionSelector()
@@ -1599,7 +1598,6 @@ private fun addHeader() {
         },
         weighted()
     )
-
     row.addView(space(dp(8)))
     row.addView(
         button("♟♟ ADMIN", platform == "ADMIN") {
@@ -2218,12 +2216,8 @@ private fun analysisStructuralTarget(
     return when (direction) {
         "UP" -> eligible.filter { it.type == "HIGH" && it.price > currentPrice }
             .sortedWith(compareBy<AnalysisPivot> { it.price }.thenByDescending { it.epoch }).firstOrNull()
-        "DOWN" -> eligible.filter { it.type == "LOW" && it.price < currentPrice }
-            .sortedWith(compareByDescending<AnalysisPivot> { it.price }.thenByDescending { it.epoch }).firstOrNull()
-        else -> null
-    }
-}
-// =========================================================
+        "
+        // =========================================================
 // ANALYSIS — MARKET DATA
 // =========================================================
 private fun addMarketDataAnalysis() {
@@ -2825,7 +2819,6 @@ private fun addTargetFilterAnalysis() {
                 userCard.addView(button("ASSIGN START / EXPIRY DATES", true) { showAssignPlanDatesDialog(user) },
                     matchWrap().apply { topMargin = dp(6) })
             }
-
             // User-management actions are handled by the server against the shared users.json.
             val userId = user.optString("id", "")
             if (userId.isNotBlank()) {
@@ -3701,8 +3694,7 @@ private fun addTargetFilterAnalysis() {
     accountType = ""
     accountBalance = 0.0
     accountCurrency = ""
-
-    render()
+        render()
     derivApiClient.connectWithAccessToken(token, executionMode)
     }
 
