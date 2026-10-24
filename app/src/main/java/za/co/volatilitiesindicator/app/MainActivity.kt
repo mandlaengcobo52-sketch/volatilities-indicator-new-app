@@ -3981,6 +3981,7 @@ override fun onMarketDataError(
         }
         android.util.Log.e("DerivMarketData", "$symbol: $message")
     }
+}
 
     override fun onError(message: String) {
     runOnUiThread {
