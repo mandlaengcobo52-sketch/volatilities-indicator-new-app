@@ -1967,8 +1967,27 @@ page.addView(
         row.addView(label("Stake: ${formatMoney(stake)}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
         val initialPnl = liveContractProfits[contractId] ?: 0.0
         val pnlHidden = label("P/L: ${formatMoney(initialPnl)}", 12f, profitColor(initialPnl), true).apply { setPadding(0, dp(4), 0, 0) }
-        val targetPrice = tracked?.target
-val targetView = label("Structure target: ${targetPrice?.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
+        val tradeDirection = tracked?.direction ?: if (
+    item.optString("contract_type", "").uppercase().let {
+        it.contains("PUT") || it.contains("FALL")
+    }
+) "SELL" else "BUY"
+
+val originalTarget = tracked?.target?.takeIf { it.isFinite() && it > 0.0 }
+val analysisTarget = lastPtpeByIndex[normalizedSymbol(item)]
+    ?.takeIf { it.direction == tradeDirection }
+    ?.target?.takeIf { it.isFinite() && it > 0.0 }
+
+val targetPrice = originalTarget ?: analysisTarget
+val targetLabel = when {
+    originalTarget != null ->
+        "Structure target: ${formatMarketPrice(originalTarget)}"
+    analysisTarget != null ->
+        "Current analysis target (not original trade target): ${formatMarketPrice(analysisTarget)}"
+    else -> "Structure target: Not available"
+}
+val targetView = label(targetLabel, 12f, yellow, true)
+    .apply { setPadding(0, dp(4), 0, 0) }
         val profitTargetView = label("20% profit target: ${formatMoney(stake * 0.20)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
         val trailView = label("Trailing stop: ${if (tracked?.trailingActivated == true) "ACTIVATED" else if (trailingStopEnabled) "ARMED" else "OFF"}", 12f, if (trailingStopEnabled) green else muted, true).apply { setPadding(0, dp(4), 0, 0) }
         val spotView = label("Current value/spot: ${if (currentValue > 0) formatMarketPrice(currentValue) else "—"}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
