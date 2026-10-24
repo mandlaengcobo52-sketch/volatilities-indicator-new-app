@@ -591,7 +591,7 @@ private var drawerOpen = false
             )
             return
         }
-        val relativeBarrier = String.format(java.util.Locale.US, "%+.5f", barrierOffset)
+        val relativeBarrier = String.format(java.util.Locale.US, "%+.2f", barrierOffset)
         val reqId = nextTradeRequestId()
         pendingIndexSymbols.add(symbol)
         pendingOrdersByRequest[reqId] = PendingOrder(symbol, decision.direction, decision.entry,
@@ -605,7 +605,7 @@ private var drawerOpen = false
             .put("duration", 3)
             .put("duration_unit", "d")
             .put("underlying_symbol", symbol)
-            .put("barrier", String.format(java.util.Locale.US, "%.3f", targetPrice))
+            .put("barrier", relativeBarrier)
             .put("req_id", reqId)
         if (!derivApiClient.send(proposal)) {
             pendingOrdersByRequest.remove(reqId)
