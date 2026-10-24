@@ -3362,9 +3362,16 @@ private fun addTargetFilterAnalysis() {
         notifyEvent(title, message, eventKey)
     }
     private fun notifyEvent(title: String, message: String, eventKey: String = "") {
-        val stableKey = eventKey.ifBlank {
-            "${saDayKey()}_${accountId}_${executionMode}_${title}_${message}".hashCode().toString()
-        }
+        val noReturnError = title == "Execution rejected" &&
+    message.contains("This contract offers no return", ignoreCase = true)
+
+val stableKey = if (noReturnError) {
+    "deriv_no_return_${saDayKey()}_${accountId}_${executionMode}"
+} else {
+    eventKey.ifBlank {
+        "${saDayKey()}_${accountId}_${executionMode}_${title}_${message}".hashCode().toString()
+    }
+}
         val seen = appPrefs.getStringSet("notification_seen_keys", emptySet()).orEmpty().toMutableSet()
         if (!seen.add(stableKey)) return
         appPrefs.edit().putStringSet("notification_seen_keys", seen.toList().takeLast(500).toSet()).apply()
