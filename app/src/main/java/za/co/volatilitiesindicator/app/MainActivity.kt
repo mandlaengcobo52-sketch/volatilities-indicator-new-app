@@ -456,15 +456,6 @@ private var drawerOpen = false
             return null
         }
         val lifecycle = pivotLifecycleStatus(candles, current, pivot)
-        if (lifecycle != "BUILDING UP") {
-            lastPtpeByIndex[symbol] = PtpeDisplay(
-                direction = "WAIT", probability = 0.0, samples = 0,
-                status = if (lifecycle == "CONTINUATION") "CONTINUATION — NO REVERSAL SETUP" else lifecycle,
-                pivot = pivot
-            )
-            lastDecisionByIndex.remove(symbol)
-            return null
-        }
         val event = analysisLatestMss(candles)
         if (event == null) {
             lastPtpeByIndex[symbol] = PtpeDisplay(status = "BUILDING UP — WAITING FOR CHOCH/MSS AND BOS", pivot = pivot)
@@ -490,6 +481,10 @@ private var drawerOpen = false
         val decisionDirection = if (direction == "BULLISH") "BUY" else "SELL"
         val priorOutcomeExists = analysisHistoricalOutcomes(candles).any { it.direction == direction && it.confirmation.epoch != event.confirmation.epoch }
         val status = when {
+            lifecycle != "BUILDING UP" ->
+    if (lifecycle == "CONTINUATION")
+        "CONTINUATION — NO REVERSAL SETUP"
+    else lifecycle
             samples < 5 -> "GET READY — INSUFFICIENT PTPE SAMPLES"
             probability <= 55.0 -> "GET READY — PTPE PROBABILITY MUST BE GREATER THAN 55%"
             !priorOutcomeExists -> "GET READY — NO PRIOR SAME-DIRECTION OUTCOME"
