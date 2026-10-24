@@ -388,7 +388,7 @@ private var drawerOpen = false
         var hits = 0
         for (outcome in outcomes) {
             val start = candles.indexOfFirst { it.epoch == outcome.confirmation.epoch }
-            val evaluationCandles = 24
+            val evaluationCandles = 72
             if (start < 0 || start + evaluationCandles >= candles.size) continue // require a full 24-hour forward window
             val entry = outcome.confirmation.close
             if (entry <= 0.0 || !entry.isFinite()) continue
