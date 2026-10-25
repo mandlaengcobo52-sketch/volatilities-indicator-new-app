@@ -2020,7 +2020,7 @@ page.addView(
         row.addView(label("Index: $symbol", 14f, green, true))
 row.addView(
     label(
-        "DIRECTION: $tradeDirection",
+        "DIRECTION: ${if (tracked?.direction == "SELL") "SELL" else "BUY"}",
         14f,
         if (tradeDirection == "BUY") green else red,
         true
@@ -2090,7 +2090,7 @@ val targetView = label(targetLabel, 12f, yellow, true)
         row.addView(label("Index: ${running.symbol}", 14f, green, true))
 row.addView(
     label(
-        "DIRECTION: ${running.direction}",
+        "DIRECTION: ${if (tracked?.direction == "SELL") "SELL" else "BUY"}",
         14f,
         if (running.direction == "BUY") green else red,
         true
