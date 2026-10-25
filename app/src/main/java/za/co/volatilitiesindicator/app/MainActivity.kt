@@ -2018,6 +2018,14 @@ page.addView(
             background = shape(panel, greenDark, 8, 1)
         }
         row.addView(label("Index: $symbol", 14f, green, true))
+row.addView(
+    label(
+        "DIRECTION: $tradeDirection",
+        14f,
+        if (tradeDirection == "BUY") green else red,
+        true
+    ).apply { setPadding(0, dp(4), 0, 0) }
+)
         row.addView(label("Contract number: $contractId", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
         row.addView(label("Stake: ${formatMoney(stake)}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
         val initialPnl = liveContractProfits[contractId] ?: 0.0
@@ -2080,6 +2088,14 @@ val targetView = label(targetLabel, 12f, yellow, true)
             background = shape(panel, greenDark, 8, 1)
         }
         row.addView(label("Index: ${running.symbol}", 14f, green, true))
+row.addView(
+    label(
+        "DIRECTION: ${running.direction}",
+        14f,
+        if (running.direction == "BUY") green else red,
+        true
+    ).apply { setPadding(0, dp(4), 0, 0) }
+)
         row.addView(label("Contract number: ${running.contractId}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
         row.addView(label("Stake: ${formatMoney(running.stake)}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
         val initialPnl = liveContractProfits[running.contractId] ?: 0.0
