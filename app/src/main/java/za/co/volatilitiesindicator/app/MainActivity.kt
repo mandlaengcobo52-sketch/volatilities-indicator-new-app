@@ -615,7 +615,7 @@ private var drawerOpen = false
                 .put("duration", 3)
                 .put("duration_unit", "d")
                 .put("underlying_symbol", symbol)
-                .put("barrier", String.format(java.util.Locale.US, "%.8f", barrierPrice))
+                .put("barrier", String.format(java.util.Locale.US, "%.2f", barrierPrice))
                 .put("req_id", reqId)
             if (!derivApiClient.send(proposal)) {
                 pendingOrdersByRequest.remove(reqId)
@@ -658,7 +658,7 @@ private var drawerOpen = false
         val proposal = JSONObject().put("proposal", 1).put("amount", stake).put("basis", "stake")
             .put("contract_type", "ONETOUCH").put("currency", accountCurrency.ifBlank { "USD" })
             .put("duration", 3).put("duration_unit", "d").put("underlying_symbol", winner.symbol)
-            .put("barrier", String.format(java.util.Locale.US, "%.8f", barrier)).put("req_id", reqId)
+            .put("barrier", String.format(java.util.Locale.US, "%.2f", barrier))
         if (!derivApiClient.send(proposal)) {
             pendingOrdersByRequest.remove(reqId)
             notifyEvent("Recovery rejected", "${winner.symbol} · Deriv recovery proposal could not be sent.", "recovery_send_failed_${winner.pairId}")
