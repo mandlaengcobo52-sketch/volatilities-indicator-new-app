@@ -2089,7 +2089,7 @@ val targetView = label(targetLabel, 12f, yellow, true)
         row.addView(label("Index: ${running.symbol}", 14f, green, true))
 row.addView(
     label(
-        "DIRECTION: ${if (tracked?.direction == "SELL") "SELL" else "BUY"}",
+        "DIRECTION: ${running.direction}",
         14f,
         if (running.direction == "BUY") green else red,
         true
