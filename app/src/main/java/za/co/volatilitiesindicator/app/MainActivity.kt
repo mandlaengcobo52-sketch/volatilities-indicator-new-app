@@ -2712,11 +2712,6 @@ private fun addQualificationAnalysis() {
             targetDistance < 0.5 -> "WAIT — TOO CLOSE"
             else -> "PASS"
         }
-        val targetDistanceStatus = when {
-    targetDistance == null -> "WAIT — NO TARGET"
-    targetDistance < 0.5 -> "WAIT — TOO CLOSE"
-    else -> "PASS"
-}
 qualificationCard.addView(label(
     "TARGET DISTANCE (MINIMUM 0.5%): ${targetDistance?.let { String.format(java.util.Locale.US, "%.3f%%", it) } ?: "NO TARGET"} — $targetDistanceStatus",
     12f, if (targetDistance != null && targetDistance >= 0.5) green else yellow, true
