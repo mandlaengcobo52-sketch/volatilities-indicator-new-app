@@ -481,15 +481,15 @@ private var drawerOpen = false
         val decisionDirection = if (direction == "BULLISH") "BUY" else "SELL"
         val priorOutcomeExists = analysisHistoricalOutcomes(candles).any { it.direction == direction && it.confirmation.epoch != event.confirmation.epoch }
         val status = when {
-            lifecycle != "BUILDING UP" ->
-                        distance < 0.5 -> "WAIT — TARGET TOO CLOSE (MINIMUM 0.5%)"
+    distance < 0.5 -> "WAIT — TARGET TOO CLOSE (MINIMUM 0.5%)"
+    lifecycle != "BUILDING UP" ->
     if (lifecycle == "CONTINUATION")
         "CONTINUATION — NO REVERSAL SETUP"
     else lifecycle
-            samples < 5 -> "GET READY — INSUFFICIENT PTPE SAMPLES"
-            probability <= 55.0 -> "GET READY — PTPE PROBABILITY MUST BE GREATER THAN 55%"
-            !priorOutcomeExists -> "GET READY — NO PRIOR SAME-DIRECTION OUTCOME"
-            else -> "QUALIFYING NOW"
+    samples < 5 -> "GET READY — INSUFFICIENT PTPE SAMPLES"
+    probability <= 55.0 -> "GET READY — PTPE PROBABILITY MUST BE GREATER THAN 55%"
+    !priorOutcomeExists -> "GET READY — NO PRIOR SAME-DIRECTION OUTCOME"
+    else -> "QUALIFYING NOW"
         }
         lastPtpeByIndex[symbol] = PtpeDisplay(decisionDirection, target, distance, probability, samples, status, pivot)
         if (status != "QUALIFYING NOW") {
@@ -2712,10 +2712,15 @@ private fun addQualificationAnalysis() {
             targetDistance < 0.5 -> "WAIT — TOO CLOSE"
             else -> "PASS"
         }
-        qualificationCard.addView(label(
-            "TARGET DISTANCE (MINIMUM 0.5%): ${targetDistance?.let { String.format(java.util.Locale.US, "%.3f%%", it) } ?: "NO TARGET"} — $targetDistanceStatus",
-            12f, if (targetDistance != null && targetDistance >= 0.5) green else yellow, true
-        ))
+        val targetDistanceStatus = when {
+    targetDistance == null -> "WAIT — NO TARGET"
+    targetDistance < 0.5 -> "WAIT — TOO CLOSE"
+    else -> "PASS"
+}
+qualificationCard.addView(label(
+    "TARGET DISTANCE (MINIMUM 0.5%): ${targetDistance?.let { String.format(java.util.Locale.US, "%.3f%%", it) } ?: "NO TARGET"} — $targetDistanceStatus",
+    12f, if (targetDistance != null && targetDistance >= 0.5) green else yellow, true
+))
         val ptpeText = if (masterDecision != null) {
             String.format(java.util.Locale.US, "%.1f%%", masterDecision.targetProbability) +
                 " (${masterDecision.sampleCount} comparable 3-day samples)"
