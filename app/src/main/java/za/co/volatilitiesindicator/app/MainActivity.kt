@@ -284,7 +284,7 @@ private var drawerOpen = false
         runningContracts.values.count { it.mode == executionMode } +
             pendingOrdersByRequest.values.count { it.mode == executionMode }
 
-    private fun hasCapacityForTrades(count: Int): Boolean = runningAndPendingTradeCount() + count <= 3
+    private fun hasCapacityForTrades(count: Int): Boolean = runningAndPendingTradeCount() + count <= 6
 
     private fun normalizedSymbol(item: JSONObject): String = item.optString(
         "underlying", item.optString("underlying_symbol", item.optString("symbol", ""))
