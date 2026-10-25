@@ -3830,7 +3830,7 @@ val stableKey = if (noReturnError) {
     marketDataRequested = false
         accountId = ""
     accountType = ""
-        accountBalance = 0.0
+    accountBalance = 0.0
     accountCurrency = ""
 
     render()
@@ -4019,7 +4019,7 @@ val stableKey = if (noReturnError) {
             }
         }
 
-                        // Do not rebuild the entire Trade view for every live quote/contract update.
+        // Do not rebuild the entire Trade view for every live quote/contract update.
         // Re-rendering here caused the ScrollView to reset/jump while users scrolled.
         // The explicit Refresh button requests fresh account/trade data when needed.
     }
@@ -4083,4 +4083,8 @@ override fun onMarketDataError(
     }
 
 }
+
+                        
+     
+        
             
