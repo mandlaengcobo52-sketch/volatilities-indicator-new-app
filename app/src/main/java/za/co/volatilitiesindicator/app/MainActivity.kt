@@ -177,7 +177,10 @@ private var drawerOpen = false
         val targetProbability: Double,
         val stake: Double,
         val mode: String,
-        val stage: String
+        val stage: String,
+        val pairId: String = "",
+        val pairSide: String = "",
+        val isRecovery: Boolean = false
     )
 
     private data class RunningContract(
@@ -194,7 +197,11 @@ private var drawerOpen = false
         var trailingActivated: Boolean = false,
         var peakProfit: Double = 0.0,
         var closeRequested: Boolean = false,
-        var closeReason: String = ""
+        var closeReason: String = "",
+        val pairId: String = "",
+        val pairSide: String = "",
+        val isRecovery: Boolean = false,
+        var recoveryTriggered: Boolean = false
     )
     private data class ContractLiveViews(
         val stake: Double,
@@ -261,11 +268,23 @@ private var drawerOpen = false
         return accountBalance
     }
 
-    /** The stake is fixed for the whole South African calendar day: 20% of day-start capital. */
+    /** Initial paired stake: 10% of the fixed daily starting capital per side. */
     private fun fixedDailyStake(): Double {
+        val capital = dailyStartingCapital()
+        return if (capital > 0.0) kotlin.math.round(capital * 0.10 * 100.0) / 100.0 else 0.0
+    }
+
+    /** Recovery stake: 20% of the fixed daily starting capital. */
+    private fun fixedRecoveryStake(): Double {
         val capital = dailyStartingCapital()
         return if (capital > 0.0) kotlin.math.round(capital * 0.20 * 100.0) / 100.0 else 0.0
     }
+
+    private fun runningAndPendingTradeCount(): Int =
+        runningContracts.values.count { it.mode == executionMode } +
+            pendingOrdersByRequest.values.count { it.mode == executionMode }
+
+    private fun hasCapacityForTrades(count: Int): Boolean = runningAndPendingTradeCount() + count <= 3
 
     private fun normalizedSymbol(item: JSONObject): String = item.optString(
         "underlying", item.optString("underlying_symbol", item.optString("symbol", ""))
@@ -294,7 +313,6 @@ private var drawerOpen = false
         }
         return false
     }
-
     private fun requestOpenTradesIfNeeded() {
         if (!connected || accountId.isBlank() || portfolioLoadedForAccount) return
         val now = android.os.SystemClock.elapsedRealtime()
@@ -561,78 +579,91 @@ private var drawerOpen = false
             return
         }
         val stake = fixedDailyStake()
-        if (hasOpenStakeMismatch(stake)) {
-            notifyEvent("Execution rejected", "$symbol · An existing open or pending contract uses a different stake. No new trade can open until the stake is consistent.",
-                "stake_mismatch_${accountId}_${executionMode}_${saDayKey()}_$symbol")
+        val capital = dailyStartingCapital()
+        if (!hasCapacityForTrades(2)) {
+            recordExecutionStage("Execution blocked", "$symbol · The maximum of 3 simultaneously running/pending trades would be exceeded.", "blocked_trade_cap_${accountId}_${executionMode}")
             return
         }
-        if (stake <= 0.0 || stake > accountBalance) {
-            notifyEvent("Execution rejected", "$symbol · The fixed daily stake is greater than the available balance.",
-                "insufficient_funds_${accountId}_${executionMode}_${saDayKey()}_$symbol")
+        if (stake <= 0.0 || capital <= 0.0 || accountBalance < (stake * 2.0 + capital * 0.40)) {
+            notifyEvent("Execution rejected", "$symbol · Insufficient available balance to open both 10% Touch sides while preserving the 40% recovery reserve.",
+                "insufficient_pair_funds_${accountId}_${executionMode}_${saDayKey()}_$symbol")
             return
         }
-        // Build the ONETOUCH barrier from the latest spot as a signed relative offset.
-        // This also prevents sending a stale absolute target after the market has moved.
         val proposalSpot = marketDataPrices[symbol] ?: decision.entry
-        val targetPrice = decision.target
-        val barrierOffset = targetPrice - proposalSpot
-        val targetIsAhead = when (decision.direction) {
-            "BUY" -> barrierOffset > 0.0
-            "SELL" -> barrierOffset < 0.0
-            else -> false
-        }
-        if (!proposalSpot.isFinite() || proposalSpot <= 0.0 ||
-            !targetPrice.isFinite() || targetPrice <= 0.0 ||
-            !barrierOffset.isFinite() || kotlin.math.abs(barrierOffset) < 0.0000001 ||
-            !targetIsAhead) {
-            recordExecutionStage(
-                "Execution rejected",
-                "$symbol · Target is invalid or is no longer ahead of the latest spot. No proposal was sent.",
-                "blocked_barrier_$signalKey"
-            )
+        val distance = kotlin.math.abs(decision.target - proposalSpot)
+        if (!proposalSpot.isFinite() || proposalSpot <= 0.0 || !distance.isFinite() || distance <= 0.0) {
+            recordExecutionStage("Execution rejected", "$symbol · Invalid live price or target distance; paired Touch proposals were not sent.", "blocked_pair_barrier_$signalKey")
             return
         }
-        val relativeBarrier = String.format(java.util.Locale.US, "%+.2f", barrierOffset)
+        val pairId = "${accountId}_${executionMode}_${symbol}_${System.currentTimeMillis()}"
+        val sides = listOf(
+            Triple("BUY", proposalSpot + distance, "+TOUCH"),
+            Triple("SELL", (proposalSpot - distance).coerceAtLeast(0.0000001), "-TOUCH")
+        )
+        for ((direction, barrierPrice, side) in sides) {
+            val reqId = nextTradeRequestId()
+            val pending = PendingOrder(symbol, direction, proposalSpot, barrierPrice, decision.targetProbability,
+                stake, executionMode, "PROPOSAL", pairId, side, false)
+            pendingOrdersByRequest[reqId] = pending
+            pendingIndexSymbols.add(symbol)
+            val proposal = JSONObject()
+                .put("proposal", 1)
+                .put("amount", stake)
+                .put("basis", "stake")
+                .put("contract_type", "ONETOUCH")
+                .put("currency", accountCurrency.ifBlank { "USD" })
+                .put("duration", 3)
+                .put("duration_unit", "d")
+                .put("underlying_symbol", symbol)
+                .put("barrier", String.format(java.util.Locale.US, "%.8f", barrierPrice))
+                .put("req_id", reqId)
+            if (!derivApiClient.send(proposal)) {
+                pendingOrdersByRequest.remove(reqId)
+                notifyEvent("Execution rejected", "$symbol · Could not send the $side proposal.", "pair_proposal_send_failed_${pairId}_$side")
+            } else {
+                android.os.Handler(mainLooper).postDelayed({
+                    val waiting = pendingOrdersByRequest[reqId]
+                    if (waiting != null && waiting.stage == "PROPOSAL") {
+                        pendingOrdersByRequest.remove(reqId)
+                        if (pendingOrdersByRequest.values.none { it.symbol == symbol && it.mode == executionMode } &&
+                            runningContracts.values.none { it.symbol == symbol && it.mode == executionMode }) pendingIndexSymbols.remove(symbol)
+                        notifyEvent("Execution rejected", "$symbol · No response to the $side proposal within 15 seconds.", "pair_proposal_timeout_${pairId}_$side")
+                    }
+                }, 15000L)
+            }
+        }
+        notifyEvent("Paired Touch requested", "$symbol · +Touch and −Touch proposals submitted. Each stake is 10% of daily starting capital; profit target is 30%; reserve 40%; maximum 3 running trades.", "paired_touch_requested_$pairId")
+    }
+
+    private fun requestRecoveryTrade(winner: RunningContract, spot: Double) {
+        if (winner.isRecovery || winner.recoveryTriggered || winner.pairId.isBlank()) return
+        if (!connected || spot <= 0.0 || !spot.isFinite()) return
+        if (!hasCapacityForTrades(1)) {
+            notifyEvent("Recovery blocked", "${winner.symbol} · Recovery would exceed the 3-running-trade limit.", "recovery_cap_${winner.pairId}")
+            return
+        }
+        val capital = dailyStartingCapital()
+        val stake = fixedRecoveryStake()
+        if (capital <= 0.0 || stake <= 0.0 || accountBalance < stake + capital * 0.40) {
+            notifyEvent("Recovery blocked", "${winner.symbol} · Recovery stake is 20% of daily starting capital, but funds plus the protected 40% reserve are insufficient.", "recovery_funds_${winner.pairId}")
+            return
+        }
+        winner.recoveryTriggered = true
+        val distance = kotlin.math.abs(winner.target - spot).takeIf { it > 0.0 } ?: (spot * 0.005)
+        val barrier = if (winner.direction.equals("BUY", true)) spot + distance else (spot - distance).coerceAtLeast(0.0000001)
         val reqId = nextTradeRequestId()
-        pendingIndexSymbols.add(symbol)
-        pendingOrdersByRequest[reqId] = PendingOrder(symbol, decision.direction, decision.entry,
-            decision.target, decision.targetProbability, stake, executionMode, "PROPOSAL")
-        val proposal = JSONObject()
-            .put("proposal", 1)
-            .put("amount", stake)
-            .put("basis", "stake")
-            .put("contract_type", "ONETOUCH")
-            .put("currency", accountCurrency.ifBlank { "USD" })
-            .put("duration", 3)
-            .put("duration_unit", "d")
-            .put("underlying_symbol", symbol)
-            .put("barrier", String.format(java.util.Locale.US, "%.2f", targetPrice))
-            .put("req_id", reqId)
+        val pending = PendingOrder(winner.symbol, winner.direction, spot, barrier, winner.targetProbability,
+            stake, winner.mode, "PROPOSAL", winner.pairId, winner.pairSide, true)
+        pendingOrdersByRequest[reqId] = pending
+        val proposal = JSONObject().put("proposal", 1).put("amount", stake).put("basis", "stake")
+            .put("contract_type", "ONETOUCH").put("currency", accountCurrency.ifBlank { "USD" })
+            .put("duration", 3).put("duration_unit", "d").put("underlying_symbol", winner.symbol)
+            .put("barrier", String.format(java.util.Locale.US, "%.8f", barrier)).put("req_id", reqId)
         if (!derivApiClient.send(proposal)) {
             pendingOrdersByRequest.remove(reqId)
-            pendingIndexSymbols.remove(symbol)
-            notifyEvent("Execution rejected", "$symbol · Unable to send the proposal request; Deriv connection/client did not accept the request.",
-                "trade_open_failed_$signalKey")
+            notifyEvent("Recovery rejected", "${winner.symbol} · Deriv recovery proposal could not be sent.", "recovery_send_failed_${winner.pairId}")
         } else {
-            notifyEvent("Execution requested", "$symbol · ${decision.direction} · Proposal request sent to Deriv. Stake ${formatMoney(stake)}; target ${formatMarketPrice(targetPrice)}; relative barrier $relativeBarrier.",
-                "execution_requested_$signalKey")
-            // A proposal timeout is safe to release because no purchase request has been sent.
-            // Do not leave the index locked indefinitely if Deriv never answers the proposal.
-            android.os.Handler(mainLooper).postDelayed({
-                val stillWaiting = pendingOrdersByRequest[reqId]
-                if (stillWaiting != null && stillWaiting.stage == "PROPOSAL") {
-                    pendingOrdersByRequest.remove(reqId)
-                    if (pendingOrdersByRequest.values.none { it.symbol == stillWaiting.symbol && it.mode == stillWaiting.mode } &&
-                        runningContracts.values.none { it.symbol == stillWaiting.symbol && it.mode == stillWaiting.mode }) {
-                        pendingIndexSymbols.remove(stillWaiting.symbol)
-                    }
-                    notifyEvent(
-                          "Execution rejected",
-                        "${stillWaiting.symbol} · No proposal response was received from Deriv within 15 seconds. No purchase was submitted; the index lock was released safely.",
-                        "proposal_timeout_${accountId}_${executionMode}_${stillWaiting.symbol}_${stillWaiting.direction}_${String.format(java.util.Locale.US, "%.3f", stillWaiting.target)}"
-                    )
-                }
-            }, 15000L)
+            notifyEvent("Recovery requested", "${winner.symbol} · ${winner.direction} recovery proposal submitted. Stake ${formatMoney(stake)} (20% of daily starting capital); target 30% of stake.", "recovery_requested_${winner.pairId}")
         }
     }
 
@@ -677,7 +708,7 @@ private var drawerOpen = false
             // was in flight. Recalculate the full Master Decision using the latest live price,
             // then ensure the target still offers the required minimum distance and is still
             // the same structural target/direction that generated this proposal.
-            val freshDecision = evaluateMasterDecision(pending.symbol)
+            val freshDecision = if (pending.pairId.isBlank()) evaluateMasterDecision(pending.symbol) else lastDecisionByIndex[pending.symbol]
             val livePrice = marketDataPrices[pending.symbol]
             val freshDistance = if (livePrice != null && livePrice.isFinite() && livePrice > 0.0)
                 kotlin.math.abs(pending.target - livePrice) / livePrice * 100.0 else 0.0
@@ -686,8 +717,8 @@ private var drawerOpen = false
                 "SELL" -> pending.target < livePrice
                 else -> false
             }
-            val sameSignal = freshDecision != null && freshDecision.direction == pending.direction &&
-                kotlin.math.abs(freshDecision.target - pending.target) <= kotlin.math.max(0.0000001, kotlin.math.abs(pending.target) * 0.0000001)
+            val sameSignal = pending.pairId.isNotBlank() || (freshDecision != null && freshDecision.direction == pending.direction &&
+                kotlin.math.abs(freshDecision.target - pending.target) <= kotlin.math.max(0.0000001, kotlin.math.abs(pending.target) * 0.0000001))
             if (freshDecision == null || !sameSignal || !targetStillAhead) {
                 pendingOrdersByRequest.remove(reqId)
                 pendingIndexSymbols.remove(pending.symbol)
@@ -701,17 +732,17 @@ private var drawerOpen = false
                 return
             }
 
-            val minimumRequiredPayout = pending.stake * 1.15
-            val preferredPayout = pending.stake * 1.20
+            val minimumRequiredPayout = pending.stake * 1.30
+            val preferredPayout = pending.stake * 1.30
             val potentialProfit = payout - pending.stake
             if (payout + 1e-8 < minimumRequiredPayout) {
                 pendingOrdersByRequest.remove(reqId)
                 pendingIndexSymbols.remove(pending.symbol)
-                notifyEvent("Execution rejected", "${pending.symbol} · Potential profit is below the 15% minimum. Deriv proposal payout ${formatMoney(payout)}; stake ${formatMoney(pending.stake)}; potential profit ${formatMoney(potentialProfit)}; minimum required profit ${formatMoney(pending.stake * 0.15)} (15% of stake). No purchase submitted.",
+                notifyEvent("Execution rejected", "${pending.symbol} · Potential profit is below the required 30% target. Deriv proposal payout ${formatMoney(payout)}; stake ${formatMoney(pending.stake)}; potential profit ${formatMoney(potentialProfit)}; minimum required profit ${formatMoney(pending.stake * 0.15)} (30% of stake). No purchase submitted.",
                     "profit_target_rejected_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
                 return
             }
-            val profitBand = if (payout + 1e-8 >= preferredPayout) "preferred 20% target" else "accepted reduced target (15% to below 20%)"
+            val profitBand = "30% profit target"
             notifyEvent("Profit target eligibility passed", "${pending.symbol} · $profitBand; potential profit ${formatMoney(potentialProfit)} (${String.format(java.util.Locale.US, "%.2f", potentialProfit / pending.stake * 100.0)}% of stake); fresh target distance ${String.format(java.util.Locale.US, "%.2f", freshDistance)}%.",
                 "profit_target_passed_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
             val buyReqId = nextTradeRequestId()
@@ -739,7 +770,8 @@ private var drawerOpen = false
                 return
             }
             runningContracts[contractId] = RunningContract(contractId, pending.symbol, pending.direction,
-                pending.stake, pending.target, pending.targetProbability, pending.mode)
+                pending.stake, pending.target, pending.targetProbability, pending.mode,
+                pairId = pending.pairId, pairSide = pending.pairSide, isRecovery = pending.isRecovery)
             notifyEvent("Execution accepted", "${pending.symbol} · Deriv accepted the buy request and returned contract $contractId.",
                 "execution_accepted_${accountId}_${executionMode}_$contractId")
             recordSuccessfulTrade(pending.symbol, pending.stake, contractId)
@@ -771,15 +803,28 @@ private var drawerOpen = false
             if (!isClosed) {
                 liveContractProfits[contractId] = profitOpen
                 liveContractProfitModes[contractId] = "${accountId}_$executionMode"
-                val twentyPercentTarget = running.stake * 0.20
+                val profitTarget = running.stake * 0.30
                 val tenPercentTarget = running.stake * 0.10 // Preserve the existing trailing-stop threshold.
-                if (!running.targetNotified && profitOpen >= twentyPercentTarget) {
+                if (!running.targetNotified && profitOpen >= profitTarget) {
                     running.targetNotified = true
                     running.trailingActivated = true
                     running.peakProfit = profitOpen
                     appPrefs.edit().putBoolean("${trailStateKey}_target_notified", true).putBoolean("${trailStateKey}_activated", true).putString("${trailStateKey}_peak", running.peakProfit.toString()).apply()
-                    notifyEvent("20% Profit Target Reached", "${running.symbol} · Contract $contractId · Stake ${formatMoney(running.stake)} · Target ${formatMoney(twentyPercentTarget)} · Current P/L ${formatMoney(profitOpen)}. Trailing stop ${if (trailingStopEnabled) "ACTIVE" else "READY — currently OFF"}.",
-                        "profit_10pct_reached_${accountId}_${executionMode}_$contractId")
+                    notifyEvent("30% Profit Target Reached", "${running.symbol} · Contract $contractId · Stake ${formatMoney(running.stake)} · Target ${formatMoney(profitTarget)} · Current P/L ${formatMoney(profitOpen)}.",
+                        "profit_30pct_reached_${accountId}_${executionMode}_$contractId")
+                    if (running.pairId.isNotBlank() && !running.isRecovery && !running.recoveryTriggered) {
+                        runningContracts.values.firstOrNull { it.contractId != contractId && it.pairId == running.pairId && !it.closeRequested }?.let { losingSide ->
+                            losingSide.closeRequested = true
+                            losingSide.closeReason = "Opposite Touch closed after paired target"
+                            if (!derivApiClient.send(JSONObject().put("sell", losingSide.contractId).put("price", 0).put("req_id", nextTradeRequestId()))) {
+                                losingSide.closeRequested = false
+                                losingSide.closeReason = ""
+                                notifyEvent("Opposite Touch close failed", "${losingSide.symbol} · Contract ${losingSide.contractId} could not be closed; Deriv monitoring continues.", "pair_close_failed_${running.pairId}")
+                            }
+                        }
+                        val liveSpot = contract.optDouble("current_spot", contract.optDouble("current_spot_display_value", 0.0))
+                        requestRecoveryTrade(running, if (liveSpot > 0.0) liveSpot else (marketDataPrices[running.symbol] ?: running.target))
+                    }
                 }
                 if (running.trailingActivated) {
                     running.peakProfit = maxOf(running.peakProfit, profitOpen)
@@ -828,6 +873,17 @@ private var drawerOpen = false
                 }
             } else {
                 val finalProfit = contract.optDouble("profit", contract.optDouble("profit_open", liveContractProfits[contractId] ?: 0.0))
+                if (status == "won" && finalProfit >= running.stake * 0.30 && running.pairId.isNotBlank() && !running.isRecovery && !running.recoveryTriggered) {
+                    runningContracts.values.firstOrNull { it.contractId != contractId && it.pairId == running.pairId && !it.closeRequested }?.let { losingSide ->
+                        losingSide.closeRequested = true
+                        losingSide.closeReason = "Opposite Touch closed after paired win"
+                        if (!derivApiClient.send(JSONObject().put("sell", losingSide.contractId).put("price", 0).put("req_id", nextTradeRequestId()))) {
+                            losingSide.closeRequested = false
+                            losingSide.closeReason = ""
+                        }
+                    }
+                    requestRecoveryTrade(running, marketDataPrices[running.symbol] ?: running.target)
+                }
                 val reason = running.closeReason.ifBlank { if (status == "expired") "Contract Expired" else if (running.takeProfitRequested) "Target Close" else "Contract Closed" }
                 runningContracts.remove(contractId)
                 pendingIndexSymbols.remove(running.symbol)
@@ -1335,7 +1391,7 @@ private fun addUserProfileScreen(page: LinearLayout) {
         profileField("Subscription amount", subscriptionText)
         profileField("Period", periodText)
         profileField("Trading capital range", "R1,000 to R5,000")
-        profileField("Target profit", "20% of stake")
+        profileField("Target profit", "30% of stake")
         val riskLimitText = when (risk.lowercase()) {
             "minimum" -> "1 trade per day"
             "medium" -> "2 trades per day"
@@ -1345,7 +1401,7 @@ private fun addUserProfileScreen(page: LinearLayout) {
             else -> "Trading disabled until assigned"
         }
         profileField("Risk-plan trade limit", riskLimitText)
-        profileField("Daily fixed stake", "20% of the account balance frozen at 00:00 South African time")
+        profileField("Daily fixed stake", "10% per Touch side; recovery stake 20% of daily starting capital, frozen at 00:00 South African time")
         profileField("Trades used today", "${dailyTradeCount()} / ${if (maxTradesPerDay() == Int.MAX_VALUE) "Unlimited" else maxTradesPerDay()}")
         profileField("Start of risk plan", u.optString("start_date", "").takeUnless { it == "null" }.orEmpty())
         profileField("Expiry of risk plan", u.optString("expiry_date", "").takeUnless { it == "null" }.orEmpty())
@@ -1688,7 +1744,7 @@ private fun addHeader() {
         row.addView(space(dp(8)))
 
         row.addView(
-    button("▥  REAL", executionMode == "REAL") {
+            button("▥  REAL", executionMode == "REAL") {
     if (executionMode != "REAL") {
         resetAccountScopedTradeData()
         executionMode = "REAL"
@@ -1973,8 +2029,7 @@ page.addView(
         it.contains("PUT") || it.contains("FALL")
     }
 ) "SELL" else "BUY"
-
-val originalTarget = tracked?.target?.takeIf { it.isFinite() && it > 0.0 }
+        val originalTarget = tracked?.target?.takeIf { it.isFinite() && it > 0.0 }
 val analysisTarget = lastPtpeByIndex[normalizedSymbol(item)]
     ?.takeIf { it.direction == tradeDirection }
     ?.target?.takeIf { it.isFinite() && it > 0.0 }
@@ -1989,7 +2044,7 @@ val targetLabel = when {
 }
 val targetView = label(targetLabel, 12f, yellow, true)
     .apply { setPadding(0, dp(4), 0, 0) }
-        val profitTargetView = label("20% profit target: ${formatMoney(stake * 0.20)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
+        val profitTargetView = label("30% profit target: ${formatMoney(stake * 0.30)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
         val trailView = label("Trailing stop: ${if (tracked?.trailingActivated == true) "ACTIVATED" else if (trailingStopEnabled) "ARMED" else "OFF"}", 12f, if (trailingStopEnabled) green else muted, true).apply { setPadding(0, dp(4), 0, 0) }
         val spotView = label("Current value/spot: ${if (currentValue > 0) formatMarketPrice(currentValue) else "—"}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val expiryView = label("Expiry: $expiryText", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
@@ -2031,7 +2086,7 @@ val targetView = label(targetLabel, 12f, yellow, true)
         val initialPnl = liveContractProfits[running.contractId] ?: 0.0
         val pnlHidden = label("P/L: ${formatMoney(initialPnl)}", 12f, profitColor(initialPnl), true).apply { setPadding(0, dp(4), 0, 0) }
         val targetView = label("Structure target: ${running.target.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
-        val profitTargetView = label("20% profit target: ${formatMoney(running.stake * 0.20)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
+        val profitTargetView = label("30% profit target: ${formatMoney(running.stake * 0.30)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
         val trailView = label("Trailing stop: ${if (running.trailingActivated) "ACTIVATED" else if (trailingStopEnabled) "ARMED" else "OFF"}", 12f, if (trailingStopEnabled) green else muted, true).apply { setPadding(0, dp(4), 0, 0) }
         val spotView = label("Current value/spot: —", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val expiryView = label("Expiry: —", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
@@ -2578,7 +2633,7 @@ private fun addDirectionStructuralTargetAnalysis() {
         if (platform == "ADMIN") {
             indexCard.addView(
                 label(
-                    "STRUCTURAL TARGET: ${
+                        "STRUCTURAL TARGET: ${
                         if (hasTarget) formatMarketPrice(target?.price)
                         else "WAITING"
                     }",
@@ -3199,11 +3254,11 @@ private fun addTargetFilterAnalysis() {
         page.addView(sectionTitle("RISK CATEGORIES"))
         page.addView(label("Trading capital range: R1,000 to R5,000. Interest is administrator-only. Users see plan name, interest period label only if permitted, subscription amount, period, trades used today, stake, target, trade limit, and assigned dates in My Profile.", 13f, muted, false))
         val rules = listOf(
-            listOf("MINIMUM RISK", "Interest per 30 days: 50%", "Subscription: 25% of capital", "Period: 30 days", "Stake: 20% of capital", "Target profit: 20% of stake", "Trades per day: 1"),
-            listOf("MEDIUM RISK", "Interest per 30 days: 100%", "Subscription: 75% of capital", "Period: 30 days", "Stake: 20% of capital", "Target profit: 20% of stake", "Trades per day: 2"),
-            listOf("MAXIMUM RISK", "Interest per 30 days: 200%", "Subscription: 100% of capital", "Period: 30 days", "Stake: 20% of capital", "Target profit: 20% of stake", "Trades per day: 3"),
-            listOf("SUPER MAXIMUM RISK", "Period: 30 days", "Stake: 20% of capital", "Target profit: 20% per stake", "Trades per day: Unlimited"),
-            listOf("TRIAL", "Interest per 7 days: 50%", "Subscription: Free", "Period: 7 days", "Stake: 20% of capital", "Target profit: 20% per stake", "Trade limit: Not specified")
+            listOf("MINIMUM RISK", "Interest per 30 days: 50%", "Subscription: 25% of capital", "Period: 30 days", "Stake: 10% per Touch side", "Target profit: 30% of stake", "Trades per day: 1"),
+            listOf("MEDIUM RISK", "Interest per 30 days: 100%", "Subscription: 75% of capital", "Period: 30 days", "Stake: 10% per Touch side", "Target profit: 30% of stake", "Trades per day: 2"),
+            listOf("MAXIMUM RISK", "Interest per 30 days: 200%", "Subscription: 100% of capital", "Period: 30 days", "Stake: 10% per Touch side", "Target profit: 30% of stake", "Trades per day: 3"),
+            listOf("SUPER MAXIMUM RISK", "Period: 30 days", "Stake: 10% per Touch side", "Target profit: 30% per stake", "Trades per day: Unlimited"),
+            listOf("TRIAL", "Interest per 7 days: 50%", "Subscription: Free", "Period: 7 days", "Stake: 10% per Touch side", "Target profit: 30% per stake", "Trade limit: Not specified")
         )
         rules.forEach { details ->
             val ruleCard = card().apply { orientation = LinearLayout.VERTICAL }
@@ -3477,7 +3532,6 @@ val stableKey = if (noReturnError) {
                 1
             )
         }
-
         val tabs = if (authToken.isBlank()) {
             listOf("⌂" to "Home", "↪" to "Login", "+" to "Register")
         } else if (platform == "ADMIN") {
@@ -3779,7 +3833,7 @@ val stableKey = if (noReturnError) {
     marketDataRequested = false
         accountId = ""
     accountType = ""
-    accountBalance = 0.0
+        accountBalance = 0.0
     accountCurrency = ""
 
     render()
@@ -4032,4 +4086,4 @@ override fun onMarketDataError(
     }
 
 }
-                        
+            
