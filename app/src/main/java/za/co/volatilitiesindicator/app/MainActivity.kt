@@ -4026,8 +4026,6 @@ val stableKey = if (noReturnError) {
     }
 
     override fun onCandles(
-
-    override fun onCandles(
     symbol: String,
     candles: List<DerivApiClient.Candle>
 ) {
