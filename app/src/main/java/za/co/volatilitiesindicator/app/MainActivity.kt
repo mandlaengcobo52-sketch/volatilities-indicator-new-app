@@ -313,6 +313,7 @@ private var drawerOpen = false
         }
         return false
     }
+
     private fun requestOpenTradesIfNeeded() {
         if (!connected || accountId.isBlank() || portfolioLoadedForAccount) return
         val now = android.os.SystemClock.elapsedRealtime()
@@ -320,8 +321,7 @@ private var drawerOpen = false
         lastOpenTradesRequestAt = now
         derivApiClient.requestOpenTrades()
     }
-
-    /**
+   /**
      * A confirmed contract may carry a stake from a previous day's capital cycle.
      * That contract must never block today's trade solely because its stake differs.
      * Only a still-pending purchase in the same selected mode can block a conflicting stake.
@@ -658,7 +658,7 @@ private var drawerOpen = false
         val proposal = JSONObject().put("proposal", 1).put("amount", stake).put("basis", "stake")
             .put("contract_type", "ONETOUCH").put("currency", accountCurrency.ifBlank { "USD" })
             .put("duration", 3).put("duration_unit", "d").put("underlying_symbol", winner.symbol)
-            .put("barrier", String.format(java.util.Locale.US, "%.2f", barrier))
+            .put("barrier", String.format(java.util.Locale.US, "%.2f", barrier)).put("req_id", reqId)
         if (!derivApiClient.send(proposal)) {
             pendingOrdersByRequest.remove(reqId)
             notifyEvent("Recovery rejected", "${winner.symbol} · Deriv recovery proposal could not be sent.", "recovery_send_failed_${winner.pairId}")
@@ -738,7 +738,10 @@ private var drawerOpen = false
             if (payout + 1e-8 < minimumRequiredPayout) {
                 pendingOrdersByRequest.remove(reqId)
                 pendingIndexSymbols.remove(pending.symbol)
-                notifyEvent("Execution rejected", "${pending.symbol} · Potential profit is below the required 30% target. Deriv proposal payout ${formatMoney(payout)}; stake ${formatMoney(pending.stake)}; potential profit ${formatMoney(potentialProfit)}; minimum required profit ${formatMoney(pending.stake * 0.15)} (30% of stake). No purchase submitted.",
+                notifyEvent("Execution rejected", "${pending.symbol} · Potential profit is below the required 30% target. Deriv proposal payout ${formatMoney(payout)}; stake ${formatMoney(pending.stake)}; potential profit ${formatMoney(potentialProfit)}; minimum required profit ${formatMoney(pending.stake * 0.30)} (30% of stake). No purchase submitted.",
+                    "profit_target_rejected_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
+                return
+            }
             val profitBand = "30% profit target"
             notifyEvent("Profit target eligibility passed", "${pending.symbol} · $profitBand; potential profit ${formatMoney(potentialProfit)} (${String.format(java.util.Locale.US, "%.2f", potentialProfit / pending.stake * 100.0)}% of stake); fresh target distance ${String.format(java.util.Locale.US, "%.2f", freshDistance)}%.",
                 "profit_target_passed_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
@@ -1560,7 +1563,6 @@ private fun addHeader() {
 
             clipToOutline = true
         }
-
         row.addView(
             logo,
             LinearLayout.LayoutParams(dp(52), dp(52)).apply {
@@ -1741,7 +1743,7 @@ private fun addHeader() {
         row.addView(space(dp(8)))
 
         row.addView(
-            button("▥  REAL", executionMode == "REAL") {
+    button("▥  REAL", executionMode == "REAL") {
     if (executionMode != "REAL") {
         resetAccountScopedTradeData()
         executionMode = "REAL"
@@ -1851,7 +1853,6 @@ private fun addHeader() {
 
         balanceView = label("Balance:  ${if (connected) "$accountCurrency ${String.format(java.util.Locale.US, "%.2f", accountBalance)}" else "—"}", 14f, white, false)
         card.addView(balanceView, matchWrap().apply { topMargin = dp(4) })
-
         val selectedModePl = liveContractProfits.filterKeys { liveContractProfitModes[it] == "${accountId}_$executionMode" }.values.sum()
         openPlView = label("Open P/L:  ${formatMoney(selectedModePl)}", 14f,
             profitColor(selectedModePl), true)
@@ -2026,7 +2027,8 @@ page.addView(
         it.contains("PUT") || it.contains("FALL")
     }
 ) "SELL" else "BUY"
-        val originalTarget = tracked?.target?.takeIf { it.isFinite() && it > 0.0 }
+
+val originalTarget = tracked?.target?.takeIf { it.isFinite() && it > 0.0 }
 val analysisTarget = lastPtpeByIndex[normalizedSymbol(item)]
     ?.takeIf { it.direction == tradeDirection }
     ?.target?.takeIf { it.isFinite() && it > 0.0 }
@@ -2630,7 +2632,7 @@ private fun addDirectionStructuralTargetAnalysis() {
         if (platform == "ADMIN") {
             indexCard.addView(
                 label(
-                        "STRUCTURAL TARGET: ${
+                    "STRUCTURAL TARGET: ${
                         if (hasTarget) formatMarketPrice(target?.price)
                         else "WAITING"
                     }",
@@ -3529,6 +3531,7 @@ val stableKey = if (noReturnError) {
                 1
             )
         }
+
         val tabs = if (authToken.isBlank()) {
             listOf("⌂" to "Home", "↪" to "Login", "+" to "Register")
         } else if (platform == "ADMIN") {
@@ -3644,7 +3647,6 @@ val stableKey = if (noReturnError) {
             minHeight = dp(48)
             minimumHeight = dp(48)
             stateListAnimator = null
-
             setPadding(
                 dp(7),
                 dp(4),
@@ -4083,8 +4085,3 @@ override fun onMarketDataError(
     }
 
 }
-
-                        
-     
-        
-            
