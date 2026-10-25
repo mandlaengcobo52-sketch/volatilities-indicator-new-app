@@ -2018,14 +2018,6 @@ page.addView(
             background = shape(panel, greenDark, 8, 1)
         }
         row.addView(label("Index: $symbol", 14f, green, true))
-row.addView(
-    label(
-        "DIRECTION: ${if (tracked?.direction == "SELL") "SELL" else "BUY"}",
-        14f,
-        if (tradeDirection == "BUY") green else red,
-        true
-    ).apply { setPadding(0, dp(4), 0, 0) }
-)
         row.addView(label("Contract number: $contractId", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
         row.addView(label("Stake: ${formatMoney(stake)}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
         val initialPnl = liveContractProfits[contractId] ?: 0.0
@@ -2035,7 +2027,14 @@ row.addView(
         it.contains("PUT") || it.contains("FALL")
     }
 ) "SELL" else "BUY"
-
+row.addView(
+    label(
+        "DIRECTION: $tradeDirection",
+        14f,
+        if (tradeDirection == "BUY") green else red,
+        true
+    ).apply { setPadding(0, dp(4), 0, 0) }
+)
 val originalTarget = tracked?.target?.takeIf { it.isFinite() && it > 0.0 }
 val analysisTarget = lastPtpeByIndex[normalizedSymbol(item)]
     ?.takeIf { it.direction == tradeDirection }
