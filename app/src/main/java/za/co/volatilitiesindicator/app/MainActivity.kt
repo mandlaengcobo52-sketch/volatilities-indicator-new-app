@@ -482,6 +482,7 @@ private var drawerOpen = false
         val priorOutcomeExists = analysisHistoricalOutcomes(candles).any { it.direction == direction && it.confirmation.epoch != event.confirmation.epoch }
         val status = when {
             lifecycle != "BUILDING UP" ->
+                        distance < 0.5 -> "WAIT — TARGET TOO CLOSE (MINIMUM 0.5%)"
     if (lifecycle == "CONTINUATION")
         "CONTINUATION — NO REVERSAL SETUP"
     else lifecycle
@@ -2706,9 +2707,14 @@ private fun addQualificationAnalysis() {
         } else {
             null
         }
+                val targetDistanceStatus = when {
+            targetDistance == null -> "WAIT — NO TARGET"
+            targetDistance < 0.5 -> "WAIT — TOO CLOSE"
+            else -> "PASS"
+        }
         qualificationCard.addView(label(
-            "TARGET DISTANCE (INFORMATION ONLY): ${targetDistance?.let { String.format(java.util.Locale.US, "%.3f%%", it) } ?: "NO TARGET"}",
-            12f, if (targetDistance != null) white else yellow, true
+            "TARGET DISTANCE (MINIMUM 0.5%): ${targetDistance?.let { String.format(java.util.Locale.US, "%.3f%%", it) } ?: "NO TARGET"} — $targetDistanceStatus",
+            12f, if (targetDistance != null && targetDistance >= 0.5) green else yellow, true
         ))
         val ptpeText = if (masterDecision != null) {
             String.format(java.util.Locale.US, "%.1f%%", masterDecision.targetProbability) +
