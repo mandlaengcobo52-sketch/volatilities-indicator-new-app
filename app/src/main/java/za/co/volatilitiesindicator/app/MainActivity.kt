@@ -738,7 +738,7 @@ private var drawerOpen = false
             if (payout + 1e-8 < minimumRequiredPayout) {
                 pendingOrdersByRequest.remove(reqId)
                 pendingIndexSymbols.remove(pending.symbol)
-                notifyEvent("Execution rejected", "${pending.symbol} · Potential profit is below the required 30% target. Deriv proposal payout ${formatMoney(payout)}; stake ${formatMoney(pending.stake)}; potential profit ${formatMoney(potentialProfit)}; minimum required profit ${formatMoney(pending.stake * 0.30)} (30% of stake). No purchase submitted.",
+                notifyEvent("Execution rejected", "${pending.symbol} · Potential profit is below the required 30% target. Deriv proposal payout ${formatMoney(payout)}; stake ${formatMoney(pending.stake)}; potential profit ${formatMoney(potentialProfit)}; minimum required profit ${formatMoney(pending.stake * 0.15)} (30% of stake). No purchase submitted.",
             val profitBand = "30% profit target"
             notifyEvent("Profit target eligibility passed", "${pending.symbol} · $profitBand; potential profit ${formatMoney(potentialProfit)} (${String.format(java.util.Locale.US, "%.2f", potentialProfit / pending.stake * 100.0)}% of stake); fresh target distance ${String.format(java.util.Locale.US, "%.2f", freshDistance)}%.",
                 "profit_target_passed_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
@@ -4019,10 +4019,13 @@ val stableKey = if (noReturnError) {
             }
         }
 
-                // Do not rebuild the entire Trade view for every live quote/contract update.
+                        // Do not rebuild the entire Trade view for every live quote/contract update.
         // Re-rendering here caused the ScrollView to reset/jump while users scrolled.
         // The explicit Refresh button requests fresh account/trade data when needed.
     }
+    }
+
+    override fun onCandles(
 
     override fun onCandles(
     symbol: String,
