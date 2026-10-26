@@ -3981,6 +3981,7 @@ val stableKey = if (noReturnError) {
 val contractType = c.optString("contract_type", "").uppercase()
 val direction = if (contractType.contains("PUT") || contractType.contains("FALL")) "SELL" else "BUY"
 if (stake > 0.0) runningContracts[id] = RunningContract(id, symbol, direction, stake, barrier, 0.0, executionMode)
+                        }
                         derivApiClient.send(JSONObject().put("proposal_open_contract", 1).put("contract_id", id).put("subscribe", 1))
                     }
                 }
