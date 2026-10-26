@@ -596,9 +596,12 @@ private var drawerOpen = false
             return
         }
         val pairId = "${accountId}_${executionMode}_${symbol}_${System.currentTimeMillis()}"
-        val sides = listOf(
-            Triple("BUY", proposalSpot + distance, "+TOUCH"),
-            Triple("SELL", (proposalSpot - distance).coerceAtLeast(0.0000001), "-TOUCH")
+                val sides = listOf(
+            if (decision.direction.equals("BUY", ignoreCase = true)) {
+                Triple("BUY", proposalSpot + distance, "+TOUCH")
+            } else {
+                Triple("SELL", (proposalSpot - distance).coerceAtLeast(0.0000001), "-TOUCH")
+            }
         )
         for ((direction, barrierPrice, side) in sides) {
             val reqId = nextTradeRequestId()
