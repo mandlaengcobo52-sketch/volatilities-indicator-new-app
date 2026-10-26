@@ -3977,11 +3977,25 @@ val stableKey = if (noReturnError) {
                             val stake = c.optDouble("buy_price", c.optDouble("purchase_price", 0.0))
                             // An execution barrier is not necessarily the technical structure target.
                             // Keep the structure target unknown unless Master Decision supplied it.
-                            val barrier = 0.0
-                            val contractType = c.optString("contract_type", "").uppercase()
-                            val direction = if (contractType.contains("PUT") || contractType.contains("FALL")) "SELL" else "BUY"
-                            if (stake > 0.0) runningContracts[id] = RunningContract(id, symbol, direction, stake, barrier, 0.0, executionMode)
-                        }
+                            val barrier = c.optString("barrier", "").toDoubleOrNull() ?: 0.0
+val contractType = c.optString("contract_type", "").uppercase()
+val currentSpot = c.optDouble(
+    "current_spot",
+    c.optDouble("current_spot_display_value", 0.0)
+)
+
+val direction = when {
+    contractType.contains("PUT") || contractType.contains("FALL") -> "SELL"
+    barrier > 0.0 && currentSpot > 0.0 && barrier < currentSpot -> "SELL"
+    barrier > 0.0 && currentSpot > 0.0 && barrier > currentSpot -> "BUY"
+    else -> "UNKNOWN"
+}
+
+if (stake > 0.0) {
+    runningContracts[id] = RunningContract(
+        id, symbol, direction, stake, 0.0, 0.0, executionMode
+    )
+}
                         derivApiClient.send(JSONObject().put("proposal_open_contract", 1).put("contract_id", id).put("subscribe", 1))
                     }
                 }
