@@ -286,18 +286,7 @@ private val pendingRecoverySpots = mutableMapOf<String, Double>()
         runningContracts.values.count { it.mode == executionMode } +
             pendingOrdersByRequest.values.count { it.mode == executionMode }
 
-    private fun canStartPairedCycle(): Boolean {
-    val activePairIds = (
-        runningContracts.values
-            .filter { it.mode == executionMode && !it.isRecovery }
-            .map { it.pairId } +
-        pendingOrdersByRequest.values
-            .filter { it.mode == executionMode && !it.isRecovery }
-            .map { it.pairId }
-    ).filter { it.isNotBlank() }.toSet()
-
-    return activePairIds.size < 3
-    }
+    private fun hasCapacityForTrades(count: Int): Boolean = runningAndPendingTradeCount() + count <= 6
 
     private fun normalizedSymbol(item: JSONObject): String = item.optString(
         "underlying", item.optString("underlying_symbol", item.optString("symbol", ""))
