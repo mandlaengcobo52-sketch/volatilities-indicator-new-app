@@ -2286,8 +2286,16 @@ private fun analysisMssEvents(candles: List<DerivApiClient.Candle>): List<Analys
     }
     return events
 }
-private fun analysisLatestMss(candles: List<DerivApiClient.Candle>): AnalysisMssEvent? =
-    analysisMssEvents(candles).lastOrNull()
+private fun analysisLatestMss(candles: List<DerivApiClient.Candle>): AnalysisMssEvent? {
+    val events = analysisMssEvents(candles)
+    val latestEpoch = events.maxOfOrNull { it.confirmation.epoch } ?: return null
+    val latestEvents = events.filter { it.confirmation.epoch == latestEpoch }
+
+    val directions = latestEvents.map { it.direction }.distinct()
+    if (directions.size != 1) return null
+
+    return latestEvents.last()
+}
 
 /* Historical Step 5 events only become eligible once the pivot's two
    right-side confirmation candles have completed, as in WebTrader h5Events. */
