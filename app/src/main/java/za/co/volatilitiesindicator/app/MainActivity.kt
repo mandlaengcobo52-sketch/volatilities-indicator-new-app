@@ -894,6 +894,7 @@ private var drawerOpen = false
         )
     }
                     }
+                    if (running.pairId.isNotBlank() && !running.isRecovery && !running.recoveryTriggered) {
                         val liveSpot = contract.optDouble("current_spot", contract.optDouble("current_spot_display_value", 0.0))
                         preparePairRecovery(running, if (liveSpot > 0.0) liveSpot else (marketDataPrices[running.symbol] ?: running.target))
                     }
