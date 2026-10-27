@@ -875,7 +875,25 @@ private var drawerOpen = false
                     appPrefs.edit().putBoolean("${trailStateKey}_target_notified", true).putBoolean("${trailStateKey}_activated", true).putString("${trailStateKey}_peak", running.peakProfit.toString()).apply()
                     notifyEvent("30% Profit Target Reached", "${running.symbol} · Contract $contractId · Stake ${formatMoney(running.stake)} · Target ${formatMoney(profitTarget)} · Current P/L ${formatMoney(profitOpen)}.",
                         "profit_30pct_reached_${accountId}_${executionMode}_$contractId")
-                    if (running.pairId.isNotBlank() && !running.isRecovery && !running.recoveryTriggered) {
+                    if (!running.closeRequested) {
+    running.closeRequested = true
+    running.closeReason = "30% Profit Target Reached"
+
+    if (!derivApiClient.send(
+            JSONObject()
+                .put("sell", contractId)
+                .put("price", 0)
+                .put("req_id", nextTradeRequestId())
+        )) {
+        running.closeRequested = false
+        running.closeReason = ""
+        notifyEvent(
+            "Profit Target Close Failed",
+            "${running.symbol} · Contract $contractId · Close request failed; monitoring continues.",
+            "profit_target_close_failed_${accountId}_${executionMode}_$contractId"
+        )
+    }
+                    }
                         val liveSpot = contract.optDouble("current_spot", contract.optDouble("current_spot_display_value", 0.0))
                         preparePairRecovery(running, if (liveSpot > 0.0) liveSpot else (marketDataPrices[running.symbol] ?: running.target))
                     }
