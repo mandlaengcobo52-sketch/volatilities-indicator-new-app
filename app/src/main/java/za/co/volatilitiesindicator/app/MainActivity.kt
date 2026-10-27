@@ -966,6 +966,9 @@ private var drawerOpen = false
                 }
                 val reason = running.closeReason.ifBlank { if (status == "expired") "Contract Expired" else if (running.takeProfitRequested) "Target Close" else "Contract Closed" }
                 runningContracts.remove(contractId)
+                appPrefs.edit()
+    .remove("contract_metadata_$contractId")
+    .apply()
                 finishPairRecoveryIfClosed(running.pairId)
                 pendingIndexSymbols.remove(running.symbol)
                 liveContractProfits.remove(contractId)
