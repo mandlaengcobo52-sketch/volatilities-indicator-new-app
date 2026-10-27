@@ -835,6 +835,19 @@ private var drawerOpen = false
             runningContracts[contractId] = RunningContract(contractId, pending.symbol, pending.direction,
                 pending.stake, pending.target, pending.targetProbability, pending.mode,
                 pairId = pending.pairId, pairSide = pending.pairSide, isRecovery = pending.isRecovery)
+            appPrefs.edit().putString(
+    "contract_metadata_$contractId",
+    JSONObject()
+        .put("direction", pending.direction)
+        .put("target", pending.target)
+        .put("targetProbability", pending.targetProbability)
+        .put("symbol", pending.symbol)
+        .put("mode", pending.mode)
+        .put("pairId", pending.pairId)
+        .put("pairSide", pending.pairSide)
+        .put("isRecovery", pending.isRecovery)
+        .toString()
+).apply()
             notifyEvent("Execution accepted", "${pending.symbol} · Deriv accepted the buy request and returned contract $contractId.",
                 "execution_accepted_${accountId}_${executionMode}_$contractId")
             recordSuccessfulTrade(pending.symbol, pending.stake, contractId)
