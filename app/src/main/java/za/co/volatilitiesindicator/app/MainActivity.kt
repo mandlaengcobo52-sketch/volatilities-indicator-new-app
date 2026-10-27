@@ -4079,17 +4079,31 @@ private fun addTargetFilterAnalysis() {
                 if (contracts != null) for (i in 0 until contracts.length()) {
                     val c = contracts.optJSONObject(i) ?: continue
                     val id = c.optLong("contract_id", 0L)
-                    if (id > 0L) {
-                        if (!runningContracts.containsKey(id)) {
-                            val symbol = normalizedSymbol(c).ifBlank { "UNKNOWN" }
-                            val stake = c.optDouble("buy_price", c.optDouble("purchase_price", 0.0))
-                            // An execution barrier is not necessarily the technical structure target.
-                            // Keep the structure target unknown unless Master Decision supplied it.
-                            val barrier = 0.0
+                    val saved = appPrefs.getString("contract_metadata_$id", null)
+    ?.let { runCatching { JSONObject(it) }.getOrNull() }
+
+val symbol = saved?.optString("symbol")
+    ?.takeIf { it.isNotBlank() }
+    ?: normalizedSymbol(c).ifBlank { "UNKNOWN" }
+
+val stake = c.optDouble("buy_price", c.optDouble("purchase_price", 0.0))
 val contractType = c.optString("contract_type", "").uppercase()
-val direction = if (contractType.contains("PUT") || contractType.contains("FALL")) "SELL" else "BUY"
-if (stake > 0.0) runningContracts[id] = RunningContract(id, symbol, direction, stake, barrier, 0.0, executionMode)
-                        }
+val direction = saved?.optString("direction")
+    ?.takeIf { it == "BUY" || it == "SELL" }
+    ?: if (contractType.contains("PUT") || contractType.contains("FALL")) "SELL" else "BUY"
+
+val target = saved?.optDouble("target", 0.0) ?: 0.0
+val probability = saved?.optDouble("targetProbability", 0.0) ?: 0.0
+val mode = saved?.optString("mode")?.takeIf { it.isNotBlank() } ?: executionMode
+
+if (stake > 0.0) {
+    runningContracts[id] = RunningContract(
+        id, symbol, direction, stake, target, probability, mode,
+        pairId = saved?.optString("pairId") ?: "",
+        pairSide = saved?.optString("pairSide") ?: "",
+        isRecovery = saved?.optBoolean("isRecovery", false) ?: false
+    )
+}
                         derivApiClient.send(JSONObject().put("proposal_open_contract", 1).put("contract_id", id).put("subscribe", 1))
                     }
                 }
