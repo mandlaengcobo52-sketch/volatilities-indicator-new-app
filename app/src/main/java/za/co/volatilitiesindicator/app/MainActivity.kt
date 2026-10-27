@@ -4215,7 +4215,7 @@ override fun onMarketDataError(
             marketDataRequested = false
             if (::accountStatus.isInitialized) {
                 accountStatus.text = "●  RECONNECTING"
-                accountStatus.setTextColor(yellow)
+                accountStatus.setTextColor(Color.YELLOW)
             }
         }
     }
