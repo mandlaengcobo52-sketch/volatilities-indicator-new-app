@@ -4217,7 +4217,6 @@ override fun onMarketDataError(
                 accountStatus.text = "●  RECONNECTING"
                 accountStatus.setTextColor(yellow)
             }
-            scheduleDerivReconnect()
         }
     }
 
