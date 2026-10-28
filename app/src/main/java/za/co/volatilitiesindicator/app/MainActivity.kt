@@ -709,8 +709,37 @@ private var drawerOpen = false
             return
         }
         winner.recoveryTriggered = true
-        val distance = kotlin.math.abs(winner.target - spot).takeIf { it > 0.0 } ?: (spot * 0.005)
-        val barrier = if (winner.direction.equals("BUY", true)) spot + distance else (spot - distance).coerceAtLeast(0.0000001)
+        // Recovery uses the current spot, not the previous structural target.
+// Reverse the original direction and calculate a fresh 0.5% barrier.
+val recoveryDirection =
+    if (winner.direction.equals("BUY", true)) "SELL" else "BUY"
+
+val distance = spot * 0.005
+
+val barrier = if (recoveryDirection == "BUY") {
+    spot + distance
+} else {
+    (spot - distance).coerceAtLeast(0.0000001)
+}
+
+val reqId = nextTradeRequestId()
+
+val recoverySide =
+    if (recoveryDirection == "BUY") "+TOUCH" else "-TOUCH"
+
+val pending = PendingOrder(
+    winner.symbol,
+    recoveryDirection,
+    spot,
+    barrier,
+    winner.targetProbability,
+    stake,
+    winner.mode,
+    "PROPOSAL",
+    winner.pairId,
+    recoverySide,
+    true
+)
         val reqId = nextTradeRequestId()
         val pending = PendingOrder(winner.symbol, winner.direction, spot, barrier, winner.targetProbability,
             stake, winner.mode, "PROPOSAL", winner.pairId, winner.pairSide, true)
