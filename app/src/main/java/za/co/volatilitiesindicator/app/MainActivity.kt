@@ -698,7 +698,6 @@ private var drawerOpen = false
             pendingRecoverySpots.remove(pairId)
         }
     }
-
     private fun requestRecoveryTrade(winner: RunningContract, spot: Double) {
         if (winner.isRecovery || winner.recoveryTriggered || winner.pairId.isBlank()) return
         if (!connected || spot <= 0.0 || !spot.isFinite()) return
@@ -709,37 +708,10 @@ private var drawerOpen = false
             return
         }
         winner.recoveryTriggered = true
-        // Recovery uses the current spot, not the previous structural target.
-// Reverse the original direction and calculate a fresh 0.5% barrier.
-val recoveryDirection =
-    if (winner.direction.equals("BUY", true)) "SELL" else "BUY"
-
-val distance = spot * 0.005
-
-val barrier = if (recoveryDirection == "BUY") {
-    spot + distance
-} else {
-    (spot - distance).coerceAtLeast(0.0000001)
-}
-
-val reqId = nextTradeRequestId()
-
-val recoverySide =
-    if (recoveryDirection == "BUY") "+TOUCH" else "-TOUCH"
-
-val pending = PendingOrder(
-    winner.symbol,
-    recoveryDirection,
-    spot,
-    barrier,
-    winner.targetProbability,
-    stake,
-    winner.mode,
-    "PROPOSAL",
-    winner.pairId,
-    recoverySide,
-    true
-)
+        val distance = kotlin.math.abs(winner.target - spot).takeIf { it > 0.0 } ?: (spot * 0.005)
+        val barrier = if (winner.direction.equals("BUY", true)) spot + distance else (spot - distance).coerceAtLeast(0.0000001)
+        val reqId = nextTradeRequestId()
+        val pending = PendingOrder(winner.symbol, winner.direction, spot, barrier, winner.targetProbability,
             stake, winner.mode, "PROPOSAL", winner.pairId, winner.pairSide, true)
         pendingOrdersByRequest[reqId] = pending
         val proposal = JSONObject().put("proposal", 1).put("amount", stake).put("basis", "stake")
@@ -754,7 +726,6 @@ val pending = PendingOrder(
             notifyEvent("Recovery requested", "${winner.symbol} · ${winner.direction} recovery proposal submitted. Stake ${formatMoney(stake)} (20% of daily starting capital); target 30% of stake.", "recovery_requested_${winner.pairId}")
         }
     }
-
     private fun handleMasterDecisionTradeResponse(json: JSONObject) {
         val msgType = json.optString("msg_type", "")
         val reqId = json.optInt("req_id", -1)
