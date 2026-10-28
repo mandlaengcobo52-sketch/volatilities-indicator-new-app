@@ -935,14 +935,6 @@ val structureReached = running.target > 0.0 &&
 // Do not close here when the structural target is reached.
 // The existing 30% profit-target handler controls the winning
 // contract's automatic closure.
-                        running.closeRequested = false
-                        running.closeReason = ""
-                        notifyEvent("Structure Target Close Failed", "${running.symbol} · Contract $contractId · Close request could not be sent; monitoring continues.",
-                            "structure_close_failed_${accountId}_${executionMode}_$contractId")
-                    } else {
-                        notifyEvent("Structure Target Reached", "${running.symbol} · Contract $contractId · Spot ${formatMarketPrice(currentSpot)} reached structure target ${formatMarketPrice(running.target)}. Waiting for Deriv confirmation.",
-                            "structure_target_reached_${accountId}_${executionMode}_$contractId")
-                    }
                 }
 
                     // Standalone true trailing stop: activate at +10% of original stake,
