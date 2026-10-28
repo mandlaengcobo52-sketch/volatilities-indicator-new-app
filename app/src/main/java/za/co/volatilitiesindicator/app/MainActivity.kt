@@ -2152,6 +2152,7 @@ val targetLabel = when {
 
 val targetView = label(targetLabel, 12f, yellow, true)
     .apply { setPadding(0, dp(4), 0, 0) }
+        val profitTargetView = label("30% profit target: ${formatMoney(stake * 0.30)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
         val trailView = label("Trailing stop: ${if (tracked?.trailingActivated == true) "ACTIVATED" else if (trailingStopEnabled) "ARMED" else "OFF"}", 12f, if (trailingStopEnabled) green else muted, true).apply { setPadding(0, dp(4), 0, 0) }
         val spotView = label("Current value/spot: ${if (currentValue > 0) formatMarketPrice(currentValue) else "—"}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val expiryView = label("Expiry: $expiryText", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
@@ -2169,7 +2170,6 @@ val targetView = label(targetLabel, 12f, yellow, true)
         ).apply { setPadding(0, dp(4), 0, 0) }
     )
         }
-        val profitTargetView = label("30% profit target: ${formatMoney(stake * 0.30)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
         row.addView(trailView)
         row.addView(spotView)
         row.addView(expiryView)
@@ -2291,181 +2291,7 @@ row.addView(
     page.addView(historyCard, matchWrap().apply { bottomMargin = dp(10) })
     page.addView(button("NOTIFICATIONS", false) { selectedTab = "Notifications"; render() }, matchWrap().apply { bottomMargin = dp(6) })
     page.addView(button("MY PROFILE", false) { selectedTab = "My profile"; render() }, matchWrap())
-}
-// =========================================================
-// WEBTRADER-PARITY ANALYSIS CORE
-// =========================================================
-private data class AnalysisPivot(
-    val type: String,
-    val price: Double,
-    val epoch: Long,
-    val index: Int,
-    val confirmedEpoch: Long,
-    var label: String = ""
-)
-
-private data class AnalysisMssEvent(
-    val state: String,
-    val direction: String,
-    val broken: AnalysisPivot,
-    val confirmation: DerivApiClient.Candle
-)
-
-private data class AnalysisHistoricalOutcome(
-    val direction: String,
-    val pivot: AnalysisPivot,
-    val confirmation: DerivApiClient.Candle,
-    val index: Int,
-    val maxFav: Double,
-    val maxFavPrice: Double,
-    val maxFavEpoch: Long,
-    val maxAdv: Double,
-    val maxAdvPrice: Double,
-    val maxAdvEpoch: Long,
-    val endedByOpposite: Boolean
-)
-
-/* Matches WebTrader mssCompleted()/csCompleted(): sort valid H1 candles,
-   remove the live candle using the same one-hour age test, and use the
-   last-candle fallback only when fewer than two candles pass that test. */
-private fun analysisCompletedCandles(symbol: String): List<DerivApiClient.Candle> {
-    val all = marketDataCandles[symbol].orEmpty()
-        .filter { candle ->
-            listOf(candle.epoch.toDouble(), candle.open, candle.high, candle.low, candle.close).all { it.isFinite() }
-        }
-        .sortedBy { it.epoch }
-    if (all.size < 2) return all
-    val now = System.currentTimeMillis() / 1000L
-    val completed = all.filter { now - it.epoch >= 3600L }
-    return if (completed.size >= 2) completed else all.dropLast(1)
-}
-
-/* L=2/R=2 pivots and same-type collapse match WebTrader. Left comparisons
-   are strict; right comparisons permit equality, exactly as mssDetect(). */
-private fun analysisPivots(candles: List<DerivApiClient.Candle>): List<AnalysisPivot> {
-    val raw = mutableListOf<AnalysisPivot>()
-    fun swingHigh(i: Int): Boolean {
-        for (k in 1..2) if (candles[i].high <= candles[i-k].high) return false
-        for (k in 1..2) if (candles[i].high < candles[i+k].high) return false
-        return true
-    }
-    fun swingLow(i: Int): Boolean {
-        for (k in 1..2) if (candles[i].low >= candles[i-k].low) return false
-        for (k in 1..2) if (candles[i].low > candles[i+k].low) return false
-        return true
-    }
-    for (i in 2 until candles.size - 2) {
-        if (swingHigh(i)) raw.add(AnalysisPivot("HIGH", candles[i].high, candles[i].epoch, i, candles[i+2].epoch))
-        if (swingLow(i)) raw.add(AnalysisPivot("LOW", candles[i].low, candles[i].epoch, i, candles[i+2].epoch))
-    }
-    val collapsed = mutableListOf<AnalysisPivot>()
-    raw.sortedBy { it.index }.forEach { pivot ->
-        val last = collapsed.lastOrNull()
-        if (last == null) collapsed.add(pivot)
-        else if (last.type == pivot.type) {
-            val moreExtreme = if (pivot.type == "HIGH") pivot.price > last.price else pivot.price < last.price
-            if (moreExtreme) collapsed[collapsed.lastIndex] = pivot
-        } else collapsed.add(pivot)
-    }
-    val highs = collapsed.filter { it.type == "HIGH" }
-    val lows = collapsed.filter { it.type == "LOW" }
-    highs.forEachIndexed { i, pivot -> pivot.label = if (i > 0 && pivot.price > highs[i-1].price) "HH" else "LH" }
-    lows.forEachIndexed { i, pivot -> pivot.label = if (i > 0 && pivot.price > lows[i-1].price) "HL" else "LL" }
-    return collapsed
-}
-
-private fun analysisMssEvents(candles: List<DerivApiClient.Candle>): List<AnalysisMssEvent> {
-    if (candles.size < 20) return emptyList()
-    val pivots = analysisPivots(candles)
-    val highs = pivots.filter { it.type == "HIGH" }
-    val lows = pivots.filter { it.type == "LOW" }
-    val brokenHighs = mutableSetOf<Int>()
-    val brokenLows = mutableSetOf<Int>()
-    val events = mutableListOf<AnalysisMssEvent>()
-    for (j in candles.indices) {
-        val candle = candles[j]
-        val priorLH = highs.lastOrNull { it.label == "LH" && it.index < j }
-        val priorHL = lows.lastOrNull { it.label == "HL" && it.index < j }
-        if (priorLH != null && candle.close > priorLH.price && brokenHighs.add(priorLH.index)) {
-            events.add(AnalysisMssEvent("BULLISH MSS", "BULLISH", priorLH, candle))
-        }
-        if (priorHL != null && candle.close < priorHL.price && brokenLows.add(priorHL.index)) {
-            events.add(AnalysisMssEvent("BEARISH MSS", "BEARISH", priorHL, candle))
-            }
-    }
-    return events
-}
-private fun analysisLatestMss(candles: List<DerivApiClient.Candle>): AnalysisMssEvent? =
-    analysisMssEvents(candles).lastOrNull()
-
-/* Historical Step 5 events only become eligible once the pivot's two
-   right-side confirmation candles have completed, as in WebTrader h5Events. */
-private fun analysisHistoricalOutcomes(candles: List<DerivApiClient.Candle>): List<AnalysisHistoricalOutcome> {
-    if (candles.size < 30) return emptyList()
-    val pivots = analysisPivots(candles)
-    val highs = pivots.filter { it.type == "HIGH" }
-    val lows = pivots.filter { it.type == "LOW" }
-    // WebTrader Step 3/5 labels the first pivot of each type SWING; only
-    // subsequent pivots are HH/LH or HL/LL. Keep this separate from Step 4's
-    // mssDetect classification, where the first high is LH and first low LL.
-    highs.forEachIndexed { i, pivot -> pivot.label = if (i == 0) "SWING" else if (pivot.price > highs[i-1].price) "HH" else "LH" }
-    lows.forEachIndexed { i, pivot -> pivot.label = if (i == 0) "SWING" else if (pivot.price > lows[i-1].price) "HL" else "LL" }
-    val events = mutableListOf<AnalysisMssEvent>()
-    val used = mutableSetOf<String>()
-    for (i in candles.indices) {
-        val eligibleHighs = highs.filter { it.index <= i - 2 }
-        val eligibleLows = lows.filter { it.index <= i - 2 }
-        val lh = eligibleHighs.lastOrNull { it.label == "LH" }
-        val hl = eligibleLows.lastOrNull { it.label == "HL" }
-        val c = candles[i]
-        if (lh != null && c.epoch > lh.epoch && c.close > lh.price) {
-            if (used.add("B:${lh.epoch}")) events.add(AnalysisMssEvent("BULLISH MSS", "BULLISH", lh, c))
-        } else if (hl != null && c.epoch > hl.epoch && c.close < hl.price) {
-            if (used.add("S:${hl.epoch}")) events.add(AnalysisMssEvent("BEARISH MSS", "BEARISH", hl, c))
-        }
-    }
-    return events.mapIndexed { idx, event ->
-        var end = candles.lastIndex
-        for (next in idx + 1 until events.size) {
-            if (events[next].direction != event.direction) { end = events[next].confirmation.let { c -> candles.indexOfFirst { it.epoch == c.epoch } }; break }
-        }
-        val start = (event.confirmation.let { c -> candles.indexOfFirst { it.epoch == c.epoch } } + 1).coerceAtLeast(0)
-        var maxFav = 0.0; var maxAdv = 0.0
-        var favPrice = event.confirmation.close; var advPrice = event.confirmation.close
-        var favEpoch = event.confirmation.epoch; var advEpoch = event.confirmation.epoch
-        if (start <= end && start < candles.size) for (k in start..end) {
-            val c = candles[k]
-            val fav = if (event.direction == "BULLISH") c.high - event.confirmation.close else event.confirmation.close - c.low
-            val adv = if (event.direction == "BULLISH") event.confirmation.close - c.low else c.high - event.confirmation.close
-            if (fav > maxFav) { maxFav = fav; favPrice = if (event.direction == "BULLISH") c.high else c.low; favEpoch = c.epoch }
-            if (adv > maxAdv) { maxAdv = adv; advPrice = if (event.direction == "BULLISH") c.low else c.high; advEpoch = c.epoch }
-        }
-        AnalysisHistoricalOutcome(event.direction, event.broken, event.confirmation,
-            candles.indexOfFirst { it.epoch == event.confirmation.epoch }, maxFav, favPrice, favEpoch,
-            maxAdv, advPrice, advEpoch, end < candles.lastIndex)
-    }
-}
-
-private fun analysisStructuralTarget(
-    candles: List<DerivApiClient.Candle>, currentPrice: Double, direction: String, confirmationEpoch: Long
-): AnalysisPivot? {
-    val pivots = analysisPivots(candles)
-    val eligible = pivots.filter { pivot ->
-        if (pivot.confirmedEpoch > confirmationEpoch) return@filter false
-        candles.none { candle ->
-            candle.epoch > pivot.confirmedEpoch && candle.epoch <= confirmationEpoch &&
-                ((pivot.type == "HIGH" && candle.close > pivot.price) ||
-                 (pivot.type == "LOW" && candle.close < pivot.price))
-        }
-    }
-    return when (direction) {
-        "UP" -> eligible.filter { it.type == "HIGH" && it.price > currentPrice }
-            .sortedWith(compareBy<AnalysisPivot> { it.price }.thenByDescending { it.epoch }).firstOrNull()
-        "DOWN" -> eligible.filter { it.type == "LOW" && it.price < currentPrice }
-            .sortedWith(compareByDescending<AnalysisPivot> { it.price }.thenByDescending { it.epoch }).firstOrNull()
-        else -> null
-    }
-}
+}     
 // =========================================================
 // ANALYSIS — MARKET DATA
 // =========================================================
