@@ -958,10 +958,16 @@ private var drawerOpen = false
                 }
             } else {
                 val finalProfit = contract.optDouble("profit", contract.optDouble("profit_open", liveContractProfits[contractId] ?: 0.0))
-                if (finalProfit >= running.stake * 0.30 && running.pairId.isNotBlank() && !running.isRecovery && !running.recoveryTriggered) {
-                    // Deriv has already confirmed this contract is closed; do not send another sell request for it.
-                    running.closeRequested = true
-                    preparePairRecovery(running, marketDataPrices[running.symbol] ?: running.target)
+                if (running.pairId.isNotBlank() &&
+    !running.isRecovery &&
+    !running.recoveryTriggered
+) {
+    // Any original contract closure triggers closure of its paired contract.
+    // Recovery waits until Deriv confirms both original contracts are closed.
+    running.closeRequested = true
+
+    val recoverySpot = marketDataPrices[running.symbol] ?: running.target
+    preparePairRecovery(running, recoverySpot)
                 }
                 val reason = running.closeReason.ifBlank { if (status == "expired") "Contract Expired" else if (running.takeProfitRequested) "Target Close" else "Contract Closed" }
                 runningContracts.remove(contractId)
