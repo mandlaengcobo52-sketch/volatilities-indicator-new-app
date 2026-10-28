@@ -653,7 +653,7 @@ private var drawerOpen = false
     private fun preparePairRecovery(winner: RunningContract, spot: Double) {
         if (winner.isRecovery || winner.pairId.isBlank() || winner.recoveryTriggered) return
         if (spot > 0.0 && spot.isFinite()) {
-            pendingRecoveryWinners[winner.pairId] = winner
+            pendingRecoveryWinners.putIfAbsent(winner.pairId, winner)
             pendingRecoverySpots[winner.pairId] = spot
         } else if (!pendingRecoveryWinners.containsKey(winner.pairId)) {
             pendingRecoveryWinners[winner.pairId] = winner
