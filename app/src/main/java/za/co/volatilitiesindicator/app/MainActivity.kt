@@ -916,27 +916,27 @@ private var drawerOpen = false
                     appPrefs.edit().putBoolean("${trailStateKey}_activated", true).putString("${trailStateKey}_peak", running.peakProfit.toString()).apply()
                 }
 
-                // The 30% monetary profit target is the only automatic
-// profit-based closure trigger. Structural target is informational only.
-val currentSpot = contract.optDouble(
-    "current_spot",
-    contract.optDouble("current_spot_display_value", 0.0)
-)
-
-val structureReached = running.target > 0.0 &&
-    currentSpot > 0.0 &&
-    (
-        (running.direction.equals("BUY", true) &&
-            currentSpot >= running.target) ||
-        (running.direction.equals("SELL", true) &&
-            currentSpot <= running.target)
-    )
-
-// Do not close here when the structural target is reached.
-// The existing 30% profit-target handler controls the winning
-// contract's automatic closure.
+                // The structural price target is distinct from the 10% monetary profit target.
+                // Close only when a known target from the Master Decision is crossed.
+                val currentSpot = contract.optDouble("current_spot", contract.optDouble("current_spot_display_value", 0.0))
+                val structureReached = running.target > 0.0 && currentSpot > 0.0 &&
+                    ((running.direction.equals("BUY", true) && currentSpot >= running.target) ||
+                     (running.direction.equals("SELL", true) && currentSpot <= running.target))
+                if (structureReached && !running.closeRequested) {
+                    running.closeRequested = true
+                    running.closeReason = "Structure Target Reached"
+                    val sent = derivApiClient.send(JSONObject().put("sell", contractId).put("price", 0).put("req_id", nextTradeRequestId()))
+                    if (!sent) {
+                        running.closeRequested = false
+                        running.closeReason = ""
+                        notifyEvent("Structure Target Close Failed", "${running.symbol} · Contract $contractId · Close request could not be sent; monitoring continues.",
+                            "structure_close_failed_${accountId}_${executionMode}_$contractId")
+                    } else {
+                        notifyEvent("Structure Target Reached", "${running.symbol} · Contract $contractId · Spot ${formatMarketPrice(currentSpot)} reached structure target ${formatMarketPrice(running.target)}. Waiting for Deriv confirmation.",
+                            "structure_target_reached_${accountId}_${executionMode}_$contractId")
+                    }
                 }
-        }
+
                     // Standalone true trailing stop: activate at +10% of original stake,
                 // then trail the peak profit by 10% of original stake, with a break-even floor.
                 val trailingGap = tenPercentTarget
