@@ -2153,21 +2153,6 @@ val targetLabel = when {
 val targetView = label(targetLabel, 12f, yellow, true)
     .apply { setPadding(0, dp(4), 0, 0) }
 )
-val originalTarget = tracked?.target?.takeIf { it.isFinite() && it > 0.0 }
-val analysisTarget = lastPtpeByIndex[normalizedSymbol(item)]
-    ?.takeIf { it.direction == tradeDirection }
-    ?.target?.takeIf { it.isFinite() && it > 0.0 }
-
-val targetPrice = originalTarget ?: analysisTarget
-val targetLabel = when {
-    originalTarget != null ->
-        "Structure target: ${formatMarketPrice(originalTarget)}"
-    analysisTarget != null ->
-        "Current analysis target (not original trade target): ${formatMarketPrice(analysisTarget)}"
-    else -> "Structure target: Not available"
-}
-val targetView = label(targetLabel, 12f, yellow, true)
-    .apply { setPadding(0, dp(4), 0, 0) }
         val profitTargetView = label("30% profit target: ${formatMoney(stake * 0.30)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
         val trailView = label("Trailing stop: ${if (tracked?.trailingActivated == true) "ACTIVATED" else if (trailingStopEnabled) "ARMED" else "OFF"}", 12f, if (trailingStopEnabled) green else muted, true).apply { setPadding(0, dp(4), 0, 0) }
         val spotView = label("Current value/spot: ${if (currentValue > 0) formatMarketPrice(currentValue) else "—"}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
