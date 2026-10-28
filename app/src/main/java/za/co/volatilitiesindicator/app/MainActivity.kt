@@ -2101,47 +2101,25 @@ page.addView(
         row.addView(label("Stake: ${formatMoney(stake)}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
         val initialPnl = liveContractProfits[contractId] ?: 0.0
         val pnlHidden = label("P/L: ${formatMoney(initialPnl)}", 12f, profitColor(initialPnl), true).apply { setPadding(0, dp(4), 0, 0) }
-        val pairSide = tracked?.pairSide.orEmpty()
-
-val tradeDirection = tracked?.direction ?: if (
+        val tradeDirection = tracked?.direction ?: if (
     item.optString("contract_type", "").uppercase().let {
         it.contains("PUT") || it.contains("FALL")
     }
 ) "SELL" else "BUY"
-
-val displayDirection = when (pairSide) {
-    "+TOUCH" -> "UPWARD TOUCH"
-    "-TOUCH" -> "DOWNWARD TOUCH"
-    else -> tradeDirection
-}
-
 row.addView(
     label(
-        if (pairSide.isNotBlank()) {
-            "TOUCH SIDE: $displayDirection"
-        } else {
-            "DIRECTION: $displayDirection"
-        },
+        "DIRECTION: $tradeDirection",
         14f,
-        if (pairSide == "-TOUCH" || tradeDirection == "SELL") red else green,
+        if (tradeDirection == "BUY") green else red,
         true
     ).apply { setPadding(0, dp(4), 0, 0) }
 )
-
-val contractBarrier = item.optString("barrier", "")
-    .trim()
-    .toDoubleOrNull()
-
-val originalTarget = tracked?.target
-    ?.takeIf { it.isFinite() && it > 0.0 }
-
+val originalTarget = tracked?.target?.takeIf { it.isFinite() && it > 0.0 }
 val analysisTarget = lastPtpeByIndex[normalizedSymbol(item)]
     ?.takeIf { it.direction == tradeDirection }
-    ?.target
-    ?.takeIf { it.isFinite() && it > 0.0 }
+    ?.target?.takeIf { it.isFinite() && it > 0.0 }
 
 val targetPrice = originalTarget ?: analysisTarget
-
 val targetLabel = when {
     originalTarget != null ->
         "Structure target: ${formatMarketPrice(originalTarget)}"
@@ -2149,7 +2127,6 @@ val targetLabel = when {
         "Current analysis target (not original trade target): ${formatMarketPrice(analysisTarget)}"
     else -> "Structure target: Not available"
 }
-
 val targetView = label(targetLabel, 12f, yellow, true)
     .apply { setPadding(0, dp(4), 0, 0) }
         val profitTargetView = label("30% profit target: ${formatMoney(stake * 0.30)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
@@ -2160,16 +2137,6 @@ val targetView = label(targetLabel, 12f, yellow, true)
         row.addView(pnlHidden)
         row.addView(profitTargetView)
         row.addView(targetView)
-        if (contractBarrier != null && contractBarrier.isFinite() && contractBarrier > 0.0) {
-    row.addView(
-        label(
-            "Contract barrier: ${formatMarketPrice(contractBarrier)}",
-            12f,
-            yellow,
-            true
-        ).apply { setPadding(0, dp(4), 0, 0) }
-    )
-        }
         row.addView(trailView)
         row.addView(spotView)
         row.addView(expiryView)
@@ -2291,7 +2258,69 @@ row.addView(
     page.addView(historyCard, matchWrap().apply { bottomMargin = dp(10) })
     page.addView(button("NOTIFICATIONS", false) { selectedTab = "Notifications"; render() }, matchWrap().apply { bottomMargin = dp(6) })
     page.addView(button("MY PROFILE", false) { selectedTab = "My profile"; render() }, matchWrap())
-}     
+}
+// =========================================================
+// WEBTRADER-PARITY ANALYSIS CORE
+// =========================================================
+private data class AnalysisPivot(
+    val type: String,
+    val price: Double,
+    val epoch: Long,
+    val index: Int,
+    val confirmedEpoch: Long,
+    var label: String = ""
+)
+
+private data class AnalysisMssEvent(
+    val state: String,
+    val direction: String,
+    val broken: AnalysisPivot,
+    val confirmation: DerivApiClient.Candle
+)
+
+private data class AnalysisHistoricalOutcome(
+    val direction: String,
+    val pivot: AnalysisPivot,
+    val confirmation: DerivApiClient.Candle,
+    val index: Int,
+    val maxFav: Double,
+    val maxFavPrice: Double,
+    val maxFavEpoch: Long,
+    val maxAdv: Double,
+    val maxAdvPrice: Double,
+    val maxAdvEpoch: Long,
+    val endedByOpposite: Boolean
+)
+
+/* Matches WebTrader mssCompleted()/csCompleted(): sort valid H1 candles,
+   remove the live candle using the same one-hour age test, and use the
+   last-candle fallback only when fewer than two candles pass that test. */
+private fun analysisCompletedCandles(symbol: String): List<DerivApiClient.Candle> {
+    val all = marketDataCandles[symbol].orEmpty()
+        .filter { candle ->
+            listOf(candle.epoch.toDouble(), candle.open, candle.high, candle.low, candle.close).all { it.isFinite() }
+        }
+        .sortedBy { it.epoch }
+    if (all.size < 2) return all
+    val now = System.currentTimeMillis() / 1000L
+    val completed = all.filter { now - it.epoch >= 3600L }
+    return if (completed.size >= 2) completed else all.dropLast(1)
+}
+
+/* L=2/R=2 pivots and same-type collapse match WebTrader. Left comparisons
+   are strict; right comparisons permit equality, exactly as mssDetect(). */
+private fun analysisPivots(candles: List<DerivApiClient.Candle>): List<AnalysisPivot> {
+    val raw = mutableListOf<AnalysisPivot>()
+    fun swingHigh(i: Int): Boolean {
+        for (k in 1..2) if (candles[i].high <= candles[i-k].high) return false
+        for (k in 1..2) if (candles[i].high < candles[i+k].high) return false
+        return true
+    }
+    fun swingLow(i: Int): Boolean {
+        for (k in 1..2) if (candles[i].low >= candles[i-k].low) return false
+        for (k in 1..2) if (candles[i].low > candles[i+k].low) return false
+        return true
+    }
 // =========================================================
 // ANALYSIS — MARKET DATA
 // =========================================================
