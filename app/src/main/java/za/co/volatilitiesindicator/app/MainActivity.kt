@@ -797,7 +797,7 @@ private var drawerOpen = false
             val minimumRequiredPayout = pending.stake * 1.30
             val preferredPayout = pending.stake * 1.30
             val potentialProfit = payout - pending.stake
-            if (payout + 1e-8 < minimumRequiredPayout) {
+            if (pending.pairId.isBlank() && payout + 1e-8 < minimumRequiredPayout) {
                 pendingOrdersByRequest.remove(reqId)
                 pendingIndexSymbols.remove(pending.symbol)
                 notifyEvent("Execution rejected", "${pending.symbol} · Potential profit is below the required 30% target. Deriv proposal payout ${formatMoney(payout)}; stake ${formatMoney(pending.stake)}; potential profit ${formatMoney(potentialProfit)}; minimum required profit ${formatMoney(pending.stake * 0.30)} (30% of stake). No purchase submitted.",
