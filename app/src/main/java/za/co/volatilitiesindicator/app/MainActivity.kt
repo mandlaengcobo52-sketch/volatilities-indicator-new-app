@@ -2169,12 +2169,7 @@ val targetView = label(targetLabel, 12f, yellow, true)
         ).apply { setPadding(0, dp(4), 0, 0) }
     )
         }
-        val profitTargetView = label(
-    "30% profit target: ${formatMoney(stake * 0.30)}",
-    12f,
-    yellow,
-    true
-).apply { setPadding(0, dp(4), 0, 0) }
+        val profitTargetView = label("30% profit target: ${formatMoney(stake * 0.30)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
         row.addView(trailView)
         row.addView(spotView)
         row.addView(expiryView)
