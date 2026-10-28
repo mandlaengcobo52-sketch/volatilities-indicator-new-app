@@ -916,13 +916,25 @@ private var drawerOpen = false
                     appPrefs.edit().putBoolean("${trailStateKey}_activated", true).putString("${trailStateKey}_peak", running.peakProfit.toString()).apply()
                 }
 
-                // The structural price target is distinct from the 10% monetary profit target.
-                // Close only when a known target from the Master Decision is crossed.
-                val currentSpot = contract.optDouble("current_spot", contract.optDouble("current_spot_display_value", 0.0))
-                val structureReached = running.target > 0.0 && currentSpot > 0.0 &&
-                    ((running.direction.equals("BUY", true) && currentSpot >= running.target) ||
-                     (running.direction.equals("SELL", true) && currentSpot <= running.target))
-                if (structureReached && !running.closeRequested) {
+                // The 30% monetary profit target is the only automatic
+// profit-based closure trigger. Structural target is informational only.
+val currentSpot = contract.optDouble(
+    "current_spot",
+    contract.optDouble("current_spot_display_value", 0.0)
+)
+
+val structureReached = running.target > 0.0 &&
+    currentSpot > 0.0 &&
+    (
+        (running.direction.equals("BUY", true) &&
+            currentSpot >= running.target) ||
+        (running.direction.equals("SELL", true) &&
+            currentSpot <= running.target)
+    )
+
+// Do not close here when the structural target is reached.
+// The existing 30% profit-target handler controls the winning
+// contract's automatic closure.
                     running.closeRequested = true
                     running.closeReason = "Structure Target Reached"
                     val sent = derivApiClient.send(JSONObject().put("sell", contractId).put("price", 0).put("req_id", nextTradeRequestId()))
