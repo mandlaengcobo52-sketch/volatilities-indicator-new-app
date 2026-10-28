@@ -935,10 +935,6 @@ val structureReached = running.target > 0.0 &&
 // Do not close here when the structural target is reached.
 // The existing 30% profit-target handler controls the winning
 // contract's automatic closure.
-                    running.closeRequested = true
-                    running.closeReason = "Structure Target Reached"
-                    val sent = derivApiClient.send(JSONObject().put("sell", contractId).put("price", 0).put("req_id", nextTradeRequestId()))
-                    if (!sent) {
                         running.closeRequested = false
                         running.closeReason = ""
                         notifyEvent("Structure Target Close Failed", "${running.symbol} · Contract $contractId · Close request could not be sent; monitoring continues.",
