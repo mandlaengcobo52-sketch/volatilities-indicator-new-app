@@ -936,7 +936,7 @@ val structureReached = running.target > 0.0 &&
 // The existing 30% profit-target handler controls the winning
 // contract's automatic closure.
                 }
-
+        }
                     // Standalone true trailing stop: activate at +10% of original stake,
                 // then trail the peak profit by 10% of original stake, with a break-even floor.
                 val trailingGap = tenPercentTarget
