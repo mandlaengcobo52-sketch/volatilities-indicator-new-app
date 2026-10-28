@@ -740,8 +740,6 @@ val pending = PendingOrder(
     recoverySide,
     true
 )
-        val reqId = nextTradeRequestId()
-        val pending = PendingOrder(winner.symbol, winner.direction, spot, barrier, winner.targetProbability,
             stake, winner.mode, "PROPOSAL", winner.pairId, winner.pairSide, true)
         pendingOrdersByRequest[reqId] = pending
         val proposal = JSONObject().put("proposal", 1).put("amount", stake).put("basis", "stake")
