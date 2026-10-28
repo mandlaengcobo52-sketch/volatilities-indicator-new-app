@@ -708,11 +708,33 @@ private var drawerOpen = false
             return
         }
         winner.recoveryTriggered = true
-        val distance = kotlin.math.abs(winner.target - spot).takeIf { it > 0.0 } ?: (spot * 0.005)
-        val barrier = if (winner.direction.equals("BUY", true)) spot + distance else (spot - distance).coerceAtLeast(0.0000001)
-        val reqId = nextTradeRequestId()
-        val pending = PendingOrder(winner.symbol, winner.direction, spot, barrier, winner.targetProbability,
-            stake, winner.mode, "PROPOSAL", winner.pairId, winner.pairSide, true)
+
+val recoveryDirection =
+    if (winner.direction.equals("BUY", true)) "SELL" else "BUY"
+
+val distance = spot * 0.005
+
+val barrier = if (recoveryDirection == "BUY") {
+    spot + distance
+} else {
+    (spot - distance).coerceAtLeast(0.0000001)
+}
+
+val reqId = nextTradeRequestId()
+
+val pending = PendingOrder(
+    winner.symbol,
+    recoveryDirection,
+    spot,
+    barrier,
+    winner.targetProbability,
+    stake,
+    winner.mode,
+    "PROPOSAL",
+    winner.pairId,
+    if (recoveryDirection == "BUY") "+TOUCH" else "-TOUCH",
+    true
+)
         pendingOrdersByRequest[reqId] = pending
         val proposal = JSONObject().put("proposal", 1).put("amount", stake).put("basis", "stake")
             .put("contract_type", "ONETOUCH").put("currency", accountCurrency.ifBlank { "USD" })
