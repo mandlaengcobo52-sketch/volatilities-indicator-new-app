@@ -2101,18 +2101,57 @@ page.addView(
         row.addView(label("Stake: ${formatMoney(stake)}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
         val initialPnl = liveContractProfits[contractId] ?: 0.0
         val pnlHidden = label("P/L: ${formatMoney(initialPnl)}", 12f, profitColor(initialPnl), true).apply { setPadding(0, dp(4), 0, 0) }
-        val tradeDirection = tracked?.direction ?: if (
+        val pairSide = tracked?.pairSide.orEmpty()
+
+val tradeDirection = tracked?.direction ?: if (
     item.optString("contract_type", "").uppercase().let {
         it.contains("PUT") || it.contains("FALL")
     }
 ) "SELL" else "BUY"
+
+val displayDirection = when (pairSide) {
+    "+TOUCH" -> "UPWARD TOUCH"
+    "-TOUCH" -> "DOWNWARD TOUCH"
+    else -> tradeDirection
+}
+
 row.addView(
     label(
-        "DIRECTION: $tradeDirection",
+        if (pairSide.isNotBlank()) {
+            "TOUCH SIDE: $displayDirection"
+        } else {
+            "DIRECTION: $displayDirection"
+        },
         14f,
-        if (tradeDirection == "BUY") green else red,
+        if (pairSide == "-TOUCH" || tradeDirection == "SELL") red else green,
         true
     ).apply { setPadding(0, dp(4), 0, 0) }
+)
+
+val contractBarrier = item.optString("barrier", "")
+    .trim()
+    .toDoubleOrNull()
+
+val originalTarget = tracked?.target
+    ?.takeIf { it.isFinite() && it > 0.0 }
+
+val analysisTarget = lastPtpeByIndex[normalizedSymbol(item)]
+    ?.takeIf { it.direction == tradeDirection }
+    ?.target
+    ?.takeIf { it.isFinite() && it > 0.0 }
+
+val targetPrice = originalTarget ?: analysisTarget
+
+val targetLabel = when {
+    originalTarget != null ->
+        "Structure target: ${formatMarketPrice(originalTarget)}"
+    analysisTarget != null ->
+        "Current analysis target (not original trade target): ${formatMarketPrice(analysisTarget)}"
+    else -> "Structure target: Not available"
+}
+
+val targetView = label(targetLabel, 12f, yellow, true)
+    .apply { setPadding(0, dp(4), 0, 0) }
 )
 val originalTarget = tracked?.target?.takeIf { it.isFinite() && it > 0.0 }
 val analysisTarget = lastPtpeByIndex[normalizedSymbol(item)]
@@ -2137,6 +2176,16 @@ val targetView = label(targetLabel, 12f, yellow, true)
         row.addView(pnlHidden)
         row.addView(profitTargetView)
         row.addView(targetView)
+        if (contractBarrier != null && contractBarrier.isFinite() && contractBarrier > 0.0) {
+    row.addView(
+        label(
+            "Contract barrier: ${formatMarketPrice(contractBarrier)}",
+            12f,
+            yellow,
+            true
+        ).apply { setPadding(0, dp(4), 0, 0) }
+    )
+        }
         row.addView(trailView)
         row.addView(spotView)
         row.addView(expiryView)
