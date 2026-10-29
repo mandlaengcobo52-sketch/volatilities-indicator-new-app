@@ -3603,15 +3603,32 @@ private fun addTargetFilterAnalysis() {
         val noReturnError = title == "Execution rejected" &&
     message.contains("This contract offers no return", ignoreCase = true)
 
-val stableKey = if (noReturnError) {
-    "deriv_no_return_${saDayKey()}_${accountId}_${executionMode}"
-} else {
-    eventKey.ifBlank {
-        "${saDayKey()}_${accountId}_${executionMode}_${title}_${message}".hashCode().toString()
-    }
-}
-        val seen = appPrefs.getStringSet("notification_seen_keys", emptySet()).orEmpty().toMutableSet()
-        if (!seen.add(stableKey)) return
+
+        val notificationScope =
+            "${accountId}_${executionMode}_${title}_${message.substringBefore(" · ")}".hashCode().toString()
+        val lastMessageKey = "notification_last_message_$notificationScope"
+        val lastTimeKey = "notification_last_time_$notificationScope"
+        val lastMessage = appPrefs.getString(lastMessageKey, null)
+        val lastTime = appPrefs.getLong(lastTimeKey, 0L)
+        val now = System.currentTimeMillis()
+
+        if (lastMessage == message && now - lastTime < 60 * 60 * 1000L) return
+
+        appPrefs.edit()
+            .putString(lastMessageKey, message)
+            .putLong(lastTimeKey, now)
+            .apply()
+
+        val stableKey = if (noReturnError) {
+            "deriv_no_return_${saDayKey()}_${accountId}_${executionMode}"
+        } else {
+            eventKey.ifBlank {
+                "${saDayKey()}_${accountId}_${executionMode}_${title}_${message}".hashCode().toString()
+            }
+        }
+        val seen = appPrefs.getStringSet("notification_seen_keys", emptySet())
+            .orEmpty().toMutableSet()
+            
         appPrefs.edit().putStringSet("notification_seen_keys", seen.toList().takeLast(500).toSet()).apply()
         addNotificationFeedItem("$title — $message")
         if (!notificationsEnabled) return
