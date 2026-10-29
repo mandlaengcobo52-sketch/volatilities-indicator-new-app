@@ -214,7 +214,7 @@ private var drawerOpen = false
         val ptpe: TextView
     )
     private val contractLiveViews = mutableMapOf<Long, ContractLiveViews>()
-
+    private val pendingOrdersByRequest = mutableMapOf<Int, PendingOrder>()
     private data class PendingCloseRequest(
     val contractId: Long,
     val pairId: String,
