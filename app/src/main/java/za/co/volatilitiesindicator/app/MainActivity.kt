@@ -801,9 +801,16 @@ private var drawerOpen = false
                 "SELL" -> pending.target < livePrice
                 else -> false
             }
-            val sameSignal = pending.pairId.isNotBlank() || (freshDecision != null && freshDecision.direction == pending.direction &&
-                kotlin.math.abs(freshDecision.target - pending.target) <= kotlin.math.max(0.0000001, kotlin.math.abs(pending.target) * 0.0000001))
-            if ((pending.pairId.isBlank() && freshDecision == null) || !sameSignal || !targetStillAhead) {
+            
+            val analysisRequired = !pending.isRecovery && pending.pairSide != "OPPOSITE"
+            val sameSignal = !analysisRequired || (
+                freshDecision != null &&
+                freshDecision.direction == pending.direction &&
+                kotlin.math.abs(freshDecision.target - pending.target) <=
+                    kotlin.math.max(0.0000001, kotlin.math.abs(pending.target) * 0.0000001)
+            )
+            if ((analysisRequired && freshDecision == null) || !sameSignal || !targetStillAhead) {
+                
                 pendingOrdersByRequest.remove(reqId)
                 pendingIndexSymbols.remove(pending.symbol)
                 val reason = when {
