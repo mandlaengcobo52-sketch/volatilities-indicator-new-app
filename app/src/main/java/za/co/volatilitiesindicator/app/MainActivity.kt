@@ -610,54 +610,66 @@ private var drawerOpen = false
             recordExecutionStage("Execution rejected", "$symbol · Invalid live price or target distance; paired Touch proposals were not sent.", "blocked_pair_barrier_$signalKey")
             return
         }
+        
         val pairId = "${accountId}_${executionMode}_${symbol}_${System.currentTimeMillis()}"
-        val masterDirection = if (decision.direction.equals("SELL", true)) "SELL" else "BUY"
-val oppositeDirection = if (masterDirection == "BUY") "SELL" else "BUY"
+        val direction = if (decision.direction.equals("SELL", true)) "SELL" else "BUY"
+        val barrierPrice = decision.target
+        val side = "MASTER"
+        val reqId = nextTradeRequestId()
+        val pending = PendingOrder(
+            symbol, direction, proposalSpot, barrierPrice,
+            decision.targetProbability, stake, executionMode,
+            "PROPOSAL", pairId, side, false
+        )
+        pendingOrdersByRequest[reqId] = pending
+        pendingIndexSymbols.add(symbol)
 
-val sides = if (masterDirection == "BUY") {
-    listOf(
-        Triple("BUY", proposalSpot + distance, "+TOUCH"),
-        Triple("SELL", (proposalSpot - distance).coerceAtLeast(0.0000001), "-TOUCH")
-    )
-} else {
-    listOf(
-        Triple("SELL", (proposalSpot - distance).coerceAtLeast(0.0000001), "-TOUCH"),
-        Triple("BUY", proposalSpot + distance, "+TOUCH")
-    )
-}
-        for ((direction, barrierPrice, side) in sides) {
-            val reqId = nextTradeRequestId()
-            val pending = PendingOrder(symbol, direction, proposalSpot, barrierPrice, decision.targetProbability,
-                stake, executionMode, "PROPOSAL", pairId, side, false)
-            pendingOrdersByRequest[reqId] = pending
-            pendingIndexSymbols.add(symbol)
-            val proposal = JSONObject()
-                .put("proposal", 1)
-                .put("amount", stake)
-                .put("basis", "stake")
-                .put("contract_type", "ONETOUCH")
-                .put("currency", accountCurrency.ifBlank { "USD" })
-                .put("duration", 3)
-                .put("duration_unit", "d")
-                .put("underlying_symbol", symbol)
-                .put("barrier", String.format(java.util.Locale.US, "%.2f", barrierPrice))
-                .put("req_id", reqId)
-            if (!derivApiClient.send(proposal)) {
-                pendingOrdersByRequest.remove(reqId)
-                notifyEvent("Execution rejected", "$symbol · Could not send the $side proposal.", "pair_proposal_send_failed_${pairId}_$side")
-            } else {
-                android.os.Handler(mainLooper).postDelayed({
-                    val waiting = pendingOrdersByRequest[reqId]
-                    if (waiting != null && waiting.stage == "PROPOSAL") {
-                        pendingOrdersByRequest.remove(reqId)
-                        if (pendingOrdersByRequest.values.none { it.symbol == symbol && it.mode == executionMode } &&
-                            runningContracts.values.none { it.symbol == symbol && it.mode == executionMode }) pendingIndexSymbols.remove(symbol)
-                        notifyEvent("Execution rejected", "$symbol · No response to the $side proposal within 15 seconds.", "pair_proposal_timeout_${pairId}_$side")
+        val proposal = JSONObject()
+            .put("proposal", 1)
+            .put("amount", stake)
+            .put("basis", "stake")
+            .put("contract_type", "ONETOUCH")
+            .put("currency", accountCurrency.ifBlank { "USD" })
+            .put("duration", 3)
+            .put("duration_unit", "d")
+            .put("underlying_symbol", symbol)
+            .put("barrier", String.format(java.util.Locale.US, "%.2f", barrierPrice))
+            .put("req_id", reqId)
+
+        if (!derivApiClient.send(proposal)) {
+            pendingOrdersByRequest.remove(reqId)
+            notifyEvent(
+                "Execution rejected",
+                "$symbol · Could not send the Master Decision proposal.",
+                "master_proposal_send_failed_${pairId}"
+            )
+        } else {
+            android.os.Handler(mainLooper).postDelayed({
+                val waiting = pendingOrdersByRequest[reqId]
+                if (waiting != null && waiting.stage == "PROPOSAL") {
+                    pendingOrdersByRequest.remove(reqId)
+                    if (pendingOrdersByRequest.values.none {
+                            it.symbol == symbol && it.mode == executionMode
+                        } && runningContracts.values.none {
+                            it.symbol == symbol && it.mode == executionMode
+                        }) {
+                        pendingIndexSymbols.remove(symbol)
                     }
-                }, 15000L)
-            }
+                    notifyEvent(
+                        "Execution rejected",
+                        "$symbol · No response to the Master Decision proposal within 15 seconds.",
+                        "master_proposal_timeout_${pairId}"
+                    )
+                }
+            }, 15000L)
         }
-        notifyEvent("Paired Touch requested", "$symbol · +Touch and −Touch proposals submitted. Each stake is 10% of daily starting capital; profit target is 30%; reserve 40%; maximum 3 simultaneous paired cycles.", "paired_touch_requested_$pairId")
+
+        notifyEvent(
+            "Master Decision requested",
+            "$symbol · $direction proposal submitted. Trade 2 must wait for Trade 1 confirmation.",
+            "master_trade_requested_${pairId}"
+        )
+
     }
 
     /** Request closure of both original contracts, but never launch recovery until both closures are confirmed. */
