@@ -3606,16 +3606,16 @@ private fun addTargetFilterAnalysis() {
 
         val notificationScope =
             "${accountId}_${executionMode}_${title}_${message.substringBefore(" · ")}".hashCode().toString()
-        val lastMessageKey = "notification_last_message_$notificationScope"
-        val lastTimeKey = "notification_last_time_$notificationScope"
+                val statusSignature =
+            "$title|${message.substringBefore(" · ")}|${message.substringAfter(" · ", message).substringBefore(".")}"
         val lastMessage = appPrefs.getString(lastMessageKey, null)
         val lastTime = appPrefs.getLong(lastTimeKey, 0L)
         val now = System.currentTimeMillis()
 
-        if (lastMessage == message && now - lastTime < 60 * 60 * 1000L) return
+        if (lastMessage == statusSignature && now - lastTime < 60 * 60 * 1000L) return
 
         appPrefs.edit()
-            .putString(lastMessageKey, message)
+            .putString(lastMessageKey, statusSignature)
             .putLong(lastTimeKey, now)
             .apply()
 
