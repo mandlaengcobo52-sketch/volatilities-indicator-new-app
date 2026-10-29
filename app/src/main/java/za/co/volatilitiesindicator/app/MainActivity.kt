@@ -1010,6 +1010,39 @@ runningContracts[contractId] = RunningContract(contractId, pending.symbol, pendi
                 }
             } else {
                 val finalProfit = contract.optDouble("profit", contract.optDouble("profit_open", liveContractProfits[contractId] ?: 0.0))
+                
+                val pairedContract = runningContracts.values.firstOrNull {
+                    it.contractId != running.contractId &&
+                        it.pairId == running.pairId &&
+                        running.pairId.isNotBlank() &&
+                        !it.isRecovery &&
+                        !it.closeRequested
+                }
+                if (pairedContract != null) {
+                    pairedContract.closeRequested = true
+                    pairedContract.closeReason = "Paired trade closed"
+                    if (!derivApiClient.send(
+                            JSONObject()
+                                .put("sell", pairedContract.contractId)
+                                .put("price", 0)
+                                .put("req_id", nextTradeRequestId())
+                        )) {
+                        pairedContract.closeRequested = false
+                        pairedContract.closeReason = ""
+                        notifyEvent(
+                            "Paired Trade Close Failed",
+                            "${pairedContract.symbol} · Contract ${pairedContract.contractId} could not be closed. The app will need to retry.",
+                            "paired_close_failed_${running.pairId}_${pairedContract.contractId}"
+                        )
+                    } else {
+                        notifyEvent(
+                            "Paired Trade Close Requested",
+                            "${running.symbol} · Contract ${pairedContract.contractId} is being closed because its paired trade closed.",
+                            "paired_close_requested_${running.pairId}_${pairedContract.contractId}"
+                        )
+                    }
+                }
+                
                 if (finalProfit >= running.stake * 0.30 && running.pairId.isNotBlank() && !running.isRecovery && !running.recoveryTriggered) {
                     // Deriv has already confirmed this contract is closed; do not send another sell request for it.
                     running.closeRequested = true
