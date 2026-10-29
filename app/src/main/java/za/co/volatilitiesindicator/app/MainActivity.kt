@@ -215,14 +215,6 @@ private var drawerOpen = false
     )
     private val contractLiveViews = mutableMapOf<Long, ContractLiveViews>()
     private val pendingOrdersByRequest = mutableMapOf<Int, PendingOrder>()
-    private data class PendingCloseRequest(
-    val contractId: Long,
-    val pairId: String,
-    val reason: String,
-    val requestId: Int
-)
-
-private val pendingCloseRequests = mutableMapOf<Int, PendingCloseRequest>()
     private val pendingCloseRequests = mutableMapOf<Int, Long>()
     private val pendingIndexSymbols = mutableSetOf<String>()
     private val runningContracts = mutableMapOf<Long, RunningContract>()
