@@ -216,7 +216,6 @@ private var drawerOpen = false
     private val contractLiveViews = mutableMapOf<Long, ContractLiveViews>()
 
     private val pendingOrdersByRequest = mutableMapOf<Int, PendingOrder>()
-    private val pendingCloseRequests = mutableMapOf<Int, Long>()
     private val pendingIndexSymbols = mutableSetOf<String>()
     private val runningContracts = mutableMapOf<Long, RunningContract>()
     // Retain the winning side until Deriv confirms both contracts in its pair are closed.
@@ -242,12 +241,6 @@ private var drawerOpen = false
     private val notificationsEnabled: Boolean
         get() = appPrefs.getBoolean("notificationsEnabled", false)
     private val priceAlertActive: Boolean
-        get() = appPrefs.getBoolean("priceAlertActive", false)
-    private val priceAlertSymbol: String
-        get() = appPrefs.getString("priceAlertSymbol", "R_10").orEmpty()
-    private val priceAlertTarget: Double
-        get() = appPrefs.getString("priceAlertTarget", "")?.toDoubleOrNull() ?: 0.0
-    private val priceAlertCondition: String
         get() = appPrefs.getBoolean("priceAlertActive", false)
     private val priceAlertSymbol: String
         get() = appPrefs.getString("priceAlertSymbol", "R_10").orEmpty()
@@ -308,7 +301,6 @@ private var drawerOpen = false
         ).filter { it.isNotBlank() }.toSet()
         return activePairIds.size < 3
     }
-
     private fun normalizedSymbol(item: JSONObject): String = item.optString(
         "underlying", item.optString("underlying_symbol", item.optString("symbol", ""))
     ).uppercase()
