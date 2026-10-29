@@ -216,7 +216,6 @@ private var drawerOpen = false
     private val contractLiveViews = mutableMapOf<Long, ContractLiveViews>()
 
     private val pendingOrdersByRequest = mutableMapOf<Int, PendingOrder>()
-    private val pendingCloseRequests = mutableMapOf<Int, Long>()
     private val pendingIndexSymbols = mutableSetOf<String>()
     private val runningContracts = mutableMapOf<Long, RunningContract>()
     // Retain the winning side until Deriv confirms both contracts in its pair are closed.
@@ -302,7 +301,6 @@ private var drawerOpen = false
         ).filter { it.isNotBlank() }.toSet()
         return activePairIds.size < 3
     }
-
     private fun normalizedSymbol(item: JSONObject): String = item.optString(
         "underlying", item.optString("underlying_symbol", item.optString("symbol", ""))
     ).uppercase()
@@ -654,7 +652,7 @@ private var drawerOpen = false
     private fun preparePairRecovery(winner: RunningContract, spot: Double) {
         if (winner.isRecovery || winner.pairId.isBlank() || winner.recoveryTriggered) return
         if (spot > 0.0 && spot.isFinite()) {
-            pendingRecoveryWinners.putIfAbsent(winner.pairId, winner)
+            pendingRecoveryWinners[winner.pairId] = winner
             pendingRecoverySpots[winner.pairId] = spot
         } else if (!pendingRecoveryWinners.containsKey(winner.pairId)) {
             pendingRecoveryWinners[winner.pairId] = winner
@@ -699,6 +697,7 @@ private var drawerOpen = false
             pendingRecoverySpots.remove(pairId)
         }
     }
+
     private fun requestRecoveryTrade(winner: RunningContract, spot: Double) {
         if (winner.isRecovery || winner.recoveryTriggered || winner.pairId.isBlank()) return
         if (!connected || spot <= 0.0 || !spot.isFinite()) return
@@ -709,33 +708,11 @@ private var drawerOpen = false
             return
         }
         winner.recoveryTriggered = true
-
-val recoveryDirection =
-    if (winner.direction.equals("BUY", true)) "SELL" else "BUY"
-
-val distance = spot * 0.005
-
-val barrier = if (recoveryDirection == "BUY") {
-    spot + distance
-} else {
-    (spot - distance).coerceAtLeast(0.0000001)
-}
-
-val reqId = nextTradeRequestId()
-
-val pending = PendingOrder(
-    winner.symbol,
-    recoveryDirection,
-    spot,
-    barrier,
-    winner.targetProbability,
-    stake,
-    winner.mode,
-    "PROPOSAL",
-    winner.pairId,
-    if (recoveryDirection == "BUY") "+TOUCH" else "-TOUCH",
-    true
-)
+        val distance = kotlin.math.abs(winner.target - spot).takeIf { it > 0.0 } ?: (spot * 0.005)
+        val barrier = if (winner.direction.equals("BUY", true)) spot + distance else (spot - distance).coerceAtLeast(0.0000001)
+        val reqId = nextTradeRequestId()
+        val pending = PendingOrder(winner.symbol, winner.direction, spot, barrier, winner.targetProbability,
+            stake, winner.mode, "PROPOSAL", winner.pairId, winner.pairSide, true)
         pendingOrdersByRequest[reqId] = pending
         val proposal = JSONObject().put("proposal", 1).put("amount", stake).put("basis", "stake")
             .put("contract_type", "ONETOUCH").put("currency", accountCurrency.ifBlank { "USD" })
@@ -749,39 +726,12 @@ val pending = PendingOrder(
             notifyEvent("Recovery requested", "${winner.symbol} · ${winner.direction} recovery proposal submitted. Stake ${formatMoney(stake)} (20% of daily starting capital); target 30% of stake.", "recovery_requested_${winner.pairId}")
         }
     }
-    private fun sendContractCloseRequest(contractId: Long): Boolean {
-    val reqId = nextTradeRequestId()
-    val tracked = runningContracts.containsKey(contractId)
-    if (tracked) pendingCloseRequests[reqId] = contractId
-    val sent = derivApiClient.send(
-        JSONObject().put("sell", contractId).put("price", 0).put("req_id", reqId)
-    )
-    if (!sent) pendingCloseRequests.remove(reqId)
-    return sent
-    }
+
     private fun handleMasterDecisionTradeResponse(json: JSONObject) {
         val msgType = json.optString("msg_type", "")
         val reqId = json.optInt("req_id", -1)
         if (json.has("error")) {
-    val failedCloseContractId = pendingCloseRequests.remove(reqId)
-    if (failedCloseContractId != null) {
-        val running = runningContracts[failedCloseContractId]
-        if (running != null) {
-            running.closeRequested = false
-            running.closeReason = ""
-        }
-        val errorObject = json.optJSONObject("error")
-        val errorMessage = errorObject?.optString(
-            "message", "Deriv rejected the close request."
-        ) ?: "Deriv rejected the close request."
-        val errorCode = errorObject?.optString("code", "").orEmpty()
-        notifyEvent(
-            "Trade Close Rejected",
-            "Contract $failedCloseContractId · $errorMessage (code: $errorCode; req_id: $reqId). The contract remains under monitoring.",
-            "trade_close_rejected_${accountId}_${executionMode}_$failedCloseContractId"
-        )
-    }
-    val failed = pendingOrdersByRequest.remove(reqId)
+            val failed = pendingOrdersByRequest.remove(reqId)
             if (failed != null) {
                 pendingIndexSymbols.remove(failed.symbol)
                 val errorObject = json.optJSONObject("error")
@@ -799,7 +749,6 @@ val pending = PendingOrder(
             }
             return
         }
-        if (pendingCloseRequests.remove(reqId) != null) return
         val pending = pendingOrdersByRequest[reqId]
         if (pending != null && msgType == "proposal") {
             val proposal = json.optJSONObject("proposal")
@@ -847,7 +796,7 @@ val pending = PendingOrder(
             val minimumRequiredPayout = pending.stake * 1.30
             val preferredPayout = pending.stake * 1.30
             val potentialProfit = payout - pending.stake
-            if (pending.pairId.isBlank() && payout + 1e-8 < minimumRequiredPayout) {
+            if (payout + 1e-8 < minimumRequiredPayout) {
                 pendingOrdersByRequest.remove(reqId)
                 pendingIndexSymbols.remove(pending.symbol)
                 notifyEvent("Execution rejected", "${pending.symbol} · Potential profit is below the required 30% target. Deriv proposal payout ${formatMoney(payout)}; stake ${formatMoney(pending.stake)}; potential profit ${formatMoney(potentialProfit)}; minimum required profit ${formatMoney(pending.stake * 0.30)} (30% of stake). No purchase submitted.",
@@ -957,11 +906,7 @@ val pending = PendingOrder(
     }
                     }
                     if (running.pairId.isNotBlank() && !running.isRecovery && !running.recoveryTriggered) {
-                        val liveSpot = contract.optDouble("current_spot", contract.optDouble("current_spot_display_value", 0.0))
-                        preparePairRecovery(running, if (liveSpot > 0.0) liveSpot else (marketDataPrices[running.symbol] ?: running.target))
-                    }
-                }
-                if (running.trailingActivated) {
+               if (running.trailingActivated) {
                     running.peakProfit = maxOf(running.peakProfit, profitOpen)
                     appPrefs.edit().putBoolean("${trailStateKey}_activated", true).putString("${trailStateKey}_peak", running.peakProfit.toString()).apply()
                 }
@@ -1008,16 +953,10 @@ val pending = PendingOrder(
                 }
             } else {
                 val finalProfit = contract.optDouble("profit", contract.optDouble("profit_open", liveContractProfits[contractId] ?: 0.0))
-                if (running.pairId.isNotBlank() &&
-    !running.isRecovery &&
-    !running.recoveryTriggered
-) {
-    // Any original contract closure triggers closure of its paired contract.
-    // Recovery waits until Deriv confirms both original contracts are closed.
-    running.closeRequested = true
-
-    val recoverySpot = marketDataPrices[running.symbol] ?: running.target
-    preparePairRecovery(running, recoverySpot)
+                if (finalProfit >= running.stake * 0.30 && running.pairId.isNotBlank() && !running.isRecovery && !running.recoveryTriggered) {
+                    // Deriv has already confirmed this contract is closed; do not send another sell request for it.
+                    running.closeRequested = true
+                    preparePairRecovery(running, marketDataPrices[running.symbol] ?: running.target)
                 }
                 val reason = running.closeReason.ifBlank { if (status == "expired") "Contract Expired" else if (running.takeProfitRequested) "Target Close" else "Contract Closed" }
                 runningContracts.remove(contractId)
@@ -1269,8 +1208,7 @@ when (selectedTab) {
             }
 }
 addBottomNavigation(outer)
-
-        // Restore the previous position after layout settles. Live account callbacks can
+// Restore the previous position after layout settles. Live account callbacks can
         // trigger repeated renders; a delayed restore prevents the REAL account screen jumping.
         scroll.post {    
             scroll.postDelayed({
@@ -1810,6 +1748,7 @@ private fun addHeader() {
     // =========================================================
     // PLATFORM SELECTOR
     // =========================================================
+
     private fun addPlatformSelector() {
     // Only an authenticated administrator may see this section.
         if (currentProfile?.optString("role", "user")
@@ -1875,7 +1814,7 @@ private fun addHeader() {
     },
     weighted()
 )
-        row.addView(space(dp(8)))
+ row.addView(space(dp(8)))
 
         row.addView(
     button("▥  REAL", executionMode == "REAL") {
@@ -2684,8 +2623,40 @@ private fun addMssChochBehaviourAnalysis() {
             card.addView(label("AVERAGE FAVOURABLE MOVE: ${avgFav?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
             card.addView(label("AVERAGE ADVERSE MOVE: ${avgAdv?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
         }
-        page.addView(card, matchWrap()
-        (direction == "UP" && target.price > current) ||
+        page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
+    }
+}
+// =========================================================
+// ANALYSIS — DIRECTION AND STRUCTURAL TARGET
+// =========================================================
+private fun addDirectionStructuralTargetAnalysis() {
+    val header = card().apply { orientation = LinearLayout.VERTICAL }
+    val row = horizontalRow()
+    row.addView(label("Analysis - Direction and Structural Target", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
+    row.addView(button(if (directionStructuralTargetExpanded) "▼ OPEN" else "▶ CLOSED", directionStructuralTargetExpanded) {
+        directionStructuralTargetExpanded = !directionStructuralTargetExpanded
+        render()
+    }, LinearLayout.LayoutParams(-2, dp(48)))
+    header.addView(row)
+    page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
+    if (!directionStructuralTargetExpanded) return
+    page.addView(label("Direction is taken from the latest confirmed MSS/CHOCH. The structural target must lie beyond the current price in that direction.", 12f, muted, false))
+    marketDataIndexes.forEach { symbol ->
+        val candles = analysisCompletedCandles(symbol)
+        val current = marketDataPrices[symbol] ?: candles.lastOrNull()?.close
+        val event = if (candles.size >= 20) analysisLatestMss(candles) else null
+        val direction = when (event?.direction) {
+            "BULLISH" -> "UP"
+            "BEARISH" -> "DOWN"
+            else -> ""
+        }
+        val target = if (event != null && current != null && direction.isNotBlank()) {
+            analysisStructuralTarget(candles, current, direction, event.confirmation.epoch)
+        } else null
+        val hasTarget = target != null &&
+            current != null &&
+            (
+                (direction == "UP" && target.price > current) ||
                 (direction == "DOWN" && target.price < current)
             )
 
@@ -2762,7 +2733,7 @@ private fun addMssChochBehaviourAnalysis() {
                 "TARGET DISTANCE: ${
                     distance?.let {
                         String.format(
-                            java.util.Locale.US,
+                       java.util.Locale.US,
                             "%.3f%%",
                             it
                         )
@@ -3097,7 +3068,7 @@ private fun addTargetFilterAnalysis() {
                                         toast(result.optString("message", if (ok) "User suspended." else "Unable to suspend user."))
                                         if (ok) loadAdminUsers()
                                     }
-                                }.show()
+                                    }.show()
                         },
                         matchWrap().apply { topMargin = dp(6) }
                     )
@@ -3673,7 +3644,6 @@ private fun addTargetFilterAnalysis() {
                 1
             )
         }
-
         val tabs = if (authToken.isBlank()) {
             listOf("⌂" to "Home", "↪" to "Login", "+" to "Register")
         } else if (platform == "ADMIN") {
@@ -3885,6 +3855,7 @@ private fun addTargetFilterAnalysis() {
             Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
         )
     }
+
     private fun createCodeChallenge(verifier: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
             .digest(verifier.toByteArray(Charsets.US_ASCII))
@@ -3961,7 +3932,6 @@ private fun addTargetFilterAnalysis() {
         val j = JSONObject(body); val err = j.optJSONObject("error")
         err?.optString("message")?.takeIf { !it.isNullOrBlank() } ?: j.optString("message", body.take(180))
     } catch (_: Exception) { body.take(180) }
-
     private fun connectWithToken(token: String) {
     cancelDerivReconnect()
     if (token.isBlank()) {
