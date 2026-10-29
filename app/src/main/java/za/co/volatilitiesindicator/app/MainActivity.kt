@@ -214,15 +214,9 @@ private var drawerOpen = false
         val ptpe: TextView
     )
     private val contractLiveViews = mutableMapOf<Long, ContractLiveViews>()
-    private val pendingOrdersByRequest = mutableMapOf<Int, PendingOrder>()
-    private data class PendingCloseRequest(
-    val contractId: Long,
-    val pairId: String,
-    val reason: String,
-    val requestId: Int
-)
 
-private val pendingCloseRequests = mutableMapOf<Int, PendingCloseRequest>()
+    private val pendingOrdersByRequest = mutableMapOf<Int, PendingOrder>()
+    private val pendingCloseRequests = mutableMapOf<Int, Long>()
     private val pendingIndexSymbols = mutableSetOf<String>()
     private val runningContracts = mutableMapOf<Long, RunningContract>()
     // Retain the winning side until Deriv confirms both contracts in its pair are closed.
@@ -248,6 +242,12 @@ private val pendingCloseRequests = mutableMapOf<Int, PendingCloseRequest>()
     private val notificationsEnabled: Boolean
         get() = appPrefs.getBoolean("notificationsEnabled", false)
     private val priceAlertActive: Boolean
+        get() = appPrefs.getBoolean("priceAlertActive", false)
+    private val priceAlertSymbol: String
+        get() = appPrefs.getString("priceAlertSymbol", "R_10").orEmpty()
+    private val priceAlertTarget: Double
+        get() = appPrefs.getString("priceAlertTarget", "")?.toDoubleOrNull() ?: 0.0
+    private val priceAlertCondition: String
         get() = appPrefs.getBoolean("priceAlertActive", false)
     private val priceAlertSymbol: String
         get() = appPrefs.getString("priceAlertSymbol", "R_10").orEmpty()
