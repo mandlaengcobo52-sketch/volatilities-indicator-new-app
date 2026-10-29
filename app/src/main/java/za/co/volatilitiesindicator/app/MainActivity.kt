@@ -611,10 +611,20 @@ private var drawerOpen = false
             return
         }
         val pairId = "${accountId}_${executionMode}_${symbol}_${System.currentTimeMillis()}"
-        val sides = listOf(
-            Triple("BUY", proposalSpot + distance, "+TOUCH"),
-            Triple("SELL", (proposalSpot - distance).coerceAtLeast(0.0000001), "-TOUCH")
-        )
+        val masterDirection = if (decision.direction.equals("SELL", true)) "SELL" else "BUY"
+val oppositeDirection = if (masterDirection == "BUY") "SELL" else "BUY"
+
+val sides = if (masterDirection == "BUY") {
+    listOf(
+        Triple("BUY", proposalSpot + distance, "+TOUCH"),
+        Triple("SELL", (proposalSpot - distance).coerceAtLeast(0.0000001), "-TOUCH")
+    )
+} else {
+    listOf(
+        Triple("SELL", (proposalSpot - distance).coerceAtLeast(0.0000001), "-TOUCH"),
+        Triple("BUY", proposalSpot + distance, "+TOUCH")
+    )
+}
         for ((direction, barrierPrice, side) in sides) {
             val reqId = nextTradeRequestId()
             val pending = PendingOrder(symbol, direction, proposalSpot, barrierPrice, decision.targetProbability,
