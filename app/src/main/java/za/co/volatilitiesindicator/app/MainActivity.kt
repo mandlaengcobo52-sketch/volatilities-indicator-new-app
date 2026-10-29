@@ -872,7 +872,76 @@ runningContracts[contractId] = RunningContract(contractId, pending.symbol, pendi
     pairId = pending.pairId, pairSide = pending.pairSide, isRecovery = pending.isRecovery)
             notifyEvent("Execution accepted", "${pending.symbol} · Deriv accepted the buy request and returned contract $contractId.",
                 "execution_accepted_${accountId}_${executionMode}_$contractId")
+            
             recordSuccessfulTrade(pending.symbol, pending.stake, contractId)
+
+            if (pending.pairSide == "MASTER" && !pending.isRecovery) {
+                val oppositeDirection = if (pending.direction == "BUY") "SELL" else "BUY"
+                val distance = kotlin.math.abs(pending.target - pending.entry)
+                val oppositeBarrier = if (oppositeDirection == "BUY") {
+                    pending.entry + distance
+                } else {
+                    (pending.entry - distance).coerceAtLeast(0.0000001)
+                }
+
+                val oppositeReqId = nextTradeRequestId()
+                val oppositePending = PendingOrder(
+                    pending.symbol,
+                    oppositeDirection,
+                    pending.entry,
+                    oppositeBarrier,
+                    pending.targetProbability,
+                    pending.stake,
+                    pending.mode,
+                    "PROPOSAL",
+                    pending.pairId,
+                    "OPPOSITE",
+                    false
+                )
+                pendingOrdersByRequest[oppositeReqId] = oppositePending
+                pendingIndexSymbols.add(pending.symbol)
+
+                val oppositeProposal = JSONObject()
+                    .put("proposal", 1)
+                    .put("amount", pending.stake)
+                    .put("basis", "stake")
+                    .put("contract_type", "ONETOUCH")
+                    .put("currency", accountCurrency.ifBlank { "USD" })
+                    .put("duration", 3)
+                    .put("duration_unit", "d")
+                    .put("underlying_symbol", pending.symbol)
+                    .put("barrier", String.format(
+                        java.util.Locale.US, "%.2f", oppositeBarrier
+                    ))
+                    .put("req_id", oppositeReqId)
+
+                if (!derivApiClient.send(oppositeProposal)) {
+                    pendingOrdersByRequest.remove(oppositeReqId)
+                    notifyEvent(
+                        "Trade 2 rejected",
+                        "${pending.symbol} · Trade 1 was accepted, but the opposite-direction proposal could not be sent.",
+                        "opposite_send_failed_${pending.pairId}"
+                    )
+                } else {
+                    notifyEvent(
+                        "Trade 2 requested",
+                        "${pending.symbol} · Trade 1 confirmed. $oppositeDirection proposal submitted.",
+                        "opposite_requested_${pending.pairId}"
+                    )
+                    android.os.Handler(mainLooper).postDelayed({
+                        val waiting = pendingOrdersByRequest[oppositeReqId]
+                        if (waiting != null && waiting.stage == "PROPOSAL") {
+                            pendingOrdersByRequest.remove(oppositeReqId)
+                            notifyEvent(
+                                "Trade 2 rejected",
+                                "${pending.symbol} · No response to the opposite proposal within 15 seconds.",
+                                "opposite_timeout_${pending.pairId}"
+                            )
+                        }
+                    }, 15000L)
+                }
+            }
+            
             pendingOrdersByRequest.remove(reqId)
             derivApiClient.send(JSONObject().put("proposal_open_contract", 1).put("contract_id", contractId).put("subscribe", 1))
             derivApiClient.requestOpenTrades()
