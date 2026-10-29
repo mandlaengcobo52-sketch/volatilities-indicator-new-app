@@ -216,6 +216,7 @@ private var drawerOpen = false
     private val contractLiveViews = mutableMapOf<Long, ContractLiveViews>()
 
     private val pendingOrdersByRequest = mutableMapOf<Int, PendingOrder>()
+    private val pendingCloseRequests = mutableMapOf<Int, Long>()
     private val pendingIndexSymbols = mutableSetOf<String>()
     private val runningContracts = mutableMapOf<Long, RunningContract>()
     // Retain the winning side until Deriv confirms both contracts in its pair are closed.
@@ -301,6 +302,7 @@ private var drawerOpen = false
         ).filter { it.isNotBlank() }.toSet()
         return activePairIds.size < 3
     }
+
     private fun normalizedSymbol(item: JSONObject): String = item.optString(
         "underlying", item.optString("underlying_symbol", item.optString("symbol", ""))
     ).uppercase()
@@ -1808,7 +1810,6 @@ private fun addHeader() {
     // =========================================================
     // PLATFORM SELECTOR
     // =========================================================
-
     private fun addPlatformSelector() {
     // Only an authenticated administrator may see this section.
         if (currentProfile?.optString("role", "user")
@@ -2683,40 +2684,8 @@ private fun addMssChochBehaviourAnalysis() {
             card.addView(label("AVERAGE FAVOURABLE MOVE: ${avgFav?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
             card.addView(label("AVERAGE ADVERSE MOVE: ${avgAdv?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
         }
-        page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
-    }
-}
-// =========================================================
-// ANALYSIS — DIRECTION AND STRUCTURAL TARGET
-// =========================================================
-private fun addDirectionStructuralTargetAnalysis() {
-    val header = card().apply { orientation = LinearLayout.VERTICAL }
-    val row = horizontalRow()
-    row.addView(label("Analysis - Direction and Structural Target", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
-    row.addView(button(if (directionStructuralTargetExpanded) "▼ OPEN" else "▶ CLOSED", directionStructuralTargetExpanded) {
-        directionStructuralTargetExpanded = !directionStructuralTargetExpanded
-        render()
-    }, LinearLayout.LayoutParams(-2, dp(48)))
-    header.addView(row)
-    page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
-    if (!directionStructuralTargetExpanded) return
-    page.addView(label("Direction is taken from the latest confirmed MSS/CHOCH. The structural target must lie beyond the current price in that direction.", 12f, muted, false))
-    marketDataIndexes.forEach { symbol ->
-        val candles = analysisCompletedCandles(symbol)
-        val current = marketDataPrices[symbol] ?: candles.lastOrNull()?.close
-        val event = if (candles.size >= 20) analysisLatestMss(candles) else null
-        val direction = when (event?.direction) {
-            "BULLISH" -> "UP"
-            "BEARISH" -> "DOWN"
-            else -> ""
-        }
-        val target = if (event != null && current != null && direction.isNotBlank()) {
-            analysisStructuralTarget(candles, current, direction, event.confirmation.epoch)
-        } else null
-        val hasTarget = target != null &&
-            current != null &&
-            (
-                (direction == "UP" && target.price > current) ||
+        page.addView(card, matchWrap()
+        (direction == "UP" && target.price > current) ||
                 (direction == "DOWN" && target.price < current)
             )
 
@@ -3916,7 +3885,6 @@ private fun addTargetFilterAnalysis() {
             Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
         )
     }
-
     private fun createCodeChallenge(verifier: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
             .digest(verifier.toByteArray(Charsets.US_ASCII))
