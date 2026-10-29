@@ -710,7 +710,7 @@ private var drawerOpen = false
             return
         }
         winner.recoveryTriggered = true
-        val distance = kotlin.math.abs(winner.target - spot).takeIf { it > 0.0 } ?: (spot * 0.005)
+        val distance = spot * 0.005
         val barrier = if (winner.direction.equals("BUY", true)) spot + distance else (spot - distance).coerceAtLeast(0.0000001)
         val reqId = nextTradeRequestId()
         val pending = PendingOrder(winner.symbol, winner.direction, spot, barrier, winner.targetProbability,
