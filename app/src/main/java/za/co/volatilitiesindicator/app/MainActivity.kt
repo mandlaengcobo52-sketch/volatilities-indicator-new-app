@@ -701,7 +701,7 @@ private var drawerOpen = false
     }
 
     private fun requestRecoveryTrade(winner: RunningContract, spot: Double) {
-        if (winner.isRecovery || winner.recoveryTriggered || winner.pairId.isBlank()) return
+        if (winner.isRecovery || winner.recoveryTriggered) return
         if (!connected || spot <= 0.0 || !spot.isFinite()) return
         val capital = dailyStartingCapital()
         val stake = fixedRecoveryStake()
