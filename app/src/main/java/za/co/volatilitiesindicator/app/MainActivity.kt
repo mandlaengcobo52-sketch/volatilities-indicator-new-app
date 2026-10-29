@@ -301,6 +301,7 @@ private var drawerOpen = false
         ).filter { it.isNotBlank() }.toSet()
         return activePairIds.size < 3
     }
+
     private fun normalizedSymbol(item: JSONObject): String = item.optString(
         "underlying", item.optString("underlying_symbol", item.optString("symbol", ""))
     ).uppercase()
@@ -830,9 +831,6 @@ private var drawerOpen = false
                     "trade_open_failed_${accountId}_${executionMode}_$reqId")
                 return
             }
-            runningContracts[contractId] = RunningContract(contractId, pending.symbol, pending.direction,
-                pending.stake, pending.target, pending.targetProbability, pending.mode,
-                pairId = pending.pairId, pairSide = pending.pairSide, isRecovery = pending.isRecovery)
             appPrefs.edit().putString(
     "contract_metadata_$contractId",
     JSONObject()
@@ -906,12 +904,14 @@ private var drawerOpen = false
     }
                     }
                     if (running.pairId.isNotBlank() && !running.isRecovery && !running.recoveryTriggered) {
-               if (running.trailingActivated) {
+                        val liveSpot = contract.optDouble("current_spot", contract.optDouble("current_spot_display_value", 0.0))
+                        preparePairRecovery(running, if (liveSpot > 0.0) liveSpot else (marketDataPrices[running.symbol] ?: running.target))
+                    }
+                }
+                if (running.trailingActivated) {
                     running.peakProfit = maxOf(running.peakProfit, profitOpen)
                     appPrefs.edit().putBoolean("${trailStateKey}_activated", true).putString("${trailStateKey}_peak", running.peakProfit.toString()).apply()
-                }
-
-                // The structural price target is distinct from the 10% monetary profit target.
+                    // The structural price target is distinct from the 10% monetary profit target.
                 // Close only when a known target from the Master Decision is crossed.
                 val currentSpot = contract.optDouble("current_spot", contract.optDouble("current_spot_display_value", 0.0))
                 val structureReached = running.target > 0.0 && currentSpot > 0.0 &&
@@ -1207,8 +1207,10 @@ when (selectedTab) {
                 }
             }
 }
-addBottomNavigation(outer)
-// Restore the previous position after layout settles. Live account callbacks can
+
+        addBottomNavigation(outer)
+
+        // Restore the previous position after layout settles. Live account callbacks can
         // trigger repeated renders; a delayed restore prevents the REAL account screen jumping.
         scroll.post {    
             scroll.postDelayed({
@@ -1814,7 +1816,7 @@ private fun addHeader() {
     },
     weighted()
 )
- row.addView(space(dp(8)))
+        row.addView(space(dp(8)))
 
         row.addView(
     button("▥  REAL", executionMode == "REAL") {
@@ -2095,25 +2097,46 @@ page.addView(
         row.addView(label("Stake: ${formatMoney(stake)}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
         val initialPnl = liveContractProfits[contractId] ?: 0.0
         val pnlHidden = label("P/L: ${formatMoney(initialPnl)}", 12f, profitColor(initialPnl), true).apply { setPadding(0, dp(4), 0, 0) }
-        val tradeDirection = tracked?.direction ?: if (
+        val pairSide = tracked?.pairSide.orEmpty()
+
+val tradeDirection = tracked?.direction ?: if (
     item.optString("contract_type", "").uppercase().let {
         it.contains("PUT") || it.contains("FALL")
     }
 ) "SELL" else "BUY"
+ val displayDirection = when (pairSide) {
+    "+TOUCH" -> "UPWARD TOUCH"
+    "-TOUCH" -> "DOWNWARD TOUCH"
+    else -> tradeDirection
+}
+
 row.addView(
     label(
-        "DIRECTION: $tradeDirection",
+        if (pairSide.isNotBlank()) {
+            "TOUCH SIDE: $displayDirection"
+        } else {
+            "DIRECTION: $displayDirection"
+        },
         14f,
-        if (tradeDirection == "BUY") green else red,
+        if (pairSide == "-TOUCH" || tradeDirection == "SELL") red else green,
         true
     ).apply { setPadding(0, dp(4), 0, 0) }
 )
-val originalTarget = tracked?.target?.takeIf { it.isFinite() && it > 0.0 }
+
+val contractBarrier = item.optString("barrier", "")
+    .trim()
+    .toDoubleOrNull()
+
+val originalTarget = tracked?.target
+    ?.takeIf { it.isFinite() && it > 0.0 }
+
 val analysisTarget = lastPtpeByIndex[normalizedSymbol(item)]
     ?.takeIf { it.direction == tradeDirection }
-    ?.target?.takeIf { it.isFinite() && it > 0.0 }
+    ?.target
+    ?.takeIf { it.isFinite() && it > 0.0 }
 
 val targetPrice = originalTarget ?: analysisTarget
+
 val targetLabel = when {
     originalTarget != null ->
         "Structure target: ${formatMarketPrice(originalTarget)}"
@@ -2121,9 +2144,10 @@ val targetLabel = when {
         "Current analysis target (not original trade target): ${formatMarketPrice(analysisTarget)}"
     else -> "Structure target: Not available"
 }
+
 val targetView = label(targetLabel, 12f, yellow, true)
     .apply { setPadding(0, dp(4), 0, 0) }
-        val profitTargetView = label("30% profit target: ${formatMoney(stake * 0.30)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
+)
         val trailView = label("Trailing stop: ${if (tracked?.trailingActivated == true) "ACTIVATED" else if (trailingStopEnabled) "ARMED" else "OFF"}", 12f, if (trailingStopEnabled) green else muted, true).apply { setPadding(0, dp(4), 0, 0) }
         val spotView = label("Current value/spot: ${if (currentValue > 0) formatMarketPrice(currentValue) else "—"}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val expiryView = label("Expiry: $expiryText", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
@@ -2131,6 +2155,16 @@ val targetView = label(targetLabel, 12f, yellow, true)
         row.addView(pnlHidden)
         row.addView(profitTargetView)
         row.addView(targetView)
+        if (contractBarrier != null && contractBarrier.isFinite() && contractBarrier > 0.0) {
+    row.addView(
+        label(
+            "Contract barrier: ${formatMarketPrice(contractBarrier)}",
+            12f,
+            yellow,
+            true
+        ).apply { setPadding(0, dp(4), 0, 0) }
+    )
+        }
         row.addView(trailView)
         row.addView(spotView)
         row.addView(expiryView)
@@ -2406,6 +2440,7 @@ private fun analysisHistoricalOutcomes(candles: List<DerivApiClient.Candle>): Li
             maxAdv, advPrice, advEpoch, end < candles.lastIndex)
     }
 }
+
 private fun analysisStructuralTarget(
     candles: List<DerivApiClient.Candle>, currentPrice: Double, direction: String, confirmationEpoch: Long
 ): AnalysisPivot? {
@@ -2701,6 +2736,7 @@ private fun addDirectionStructuralTargetAnalysis() {
                 true
             )
         )
+
         indexCard.addView(
             label(
                 "DIRECTION: ${direction.ifBlank { "WAITING" }}",
@@ -2733,7 +2769,7 @@ private fun addDirectionStructuralTargetAnalysis() {
                 "TARGET DISTANCE: ${
                     distance?.let {
                         String.format(
-                       java.util.Locale.US,
+                            java.util.Locale.US,
                             "%.3f%%",
                             it
                         )
@@ -3000,7 +3036,7 @@ private fun addTargetFilterAnalysis() {
         if (adminUsersLoading && users == null) {
             page.addView(label("Loading registrations…", 14f, yellow, false))
             return
-        }
+            }
         if (users == null) {
             page.addView(label("Tap REFRESH PENDING USERS to load registrations.", 14f, muted, false))
             return
@@ -3068,7 +3104,7 @@ private fun addTargetFilterAnalysis() {
                                         toast(result.optString("message", if (ok) "User suspended." else "Unable to suspend user."))
                                         if (ok) loadAdminUsers()
                                     }
-                                    }.show()
+                                }.show()
                         },
                         matchWrap().apply { topMargin = dp(6) }
                     )
@@ -3644,6 +3680,7 @@ private fun addTargetFilterAnalysis() {
                 1
             )
         }
+
         val tabs = if (authToken.isBlank()) {
             listOf("⌂" to "Home", "↪" to "Login", "+" to "Register")
         } else if (platform == "ADMIN") {
@@ -3837,7 +3874,7 @@ private fun addTargetFilterAnalysis() {
             Toast.LENGTH_SHORT
         ).show()
     }
-       // =========================================================
+    // =========================================================
     // DERIV OAUTH CONNECTION (existing OAuth + PKCE flow)
     // =========================================================
     private fun beginDerivConnection() {
@@ -3932,6 +3969,7 @@ private fun addTargetFilterAnalysis() {
         val j = JSONObject(body); val err = j.optJSONObject("error")
         err?.optString("message")?.takeIf { !it.isNullOrBlank() } ?: j.optString("message", body.take(180))
     } catch (_: Exception) { body.take(180) }
+
     private fun connectWithToken(token: String) {
     cancelDerivReconnect()
     if (token.isBlank()) {
@@ -4028,8 +4066,7 @@ private fun addTargetFilterAnalysis() {
         )
         if (selectedTab == "Notifications") render()
     }
-
-    override fun onTick(symbol: String, quote: Double, epoch: Long) {
+override fun onTick(symbol: String, quote: Double, epoch: Long) {
     runOnUiThread {
         if (symbol in marketDataIndexes && quote.isFinite()) {
             checkPriceAlert(symbol, quote)
