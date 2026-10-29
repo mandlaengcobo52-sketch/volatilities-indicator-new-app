@@ -216,6 +216,7 @@ private var drawerOpen = false
     private val contractLiveViews = mutableMapOf<Long, ContractLiveViews>()
 
     private val pendingOrdersByRequest = mutableMapOf<Int, PendingOrder>()
+    private val pendingCloseRequests = mutableMapOf<Int, Long>()
     private val pendingIndexSymbols = mutableSetOf<String>()
     private val runningContracts = mutableMapOf<Long, RunningContract>()
     // Retain the winning side until Deriv confirms both contracts in its pair are closed.
@@ -748,11 +749,39 @@ val pending = PendingOrder(
             notifyEvent("Recovery requested", "${winner.symbol} · ${winner.direction} recovery proposal submitted. Stake ${formatMoney(stake)} (20% of daily starting capital); target 30% of stake.", "recovery_requested_${winner.pairId}")
         }
     }
+    private fun sendContractCloseRequest(contractId: Long): Boolean {
+    val reqId = nextTradeRequestId()
+    val tracked = runningContracts.containsKey(contractId)
+    if (tracked) pendingCloseRequests[reqId] = contractId
+    val sent = derivApiClient.send(
+        JSONObject().put("sell", contractId).put("price", 0).put("req_id", reqId)
+    )
+    if (!sent) pendingCloseRequests.remove(reqId)
+    return sent
+    }
     private fun handleMasterDecisionTradeResponse(json: JSONObject) {
         val msgType = json.optString("msg_type", "")
         val reqId = json.optInt("req_id", -1)
         if (json.has("error")) {
-            val failed = pendingOrdersByRequest.remove(reqId)
+    val failedCloseContractId = pendingCloseRequests.remove(reqId)
+    if (failedCloseContractId != null) {
+        val running = runningContracts[failedCloseContractId]
+        if (running != null) {
+            running.closeRequested = false
+            running.closeReason = ""
+        }
+        val errorObject = json.optJSONObject("error")
+        val errorMessage = errorObject?.optString(
+            "message", "Deriv rejected the close request."
+        ) ?: "Deriv rejected the close request."
+        val errorCode = errorObject?.optString("code", "").orEmpty()
+        notifyEvent(
+            "Trade Close Rejected",
+            "Contract $failedCloseContractId · $errorMessage (code: $errorCode; req_id: $reqId). The contract remains under monitoring.",
+            "trade_close_rejected_${accountId}_${executionMode}_$failedCloseContractId"
+        )
+    }
+    val failed = pendingOrdersByRequest.remove(reqId)
             if (failed != null) {
                 pendingIndexSymbols.remove(failed.symbol)
                 val errorObject = json.optJSONObject("error")
@@ -770,6 +799,7 @@ val pending = PendingOrder(
             }
             return
         }
+        if (pendingCloseRequests.remove(reqId) != null) return
         val pending = pendingOrdersByRequest[reqId]
         if (pending != null && msgType == "proposal") {
             val proposal = json.optJSONObject("proposal")
