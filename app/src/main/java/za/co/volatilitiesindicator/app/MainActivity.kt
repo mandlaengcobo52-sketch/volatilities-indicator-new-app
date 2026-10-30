@@ -1203,7 +1203,15 @@ if (
                         !it.isRecovery &&
                         !it.closeRequested
                 }
-                if (pairedContract != null) {
+                if (
+    pairedContract != null &&
+    (
+        status == "won" ||
+        running.closeReason.contains("Structural Target", ignoreCase = true) ||
+        running.closeReason.contains("30% Profit Target", ignoreCase = true) ||
+        finalProfit >= running.stake * 0.30
+    )
+) {
                     pairedContract.closeRequested = true
                     pairedContract.closeReason = "Paired trade closed"
                     if (!derivApiClient.send(
