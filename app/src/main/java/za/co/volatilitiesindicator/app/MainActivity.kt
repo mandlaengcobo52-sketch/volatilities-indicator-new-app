@@ -829,10 +829,7 @@ if (!derivApiClient.send(
         if (partner != null) {
             partner.closeRequested = true
             partner.closeReason = "Opposite Touch closed after $reason"
-            val closeReqId = nextTradeRequestId()
-pairedCloseRequests[closeReqId] = winner.contractId
-
-val partnerCloseReqId = nextTradeRequestId()
+            val partnerCloseReqId = nextTradeRequestId()
 pairedCloseRequests[partnerCloseReqId] = partner.contractId
 
 if (!derivApiClient.send(
@@ -841,6 +838,16 @@ if (!derivApiClient.send(
             .put("price", 0)
             .put("req_id", partnerCloseReqId)
     )) {
+    pairedCloseRequests.remove(partnerCloseReqId)
+    partner.closeRequested = false
+    partner.closeReason = ""
+    pendingPairedCloseRetries.add(partner.contractId)
+    notifyEvent(
+        "Opposite Touch close failed",
+        "${partner.symbol} · Contract ${partner.contractId} could not be closed; recovery is waiting for confirmed closure.",
+        "pair_close_failed_${winner.pairId}"
+    )
+}
     pairedCloseRequests.remove(partnerCloseReqId)
             }
         }
