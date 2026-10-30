@@ -825,7 +825,44 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
             }
         }
     }
+private fun retryPendingPairedCloses() {
+    if (!connected || pendingPairedCloseRetries.isEmpty()) return
 
+    val retryIds = pendingPairedCloseRetries.toList()
+
+    for (contractId in retryIds) {
+        val contract = runningContracts[contractId]
+
+        if (contract == null || contract.closeRequested) {
+            pendingPairedCloseRetries.remove(contractId)
+            continue
+        }
+
+        contract.closeRequested = true
+
+        if (contract.closeReason.isBlank()) {
+            contract.closeReason = "Paired trade close retry"
+        }
+
+        val sent = derivApiClient.send(
+            JSONObject()
+                .put("sell", contractId)
+                .put("price", 0)
+                .put("req_id", nextTradeRequestId())
+        )
+
+        if (sent) {
+            pendingPairedCloseRetries.remove(contractId)
+            notifyEvent(
+                "Paired Close Retry Sent",
+                "${contract.symbol} · Contract $contractId close request was resent. Waiting for Deriv confirmation.",
+                "paired_close_retry_$contractId"
+            )
+        } else {
+            contract.closeRequested = false
+        }
+    }
+}
     private fun finishPairRecoveryIfClosed(pairId: String) {
         if (pairId.isBlank()) return
         val winner = pendingRecoveryWinners[pairId] ?: return
