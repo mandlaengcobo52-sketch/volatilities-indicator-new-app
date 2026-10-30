@@ -915,6 +915,26 @@ private fun retryPendingPairedCloses() {
         val reqId = json.optInt("req_id", -1)
         if (json.has("error")) {
             val failed = pendingOrdersByRequest.remove(reqId)
+            val failedCloseContractId = pairedCloseRequests.remove(reqId)
+
+if (failedCloseContractId != null) {
+    val failedContract = runningContracts[failedCloseContractId]
+
+    if (failedContract != null) {
+        failedContract.closeRequested = false
+        pendingPairedCloseRetries.add(failedCloseContractId)
+
+        val errorMessage = json.optJSONObject("error")
+            ?.optString("message", "Deriv rejected the close request.")
+            ?: "Deriv rejected the close request."
+
+        notifyEvent(
+            "Paired Close Rejected",
+            "${failedContract.symbol} · Contract $failedCloseContractId · $errorMessage. The app will retry.",
+            "paired_close_rejected_$failedCloseContractId"
+        )
+    }
+}
             if (failed != null) {
                 pendingIndexSymbols.remove(failed.symbol)
                 val errorObject = json.optJSONObject("error")
