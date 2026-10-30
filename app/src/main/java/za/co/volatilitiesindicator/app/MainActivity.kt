@@ -299,6 +299,8 @@ private fun startAndBindDerivService() {
     private val pendingOrdersByRequest = mutableMapOf<Int, PendingOrder>()
     private val pendingIndexSymbols = mutableSetOf<String>()
     private val runningContracts = mutableMapOf<Long, RunningContract>()
+    // Contracts awaiting a retry after a paired close request fails to send.
+private val pendingPairedCloseRetries = mutableSetOf<Long>()
     // Retain the winning side until Deriv confirms both contracts in its pair are closed.
     private val pendingRecoveryWinners = mutableMapOf<String, RunningContract>()
     private val pendingRecoverySpots = mutableMapOf<String, Double>()
@@ -806,6 +808,7 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
             if (!derivApiClient.send(JSONObject().put("sell", winner.contractId).put("price", 0).put("req_id", nextTradeRequestId()))) {
                 winner.closeRequested = false
                 winner.closeReason = ""
+                pendingPairedCloseRetries.add(winner.contractId)
                 notifyEvent("Winning Touch close failed", "${winner.symbol} · Contract ${winner.contractId} could not be closed; recovery is waiting for confirmed closure.", "winner_close_failed_${winner.pairId}")
             }
         }
@@ -819,11 +822,49 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
             if (!derivApiClient.send(JSONObject().put("sell", partner.contractId).put("price", 0).put("req_id", nextTradeRequestId()))) {
                 partner.closeRequested = false
                 partner.closeReason = ""
+                pendingPairedCloseRetries.add(partner.contractId)
                 notifyEvent("Opposite Touch close failed", "${partner.symbol} · Contract ${partner.contractId} could not be closed; recovery is waiting for confirmed closure.", "pair_close_failed_${winner.pairId}")
             }
         }
     }
+private fun retryPendingPairedCloses() {
+    if (!connected || pendingPairedCloseRetries.isEmpty()) return
 
+    val retryIds = pendingPairedCloseRetries.toList()
+
+    for (contractId in retryIds) {
+        val contract = runningContracts[contractId]
+
+        if (contract == null || contract.closeRequested) {
+            pendingPairedCloseRetries.remove(contractId)
+            continue
+        }
+
+        contract.closeRequested = true
+
+        if (contract.closeReason.isBlank()) {
+            contract.closeReason = "Paired trade close retry"
+        }
+
+        val sent = derivApiClient.send(
+            JSONObject()
+                .put("sell", contractId)
+                .put("price", 0)
+                .put("req_id", nextTradeRequestId())
+        )
+
+        if (sent) {
+            pendingPairedCloseRetries.remove(contractId)
+            notifyEvent(
+                "Paired Close Retry Sent",
+                "${contract.symbol} · Contract $contractId close request was resent. Waiting for Deriv confirmation.",
+                "paired_close_retry_$contractId"
+            )
+        } else {
+            contract.closeRequested = false
+        }
+    }
+}
     private fun finishPairRecoveryIfClosed(pairId: String) {
         if (pairId.isBlank()) return
         val winner = pendingRecoveryWinners[pairId] ?: return
@@ -1221,6 +1262,7 @@ if (
                         )) {
                         pairedContract.closeRequested = false
                         pairedContract.closeReason = ""
+                        pendingPairedCloseRetries.add(pairedContract.contractId)
                         notifyEvent(
                             "Paired Trade Close Failed",
                             "${pairedContract.symbol} · Contract ${pairedContract.contractId} could not be closed. The app will need to retry.",
@@ -4346,6 +4388,7 @@ derivApiClient.connectWithAccessToken(token, executionMode)
 
     override fun onTick(symbol: String, quote: Double, epoch: Long) {
     runOnUiThread {
+        retryPendingPairedCloses()
         if (symbol in marketDataIndexes && quote.isFinite()) {
             checkPriceAlert(symbol, quote)
             marketDataPrices[symbol] = quote
