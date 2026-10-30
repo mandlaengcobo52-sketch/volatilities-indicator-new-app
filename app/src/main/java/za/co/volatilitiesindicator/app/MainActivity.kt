@@ -1253,11 +1253,16 @@ if (authToken.isNotBlank() && savedToken.isNotBlank() &&
         }
 
         val tokenKey = if (executionMode == "REAL") "real_token" else "demo_token"
-        val savedToken = prefs.getString(tokenKey, "").orEmpty()
-        if (savedToken.isNotBlank()) {
-            derivApiClient.ensureConnectedOnResume(savedToken, executionMode)
-        }
+val savedToken = prefs.getString(tokenKey, "").orEmpty()
+
+if (savedToken.isNotBlank()) {
+    if (derivServiceBound && ::derivApiClient.isInitialized) {
+        derivApiClient.ensureConnectedOnResume(savedToken, executionMode)
+    } else {
+        pendingResumeCheck = true
+        startAndBindDerivService()
     }
+}
 
     override fun onPause() {
         profileRefreshHandler.removeCallbacks(profileRefreshRunnable)
