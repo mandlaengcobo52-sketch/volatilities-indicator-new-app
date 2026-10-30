@@ -4576,7 +4576,6 @@ if (stake > 0.0) {
             analysisRenderHandler.postDelayed(refresh, 450L)
         }
     }
-    }
     override fun onMarketDataError(
     symbol: String,
     message: String
