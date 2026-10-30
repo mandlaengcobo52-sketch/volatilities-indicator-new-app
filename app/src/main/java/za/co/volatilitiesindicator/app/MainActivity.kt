@@ -1283,12 +1283,15 @@ if (
 ) {
                     pairedContract.closeRequested = true
                     pairedContract.closeReason = "Paired trade closed"
+                    val pairedPartnerCloseReqId = nextTradeRequestId()
+                    pairedCloseRequests[pairedPartnerCloseReqId] = pairedContract.contractId
                     if (!derivApiClient.send(
                             JSONObject()
                                 .put("sell", pairedContract.contractId)
                                 .put("price", 0)
-                                .put("req_id", nextTradeRequestId())
+                                .put("req_id", pairedPartnerCloseReqId)
                         )) {
+                        pairedCloseRequests.remove(pairedPartnerCloseReqId)
                         pairedContract.closeRequested = false
                         pairedContract.closeReason = ""
                         pendingPairedCloseRetries.add(pairedContract.contractId)
