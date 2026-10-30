@@ -375,40 +375,49 @@ private var drawerOpen = false
             !today.before(startDate) && !today.after(expiryDate)
         } catch (_: Exception) { false }
     }
-    private fun dailyTradeCount(): Int {
-        val accountKey = accountId.ifBlank { "unlinked" }.replace(Regex("[^A-Za-z0-9_-]"), "_")
-        return appPrefs.getInt("daily_trades_${accountKey}_${executionMode}_${saDayKey()}", 0)
+    
+private fun dailyTradeCounterKey(): String {
+    val userId = currentProfile?.optString("id",
+        currentProfile?.optString("user_id", "") ?: ""
+    )?.trim().orEmpty()
+
+    val safeUserId = userId.replace(Regex("[^A-Za-z0-9_-]"), "_")
+    return "daily_trades_user_${safeUserId}_${saDayKey()}"
+}
+
+private fun dailyTradeCount(): Int {
+    val userId = currentProfile?.optString("id",
+        currentProfile?.optString("user_id", "") ?: ""
+    )?.trim().orEmpty()
+
+    if (userId.isBlank()) return 0
+
+    val stableKey = dailyTradeCounterKey()
+
+    if (appPrefs.contains(stableKey)) {
+        return appPrefs.getInt(stableKey, 0)
     }
 
-    private fun canPlaceTrade(showToast: Boolean = true): Boolean {
-        if (!riskPlanIsActive()) {
-            if (showToast) toast("Trading is locked: an active risk plan must be assigned by the administrator.")
-            return false
-        }
-        val limit = maxTradesPerDay()
-        if (limit <= 0) {
-            if (showToast) toast("Trading is locked: your risk plan is not recognised.")
-            return false
-        }
-        if (dailyTradeCount() >= limit) {
-            if (showToast) toast("Daily risk-plan limit reached (${if (limit == Int.MAX_VALUE) "unlimited" else limit} trades).")
-            val eventKey = "risk_limit_notice_${accountId}_${executionMode}_${saDayKey()}"
-            if (!appPrefs.getBoolean(eventKey, false)) {
-                appPrefs.edit().putBoolean(eventKey, true).apply()
-                notifyEvent("Daily limit reached", "No additional trades can be opened until the South African day resets.",
-                    "daily_limit_${accountId}_${executionMode}_${saDayKey()}")
-            }
-            return false
-        }
-        return true
-    }
+    // Migrate this account's existing daily count into the
+    // platform-user counter so the existing limit is preserved.
+    val accountKey = accountId.ifBlank { "unlinked" }
+        .replace(Regex("[^A-Za-z0-9_-]"), "_")
+    val legacyKey = "daily_trades_${accountKey}_${executionMode}_${saDayKey()}"
+    val previousCount = appPrefs.getInt(legacyKey, 0)
 
-    private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Long) {
-        val accountKey = accountId.ifBlank { "unlinked" }.replace(Regex("[^A-Za-z0-9_-]"), "_")
-        val key = "daily_trades_${accountKey}_${executionMode}_${saDayKey()}"
-        appPrefs.edit().putInt(key, dailyTradeCount() + 1).apply()
-        notifyEvent("Touch trade opened", "$symbol · Contract $contractId · Stake ${String.format(java.util.Locale.US, "%.2f", stake)} ${accountCurrency.ifBlank { "USD" }}")
-    }
+    appPrefs.edit().putInt(stableKey, previousCount).apply()
+    return previousCount
+}
+
+private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Long) {
+    val key = dailyTradeCounterKey()
+    val newCount = dailyTradeCount() + 1
+
+    appPrefs.edit().putInt(key, newCount).apply()
+
+    notifyEvent("Touch trade opened", "$symbol · Contract $contractId · Stake ${String.format(java.util.Locale.US, "%.2f", stake)} ${accountCurrency.ifBlank { "USD" }}")
+}
+
 
     /** Empirical PTPE: among prior same-direction MSS events, how often was an equivalent
  * percentage target touched within the following 24-hour window? */
