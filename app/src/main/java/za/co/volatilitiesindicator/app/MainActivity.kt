@@ -299,8 +299,6 @@ private fun startAndBindDerivService() {
     private val pendingOrdersByRequest = mutableMapOf<Int, PendingOrder>()
     private val pendingIndexSymbols = mutableSetOf<String>()
     private val runningContracts = mutableMapOf<Long, RunningContract>()
-    // Contracts awaiting a retry after a paired close request fails to send.
-    private val pairedCloseRequests = mutableMapOf<Int, Long>()
     // Retain the winning side until Deriv confirms both contracts in its pair are closed.
     private val pendingRecoveryWinners = mutableMapOf<String, RunningContract>()
     private val pendingRecoverySpots = mutableMapOf<String, Double>()
@@ -808,7 +806,6 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
             if (!derivApiClient.send(JSONObject().put("sell", winner.contractId).put("price", 0).put("req_id", nextTradeRequestId()))) {
                 winner.closeRequested = false
                 winner.closeReason = ""
-                pendingPairedCloseRetries.add(winner.contractId)
                 notifyEvent("Winning Touch close failed", "${winner.symbol} · Contract ${winner.contractId} could not be closed; recovery is waiting for confirmed closure.", "winner_close_failed_${winner.pairId}")
             }
         }
@@ -819,60 +816,14 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
         if (partner != null) {
             partner.closeRequested = true
             partner.closeReason = "Opposite Touch closed after $reason"
-            val closeReqId = nextTradeRequestId()
-pairedCloseRequests[closeReqId] = winner.contractId
-
-if (!derivApiClient.send(
-        JSONObject().put("sell", winner.contractId)
-            .put("price", 0)
-            .put("req_id", closeReqId)
-    )) {
-    pairedCloseRequests.remove(closeReqId)
+            if (!derivApiClient.send(JSONObject().put("sell", partner.contractId).put("price", 0).put("req_id", nextTradeRequestId()))) {
                 partner.closeRequested = false
                 partner.closeReason = ""
-                pendingPairedCloseRetries.add(partner.contractId)
                 notifyEvent("Opposite Touch close failed", "${partner.symbol} · Contract ${partner.contractId} could not be closed; recovery is waiting for confirmed closure.", "pair_close_failed_${winner.pairId}")
             }
         }
     }
-private fun retryPendingPairedCloses() {
-    if (!connected || pendingPairedCloseRetries.isEmpty()) return
 
-    val retryIds = pendingPairedCloseRetries.toList()
-
-    for (contractId in retryIds) {
-        val contract = runningContracts[contractId]
-
-        if (contract == null || contract.closeRequested) {
-            pendingPairedCloseRetries.remove(contractId)
-            continue
-        }
-
-        contract.closeRequested = true
-
-        if (contract.closeReason.isBlank()) {
-            contract.closeReason = "Paired trade close retry"
-        }
-
-        val sent = derivApiClient.send(
-            JSONObject()
-                .put("sell", contractId)
-                .put("price", 0)
-                .put("req_id", nextTradeRequestId())
-        )
-
-        if (sent) {
-            pendingPairedCloseRetries.remove(contractId)
-            notifyEvent(
-                "Paired Close Retry Sent",
-                "${contract.symbol} · Contract $contractId close request was resent. Waiting for Deriv confirmation.",
-                "paired_close_retry_$contractId"
-            )
-        } else {
-            contract.closeRequested = false
-        }
-    }
-}
     private fun finishPairRecoveryIfClosed(pairId: String) {
         if (pairId.isBlank()) return
         val winner = pendingRecoveryWinners[pairId] ?: return
@@ -916,7 +867,8 @@ private fun retryPendingPairedCloses() {
             notifyEvent("Recovery requested", "${winner.symbol} · ${winner.direction} recovery proposal submitted. Stake ${formatMoney(stake)} (20% of daily starting capital); target 30% of stake.", "recovery_requested_${winner.pairId}")
         }
     }
-private fun handleMasterDecisionTradeResponse(json: JSONObject) {
+
+    private fun handleMasterDecisionTradeResponse(json: JSONObject) {
         val msgType = json.optString("msg_type", "")
         val reqId = json.optInt("req_id", -1)
         if (json.has("error")) {
@@ -966,7 +918,6 @@ private fun handleMasterDecisionTradeResponse(json: JSONObject) {
                 "SELL" -> pending.target < livePrice
                 else -> false
             }
-            
             val analysisRequired = !pending.isRecovery && pending.pairSide != "OPPOSITE"
             val sameSignal = !analysisRequired || (
                 freshDecision != null &&
@@ -987,8 +938,6 @@ private fun handleMasterDecisionTradeResponse(json: JSONObject) {
                     "fresh_entry_rejected_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
                 return
             }
-            
-    
 
             val minimumRequiredPayout = pending.stake * 1.30
             val preferredPayout = pending.stake * 1.30
@@ -1272,7 +1221,6 @@ if (
                         )) {
                         pairedContract.closeRequested = false
                         pairedContract.closeReason = ""
-                        pendingPairedCloseRetries.add(pairedContract.contractId)
                         notifyEvent(
                             "Paired Trade Close Failed",
                             "${pairedContract.symbol} · Contract ${pairedContract.contractId} could not be closed. The app will need to retry.",
@@ -1568,8 +1516,7 @@ when (selectedTab) {
                 }
             }
 }
-
-        addBottomNavigation(outer)
+addBottomNavigation(outer)
 
         // Restore the previous position after layout settles. Live account callbacks can
         // trigger repeated renders; a delayed restore prevents the REAL account screen jumping.
@@ -2472,7 +2419,7 @@ row.addView(
         14f,
         if (tradeDirection == "BUY") green else red,
         true
-    ).apply { setPadding(0, dp(4), 0, 0) }
+        ).apply { setPadding(0, dp(4), 0, 0) }
 )
 val originalTarget = tracked?.target?.takeIf { it.isFinite() && it > 0.0 }
 val analysisTarget = lastPtpeByIndex[normalizedSymbol(item)]
@@ -3073,7 +3020,7 @@ private fun addDirectionStructuralTargetAnalysis() {
                 "DIRECTION: ${direction.ifBlank { "WAITING" }}",
                 13f,
                 when (direction) {
-                         "UP" -> green
+                          "UP" -> green
                     "DOWN" -> red
                     else -> yellow
                 },
@@ -3659,7 +3606,7 @@ private fun addTargetFilterAnalysis() {
                             }
                             val riskValues = mapOf(
                                 "user_id" to id,
-                                "risk_profile" to selectedRisk.lowercase(java.util.Locale.US),
+                                      "risk_profile" to selectedRisk.lowercase(java.util.Locale.US),
                                 "risk_percent" to "20",
                                 "plan_id" to (selectedRisk.lowercase(java.util.Locale.US).replace(" ", "_") + "_${planDays}_days"),
                                 "start_date" to planStartDate,
@@ -4399,7 +4346,6 @@ derivApiClient.connectWithAccessToken(token, executionMode)
 
     override fun onTick(symbol: String, quote: Double, epoch: Long) {
     runOnUiThread {
-        retryPendingPairedCloses()
         if (symbol in marketDataIndexes && quote.isFinite()) {
             checkPriceAlert(symbol, quote)
             marketDataPrices[symbol] = quote
@@ -4607,4 +4553,4 @@ override fun onDestroy() {
 
     super.onDestroy()
 }
-    }
+                                        }
