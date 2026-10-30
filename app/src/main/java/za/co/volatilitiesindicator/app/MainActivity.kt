@@ -136,7 +136,85 @@ private var drawerOpen = false
     private var accountType = ""
     private var accountBalance = 0.0
     private var accountCurrency = ""
-    private val derivApiClient by lazy { DerivApiClient(this) }
+    // DerivApiClient is owned by DerivConnectionService.
+private lateinit var derivApiClient: DerivApiClient
+
+private var derivService: DerivConnectionService? = null
+private var derivServiceBound = false
+private var pendingDerivToken: String? = null
+private var pendingResumeCheck = false
+
+private val derivServiceConnection = object : ServiceConnection {
+
+    override fun onServiceConnected(
+        name: ComponentName?,
+        binder: IBinder?
+    ) {
+        val service =
+            (binder as? DerivConnectionService.LocalBinder)?.getService()
+                ?: return
+
+        derivService = service
+        derivApiClient = service.client
+
+        service.attachActivity(this@MainActivity)
+        derivServiceBound = true
+
+        val token = pendingDerivToken
+        pendingDerivToken = null
+
+        if (!token.isNullOrBlank()) {
+            derivApiClient.connectWithAccessToken(token, executionMode)
+
+        } else if (
+            pendingResumeCheck &&
+            authToken.isNotBlank() &&
+            !appPrefs.getBoolean("deriv_manually_disconnected", false)
+        ) {
+            val key =
+                if (executionMode == "REAL") "real_token"
+                else "demo_token"
+
+            val saved = prefs.getString(key, "").orEmpty()
+
+            if (saved.isNotBlank()) {
+                derivApiClient.ensureConnectedOnResume(
+                    saved,
+                    executionMode
+                )
+            }
+        }
+
+        pendingResumeCheck = false
+    }
+
+    override fun onServiceDisconnected(name: ComponentName?) {
+        derivService?.detachActivity(this@MainActivity)
+
+        derivService = null
+        derivServiceBound = false
+    }
+}
+
+private fun startAndBindDerivService() {
+
+    if (derivServiceBound) return
+
+    val serviceIntent =
+        Intent(this, DerivConnectionService::class.java)
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        startForegroundService(serviceIntent)
+    } else {
+        startService(serviceIntent)
+    }
+
+    derivServiceBound = bindService(
+        serviceIntent,
+        derivServiceConnection,
+        BIND_AUTO_CREATE
+    )
+}
     private val httpClient = OkHttpClient()
     private val prefs by lazy { getSharedPreferences("deriv_oauth", MODE_PRIVATE) }
     private val authPrefs by lazy { getSharedPreferences("vi_platform_auth", MODE_PRIVATE) }
