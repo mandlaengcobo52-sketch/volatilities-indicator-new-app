@@ -823,17 +823,16 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
             val closeReqId = nextTradeRequestId()
 pairedCloseRequests[closeReqId] = winner.contractId
 
-val closeReqId = nextTradeRequestId()
-pairedCloseRequests[closeReqId] = partner.contractId
+val partnerCloseReqId = nextTradeRequestId()
+pairedCloseRequests[partnerCloseReqId] = partner.contractId
 
 if (!derivApiClient.send(
         JSONObject()
             .put("sell", partner.contractId)
             .put("price", 0)
-            .put("req_id", closeReqId)
+            .put("req_id", partnerCloseReqId)
     )) {
-    pairedCloseRequests.remove(closeReqId)
-    pairedCloseRequests.remove(closeReqId)
+    pairedCloseRequests.remove(partnerCloseReqId)
             }
         }
     }
