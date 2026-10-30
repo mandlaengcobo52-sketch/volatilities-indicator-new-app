@@ -39,6 +39,9 @@ import android.widget.Toast
 import android.util.Base64
 import java.security.MessageDigest
 import java.security.SecureRandom
+import android.content.ComponentName
+import android.content.ServiceConnection
+import android.os.IBinder
 
 /** Volatilities Indicator Android app. */
 class MainActivity : Activity(), DerivApiClient.Callback {
