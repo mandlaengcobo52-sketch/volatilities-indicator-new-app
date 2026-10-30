@@ -820,11 +820,16 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
         if (partner != null) {
             partner.closeRequested = true
             partner.closeReason = "Opposite Touch closed after $reason"
-            if (!derivApiClient.send(JSONObject().put("sell", partner.contractId).put("price", 0).put("req_id", nextTradeRequestId()))) {
-                partner.closeRequested = false
-                partner.closeReason = ""
-                pendingPairedCloseRetries.add(partner.contractId)
-                notifyEvent("Opposite Touch close failed", "${partner.symbol} · Contract ${partner.contractId} could not be closed; recovery is waiting for confirmed closure.", "pair_close_failed_${winner.pairId}")
+            val closeReqId = nextTradeRequestId()
+pairedCloseRequests[closeReqId] = winner.contractId
+
+if (!derivApiClient.send(
+        JSONObject()
+            .put("sell", winner.contractId)
+            .put("price", 0)
+            .put("req_id", closeReqId)
+    )) {
+    pairedCloseRequests.remove(closeReqId)
             }
         }
     }
