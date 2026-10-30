@@ -786,7 +786,11 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
     }
 
     /** Request closure of both original contracts, but never launch recovery until both closures are confirmed. */
-    private fun preparePairRecovery(winner: RunningContract, spot: Double) {
+    private fun preparePairRecovery(
+    winner: RunningContract,
+    spot: Double,
+    reason: String = "Paired 30% profit target"
+) {
         if (winner.isRecovery || winner.pairId.isBlank() || winner.recoveryTriggered) return
         if (spot > 0.0 && spot.isFinite()) {
             pendingRecoveryWinners[winner.pairId] = winner
