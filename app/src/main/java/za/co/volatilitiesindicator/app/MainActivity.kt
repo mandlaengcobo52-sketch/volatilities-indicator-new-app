@@ -4146,7 +4146,14 @@ private fun addTargetFilterAnalysis() {
     accountCurrency = ""
 
     render()
-    derivApiClient.connectWithAccessToken(token, executionMode)
+
+if (!derivServiceBound || !::derivApiClient.isInitialized) {
+    pendingDerivToken = token
+    startAndBindDerivService()
+    return
+}
+
+derivApiClient.connectWithAccessToken(token, executionMode)
     }
 
     private fun disconnectDeriv(clearSavedTokens: Boolean = false) {
