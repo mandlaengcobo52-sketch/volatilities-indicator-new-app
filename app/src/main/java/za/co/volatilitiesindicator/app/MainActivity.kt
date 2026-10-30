@@ -4415,6 +4415,40 @@ if (stake > 0.0) {
             }
             // DerivApiClient manages automatic reconnection.
 // Do not start a second Activity-level reconnect.
+override fun onDestroy() {
+
+    // Remove Activity-level callbacks.
+    profileRefreshHandler.removeCallbacks(profileRefreshRunnable)
+
+    reconnectRunnable?.let {
+        reconnectHandler.removeCallbacks(it)
+    }
+
+    reconnectRunnable = null
+    reconnectScheduled = false
+
+    // Detach this Activity from the service.
+    derivService?.detachActivity(this)
+
+    // Release only the Activity binding.
+    // Do NOT stop the foreground Deriv service.
+    if (derivServiceBound) {
+        try {
+            unbindService(derivServiceConnection)
+        } catch (e: IllegalArgumentException) {
+            android.util.Log.w(
+                "DerivService",
+                "Service was already unbound",
+                e
+            )
+        }
+    }
+
+    derivService = null
+    derivServiceBound = false
+
+    super.onDestroy()
+}
         }
     }
 
