@@ -1089,6 +1089,32 @@ runningContracts[contractId] = RunningContract(contractId, pending.symbol, pendi
                 liveContractProfitModes[contractId] = "${accountId}_$executionMode"
                 val profitTarget = running.stake * 0.30
                 val tenPercentTarget = running.stake * 0.10 // Preserve the existing trailing-stop threshold.
+                val liveSpot = contract.optDouble(
+    "current_spot",
+    contract.optDouble("current_spot_display_value", 0.0)
+)
+
+val structuralTargetReached =
+    liveSpot > 0.0 &&
+    when (running.direction) {
+        "BUY" -> liveSpot >= running.target
+        "SELL" -> liveSpot <= running.target
+        else -> false
+    }
+
+if (
+    structuralTargetReached &&
+    running.pairId.isNotBlank() &&
+    !running.isRecovery &&
+    !running.recoveryTriggered &&
+    !running.closeRequested
+) {
+    preparePairRecovery(
+        running,
+        liveSpot,
+        "Structural Target Reached"
+    )
+}
                                 if (!running.targetNotified && profitOpen >= profitTarget) {
                     running.targetNotified = true
                     running.trailingActivated = true
