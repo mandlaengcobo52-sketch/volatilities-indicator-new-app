@@ -409,6 +409,29 @@ private fun dailyTradeCount(): Int {
     return previousCount
 }
 
+private fun canPlaceTrade(showToast: Boolean = true): Boolean {
+    if (!riskPlanIsActive()) {
+        if (showToast) toast("Trading is locked: an active risk plan must be assigned by the administrator.")
+        return false
+    }
+    val limit = maxTradesPerDay()
+    if (limit <= 0) {
+        if (showToast) toast("Trading is locked: your risk plan is not recognised.")
+        return false
+    }
+    if (dailyTradeCount() >= limit) {
+        if (showToast) toast("Daily risk-plan limit reached (${if (limit == Int.MAX_VALUE) "unlimited" else limit} trades).")
+        val eventKey = "risk_limit_notice_${accountId}_${executionMode}_${saDayKey()}"
+        if (!appPrefs.getBoolean(eventKey, false)) {
+            appPrefs.edit().putBoolean(eventKey, true).apply()
+            notifyEvent("Daily limit reached", "No additional trades can be opened until the South African day resets.",
+                "daily_limit_${accountId}_${executionMode}_${saDayKey()}")
+        }
+        return false
+    }
+    return true
+}
+
 private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Long) {
     val key = dailyTradeCounterKey()
     val newCount = dailyTradeCount() + 1
