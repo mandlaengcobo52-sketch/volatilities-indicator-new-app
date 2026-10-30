@@ -1263,6 +1263,7 @@ if (savedToken.isNotBlank()) {
         startAndBindDerivService()
     }
 }
+    }
 
     override fun onPause() {
         profileRefreshHandler.removeCallbacks(profileRefreshRunnable)
