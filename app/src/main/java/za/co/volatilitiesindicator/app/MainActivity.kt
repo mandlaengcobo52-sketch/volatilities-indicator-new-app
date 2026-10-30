@@ -802,7 +802,7 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
         // If the winner is still open, request its closure as well.
         if (!winner.closeRequested && runningContracts.containsKey(winner.contractId)) {
             winner.closeRequested = true
-            winner.closeReason = "Paired 30% profit target"
+            winner.closeReason = reason
             if (!derivApiClient.send(JSONObject().put("sell", winner.contractId).put("price", 0).put("req_id", nextTradeRequestId()))) {
                 winner.closeRequested = false
                 winner.closeReason = ""
@@ -815,7 +815,7 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
         }
         if (partner != null) {
             partner.closeRequested = true
-            partner.closeReason = "Opposite Touch closed after paired target"
+            partner.closeReason = "Opposite Touch closed after $reason"
             if (!derivApiClient.send(JSONObject().put("sell", partner.contractId).put("price", 0).put("req_id", nextTradeRequestId()))) {
                 partner.closeRequested = false
                 partner.closeReason = ""
