@@ -854,12 +854,13 @@ private fun retryPendingPairedCloses() {
         if (contract.closeReason.isBlank()) {
             contract.closeReason = "Paired trade close retry"
         }
-
+        val retryReqId = nextTradeRequestId()
+        pairedCloseRequests[retryReqId] = contractId
         val sent = derivApiClient.send(
             JSONObject()
                 .put("sell", contractId)
                 .put("price", 0)
-                .put("req_id", nextTradeRequestId())
+                .put("req_id", retryReqId)
         )
 
         if (sent) {
@@ -870,7 +871,8 @@ private fun retryPendingPairedCloses() {
                 "paired_close_retry_$contractId"
             )
         } else {
-            contract.closeRequested = false
+    pairedCloseRequests.remove(retryReqId)
+    contract.closeRequested = false
         }
     }
 }
