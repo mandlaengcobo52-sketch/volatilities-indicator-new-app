@@ -4413,7 +4413,8 @@ if (stake > 0.0) {
                 accountStatus.text = "●  RECONNECTING"
                 accountStatus.setTextColor(yellow)
             }
-            scheduleDerivReconnect()
+            // DerivApiClient manages automatic reconnection.
+// Do not start a second Activity-level reconnect.
         }
     }
 
