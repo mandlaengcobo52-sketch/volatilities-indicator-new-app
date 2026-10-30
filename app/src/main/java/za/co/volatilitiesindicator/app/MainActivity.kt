@@ -1228,11 +1228,35 @@ if (
                     }
                 }
                 
-                if (finalProfit >= running.stake * 0.30 && running.pairId.isNotBlank() && !running.isRecovery && !running.recoveryTriggered) {
-                    // Deriv has already confirmed this contract is closed; do not send another sell request for it.
-                    running.closeRequested = true
-                    preparePairRecovery(running, marketDataPrices[running.symbol] ?: running.target)
-                }
+                val qualifyingPairClose =
+    status == "won" ||
+    running.closeReason.contains("Structural Target", ignoreCase = true) ||
+    running.closeReason.contains("30% Profit Target", ignoreCase = true) ||
+    finalProfit >= running.stake * 0.30
+
+if (
+    qualifyingPairClose &&
+    running.pairId.isNotBlank() &&
+    !running.isRecovery &&
+    !running.recoveryTriggered
+) {
+    // Deriv has confirmed the qualifying contract is closed.
+    running.closeRequested = true
+
+    val recoveryReason = running.closeReason.ifBlank {
+        if (status == "won") {
+            "Structural Target Reached"
+        } else {
+            "Paired 30% profit target"
+        }
+    }
+
+    preparePairRecovery(
+        running,
+        marketDataPrices[running.symbol] ?: running.target,
+        recoveryReason
+    )
+}
                 val reason = running.closeReason.ifBlank { if (status == "expired") "Contract Expired" else if (running.takeProfitRequested) "Target Close" else "Contract Closed" }
                 runningContracts.remove(contractId)
                 finishPairRecoveryIfClosed(running.pairId)
