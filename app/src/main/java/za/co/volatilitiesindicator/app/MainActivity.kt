@@ -916,8 +916,7 @@ private fun retryPendingPairedCloses() {
             notifyEvent("Recovery requested", "${winner.symbol} · ${winner.direction} recovery proposal submitted. Stake ${formatMoney(stake)} (20% of daily starting capital); target 30% of stake.", "recovery_requested_${winner.pairId}")
         }
     }
-
-    private fun handleMasterDecisionTradeResponse(json: JSONObject) {
+private fun handleMasterDecisionTradeResponse(json: JSONObject) {
         val msgType = json.optString("msg_type", "")
         val reqId = json.optInt("req_id", -1)
         if (json.has("error")) {
@@ -988,6 +987,8 @@ private fun retryPendingPairedCloses() {
                     "fresh_entry_rejected_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
                 return
             }
+            
+    
 
             val minimumRequiredPayout = pending.stake * 1.30
             val preferredPayout = pending.stake * 1.30
