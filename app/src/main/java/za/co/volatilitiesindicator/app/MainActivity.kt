@@ -300,7 +300,7 @@ private fun startAndBindDerivService() {
     private val pendingIndexSymbols = mutableSetOf<String>()
     private val runningContracts = mutableMapOf<Long, RunningContract>()
     // Contracts awaiting a retry after a paired close request fails to send.
-private val pendingPairedCloseRetries = mutableSetOf<Long>()
+    private val pairedCloseRequests = mutableMapOf<Int, Long>()
     // Retain the winning side until Deriv confirms both contracts in its pair are closed.
     private val pendingRecoveryWinners = mutableMapOf<String, RunningContract>()
     private val pendingRecoverySpots = mutableMapOf<String, Double>()
@@ -819,7 +819,15 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
         if (partner != null) {
             partner.closeRequested = true
             partner.closeReason = "Opposite Touch closed after $reason"
-            if (!derivApiClient.send(JSONObject().put("sell", partner.contractId).put("price", 0).put("req_id", nextTradeRequestId()))) {
+            val closeReqId = nextTradeRequestId()
+pairedCloseRequests[closeReqId] = winner.contractId
+
+if (!derivApiClient.send(
+        JSONObject().put("sell", winner.contractId)
+            .put("price", 0)
+            .put("req_id", closeReqId)
+    )) {
+    pairedCloseRequests.remove(closeReqId)
                 partner.closeRequested = false
                 partner.closeReason = ""
                 pendingPairedCloseRetries.add(partner.contractId)
@@ -914,6 +922,26 @@ private fun retryPendingPairedCloses() {
         val reqId = json.optInt("req_id", -1)
         if (json.has("error")) {
             val failed = pendingOrdersByRequest.remove(reqId)
+            val failedCloseContractId = pairedCloseRequests.remove(reqId)
+
+if (failedCloseContractId != null) {
+    val failedContract = runningContracts[failedCloseContractId]
+
+    if (failedContract != null) {
+        failedContract.closeRequested = false
+        pendingPairedCloseRetries.add(failedCloseContractId)
+
+        val errorMessage = json.optJSONObject("error")
+            ?.optString("message", "Deriv rejected the close request.")
+            ?: "Deriv rejected the close request."
+
+        notifyEvent(
+            "Paired Close Rejected",
+            "${failedContract.symbol} · Contract $failedCloseContractId · $errorMessage. The app will retry.",
+            "paired_close_rejected_$failedCloseContractId"
+        )
+    }
+}
             if (failed != null) {
                 pendingIndexSymbols.remove(failed.symbol)
                 val errorObject = json.optJSONObject("error")
