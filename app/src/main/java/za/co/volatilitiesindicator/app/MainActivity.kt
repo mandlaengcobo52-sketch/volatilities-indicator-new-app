@@ -808,6 +808,7 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
             if (!derivApiClient.send(JSONObject().put("sell", winner.contractId).put("price", 0).put("req_id", nextTradeRequestId()))) {
                 winner.closeRequested = false
                 winner.closeReason = ""
+                pendingPairedCloseRetries.add(winner.contractId)
                 notifyEvent("Winning Touch close failed", "${winner.symbol} · Contract ${winner.contractId} could not be closed; recovery is waiting for confirmed closure.", "winner_close_failed_${winner.pairId}")
             }
         }
@@ -821,6 +822,7 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
             if (!derivApiClient.send(JSONObject().put("sell", partner.contractId).put("price", 0).put("req_id", nextTradeRequestId()))) {
                 partner.closeRequested = false
                 partner.closeReason = ""
+                pendingPairedCloseRetries.add(partner.contractId)
                 notifyEvent("Opposite Touch close failed", "${partner.symbol} · Contract ${partner.contractId} could not be closed; recovery is waiting for confirmed closure.", "pair_close_failed_${winner.pairId}")
             }
         }
@@ -1261,6 +1263,7 @@ if (
                         )) {
                         pairedContract.closeRequested = false
                         pairedContract.closeReason = ""
+                        pendingPairedCloseRetries.add(pairedContract.contractId)
                         notifyEvent(
                             "Paired Trade Close Failed",
                             "${pairedContract.symbol} · Contract ${pairedContract.contractId} could not be closed. The app will need to retry.",
@@ -4387,6 +4390,7 @@ derivApiClient.connectWithAccessToken(token, executionMode)
 
     override fun onTick(symbol: String, quote: Double, epoch: Long) {
     runOnUiThread {
+        retryPendingPairedCloses()
         if (symbol in marketDataIndexes && quote.isFinite()) {
             checkPriceAlert(symbol, quote)
             marketDataPrices[symbol] = quote
