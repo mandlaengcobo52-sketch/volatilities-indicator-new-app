@@ -806,7 +806,16 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
         if (!winner.closeRequested && runningContracts.containsKey(winner.contractId)) {
             winner.closeRequested = true
             winner.closeReason = reason
-            if (!derivApiClient.send(JSONObject().put("sell", winner.contractId).put("price", 0).put("req_id", nextTradeRequestId()))) {
+            val winnerCloseReqId = nextTradeRequestId()
+pairedCloseRequests[winnerCloseReqId] = winner.contractId
+
+if (!derivApiClient.send(
+        JSONObject()
+            .put("sell", winner.contractId)
+            .put("price", 0)
+            .put("req_id", winnerCloseReqId)
+    )) {
+    pairedCloseRequests.remove(winnerCloseReqId)
                 winner.closeRequested = false
                 winner.closeReason = ""
                 pendingPairedCloseRetries.add(winner.contractId)
