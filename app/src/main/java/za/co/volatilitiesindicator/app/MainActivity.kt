@@ -1864,17 +1864,9 @@ private fun addUserProfileScreen(page: LinearLayout) {
             else -> "As assigned by administrator"
         }
         val periodText = if (riskKey == "trial") "7 days" else if (riskKey.isBlank() || riskKey == "null") "Not assigned" else "30 days"
-        profileField("Interest per period", when (riskKey) {
-            "minimum" -> "50% per 30 days"
-            "medium" -> "100% per 30 days"
-            "maximum" -> "200% per 30 days"
-            "trial" -> "50% per 7 days"
-            else -> "As assigned by administrator"
-        })
         profileField("Subscription amount", subscriptionText)
         profileField("Period", periodText)
         profileField("Trading capital range", "R1,000 to R5,000")
-        profileField("Target profit", "30% of stake")
         val riskLimitText = when (risk.lowercase()) {
             "minimum" -> "1 trade per day"
             "medium" -> "2 trades per day"
@@ -1883,8 +1875,6 @@ private fun addUserProfileScreen(page: LinearLayout) {
             "trial" -> "Trade limit not configured"
             else -> "Trading disabled until assigned"
         }
-        profileField("Risk-plan trade limit", riskLimitText)
-        profileField("Daily fixed stake", "10% per Touch side; recovery stake 20% of daily starting capital, frozen at 00:00 South African time")
         profileField("Trades used today", "${dailyTradeCount()} / ${if (maxTradesPerDay() == Int.MAX_VALUE) "Unlimited" else maxTradesPerDay()}")
         profileField("Start of risk plan", u.optString("start_date", "").takeUnless { it == "null" }.orEmpty())
         profileField("Expiry of risk plan", u.optString("expiry_date", "").takeUnless { it == "null" }.orEmpty())
