@@ -3298,9 +3298,11 @@ private fun addTargetFilterAnalysis() {
         } else {
             null
         }
-        val passes = targetPriceForDistance != null && distance != null && distance > 0.0 &&
-            ((direction == "UP" && targetPriceForDistance > currentPriceForDistance) ||
-             (direction == "DOWN" && targetPriceForDistance < currentPriceForDistance))
+        val passes = targetPriceForDistance != null &&
+    distance != null &&
+    distance >= 0.5 &&
+    ((direction == "UP" && targetPriceForDistance > currentPriceForDistance) ||
+     (direction == "DOWN" && targetPriceForDistance < currentPriceForDistance))
         card.addView(label("DIRECTION: ${direction.ifBlank { "WAITING" }}", 13f,
             if (direction == "UP") green else if (direction == "DOWN") red else yellow, true))
         // Never render the actual target price for a regular user.
