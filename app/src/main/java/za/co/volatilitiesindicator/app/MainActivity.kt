@@ -436,9 +436,9 @@ private val pairedCloseRequests = mutableMapOf<Int, Long>()
 
     private fun maxTradesPerDay(): Int {
         return when (riskPlanName()) {
-            "minimum" -> 1
-            "medium" -> 2
-            "maximum" -> 3
+            "minimum" -> 2
+            "medium" -> 4
+            "maximum" -> 6
             "super maximum", "super_maximum", "super-maximum", "privilege" -> Int.MAX_VALUE
             else -> 0
         }
@@ -3640,7 +3640,7 @@ private fun addTargetFilterAnalysis() {
             addView(phone)
             addView(label("Risk plan (30 days)", 14f, yellow, true))
             addView(riskSpinner)
-            addView(label("Minimum: 1/day · Medium: 2/day · Maximum: 3/day · Super Maximum: unlimited/day · Trial: 7 days", 12f, white, false))
+            addView(label("Minimum: 2/day · Medium: 4/day · Maximum: 6/day · Super Maximum: unlimited/day", 12f, white, false))
             addView(password)
         }
         android.app.AlertDialog.Builder(this)
@@ -3654,16 +3654,16 @@ private fun addTargetFilterAnalysis() {
                         val id = user.optString("id", "")
                         val first = firstName.text.toString().trim()
                         val last = surname.text.toString().trim()
-                    val mail = email.text.toString().trim()
+                        val mail = email.text.toString().trim()
                         val contact = phone.text.toString().trim()
                         val newPassword = password.text.toString()
                         val selectedRisk = riskPlans[riskSpinner.selectedItemPosition]
                         val tradesPerDay = when (selectedRisk) {
-                            "Minimum" -> "1"
-                            "Medium" -> "2"
-                            "Maximum" -> "3"
-                            "Super Maximum" -> "unlimited"
-                            else -> "1"
+    "Minimum" -> "2"
+    "Medium" -> "4"
+    "Maximum" -> "6"
+    "Super Maximum" -> "unlimited"
+    else -> "2"
                         }
                         val planDays = if (selectedRisk == "Trial") 7 else 30
                         val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).apply { timeZone = dailyCapitalTimeZone }
