@@ -1882,7 +1882,8 @@ private fun addUserProfileScreen(page: LinearLayout) {
         profileField("Account status", status)
         if (connected && accountId.isNotBlank()) {
             profileCard.addView(label("APPLY FOR A RISK PLAN", 14f, green, true).apply { setPadding(0, dp(12), 0, dp(4)) })
-            val riskOptions = listOf("Minimum — 30 days", "Medium — 30 days", "Maximum — 30 days", "Trial — Free / 7 days")
+            val riskOptions = listOf("Minimum — 30 days", "Medium — 30 days", "Maximum — 30 days")
+val riskValues = listOf("minimum", "medium", "maximum")
             val riskValues = listOf("minimum", "medium", "maximum", "trial")
             val riskSpinner = Spinner(this).apply {
                 adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, riskOptions)
@@ -1892,7 +1893,7 @@ private fun addUserProfileScreen(page: LinearLayout) {
             profileCard.addView(button("SUBMIT RISK-PLAN APPLICATION", true) {
                 val chosen = riskValues[riskSpinner.selectedItemPosition]
                 val fee = when (chosen) { "minimum" -> "25% of capital"; "medium" -> "75% of capital"; "maximum" -> "100% of capital"; else -> "0" }
-                val days = if (chosen == "trial") "7" else "30"
+val days = "30"
                 val applicationFields = mapOf(
                     "risk_profile" to chosen,
                     "plan_id" to "${chosen}_${days}_days",
@@ -3613,7 +3614,7 @@ private fun addTargetFilterAnalysis() {
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
             setSingleLine(true)
         }
-        val riskPlans = listOf("Minimum", "Medium", "Maximum", "Super Maximum", "Trial")
+        val riskPlans = listOf("Minimum", "Medium", "Maximum", "Super Maximum")
         val riskSpinner = Spinner(this).apply {
             adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, riskPlans)
             val existingRisk = user.optString("risk_profile", "").replaceFirstChar { it.uppercase() }
@@ -3655,7 +3656,7 @@ private fun addTargetFilterAnalysis() {
     "Super Maximum" -> "unlimited"
     else -> "2"
                         }
-                        val planDays = if (selectedRisk == "Trial") 7 else 30
+                        val planDays = 30
                         val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).apply { timeZone = dailyCapitalTimeZone }
                         val planStartDate = dateFormat.format(java.util.Date())
                         val planExpiryCalendar = java.util.Calendar.getInstance().apply {
@@ -3743,7 +3744,6 @@ private fun addTargetFilterAnalysis() {
             listOf("MEDIUM RISK", "Interest per 30 days: 100%", "Subscription: 75% of capital", "Period: 30 days", "Stake: 10% per Touch side", "Target profit: 30% of stake", "Trades per day: 2"),
             listOf("MAXIMUM RISK", "Interest per 30 days: 200%", "Subscription: 100% of capital", "Period: 30 days", "Stake: 10% per Touch side", "Target profit: 30% of stake", "Trades per day: 3"),
             listOf("SUPER MAXIMUM RISK", "Period: 30 days", "Stake: 10% per Touch side", "Target profit: 30% per stake", "Trades per day: Unlimited"),
-            listOf("TRIAL", "Interest per 7 days: 50%", "Subscription: Free", "Period: 7 days", "Stake: 10% per Touch side", "Target profit: 30% per stake", "Trade limit: Not specified")
         )
         rules.forEach { details ->
             val ruleCard = card().apply { orientation = LinearLayout.VERTICAL }
