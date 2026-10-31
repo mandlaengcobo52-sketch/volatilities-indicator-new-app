@@ -911,10 +911,16 @@ private fun retryPendingPairedCloses() {
         if (!connected || spot <= 0.0 || !spot.isFinite()) return
         val capital = dailyStartingCapital()
         val stake = fixedRecoveryStake()
-        if (capital <= 0.0 || stake <= 0.0 || accountBalance < stake + capital * 0.40) {
-            notifyEvent("Recovery blocked", "${winner.symbol} · Recovery stake is 20% of daily starting capital, but funds plus the protected 40% reserve are insufficient.", "recovery_funds_${winner.pairId}")
-            return
-        }
+        val requiredBalance = stake + capital * 0.40
+
+if (capital <= 0.0 || stake <= 0.0 || accountBalance < requiredBalance) {
+    notifyEvent(
+        "Recovery blocked",
+        "${winner.symbol} · Daily starting capital: ${formatMoney(capital)} · Current balance: ${formatMoney(accountBalance)} · Recovery stake: ${formatMoney(stake)} · Protected reserve: ${formatMoney(capital * 0.40)} · Required balance: ${formatMoney(requiredBalance)}.",
+        "recovery_funds_${winner.pairId}"
+    )
+    return
+}
         winner.recoveryTriggered = true
         val distance = spot * 0.005
         val barrier = if (winner.direction.equals("BUY", true)) spot + distance else (spot - distance).coerceAtLeast(0.0000001)
