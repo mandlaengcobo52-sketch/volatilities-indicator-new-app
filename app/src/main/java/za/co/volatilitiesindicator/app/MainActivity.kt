@@ -42,7 +42,6 @@ import java.security.SecureRandom
 import android.content.ComponentName
 import android.content.ServiceConnection
 import android.os.IBinder
-
 /** Volatilities Indicator Android app. */
 class MainActivity : Activity(), DerivApiClient.Callback {
 
@@ -1883,7 +1882,6 @@ private fun addUserProfileScreen(page: LinearLayout) {
         if (connected && accountId.isNotBlank()) {
             profileCard.addView(label("APPLY FOR A RISK PLAN", 14f, green, true).apply { setPadding(0, dp(12), 0, dp(4)) })
             val riskOptions = listOf("Minimum — 30 days", "Medium — 30 days", "Maximum — 30 days")
-val riskValues = listOf("minimum", "medium", "maximum")
             val riskValues = listOf("minimum", "medium", "maximum", "trial")
             val riskSpinner = Spinner(this).apply {
                 adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, riskOptions)
