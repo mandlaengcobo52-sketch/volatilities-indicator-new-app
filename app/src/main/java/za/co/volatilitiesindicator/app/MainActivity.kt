@@ -360,10 +360,10 @@ private val pairedCloseRequests = mutableMapOf<Int, Long>()
         return if (capital > 0.0) kotlin.math.round(capital * 0.10 * 100.0) / 100.0 else 0.0
     }
 
-    /** Recovery stake: 20% of the fixed daily starting capital. */
+    /** Recovery stake: 40% of the fixed daily starting capital. */
     private fun fixedRecoveryStake(): Double {
         val capital = dailyStartingCapital()
-        return if (capital > 0.0) kotlin.math.round(capital * 0.20 * 100.0) / 100.0 else 0.0
+        return if (capital > 0.0) kotlin.math.round(capital * 0.40 * 100.0) / 100.0 else 0.0
     }
 
     private fun runningAndPendingTradeCount(): Int =
@@ -372,17 +372,24 @@ private val pairedCloseRequests = mutableMapOf<Int, Long>()
 
     private fun hasCapacityForTrades(count: Int): Boolean = runningAndPendingTradeCount() + count <= 6
 
-    /** Maximum three active/pending paired cycles; recovery trades are not paired cycles. */
+    /** One trading cycle at a time across all indexes: originals plus any recovery. */
     private fun canStartPairedCycle(): Boolean {
-        val activePairIds = (
-            runningContracts.values
-                .filter { it.mode == executionMode && !it.isRecovery }
-                .map { it.pairId } +
-            pendingOrdersByRequest.values
-                .filter { it.mode == executionMode && !it.isRecovery }
-                .map { it.pairId }
-        ).filter { it.isNotBlank() }.toSet()
-        return activePairIds.size < 3
+        val localActivity = runningContracts.values.any { it.mode == executionMode } ||
+            pendingOrdersByRequest.values.any { it.mode == executionMode }
+        if (localActivity) return false
+
+        // Also respect contracts visible in Deriv's portfolio that have not yet been restored locally.
+        val root = openTradesResponse ?: return true
+        val portfolio = root.optJSONObject("portfolio")
+        val contracts = portfolio?.optJSONArray("contracts") ?: root.optJSONArray("contracts")
+        if (contracts != null) for (i in 0 until contracts.length()) {
+            val item = contracts.optJSONObject(i) ?: continue
+            val sold = item.optInt("is_sold", 0) == 1 ||
+                item.optString("is_sold", "").equals("true", true)
+            val status = item.optString("status", "open").lowercase()
+            if (!sold && status !in setOf("sold", "won", "lost", "expired")) return false
+        }
+        return true
     }
 
     private fun normalizedSymbol(item: JSONObject): String = item.optString(
@@ -781,7 +788,7 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
 
         notifyEvent(
             "Master Decision requested",
-            "$symbol · $direction proposal submitted. Trade 2 must wait for Trade 1 confirmation.",
+            "$symbol · $direction proposal submitted. Opposite original trade proposal submitted after the first purchase is confirmed.",
             "master_trade_requested_${pairId}"
         )
 
@@ -904,18 +911,17 @@ private fun retryPendingPairedCloses() {
             pendingRecoverySpots.remove(pairId)
         }
     }
-
     private fun requestRecoveryTrade(winner: RunningContract, spot: Double) {
         if (winner.isRecovery || winner.recoveryTriggered) return
         if (!connected || spot <= 0.0 || !spot.isFinite()) return
         val capital = dailyStartingCapital()
         val stake = fixedRecoveryStake()
-        val requiredBalance = stake + capital * 0.40
+        val requiredBalance = stake
 
 if (capital <= 0.0 || stake <= 0.0 || accountBalance < requiredBalance) {
     notifyEvent(
         "Recovery blocked",
-        "${winner.symbol} · Daily starting capital: ${formatMoney(capital)} · Current balance: ${formatMoney(accountBalance)} · Recovery stake: ${formatMoney(stake)} · Protected reserve: ${formatMoney(capital * 0.40)} · Required balance: ${formatMoney(requiredBalance)}.",
+        "${winner.symbol} · Daily starting capital: ${formatMoney(capital)} · Current balance: ${formatMoney(accountBalance)} · Recovery stake: ${formatMoney(stake)} · Required recovery stake: ${formatMoney(requiredBalance)}.",
         "recovery_funds_${winner.pairId}"
     )
     return
@@ -936,7 +942,7 @@ if (capital <= 0.0 || stake <= 0.0 || accountBalance < requiredBalance) {
             winner.recoveryTriggered = false
             notifyEvent("Recovery rejected", "${winner.symbol} · Deriv recovery proposal could not be sent.", "recovery_send_failed_${winner.pairId}")
         } else {
-            notifyEvent("Recovery requested", "${winner.symbol} · ${winner.direction} recovery proposal submitted. Stake ${formatMoney(stake)} (20% of daily starting capital); target 30% of stake.", "recovery_requested_${winner.pairId}")
+            notifyEvent("Recovery requested", "${winner.symbol} · ${winner.direction} recovery proposal submitted. Stake ${formatMoney(stake)} (40% of fixed daily starting capital); target 20% of stake.", "recovery_requested_${winner.pairId}")
         }
     }
 
@@ -1031,17 +1037,17 @@ if (failedCloseContractId != null) {
                 return
             }
 
-            val minimumRequiredPayout = pending.stake * 1.30
-            val preferredPayout = pending.stake * 1.30
+            val requiredProfitRate = if (pending.isRecovery) 0.20 else 0.30
+            val minimumRequiredPayout = pending.stake * (1.0 + requiredProfitRate)
             val potentialProfit = payout - pending.stake
-            if (pending.pairSide != "OPPOSITE" && payout + 1e-8 < minimumRequiredPayout) {
+            if ((pending.isRecovery || pending.pairSide != "OPPOSITE") && payout + 1e-8 < minimumRequiredPayout) {
                 pendingOrdersByRequest.remove(reqId)
                 pendingIndexSymbols.remove(pending.symbol)
-                notifyEvent("Execution rejected", "${pending.symbol} · Potential profit is below the required 30% target. Deriv proposal payout ${formatMoney(payout)}; stake ${formatMoney(pending.stake)}; potential profit ${formatMoney(potentialProfit)}; minimum required profit ${formatMoney(pending.stake * 0.30)} (30% of stake). No purchase submitted.",
+                notifyEvent("Execution rejected", "${pending.symbol} · Potential profit is below the required ${String.format(java.util.Locale.US, "%.0f", requiredProfitRate * 100.0)}% target. Deriv proposal payout ${formatMoney(payout)}; stake ${formatMoney(pending.stake)}; potential profit ${formatMoney(potentialProfit)}; minimum required profit ${formatMoney(pending.stake * requiredProfitRate)} (${String.format(java.util.Locale.US, "%.0f", requiredProfitRate * 100.0)}% of stake). No purchase submitted.",
                     "profit_target_rejected_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
                 return
             }
-            val profitBand = "30% profit target"
+            val profitBand = "${String.format(java.util.Locale.US, "%.0f", requiredProfitRate * 100.0)}% profit target"
             notifyEvent("Profit target eligibility passed", "${pending.symbol} · $profitBand; potential profit ${formatMoney(potentialProfit)} (${String.format(java.util.Locale.US, "%.2f", potentialProfit / pending.stake * 100.0)}% of stake); fresh target distance ${String.format(java.util.Locale.US, "%.2f", freshDistance)}%.",
                 "profit_target_passed_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
             val buyReqId = nextTradeRequestId()
@@ -1178,35 +1184,34 @@ runningContracts[contractId] = RunningContract(contractId, pending.symbol, pendi
             if (!isClosed) {
                 liveContractProfits[contractId] = profitOpen
                 liveContractProfitModes[contractId] = "${accountId}_$executionMode"
-                val profitTarget = running.stake * 0.30
+                val profitTarget = running.stake * if (running.isRecovery) 0.20 else 0.30
                 val tenPercentTarget = running.stake * 0.10 // Preserve the existing trailing-stop threshold.
                 val liveSpot = contract.optDouble(
     "current_spot",
     contract.optDouble("current_spot_display_value", 0.0)
 )
 
-val structuralTargetReached =
-    liveSpot > 0.0 &&
-    when (running.direction) {
-        "BUY" -> liveSpot >= running.target
-        "SELL" -> liveSpot <= running.target
-        else -> false
+// A 50% loss on either original contract triggers exactly one recovery
+// in the opposite original contract's direction. Both originals remain open.
+if (running.pairId.isNotBlank() && !running.isRecovery &&
+    !running.recoveryTriggered && profitOpen <= -(running.stake * 0.50)) {
+    val oppositeOriginal = runningContracts.values.firstOrNull {
+        it.contractId != running.contractId && it.pairId == running.pairId && !it.isRecovery
     }
-
-if (
-    structuralTargetReached &&
-    running.pairId.isNotBlank() &&
-    !running.isRecovery &&
-    !running.recoveryTriggered &&
-    !running.closeRequested
-) {
-    preparePairRecovery(
-        running,
-        liveSpot,
-        "Structural Target Reached"
-    )
+    if (oppositeOriginal != null && !oppositeOriginal.recoveryTriggered) {
+        requestRecoveryTrade(
+            oppositeOriginal,
+            if (liveSpot > 0.0 && liveSpot.isFinite()) liveSpot
+            else (marketDataPrices[running.symbol] ?: running.target)
+        )
+        notifyEvent(
+            "50% Loss Recovery Triggered",
+            "${running.symbol} · Original contract $contractId reached a 50% loss. Recovery requested in ${oppositeOriginal.direction} direction. Both original contracts remain open.",
+            "recovery_50_loss_${running.pairId}"
+        )
+    }
 }
-                                if (!running.targetNotified && profitOpen >= profitTarget) {
+if (!running.targetNotified && profitOpen >= profitTarget) {
                     running.targetNotified = true
                     running.trailingActivated = true
                     running.peakProfit = profitOpen
@@ -1218,28 +1223,14 @@ if (
                         .apply()
 
                     notifyEvent(
-                        "30% Profit Target Reached",
+                        "${if (running.isRecovery) "20%" else "30%"} Profit Target Reached",
                         "${running.symbol} · Contract $contractId · Stake ${formatMoney(running.stake)} · Target ${formatMoney(profitTarget)} · Current P/L ${formatMoney(profitOpen)}.",
-                        "profit_30pct_reached_${accountId}_${executionMode}_$contractId"
+                        "profit_target_reached_${accountId}_${executionMode}_$contractId"
                     )
 
-                    if (running.pairId.isNotBlank() &&
-                        !running.isRecovery &&
-                        !running.recoveryTriggered
-                    ) {
-                        val liveSpot = contract.optDouble(
-                            "current_spot",
-                            contract.optDouble("current_spot_display_value", 0.0)
-                        )
-
-                        preparePairRecovery(
-                            running,
-                            if (liveSpot > 0.0) liveSpot
-                            else (marketDataPrices[running.symbol] ?: running.target)
-                        )
-                    } else if (!running.closeRequested) {
+                    if (!running.closeRequested) {
                         running.closeRequested = true
-                        running.closeReason = "30% Profit Target Reached"
+                        running.closeReason = if (running.isRecovery) "20% Recovery Profit Target Reached" else "30% Original Profit Target Reached"
 
                         val sent = derivApiClient.send(
                             JSONObject()
@@ -1251,7 +1242,6 @@ if (
                         if (!sent) {
                             running.closeRequested = false
                             running.closeReason = ""
-
                             notifyEvent(
                                 "Profit Target Close Failed",
                                 "${running.symbol} · Contract $contractId · Close request failed; monitoring continues.",
@@ -1295,7 +1285,7 @@ if (
                         !it.closeRequested
                 }
                 if (
-    pairedContract != null &&
+    !running.isRecovery && pairedContract != null &&
     (
         status == "won" ||
         running.closeReason.contains("Structural Target", ignoreCase = true) ||
@@ -1331,35 +1321,6 @@ if (
                     }
                 }
                 
-                val qualifyingPairClose =
-    status == "won" ||
-    running.closeReason.contains("Structural Target", ignoreCase = true) ||
-    running.closeReason.contains("30% Profit Target", ignoreCase = true) ||
-    finalProfit >= running.stake * 0.30
-
-if (
-    qualifyingPairClose &&
-    running.pairId.isNotBlank() &&
-    !running.isRecovery &&
-    !running.recoveryTriggered
-) {
-    // Deriv has confirmed the qualifying contract is closed.
-    running.closeRequested = true
-
-    val recoveryReason = running.closeReason.ifBlank {
-        if (status == "won") {
-            "Structural Target Reached"
-        } else {
-            "Paired 30% profit target"
-        }
-    }
-
-    preparePairRecovery(
-        running,
-        marketDataPrices[running.symbol] ?: running.target,
-        recoveryReason
-    )
-}
                 val reason = running.closeReason.ifBlank { if (status == "expired") "Contract Expired" else if (running.takeProfitRequested) "Target Close" else "Contract Closed" }
                 runningContracts.remove(contractId)
                 finishPairRecoveryIfClosed(running.pairId)
@@ -1546,7 +1507,7 @@ when (selectedTab) {
                     page.addView(button("SIGN IN", true) { selectedTab = "Login"; render() }, matchWrap())
                 } else addTradeScreen()
             }
-"Register" -> {
+            "Register" -> {
     addRegistrationScreen()
     page.addView(
         button("BACK TO HOME", false) {
@@ -2134,7 +2095,6 @@ private fun addHeader() {
                 }
             )
         }
-
         page.addView(
             card,
             matchWrap().apply {
@@ -4452,8 +4412,7 @@ derivApiClient.connectWithAccessToken(token, executionMode)
             }
         }
     }
-}
-
+    }
     override fun onTradeData(json: JSONObject) {
     runOnUiThread {
         handleMasterDecisionTradeResponse(json)
@@ -4640,3 +4599,4 @@ override fun onDestroy() {
     super.onDestroy()
 }
                                         }
+                                        
