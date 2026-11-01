@@ -1191,10 +1191,10 @@ runningContracts[contractId] = RunningContract(contractId, pending.symbol, pendi
     contract.optDouble("current_spot_display_value", 0.0)
 )
 
-// A 50% loss on either original contract triggers exactly one recovery
+// A 20% loss on either original contract triggers exactly one recovery
 // in the opposite original contract's direction. Both originals remain open.
 if (running.pairId.isNotBlank() && !running.isRecovery &&
-    !running.recoveryTriggered && profitOpen <= -(running.stake * 0.50)) {
+    !running.recoveryTriggered && profitOpen <= -(running.stake * 0.20)) {
     val oppositeOriginal = runningContracts.values.firstOrNull {
         it.contractId != running.contractId && it.pairId == running.pairId && !it.isRecovery
     }
@@ -1205,9 +1205,9 @@ if (running.pairId.isNotBlank() && !running.isRecovery &&
             else (marketDataPrices[running.symbol] ?: running.target)
         )
         notifyEvent(
-            "50% Loss Recovery Triggered",
-            "${running.symbol} · Original contract $contractId reached a 50% loss. Recovery requested in ${oppositeOriginal.direction} direction. Both original contracts remain open.",
-            "recovery_50_loss_${running.pairId}"
+            "20% Loss Recovery Triggered",
+            "${running.symbol} · Original contract $contractId reached a 20% loss. Recovery requested in ${oppositeOriginal.direction} direction. Both original contracts remain open.",
+            "recovery_20_loss_${running.pairId}"
         )
     }
 }
