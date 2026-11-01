@@ -163,7 +163,7 @@ private val derivServiceConnection = object : ServiceConnection {
         pendingDerivToken = null
 
         if (!token.isNullOrBlank()) {
-            derivApiClient.ensureConnectedOnResume(token, executionMode)
+            derivApiClient.connectWithAccessToken(token, executionMode)
 
         } else if (
             pendingResumeCheck &&
@@ -1211,12 +1211,12 @@ if (running.pairId.isNotBlank() && !running.isRecovery &&
         )
     }
 }
-if (!running.targetNotified && profitOpen >= profitTarget) {
+
+                                if (!running.targetNotified && profitOpen >= profitTarget) {
                     running.targetNotified = true
                     running.trailingActivated = true
                     running.peakProfit = profitOpen
-
-                    appPrefs.edit()
+                                    appPrefs.edit()
                         .putBoolean("${trailStateKey}_target_notified", true)
                         .putBoolean("${trailStateKey}_activated", true)
                         .putString("${trailStateKey}_peak", running.peakProfit.toString())
@@ -1507,7 +1507,7 @@ when (selectedTab) {
                     page.addView(button("SIGN IN", true) { selectedTab = "Login"; render() }, matchWrap())
                 } else addTradeScreen()
             }
-            "Register" -> {
+"Register" -> {
     addRegistrationScreen()
     page.addView(
         button("BACK TO HOME", false) {
@@ -2095,6 +2095,7 @@ private fun addHeader() {
                 }
             )
         }
+
         page.addView(
             card,
             matchWrap().apply {
@@ -2113,8 +2114,7 @@ private fun addHeader() {
     platform = "USER"
     return
         }
-
-    page.addView(sectionTitle("PLATFORM"))
+        page.addView(sectionTitle("PLATFORM"))
 
     val row = horizontalRow()
 
@@ -2371,9 +2371,8 @@ private fun addHeader() {
         text = statusText
         setTextColor(statusColor)
     }
-}
-
-// =========================================================
+                            }
+                            // =========================================================
 // TRADE SCREEN
 // =========================================================
 private fun addTradeScreen() {
@@ -2715,11 +2714,6 @@ private fun analysisMssEvents(candles: List<DerivApiClient.Candle>): List<Analys
     }
     return events
 }
-private fun analysisLatestMss(candles: List<DerivApiClient.Candle>): AnalysisMssEvent? =
-    analysisMssEvents(candles).lastOrNull()
-
-/* Historical Step 5 events only become eligible once the pivot's two
-   right-side confirmation candles have completed, as in WebTrader h5Events. */
 private fun analysisHistoricalOutcomes(candles: List<DerivApiClient.Candle>): List<AnalysisHistoricalOutcome> {
     if (candles.size < 30) return emptyList()
     val pivots = analysisPivots(candles)
@@ -2977,8 +2971,38 @@ private fun addMssChochBehaviourAnalysis() {
             val avgAdv = sample.takeIf { it.isNotEmpty() }?.map { it.maxAdv }?.average()
             card.addView(label("CURRENT MSS: ${currentEvent?.state ?: "NO CONFIRMED EVENT"}", 13f, if (currentEvent?.direction == "BULLISH") green else if (currentEvent?.direction == "BEARISH") red else yellow, true))
             card.addView(label("HISTORICAL SAMPLE: ${sample.size}  |  BULLISH / BEARISH EVENTS: ${history.count { it.direction == "BULLISH" }} / ${history.count { it.direction == "BEARISH" }}", 12f, white, false))
-            card.addView(label("EVENT SAMPLE: ${direction ?: 
-                               }
+            card.addView(label("EVENT SAMPLE: ${direction ?: "ALL HISTORICAL MSS"}", 12f, muted, false))
+            card.addView(label("HISTORICAL CONTINUATION: ${continuation?.let { String.format(java.util.Locale.US, "%.1f%%", it) } ?: "WAITING"}", 13f, if (continuation != null && continuation >= 50.0) green else yellow, true))
+            card.addView(label("AVERAGE FAVOURABLE MOVE: ${avgFav?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
+            card.addView(label("AVERAGE ADVERSE MOVE: ${avgAdv?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
+        }
+        page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
+    }
+}
+// =========================================================
+// ANALYSIS — DIRECTION AND STRUCTURAL TARGET
+// =========================================================
+private fun addDirectionStructuralTargetAnalysis() {
+    val header = card().apply { orientation = LinearLayout.VERTICAL }
+    val row = horizontalRow()
+    row.addView(label("Analysis - Direction and Structural Target", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
+    row.addView(button(if (directionStructuralTargetExpanded) "▼ OPEN" else "▶ CLOSED", directionStructuralTargetExpanded) {
+        directionStructuralTargetExpanded = !directionStructuralTargetExpanded
+        render()
+    }, LinearLayout.LayoutParams(-2, dp(48)))
+    header.addView(row)
+    page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
+    if (!directionStructuralTargetExpanded) return
+    page.addView(label("Direction is taken from the latest confirmed MSS/CHOCH. The structural target must lie beyond the current price in that direction.", 12f, muted, false))
+    marketDataIndexes.forEach { symbol ->
+        val candles = analysisCompletedCandles(symbol)
+        val current = marketDataPrices[symbol] ?: candles.lastOrNull()?.close
+        val event = if (candles.size >= 20) analysisLatestMss(candles) else null
+        val direction = when (event?.direction) {
+            "BULLISH" -> "UP"
+            "BEARISH" -> "DOWN"
+            else -> ""
+        }
         val target = if (event != null && current != null && direction.isNotBlank()) {
             analysisStructuralTarget(candles, current, direction, event.confirmation.epoch)
         } else null
@@ -3268,11 +3292,9 @@ private fun addTargetFilterAnalysis() {
         } else {
             null
         }
-        val passes = targetPriceForDistance != null &&
-    distance != null &&
-    distance >= 0.5 &&
-    ((direction == "UP" && targetPriceForDistance > currentPriceForDistance) ||
-     (direction == "DOWN" && targetPriceForDistance < currentPriceForDistance))
+        val passes = targetPriceForDistance != null && distance != null && distance > 0.0 &&
+            ((direction == "UP" && targetPriceForDistance > currentPriceForDistance) ||
+             (direction == "DOWN" && targetPriceForDistance < currentPriceForDistance))
         card.addView(label("DIRECTION: ${direction.ifBlank { "WAITING" }}", 13f,
             if (direction == "UP") green else if (direction == "DOWN") red else yellow, true))
         // Never render the actual target price for a regular user.
@@ -3582,7 +3604,7 @@ private fun addTargetFilterAnalysis() {
                         val tradesPerDay = when (selectedRisk) {
     "Minimum" -> "2"
     "Medium" -> "4"
-    "Maximum" -> "6"
+                            "Maximum" -> "6"
     "Super Maximum" -> "unlimited"
     else -> "2"
                         }
@@ -3601,30 +3623,6 @@ private fun addTargetFilterAnalysis() {
                         val values = mutableMapOf(
                             "user_id" to id,
                             "first_name" to first,
-                            "surname" to last,
-                            "email" to mail,
-                               "phone" to contact,
-                            "risk_profile" to selectedRisk.lowercase(),
-                            "risk_trades_per_day" to tradesPerDay,
-                            "risk_period_days" to planDays.toString(),
-                            "start_date" to planStartDate,
-                            "expiry_date" to planExpiryDate
-                        )
-                        if (newPassword.isNotEmpty()) {
-                            if (newPassword.length < 8) {
-                                toast("A new password must contain at least 8 characters.")
-                                return@setOnClickListener
-                            }
-                            values["password"] = newPassword
-                        }
-                        authRequest("admin_edit_user", values) { ok, result ->
-                            if (!ok) {
-                                toast(result.optString("message", "Unable to update user details."))
-                                return@authRequest
-                            }
-                            val riskValues = mapOf(
-                                "user_id" to id,
-                                      "first_name" to first,
                             "surname" to last,
                             "email" to mail,
                                "phone" to contact,
@@ -3902,7 +3900,6 @@ private fun addTargetFilterAnalysis() {
             val vibrationPattern = longArrayOf(0L, 250L, 150L, 250L, 150L, 250L)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val channel = NotificationChannel(channelId, "Trading notifications", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                    setShowBadge(true)
                     enableVibration(true)
                     setVibrationPattern(vibrationPattern)
                 }
@@ -3913,12 +3910,6 @@ private fun addTargetFilterAnalysis() {
             val pendingIntent = PendingIntent.getActivity(this, 7803, intent, PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0))
             val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 Notification.Builder(this, channelId).setSmallIcon(R.drawable.volatilities_indicator_logo)
-                    .setContentTitle(title).setContentText(message)
-                    .setStyle(Notification.BigTextStyle().bigText(message)).setContentIntent(pendingIntent)
-                    .setAutoCancel(true).setVibrate(vibrationPattern).build()
-            } else {
-                @Suppress("DEPRECATION")
-                Notification.Builder(this).setSmallIcon(R.drawable.volatilities_indicator_logo)
                     .setContentTitle(title).setContentText(message)
                     .setStyle(Notification.BigTextStyle().bigText(message)).setContentIntent(pendingIntent)
                     .setAutoCancel(true).setVibrate(vibrationPattern).build()
@@ -4208,7 +4199,7 @@ private fun addTargetFilterAnalysis() {
             bytes,
             Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
         )
-    }
+        }
 
     private fun createCodeChallenge(verifier: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
@@ -4218,6 +4209,7 @@ private fun addTargetFilterAnalysis() {
             Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
         )
     }
+
     private fun startDerivOAuth() {
         val state = "android-" + UUID.randomUUID().toString()
         val verifier = createCodeVerifier()
@@ -4414,7 +4406,8 @@ derivApiClient.connectWithAccessToken(token, executionMode)
             }
         }
     }
-    }
+}
+
     override fun onTradeData(json: JSONObject) {
     runOnUiThread {
         handleMasterDecisionTradeResponse(json)
@@ -4519,6 +4512,7 @@ if (stake > 0.0) {
         marketDataErrors.remove(symbol)
         evaluateMasterDecision(symbol)
         updatePtpeDisplay(symbol)
+
         if (selectedTab == "Analysis") {
             pendingAnalysisRender?.let { analysisRenderHandler.removeCallbacks(it) }
             val refresh = Runnable {
@@ -4600,4 +4594,5 @@ override fun onDestroy() {
     super.onDestroy()
 }
                                         }
-                             
+                            
+    
