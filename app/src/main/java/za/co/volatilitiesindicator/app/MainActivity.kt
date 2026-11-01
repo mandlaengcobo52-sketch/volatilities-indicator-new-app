@@ -898,30 +898,20 @@ private fun retryPendingPairedCloses() {
         }
     }
 }
-    private fun finishPairRecoveryIfClosed(pairId: String) {
-    if (pairId.isBlank()) return
+            
+private fun finishPairRecoveryIfClosed(pairId: String) {
+        if (pairId.isBlank()) return
+        val winner = pendingRecoveryWinners[pairId] ?: return
+        val pairStillActive = runningContracts.values.any { it.pairId == pairId && !it.isRecovery } ||
+            pendingOrdersByRequest.values.any { it.pairId == pairId && !it.isRecovery }
+        if (pairStillActive) return
 
-    val survivor = pendingRecoveryWinners[pairId] ?: return
-    val losingContractId = pendingRecoveryLosers[pairId] ?: return
-
-    // Do not request recovery until Deriv confirms the losing
-    // original contract has disappeared from the running contracts.
-    if (runningContracts.containsKey(losingContractId)) return
-
-    // The surviving original must still be open.
-    if (!runningContracts.containsKey(survivor.contractId)) return
-
-    val spot = pendingRecoverySpots[pairId]
-        ?: marketDataPrices[survivor.symbol]
-        ?: survivor.target
-
-    requestRecoveryTrade(survivor, spot)
-
-    if (survivor.recoveryTriggered) {
-        pendingRecoveryWinners.remove(pairId)
-        pendingRecoverySpots.remove(pairId)
-        pendingRecoveryLosers.remove(pairId)
-    }
+        val spot = pendingRecoverySpots[pairId] ?: marketDataPrices[winner.symbol] ?: winner.target
+        requestRecoveryTrade(winner, spot)
+        if (winner.recoveryTriggered) {
+            pendingRecoveryWinners.remove(pairId)
+            pendingRecoverySpots.remove(pairId)
+        }
     }
     private fun requestRecoveryTrade(winner: RunningContract, spot: Double) {
         if (winner.isRecovery || winner.recoveryTriggered) return
