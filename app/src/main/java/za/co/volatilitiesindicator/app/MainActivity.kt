@@ -304,6 +304,7 @@ private val pairedCloseRequests = mutableMapOf<Int, Long>()
     // Retain the winning side until Deriv confirms both contracts in its pair are closed.
     private val pendingRecoveryWinners = mutableMapOf<String, RunningContract>()
     private val pendingRecoverySpots = mutableMapOf<String, Double>()
+    private val pendingRecoveryLosers = mutableMapOf<String, Long>()
     private var nextTradeRequestId = 710000
     private var manualTradeDirection = "BUY"
     private val lastDecisionByIndex = mutableMapOf<String, MasterDecision>()
@@ -898,18 +899,29 @@ private fun retryPendingPairedCloses() {
     }
 }
     private fun finishPairRecoveryIfClosed(pairId: String) {
-        if (pairId.isBlank()) return
-        val winner = pendingRecoveryWinners[pairId] ?: return
-        val pairStillActive = runningContracts.values.any { it.pairId == pairId && !it.isRecovery } ||
-            pendingOrdersByRequest.values.any { it.pairId == pairId && !it.isRecovery }
-        if (pairStillActive) return
+    if (pairId.isBlank()) return
 
-        val spot = pendingRecoverySpots[pairId] ?: marketDataPrices[winner.symbol] ?: winner.target
-        requestRecoveryTrade(winner, spot)
-        if (winner.recoveryTriggered) {
-            pendingRecoveryWinners.remove(pairId)
-            pendingRecoverySpots.remove(pairId)
-        }
+    val survivor = pendingRecoveryWinners[pairId] ?: return
+    val losingContractId = pendingRecoveryLosers[pairId] ?: return
+
+    // Do not request recovery until Deriv confirms the losing
+    // original contract has disappeared from the running contracts.
+    if (runningContracts.containsKey(losingContractId)) return
+
+    // The surviving original must still be open.
+    if (!runningContracts.containsKey(survivor.contractId)) return
+
+    val spot = pendingRecoverySpots[pairId]
+        ?: marketDataPrices[survivor.symbol]
+        ?: survivor.target
+
+    requestRecoveryTrade(survivor, spot)
+
+    if (survivor.recoveryTriggered) {
+        pendingRecoveryWinners.remove(pairId)
+        pendingRecoverySpots.remove(pairId)
+        pendingRecoveryLosers.remove(pairId)
+    }
     }
     private fun requestRecoveryTrade(winner: RunningContract, spot: Double) {
         if (winner.isRecovery || winner.recoveryTriggered) return
@@ -1191,13 +1203,65 @@ runningContracts[contractId] = RunningContract(contractId, pending.symbol, pendi
     contract.optDouble("current_spot_display_value", 0.0)
 )
 
-// A 20% loss on either original contract triggers exactly one recovery
-// in the opposite original contract's direction. Both originals remain open.
-if (running.pairId.isNotBlank() && !running.isRecovery &&
-    !running.recoveryTriggered && profitOpen <= -(running.stake * 0.20)) {
-    val oppositeOriginal = runningContracts.values.firstOrNull {
-        it.contractId != running.contractId && it.pairId == running.pairId && !it.isRecovery
+// At a 20% loss, close only the losing original.
+// Recovery is requested only after Deriv confirms that closure.
+if (running.pairId.isNotBlank() &&
+    !running.isRecovery &&
+    !running.closeRequested &&
+    !running.recoveryTriggered &&
+    profitOpen <= -(running.stake * 0.20)
+) {
+    val survivor = runningContracts.values.firstOrNull {
+        it.contractId != running.contractId &&
+        it.pairId == running.pairId &&
+        !it.isRecovery
     }
+
+    if (survivor != null && !survivor.recoveryTriggered &&
+        !pendingRecoveryWinners.containsKey(running.pairId)
+    ) {
+        val recoverySpot = if (liveSpot > 0.0 && liveSpot.isFinite()) {
+            liveSpot
+        } else {
+            marketDataPrices[running.symbol] ?: running.target
+        }
+
+        pendingRecoveryWinners[running.pairId] = survivor
+        pendingRecoverySpots[running.pairId] = recoverySpot
+        pendingRecoveryLosers[running.pairId] = running.contractId
+
+        running.closeRequested = true
+        running.closeReason = "20% Loss — Close Before Recovery"
+
+        val lossCloseReqId = nextTradeRequestId()
+        pairedCloseRequests[lossCloseReqId] = running.contractId
+
+        if (!derivApiClient.send(
+                JSONObject()
+                    .put("sell", running.contractId)
+                    .put("price", 0)
+                    .put("req_id", lossCloseReqId)
+            )
+        ) {
+            pairedCloseRequests.remove(lossCloseReqId)
+            running.closeRequested = false
+            running.closeReason = ""
+            pendingPairedCloseRetries.add(running.contractId)
+
+            notifyEvent(
+                "Loss Close Pending",
+                "${running.symbol} · Contract ${running.contractId} reached a 20% loss. Close request could not be sent; recovery will wait for confirmed closure.",
+                "loss_close_send_failed_${running.pairId}"
+            )
+        } else {
+            notifyEvent(
+                "20% Loss — Closing Losing Trade",
+                "${running.symbol} · Losing contract ${running.contractId} is being closed. The remaining ${survivor.direction} original stays open. Recovery will be requested only after Deriv confirms the losing contract is closed.",
+                "loss_close_requested_${running.pairId}"
+            )
+        }
+    }
+}
     if (oppositeOriginal != null && !oppositeOriginal.recoveryTriggered) {
         requestRecoveryTrade(
             oppositeOriginal,
