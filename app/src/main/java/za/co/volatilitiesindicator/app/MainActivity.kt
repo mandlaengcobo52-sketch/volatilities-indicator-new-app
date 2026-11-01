@@ -1203,65 +1203,51 @@ runningContracts[contractId] = RunningContract(contractId, pending.symbol, pendi
     contract.optDouble("current_spot_display_value", 0.0)
 )
 
-// At a 20% loss, close only the losing original.
-// Recovery is requested only after Deriv confirms that closure.
-if (running.pairId.isNotBlank() &&
-    !running.isRecovery &&
-    !running.closeRequested &&
-    !running.recoveryTriggered &&
-    profitOpen <= -(running.stake * 0.20)
-) {
-    val survivor = runningContracts.values.firstOrNull {
-        it.contractId != running.contractId &&
-        it.pairId == running.pairId &&
-        !it.isRecovery
-    }
-
-    if (survivor != null && !survivor.recoveryTriggered &&
-        !pendingRecoveryWinners.containsKey(running.pairId)
-    ) {
-        val recoverySpot = if (liveSpot > 0.0 && liveSpot.isFinite()) {
-            liveSpot
-        } else {
-            marketDataPrices[running.symbol] ?: running.target
-        }
-
-        pendingRecoveryWinners[running.pairId] = survivor
-        pendingRecoverySpots[running.pairId] = recoverySpot
-        pendingRecoveryLosers[running.pairId] = running.contractId
-
-        running.closeRequested = true
-        running.closeReason = "20% Loss — Close Before Recovery"
-
-        val lossCloseReqId = nextTradeRequestId()
-        pairedCloseRequests[lossCloseReqId] = running.contractId
-
-        if (!derivApiClient.send(
-                JSONObject()
-                    .put("sell", running.contractId)
-                    .put("price", 0)
-                    .put("req_id", lossCloseReqId)
-            )
-        ) {
-            pairedCloseRequests.remove(lossCloseReqId)
-            running.closeRequested = false
-            running.closeReason = ""
-            pendingPairedCloseRetries.add(running.contractId)
-
-            notifyEvent(
-                "Loss Close Pending",
-                "${running.symbol} · Contract ${running.contractId} reached a 20% loss. Close request could not be sent; recovery will wait for confirmed closure.",
-                "loss_close_send_failed_${running.pairId}"
-            )
-        } else {
-            notifyEvent(
-                "20% Loss — Closing Losing Trade",
-                "${running.symbol} · Losing contract ${running.contractId} is being closed. The remaining ${survivor.direction} original stays open. Recovery will be requested only after Deriv confirms the losing contract is closed.",
-                "loss_close_requested_${running.pairId}"
-            )
-        }
+            "20% Loss Recovery Triggered",
+            "${running.symbol} · Original contract $contractId reached a 20% loss. Recovery requested in ${oppositeOriginal.direction} direction. Both original contracts remain open.",
+            "recovery_20_loss_${running.pairId}"
+        )
     }
 }
+if (!running.targetNotified && profitOpen >= profitTarget) {
+                    running.targetNotified = true
+                    running.trailingActivated = true
+                    running.peakProfit = profitOpen
+
+                    appPrefs.edit()
+                        .putBoolean("${trailStateKey}_target_notified", true)
+                        .putBoolean("${trailStateKey}_activated", true)
+                        .putString("${trailStateKey}_peak", running.peakProfit.toString())
+                        .apply()
+
+                    notifyEvent(
+                        "${if (running.isRecovery) "20%" else "30%"} Profit Target Reached",
+                        "${running.symbol} · Contract $contractId · Stake ${formatMoney(running.stake)} · Target ${formatMoney(profitTarget)} · Current P/L ${formatMoney(profitOpen)}.",
+                        "profit_target_reached_${accountId}_${executionMode}_$contractId"
+                    )
+
+                    if (!running.closeRequested) {
+                        running.closeRequested = true
+                        running.closeReason = if (running.isRecovery) "20% Recovery Profit Target Reached" else "30% Original Profit Target Reached"
+
+                        val sent = derivApiClient.send(
+                            JSONObject()
+                                .put("sell", contractId)
+                                .put("price", 0)
+                                .put("req_id", nextTradeRequestId())
+                        )
+
+                        if (!sent) {
+                            running.closeRequested = false
+                            running.closeReason = ""
+                            notifyEvent(
+                                "Profit Target Close Failed",
+                                "${running.symbol} · Contract $contractId · Close request failed; monitoring continues.",
+                                "profit_target_close_failed_${accountId}_${executionMode}_$contractId"
+                            )
+                        }
+                    }
+                                }
     if (oppositeOriginal != null && !oppositeOriginal.recoveryTriggered) {
         requestRecoveryTrade(
             oppositeOriginal,
