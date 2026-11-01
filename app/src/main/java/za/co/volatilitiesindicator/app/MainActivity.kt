@@ -163,7 +163,7 @@ private val derivServiceConnection = object : ServiceConnection {
         pendingDerivToken = null
 
         if (!token.isNullOrBlank()) {
-            derivApiClient.connectWithAccessToken(token, executionMode)
+            derivApiClient.ensureConnectedOnResume(token, executionMode)
 
         } else if (
             pendingResumeCheck &&
@@ -3908,6 +3908,7 @@ private fun addTargetFilterAnalysis() {
             val vibrationPattern = longArrayOf(0L, 250L, 150L, 250L, 150L, 250L)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val channel = NotificationChannel(channelId, "Trading notifications", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                    setShowBadge(true)
                     enableVibration(true)
                     setVibrationPattern(vibrationPattern)
                 }
