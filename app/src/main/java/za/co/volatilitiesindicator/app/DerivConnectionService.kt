@@ -112,13 +112,69 @@ class DerivConnectionService : Service() {
         }
     }
 
-    override fun onStartCommand(
+        override fun onStartCommand(
         intent: Intent?,
         flags: Int,
         startId: Int
     ): Int {
+
+        if (
+            intent == null ||
+            intent.action == ACTION_BOOT_RECONNECT
+        ) {
+
+            val settings = getSharedPreferences(
+                "volatilities_app_settings",
+                MODE_PRIVATE
+            )
+
+            val authPrefs = getSharedPreferences(
+                "vi_platform_auth",
+                MODE_PRIVATE
+            )
+
+            val derivPrefs = getSharedPreferences(
+                "deriv_oauth",
+                MODE_PRIVATE
+            )
+
+            val executionMode = settings.getString(
+                "executionMode",
+                "DEMO"
+            ) ?: "DEMO"
+
+            val manuallyDisconnected = settings.getBoolean(
+                "deriv_manually_disconnected",
+                false
+            )
+
+            val platformToken = authPrefs.getString(
+                "mobile_auth_token",
+                ""
+            ).orEmpty()
+
+            val derivToken = derivPrefs.getString(
+                if (executionMode.equals("REAL", true))
+                    "real_token"
+                else
+                    "demo_token",
+                ""
+            ).orEmpty()
+
+            if (
+                !manuallyDisconnected &&
+                platformToken.isNotBlank() &&
+                derivToken.isNotBlank()
+            ) {
+                client.ensureConnectedOnResume(
+                    derivToken,
+                    executionMode
+                )
+            }
+        }
+
         return START_STICKY
-    }
+        }
 
     override fun onBind(intent: Intent?): IBinder {
         return binder
@@ -188,5 +244,6 @@ class DerivConnectionService : Service() {
     companion object {
         const val CHANNEL_ID = "deriv_connection_service"
         const val NOTIFICATION_ID = 7401
+                const val ACTION_BOOT_RECONNECT = "za.co.volatilitiesindicator.app.ACTION_BOOT_RECONNECT"
     }
 }
