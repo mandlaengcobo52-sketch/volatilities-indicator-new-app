@@ -163,7 +163,7 @@ private val derivServiceConnection = object : ServiceConnection {
         pendingDerivToken = null
 
         if (!token.isNullOrBlank()) {
-            derivApiClient.connectWithAccessToken(token, executionMode)
+            derivApiClient.ensureConnectedOnResume(token, executionMode)
 
         } else if (
             pendingResumeCheck &&
@@ -3727,7 +3727,20 @@ private fun addTargetFilterAnalysis() {
         }, matchWrap().apply { topMargin = dp(8) })
         page.addView(card, matchWrap())
     }
+    private fun clearTradeNotificationBadges() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val manager =
+                getSystemService(NOTIFICATION_SERVICE) as NotificationManager
 
+            manager.activeNotifications
+                .filter {
+                    it.notification.channelId == "vi_trade_events_v2"
+                }
+                .forEach {
+                    manager.cancel(it.tag, it.id)
+                }
+        }
+    }
     private fun addNotificationsScreen() {
         page.addView(sectionTitle("NOTIFICATIONS"))
         val card = card().apply { orientation = LinearLayout.VERTICAL }
