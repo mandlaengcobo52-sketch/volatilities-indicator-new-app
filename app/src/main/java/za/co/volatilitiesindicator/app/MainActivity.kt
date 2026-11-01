@@ -1011,37 +1011,56 @@ if (failedCloseContractId != null) {
                     "trade_open_failed_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
                 return
             }
-            // Fresh-entry gate: the original signal may have become stale while the proposal
-            // was in flight. Recalculate the full Master Decision using the latest live price,
-            // then ensure the target still offers the required minimum distance and is still
-            // the same structural target/direction that generated this proposal.
-            val freshDecision = if (pending.pairId.isBlank()) evaluateMasterDecision(pending.symbol) else lastDecisionByIndex[pending.symbol]
+                        // Recovery execution is independent of Master Decision and PTPE.
+            // Normal trades retain their full fresh-entry validation.
+            val freshDecision = if (pending.isRecovery) {
+                null
+            } else if (pending.pairId.isBlank()) {
+                evaluateMasterDecision(pending.symbol)
+            } else {
+                lastDecisionByIndex[pending.symbol]
+            }
+
             val livePrice = marketDataPrices[pending.symbol]
             val freshDistance = if (livePrice != null && livePrice.isFinite() && livePrice > 0.0)
                 kotlin.math.abs(pending.target - livePrice) / livePrice * 100.0 else 0.0
+
+            // Retain price-direction safety, but never use PTPE for recovery approval.
             val targetStillAhead = livePrice != null && when (pending.direction) {
                 "BUY" -> pending.target > livePrice
                 "SELL" -> pending.target < livePrice
                 else -> false
             }
+
             val analysisRequired = !pending.isRecovery && pending.pairSide != "OPPOSITE"
-            val sameSignal = !analysisRequired || (
+
+            val sameSignal = if (!analysisRequired) {
+                true
+            } else {
                 freshDecision != null &&
-                freshDecision.direction == pending.direction &&
-                kotlin.math.abs(freshDecision.target - pending.target) <=
-                    kotlin.math.max(0.0000001, kotlin.math.abs(pending.target) * 0.0000001)
-            )
-            if ((analysisRequired && freshDecision == null) || !sameSignal || !targetStillAhead) {
-                
+                    freshDecision.direction == pending.direction &&
+                    kotlin.math.abs(freshDecision.target - pending.target) <=
+                        kotlin.math.max(0.0000001, kotlin.math.abs(pending.target) * 0.0000001)
+            }
+
+            if (!sameSignal || !targetStillAhead) {
                 pendingOrdersByRequest.remove(reqId)
                 pendingIndexSymbols.remove(pending.symbol)
+
                 val reason = when {
-                    freshDecision == null -> "Master Decision no longer qualifies at the latest price."
-                    !sameSignal -> "The qualifying direction or structural target changed while requesting the proposal."
-                    else -> "The target is no longer ahead of the current entry price."
+                    analysisRequired && freshDecision == null ->
+                        "Master Decision no longer qualifies at the latest price."
+                    !sameSignal ->
+                        "The qualifying direction or structural target changed while requesting the proposal."
+                    else ->
+                        "The target is no longer ahead of the current entry price."
                 }
-                notifyEvent("Execution rejected", "${pending.symbol} · Fresh-entry validation failed. $reason No purchase submitted.",
-                    "fresh_entry_rejected_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
+
+                notifyEvent(
+                    "Execution rejected",
+                    "${pending.symbol} · Fresh-entry validation failed. $reason No purchase submitted.",
+                    "fresh_entry_rejected_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}"
+                )
                 return
             }
 
