@@ -304,6 +304,7 @@ private val pairedCloseRequests = mutableMapOf<Int, Long>()
     // Retain the winning side until Deriv confirms both contracts in its pair are closed.
     private val pendingRecoveryWinners = mutableMapOf<String, RunningContract>()
     private val pendingRecoverySpots = mutableMapOf<String, Double>()
+    private val pendingRecoveryLosers = mutableMapOf<String, Long>()
     private var nextTradeRequestId = 710000
     private var manualTradeDirection = "BUY"
     private val lastDecisionByIndex = mutableMapOf<String, MasterDecision>()
@@ -898,18 +899,25 @@ private fun retryPendingPairedCloses() {
     }
 }
     private fun finishPairRecoveryIfClosed(pairId: String) {
-        if (pairId.isBlank()) return
-        val winner = pendingRecoveryWinners[pairId] ?: return
-        val pairStillActive = runningContracts.values.any { it.pairId == pairId && !it.isRecovery } ||
-            pendingOrdersByRequest.values.any { it.pairId == pairId && !it.isRecovery }
-        if (pairStillActive) return
+    if (pairId.isBlank()) return
 
-        val spot = pendingRecoverySpots[pairId] ?: marketDataPrices[winner.symbol] ?: winner.target
-        requestRecoveryTrade(winner, spot)
-        if (winner.recoveryTriggered) {
-            pendingRecoveryWinners.remove(pairId)
-            pendingRecoverySpots.remove(pairId)
-        }
+    val survivor = pendingRecoveryWinners[pairId] ?: return
+    val losingContractId = pendingRecoveryLosers[pairId] ?: return
+
+    // Do not launch recovery until Deriv confirms the losing contract is gone.
+    if (runningContracts.containsKey(losingContractId)) return
+
+    val spot = pendingRecoverySpots[pairId]
+        ?: marketDataPrices[survivor.symbol]
+        ?: survivor.target
+
+    requestRecoveryTrade(survivor, spot)
+
+    if (survivor.recoveryTriggered) {
+        pendingRecoveryWinners.remove(pairId)
+        pendingRecoverySpots.remove(pairId)
+        pendingRecoveryLosers.remove(pairId)
+    }
     }
     private fun requestRecoveryTrade(winner: RunningContract, spot: Double) {
         if (winner.isRecovery || winner.recoveryTriggered) return
@@ -1219,6 +1227,7 @@ if (
 
         pendingRecoveryWinners[running.pairId] = survivor
         pendingRecoverySpots[running.pairId] = recoverySpot
+        pendingRecoveryLosers[running.pairId] = running.contractId
 
         running.closeRequested = true
         running.closeReason = "20% Loss — Close Before Recovery"
