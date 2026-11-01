@@ -163,7 +163,7 @@ private val derivServiceConnection = object : ServiceConnection {
         pendingDerivToken = null
 
         if (!token.isNullOrBlank()) {
-            derivApiClient.ensureConnectedOnResume(token, executionMode)
+            derivApiClient.connectWithAccessToken(token, executionMode)
 
         } else if (
             pendingResumeCheck &&
@@ -304,7 +304,6 @@ private val pairedCloseRequests = mutableMapOf<Int, Long>()
     // Retain the winning side until Deriv confirms both contracts in its pair are closed.
     private val pendingRecoveryWinners = mutableMapOf<String, RunningContract>()
     private val pendingRecoverySpots = mutableMapOf<String, Double>()
-    private val pendingRecoveryLosers = mutableMapOf<String, Long>()
     private var nextTradeRequestId = 710000
     private var manualTradeDirection = "BUY"
     private val lastDecisionByIndex = mutableMapOf<String, MasterDecision>()
@@ -899,28 +898,18 @@ private fun retryPendingPairedCloses() {
     }
 }
     private fun finishPairRecoveryIfClosed(pairId: String) {
-    if (pairId.isBlank()) return
+        if (pairId.isBlank()) return
+        val winner = pendingRecoveryWinners[pairId] ?: return
+        val pairStillActive = runningContracts.values.any { it.pairId == pairId && !it.isRecovery } ||
+            pendingOrdersByRequest.values.any { it.pairId == pairId && !it.isRecovery }
+        if (pairStillActive) return
 
-    val survivor = pendingRecoveryWinners[pairId] ?: return
-    val losingContractId = pendingRecoveryLosers[pairId] ?: return
-
-    // Do not request recovery until Deriv confirms the losing
-    // original contract has disappeared from the running contracts.
-    if (runningContracts.containsKey(losingContractId)) return
-
-    // The surviving original must still be open.
-    if (!runningContracts.containsKey(survivor.contractId)) return
-        val spot = pendingRecoverySpots[pairId]
-        ?: marketDataPrices[survivor.symbol]
-        ?: survivor.target
-
-    requestRecoveryTrade(survivor, spot)
-
-    if (survivor.recoveryTriggered) {
-        pendingRecoveryWinners.remove(pairId)
-        pendingRecoverySpots.remove(pairId)
-        pendingRecoveryLosers.remove(pairId)
-    }
+        val spot = pendingRecoverySpots[pairId] ?: marketDataPrices[winner.symbol] ?: winner.target
+        requestRecoveryTrade(winner, spot)
+        if (winner.recoveryTriggered) {
+            pendingRecoveryWinners.remove(pairId)
+            pendingRecoverySpots.remove(pairId)
+        }
     }
     private fun requestRecoveryTrade(winner: RunningContract, spot: Double) {
         if (winner.isRecovery || winner.recoveryTriggered) return
@@ -1202,64 +1191,13 @@ runningContracts[contractId] = RunningContract(contractId, pending.symbol, pendi
     contract.optDouble("current_spot_display_value", 0.0)
 )
 
-// At a 20% loss, close only the losing original.
-// Recovery is requested only after Deriv confirms that closure.
-if (running.pairId.isNotBlank() &&
-    !running.isRecovery &&
-    !running.closeRequested &&
-    !running.recoveryTriggered &&
-    profitOpen <= -(running.stake * 0.20)
-) {
-    val survivor = runningContracts.values.firstOrNull {
-        it.contractId != running.contractId &&
-        it.pairId == running.pairId &&
-        !it.isRecovery
+// A 50% loss on either original contract triggers exactly one recovery
+// in the opposite original contract's direction. Both originals remain open.
+if (running.pairId.isNotBlank() && !running.isRecovery &&
+    !running.recoveryTriggered && profitOpen <= -(running.stake * 0.50)) {
+    val oppositeOriginal = runningContracts.values.firstOrNull {
+        it.contractId != running.contractId && it.pairId == running.pairId && !it.isRecovery
     }
-    if (survivor != null && !survivor.recoveryTriggered &&
-        !pendingRecoveryWinners.containsKey(running.pairId)
-    ) {
-        val recoverySpot = if (liveSpot > 0.0 && liveSpot.isFinite()) {
-            liveSpot
-        } else {
-            marketDataPrices[running.symbol] ?: running.target
-        }
-
-        pendingRecoveryWinners[running.pairId] = survivor
-        pendingRecoverySpots[running.pairId] = recoverySpot
-        pendingRecoveryLosers[running.pairId] = running.contractId
-
-        running.closeRequested = true
-        running.closeReason = "20% Loss — Close Before Recovery"
-
-        val lossCloseReqId = nextTradeRequestId()
-        pairedCloseRequests[lossCloseReqId] = running.contractId
-
-        if (!derivApiClient.send(
-                JSONObject()
-                    .put("sell", running.contractId)
-                    .put("price", 0)
-                    .put("req_id", lossCloseReqId)
-            )
-        ) {
-            pairedCloseRequests.remove(lossCloseReqId)
-            running.closeRequested = false
-            running.closeReason = ""
-            pendingPairedCloseRetries.add(running.contractId)
-
-            notifyEvent(
-                "Loss Close Pending",
-                "${running.symbol} · Contract ${running.contractId} reached a 20% loss. Close request could not be sent; recovery will wait for confirmed closure.",
-                "loss_close_send_failed_${running.pairId}"
-            )
-        } else {
-            notifyEvent(
-                "20% Loss — Closing Losing Trade",
-                "${running.symbol} · Losing contract ${running.contractId} is being closed. The remaining ${survivor.direction} original stays open. Recovery will be requested only after Deriv confirms the losing contract is closed.",
-                "loss_close_requested_${running.pairId}"
-            )
-        }
-    }
-}
     if (oppositeOriginal != null && !oppositeOriginal.recoveryTriggered) {
         requestRecoveryTrade(
             oppositeOriginal,
@@ -1267,9 +1205,9 @@ if (running.pairId.isNotBlank() &&
             else (marketDataPrices[running.symbol] ?: running.target)
         )
         notifyEvent(
-            "20% Loss Recovery Triggered",
-            "${running.symbol} · Original contract $contractId reached a 20% loss. Recovery requested in ${oppositeOriginal.direction} direction. Both original contracts remain open.",
-            "recovery_20_loss_${running.pairId}"
+            "50% Loss Recovery Triggered",
+            "${running.symbol} · Original contract $contractId reached a 50% loss. Recovery requested in ${oppositeOriginal.direction} direction. Both original contracts remain open.",
+            "recovery_50_loss_${running.pairId}"
         )
     }
 }
@@ -1510,6 +1448,7 @@ if (savedToken.isNotBlank()) {
             if (selectedTab == "Notifications") render()
         }
     }
+
     private fun render() {
         val previousScrollY =
     if (lastRenderedTab == selectedTab) {
@@ -1810,7 +1749,7 @@ private fun addLoginScreen() {
                         authPrefs.edit().putString("mobile_auth_token", authToken).apply()
                         currentProfile = result.optJSONObject("user")
                         val role = currentProfile?.optString("role", "user") ?: "user"
-                        platform = if (role.equals("admin", ignoreCase = true)) "ADMIN" else "USER"
+platform = if (role.equals("admin", ignoreCase = true)) "ADMIN" else "USER"
                         selectedTab = "My profile"
                         drawerOpen = false
                         render()
@@ -2107,6 +2046,7 @@ private fun addHeader() {
 
     private fun addDrawer() {
         val card = card()
+
         card.orientation = LinearLayout.VERTICAL
 
         card.addView(
@@ -3037,38 +2977,8 @@ private fun addMssChochBehaviourAnalysis() {
             val avgAdv = sample.takeIf { it.isNotEmpty() }?.map { it.maxAdv }?.average()
             card.addView(label("CURRENT MSS: ${currentEvent?.state ?: "NO CONFIRMED EVENT"}", 13f, if (currentEvent?.direction == "BULLISH") green else if (currentEvent?.direction == "BEARISH") red else yellow, true))
             card.addView(label("HISTORICAL SAMPLE: ${sample.size}  |  BULLISH / BEARISH EVENTS: ${history.count { it.direction == "BULLISH" }} / ${history.count { it.direction == "BEARISH" }}", 12f, white, false))
-            card.addView(label("EVENT SAMPLE: ${direction ?: "ALL HISTORICAL MSS"}", 12f, muted, false))
-            card.addView(label("HISTORICAL CONTINUATION: ${continuation?.let { String.format(java.util.Locale.US, "%.1f%%", it) } ?: "WAITING"}", 13f, if (continuation != null && continuation >= 50.0) green else yellow, true))
-            card.addView(label("AVERAGE FAVOURABLE MOVE: ${avgFav?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
-            card.addView(label("AVERAGE ADVERSE MOVE: ${avgAdv?.let { formatMarketPrice(it) } ?: "—"}", 12f, white, false))
-        }
-        page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
-    }
-}
-// =========================================================
-// ANALYSIS — DIRECTION AND STRUCTURAL TARGET
-// =========================================================
-private fun addDirectionStructuralTargetAnalysis() {
-    val header = card().apply { orientation = LinearLayout.VERTICAL }
-    val row = horizontalRow()
-    row.addView(label("Analysis - Direction and Structural Target", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
-    row.addView(button(if (directionStructuralTargetExpanded) "▼ OPEN" else "▶ CLOSED", directionStructuralTargetExpanded) {
-        directionStructuralTargetExpanded = !directionStructuralTargetExpanded
-        render()
-    }, LinearLayout.LayoutParams(-2, dp(48)))
-    header.addView(row)
-    page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
-    if (!directionStructuralTargetExpanded) return
-    page.addView(label("Direction is taken from the latest confirmed MSS/CHOCH. The structural target must lie beyond the current price in that direction.", 12f, muted, false))
-    marketDataIndexes.forEach { symbol ->
-        val candles = analysisCompletedCandles(symbol)
-        val current = marketDataPrices[symbol] ?: candles.lastOrNull()?.close
-        val event = if (candles.size >= 20) analysisLatestMss(candles) else null
-        val direction = when (event?.direction) {
-            "BULLISH" -> "UP"
-            "BEARISH" -> "DOWN"
-            else -> ""
-        }
+            card.addView(label("EVENT SAMPLE: ${direction ?: 
+                               }
         val target = if (event != null && current != null && direction.isNotBlank()) {
             analysisStructuralTarget(candles, current, direction, event.confirmation.epoch)
         } else null
@@ -3605,6 +3515,7 @@ private fun addTargetFilterAnalysis() {
                 show()
             }
     }
+
     private fun showEditUserDialog(user: JSONObject) {
         val firstName = android.widget.EditText(this).apply {
             hint = "First name"
@@ -3713,6 +3624,30 @@ private fun addTargetFilterAnalysis() {
                             }
                             val riskValues = mapOf(
                                 "user_id" to id,
+                                      "first_name" to first,
+                            "surname" to last,
+                            "email" to mail,
+                               "phone" to contact,
+                            "risk_profile" to selectedRisk.lowercase(),
+                            "risk_trades_per_day" to tradesPerDay,
+                            "risk_period_days" to planDays.toString(),
+                            "start_date" to planStartDate,
+                            "expiry_date" to planExpiryDate
+                        )
+                        if (newPassword.isNotEmpty()) {
+                            if (newPassword.length < 8) {
+                                toast("A new password must contain at least 8 characters.")
+                                return@setOnClickListener
+                            }
+                            values["password"] = newPassword
+                        }
+                        authRequest("admin_edit_user", values) { ok, result ->
+                            if (!ok) {
+                                toast(result.optString("message", "Unable to update user details."))
+                                return@authRequest
+                            }
+                            val riskValues = mapOf(
+                                "user_id" to id,
                                       "risk_profile" to selectedRisk.lowercase(java.util.Locale.US),
                                 "risk_percent" to "20",
                                 "plan_id" to (selectedRisk.lowercase(java.util.Locale.US).replace(" ", "_") + "_${planDays}_days"),
@@ -3789,23 +3724,8 @@ private fun addTargetFilterAnalysis() {
         }, matchWrap().apply { topMargin = dp(8) })
         page.addView(card, matchWrap())
     }
-        private fun clearTradeNotificationBadges() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val manager =
-                getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-
-            manager.activeNotifications
-                .filter {
-                    it.notification.channelId == "vi_trade_events_v2"
-                }
-                .forEach {
-                    manager.cancel(it.tag, it.id)
-                }
-        }
-        }
 
     private fun addNotificationsScreen() {
-                clearTradeNotificationBadges()
         page.addView(sectionTitle("NOTIFICATIONS"))
         val card = card().apply { orientation = LinearLayout.VERTICAL }
         card.addView(label("Trade and risk notifications", 18f, green, true))
@@ -3822,8 +3742,7 @@ private fun addTargetFilterAnalysis() {
             render()
             }, matchWrap().apply { topMargin = dp(10) })
         card.addView(label("────────────────────────", 10f, muted, false))
-                card.addView(button("CLEAR NOTIFICATION FEED", false) {
-            clearTradeNotificationBadges()
+        card.addView(button("CLEAR NOTIFICATION FEED", false) {
             appPrefs.edit().remove("notification_feed").apply()
             render()
         }, matchWrap().apply { topMargin = dp(6) })
@@ -3983,7 +3902,6 @@ private fun addTargetFilterAnalysis() {
             val vibrationPattern = longArrayOf(0L, 250L, 150L, 250L, 150L, 250L)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val channel = NotificationChannel(channelId, "Trading notifications", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                    setShowBadge(true)
                     enableVibration(true)
                     setVibrationPattern(vibrationPattern)
                 }
@@ -3994,6 +3912,12 @@ private fun addTargetFilterAnalysis() {
             val pendingIntent = PendingIntent.getActivity(this, 7803, intent, PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0))
             val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 Notification.Builder(this, channelId).setSmallIcon(R.drawable.volatilities_indicator_logo)
+                    .setContentTitle(title).setContentText(message)
+                    .setStyle(Notification.BigTextStyle().bigText(message)).setContentIntent(pendingIntent)
+                    .setAutoCancel(true).setVibrate(vibrationPattern).build()
+            } else {
+                @Suppress("DEPRECATION")
+                Notification.Builder(this).setSmallIcon(R.drawable.volatilities_indicator_logo)
                     .setContentTitle(title).setContentText(message)
                     .setStyle(Notification.BigTextStyle().bigText(message)).setContentIntent(pendingIntent)
                     .setAutoCancel(true).setVibrate(vibrationPattern).build()
@@ -4201,6 +4125,7 @@ private fun addTargetFilterAnalysis() {
                 action()
             }
         }
+
         return b
     }
 
@@ -4292,7 +4217,6 @@ private fun addTargetFilterAnalysis() {
             Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
         )
     }
-
     private fun startDerivOAuth() {
         val state = "android-" + UUID.randomUUID().toString()
         val verifier = createCodeVerifier()
@@ -4594,7 +4518,6 @@ if (stake > 0.0) {
         marketDataErrors.remove(symbol)
         evaluateMasterDecision(symbol)
         updatePtpeDisplay(symbol)
-
         if (selectedTab == "Analysis") {
             pendingAnalysisRender?.let { analysisRenderHandler.removeCallbacks(it) }
             val refresh = Runnable {
@@ -4676,3 +4599,4 @@ override fun onDestroy() {
     super.onDestroy()
 }
                                         }
+                             
