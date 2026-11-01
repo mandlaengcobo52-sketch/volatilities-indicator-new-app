@@ -3730,8 +3730,23 @@ private fun addTargetFilterAnalysis() {
         }, matchWrap().apply { topMargin = dp(8) })
         page.addView(card, matchWrap())
     }
+        private fun clearTradeNotificationBadges() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val manager =
+                getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+
+            manager.activeNotifications
+                .filter {
+                    it.notification.channelId == "vi_trade_events_v2"
+                }
+                .forEach {
+                    manager.cancel(it.tag, it.id)
+                }
+        }
+        }
 
     private fun addNotificationsScreen() {
+                clearTradeNotificationBadges()
         page.addView(sectionTitle("NOTIFICATIONS"))
         val card = card().apply { orientation = LinearLayout.VERTICAL }
         card.addView(label("Trade and risk notifications", 18f, green, true))
@@ -3748,7 +3763,8 @@ private fun addTargetFilterAnalysis() {
             render()
             }, matchWrap().apply { topMargin = dp(10) })
         card.addView(label("────────────────────────", 10f, muted, false))
-        card.addView(button("CLEAR NOTIFICATION FEED", false) {
+                card.addView(button("CLEAR NOTIFICATION FEED", false) {
+            clearTradeNotificationBadges()
             appPrefs.edit().remove("notification_feed").apply()
             render()
         }, matchWrap().apply { topMargin = dp(6) })
