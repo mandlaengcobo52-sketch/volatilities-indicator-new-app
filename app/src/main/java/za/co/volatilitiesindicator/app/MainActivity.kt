@@ -2714,6 +2714,9 @@ private fun analysisMssEvents(candles: List<DerivApiClient.Candle>): List<Analys
     }
     return events
 }
+private fun analysisLatestMss(candles: List<DerivApiClient.Candle>): AnalysisMssEvent? {
+    return analysisMssEvents(candles).lastOrNull()
+}
 private fun analysisHistoricalOutcomes(candles: List<DerivApiClient.Candle>): List<AnalysisHistoricalOutcome> {
     if (candles.size < 30) return emptyList()
     val pivots = analysisPivots(candles)
