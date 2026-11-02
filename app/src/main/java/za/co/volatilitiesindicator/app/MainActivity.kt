@@ -3327,33 +3327,216 @@ qualificationCard.addView(label(
 private fun addPtpeAnalysis() {
     val header = card().apply { orientation = LinearLayout.VERTICAL }
     val row = horizontalRow()
-    row.addView(label("Analysis - PTPE Target Probability", 17f, green, true), LinearLayout.LayoutParams(0, -2, 1f))
-    row.addView(button(if (ptpeAnalysisExpanded) "▼ OPEN" else "▶ CLOSED", ptpeAnalysisExpanded) {
-        ptpeAnalysisExpanded = !ptpeAnalysisExpanded
-        render()
-        }, LinearLayout.LayoutParams(-2, dp(48)))
+
+    row.addView(
+        label("Analysis - PTPE Target Probability", 17f, green, true),
+        LinearLayout.LayoutParams(0, -2, 1f)
+    )
+
+    row.addView(
+        button(if (ptpeAnalysisExpanded) "▼ OPEN" else "▶ CLOSED", ptpeAnalysisExpanded) {
+            ptpeAnalysisExpanded = !ptpeAnalysisExpanded
+            render()
+        },
+        LinearLayout.LayoutParams(-2, dp(48))
+    )
+
     header.addView(row)
     page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
+
     if (!ptpeAnalysisExpanded) return
 
     page.addView(label(
-        "PTPE starts from the previous completed day's pivot (high + low + close / 3). A move of about 0.5% from the pivot in the previous direction is marked CONTINUATION; a move of about 0.5% in the opposite direction starts BUILDING UP. CHOCH, MSS and BOS must confirm before GET READY. QUALIFYING NOW requires target probability strictly greater than 55% and at least 5 comparable historical samples. Contract timeframe remains three days.",
+        "Each requirement is evaluated separately. PASS means satisfied; WAIT means not satisfied; NOT CHECKED means an earlier prerequisite is missing. Trading rules and thresholds remain unchanged. Contract timeframe: 3 days.",
         12f, muted, false
-        ).apply { setPadding(dp(12), dp(10), dp(12), dp(10)) })
+    ).apply {
+        setPadding(dp(12), dp(10), dp(12), dp(10))
+    })
 
     marketDataIndexes.forEach { symbol ->
+
         val ptpe = lastPtpeByIndex[symbol] ?: PtpeDisplay()
-        val card = card().apply { orientation = LinearLayout.VERTICAL }
-        card.addView(label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true))
-        card.addView(label("DIRECTION: ${ptpe.direction}", 13f, if (ptpe.direction == "BUY") green else if (ptpe.direction == "SELL") red else yellow, true))
-        card.addView(label("DAILY PIVOT: ${ptpe.pivot?.let { formatMarketPrice(it) } ?: "—"}", 13f, white, false))
-        card.addView(label("STRUCTURAL TARGET: ${ptpe.target?.let { formatMarketPrice(it) } ?: "—"}", 13f, white, false))
-        card.addView(label("TARGET DISTANCE: ${ptpe.distancePercent?.let { String.format(java.util.Locale.US, "%.3f%%", it) } ?: "—"}", 13f, white, false))
-        card.addView(label("PTPE PROBABILITY: ${String.format(java.util.Locale.US, "%.1f%%", ptpe.probability)}", 14f, if (ptpe.probability >= 55.0 && ptpe.samples >= 5) green else yellow, true))
-        card.addView(label("COMPARABLE HISTORICAL SAMPLES: ${ptpe.samples} (minimum 5)", 12f, white, false))
-        card.addView(label("MINIMUM PROBABILITY: 55%", 12f, white, false))
-        card.addView(label("STATUS: ${ptpe.status}", 13f, if (ptpe.status == "QUALIFYING NOW") green else yellow, true))
-        page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
+        val candles = analysisCompletedCandles(symbol)
+        val current = marketDataPrices[symbol] ?: candles.lastOrNull()?.close
+        val pivot = ptpe.pivot ?: previousDayPivot(candles)
+
+        val pivotDistance = if (
+            current != null && pivot != null &&
+            current > 0.0 && pivot > 0.0
+        ) {
+            kotlin.math.abs(current - pivot) / pivot * 100.0
+        } else null
+
+        val lifecycle = if (
+            current != null && pivot != null && candles.size >= 4
+        ) {
+            pivotLifecycleStatus(candles, current, pivot)
+        } else null
+
+        val event = if (candles.size >= 100) {
+            analysisLatestMss(candles)
+        } else null
+
+        val targetDirection = when (event?.direction) {
+            "BULLISH" -> "UP"
+            "BEARISH" -> "DOWN"
+            else -> ""
+        }
+
+        val targetPivot = if (
+            event != null && current != null &&
+            targetDirection.isNotBlank()
+        ) {
+            analysisStructuralTarget(
+                candles,
+                current,
+                targetDirection,
+                event.confirmation.epoch
+            )
+        } else null
+
+        val target = targetPivot?.price
+
+        val validTarget = if (event != null && current != null && target != null) {
+            target.isFinite() &&
+                ((event.direction == "BULLISH" && target > current) ||
+                 (event.direction == "BEARISH" && target < current))
+        } else null
+
+        val targetDistance = if (
+            validTarget == true && current != null && target != null
+        ) {
+            kotlin.math.abs(target - current) / current * 100.0
+        } else null
+
+        val priorOutcomeExists = if (event != null) {
+            analysisHistoricalOutcomes(candles).any {
+                it.direction == event.direction &&
+                    it.confirmation.epoch != event.confirmation.epoch
+            }
+        } else null
+
+        val card = card().apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        card.addView(label(
+            "INDEX ${symbol.removePrefix("R_")}",
+            17f, green, true
+        ))
+
+        card.addView(label(
+            "DIRECTION: ${ptpe.direction}",
+            13f,
+            if (ptpe.direction == "BUY") green
+            else if (ptpe.direction == "SELL") red else yellow,
+            true
+        ))
+
+        card.addView(label(
+            "CURRENT PRICE: ${current?.let { formatMarketPrice(it) } ?: "—"}",
+            12f, white, false
+        ))
+
+        card.addView(label(
+            "DAILY PIVOT: ${pivot?.let { formatMarketPrice(it) } ?: "—"}",
+            12f, white, false
+        ))
+
+        fun addCheck(name: String, passed: Boolean?, detail: String = "") {
+            val result = when (passed) {
+                true -> "PASS"
+                false -> "WAIT"
+                null -> "NOT CHECKED"
+            }
+
+            val color = when (passed) {
+                true -> green
+                false -> yellow
+                null -> muted
+            }
+
+            card.addView(label(
+                "$name: $result${if (detail.isNotBlank()) " — $detail" else ""}",
+                12f, color, true
+            ))
+        }
+
+        addCheck(
+            "DAILY PIVOT DISTANCE (MINIMUM 0.5%)",
+            pivotDistance?.let { it >= 0.5 },
+            pivotDistance?.let {
+                String.format(java.util.Locale.US, "%.3f%%", it)
+            } ?: "Unavailable"
+        )
+
+        addCheck(
+            "REVERSAL CLASSIFICATION",
+            lifecycle?.let { it == "BUILDING UP" },
+            lifecycle ?: "Unavailable"
+        )
+
+        addCheck(
+            "CHOCH / MSS / BOS COMBINED CONFIRMATION",
+            event != null,
+            if (event != null) "Confirmed event found"
+            else "No confirmed event"
+        )
+
+        addCheck(
+            "STRUCTURAL TARGET",
+            validTarget,
+            target?.let { formatMarketPrice(it) } ?: "Unavailable"
+        )
+
+        addCheck(
+            "TARGET DISTANCE (MINIMUM 0.5%)",
+            targetDistance?.let { it >= 0.5 },
+            targetDistance?.let {
+                String.format(java.util.Locale.US, "%.3f%%", it)
+            } ?: "Unavailable"
+        )
+
+        addCheck(
+            "PTPE PROBABILITY (STRICTLY ABOVE 55%)",
+            if (ptpe.target != null) ptpe.probability > 55.0 else null,
+            if (ptpe.target != null)
+                String.format(java.util.Locale.US, "%.1f%%", ptpe.probability)
+            else "Unavailable"
+        )
+
+        addCheck(
+            "HISTORICAL SAMPLES (MINIMUM 5)",
+            if (ptpe.target != null) ptpe.samples >= 5 else null,
+            "${ptpe.samples} samples"
+        )
+
+        addCheck(
+            "PRIOR SAME-DIRECTION OUTCOME",
+            priorOutcomeExists
+        )
+
+        val qualified = lastDecisionByIndex.containsKey(symbol)
+
+        card.addView(label(
+            "MASTER DECISION: ${if (qualified) "PASS — QUALIFYING NOW" else "WAIT"}",
+            14f,
+            if (qualified) green else yellow,
+            true
+        ))
+
+        card.addView(label(
+            "ENGINE STATUS: ${ptpe.status}",
+            12f, yellow, true
+        ))
+
+        page.addView(
+            card,
+            matchWrap().apply {
+                topMargin = dp(6)
+                bottomMargin = dp(6)
+            }
+        )
     }
 }
 
