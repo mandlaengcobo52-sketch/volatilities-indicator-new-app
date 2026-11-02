@@ -649,7 +649,8 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
             return null
         }
         val decision = MasterDecision(symbol, decisionDirection, current, target, distance, probability, samples,
-            "Daily pivot 0.5% movement classification (reversal or continuation) + confirmed MSS/CHOCH/BOS + structural target + PTPE >55%; 3-day contract timeframe"
+    "Daily pivot 0.5% movement classification (reversal or continuation) + confirmed MSS/CHOCH/BOS + structural target + PTPE >55%; 3-day contract timeframe"
+)
         lastDecisionByIndex[symbol] = decision
         notifyEvent("Trade qualified", "$symbol · ${decision.direction} · Target ${formatMarketPrice(decision.target)} · PTPE ${String.format(java.util.Locale.US, "%.1f", decision.targetProbability)}%",
             "qualified_${symbol}_${decision.direction}_${event.confirmation.epoch}_${executionMode}_${accountId}")
