@@ -1011,72 +1011,97 @@ if (failedCloseContractId != null) {
                     "trade_open_failed_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
                 return
             }
-                        // Recovery execution is independent of Master Decision and PTPE.
-            // Normal trades retain their full fresh-entry validation.
-            val freshDecision = if (pending.isRecovery) {
-                null
-            } else if (pending.pairId.isBlank()) {
-                evaluateMasterDecision(pending.symbol)
-            } else {
-                lastDecisionByIndex[pending.symbol]
-            }
+                        // Recovery trades bypass fresh-entry and proposal-profit qualification.
+// Original trades retain their normal validation.
+if (!pending.isRecovery) {
 
-            val livePrice = marketDataPrices[pending.symbol]
-            val freshDistance = if (livePrice != null && livePrice.isFinite() && livePrice > 0.0)
-                kotlin.math.abs(pending.target - livePrice) / livePrice * 100.0 else 0.0
+    val freshDecision = if (pending.pairId.isBlank()) {
+        evaluateMasterDecision(pending.symbol)
+    } else {
+        lastDecisionByIndex[pending.symbol]
+    }
 
-            // Retain price-direction safety, but never use PTPE for recovery approval.
-            val targetStillAhead = livePrice != null && when (pending.direction) {
-                "BUY" -> pending.target > livePrice
-                "SELL" -> pending.target < livePrice
-                else -> false
-            }
+    val livePrice = marketDataPrices[pending.symbol]
 
-            val analysisRequired = !pending.isRecovery && pending.pairSide != "OPPOSITE"
+    val freshDistance = if (
+        livePrice != null && livePrice.isFinite() && livePrice > 0.0
+    ) {
+        kotlin.math.abs(pending.target - livePrice) / livePrice * 100.0
+    } else {
+        0.0
+    }
 
-            val sameSignal = if (!analysisRequired) {
-                true
-            } else {
-                freshDecision != null &&
-                    freshDecision.direction == pending.direction &&
-                    kotlin.math.abs(freshDecision.target - pending.target) <=
-                        kotlin.math.max(0.0000001, kotlin.math.abs(pending.target) * 0.0000001)
-            }
+    val targetStillAhead = livePrice != null && when (pending.direction) {
+        "BUY" -> pending.target > livePrice
+        "SELL" -> pending.target < livePrice
+        else -> false
+    }
 
-            if (!sameSignal || !targetStillAhead) {
-                pendingOrdersByRequest.remove(reqId)
-                pendingIndexSymbols.remove(pending.symbol)
+    val analysisRequired = pending.pairSide != "OPPOSITE"
 
-                val reason = when {
-                    analysisRequired && freshDecision == null ->
-                        "Master Decision no longer qualifies at the latest price."
-                    !sameSignal ->
-                        "The qualifying direction or structural target changed while requesting the proposal."
-                    else ->
-                        "The target is no longer ahead of the current entry price."
-                }
+    val sameSignal = !analysisRequired || (
+        freshDecision != null &&
+        freshDecision.direction == pending.direction &&
+        kotlin.math.abs(freshDecision.target - pending.target) <=
+            kotlin.math.max(
+                0.0000001,
+                kotlin.math.abs(pending.target) * 0.0000001
+            )
+    )
 
-                notifyEvent(
-                    "Execution rejected",
-                    "${pending.symbol} · Fresh-entry validation failed. $reason No purchase submitted.",
-                    "fresh_entry_rejected_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}"
-                )
-                return
-            }
+    if (
+        (analysisRequired && freshDecision == null) ||
+        !sameSignal ||
+        !targetStillAhead
+    ) {
+        pendingOrdersByRequest.remove(reqId)
+        pendingIndexSymbols.remove(pending.symbol)
 
-            val requiredProfitRate = if (pending.isRecovery) 0.20 else 0.30
-            val minimumRequiredPayout = pending.stake * (1.0 + requiredProfitRate)
-            val potentialProfit = payout - pending.stake
-            if ((pending.isRecovery || pending.pairSide != "OPPOSITE") && payout + 1e-8 < minimumRequiredPayout) {
-                pendingOrdersByRequest.remove(reqId)
-                pendingIndexSymbols.remove(pending.symbol)
-                notifyEvent("Execution rejected", "${pending.symbol} · Potential profit is below the required ${String.format(java.util.Locale.US, "%.0f", requiredProfitRate * 100.0)}% target. Deriv proposal payout ${formatMoney(payout)}; stake ${formatMoney(pending.stake)}; potential profit ${formatMoney(potentialProfit)}; minimum required profit ${formatMoney(pending.stake * requiredProfitRate)} (${String.format(java.util.Locale.US, "%.0f", requiredProfitRate * 100.0)}% of stake). No purchase submitted.",
-                    "profit_target_rejected_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
-                return
-            }
-            val profitBand = "${String.format(java.util.Locale.US, "%.0f", requiredProfitRate * 100.0)}% profit target"
-            notifyEvent("Profit target eligibility passed", "${pending.symbol} · $profitBand; potential profit ${formatMoney(potentialProfit)} (${String.format(java.util.Locale.US, "%.2f", potentialProfit / pending.stake * 100.0)}% of stake); fresh target distance ${String.format(java.util.Locale.US, "%.2f", freshDistance)}%.",
-                "profit_target_passed_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
+        val reason = when {
+            freshDecision == null ->
+                "Master Decision no longer qualifies at the latest price."
+            !sameSignal ->
+                "The qualifying direction or structural target changed."
+            else ->
+                "The target is no longer ahead of the current entry price."
+        }
+
+        notifyEvent(
+            "Execution rejected",
+            "${pending.symbol} · Fresh-entry validation failed. $reason No purchase submitted.",
+            "fresh_entry_rejected_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}"
+        )
+        return
+    }
+
+    val requiredProfitRate = 0.30
+    val minimumRequiredPayout = pending.stake * (1.0 + requiredProfitRate)
+    val potentialProfit = payout - pending.stake
+
+    if (
+        pending.pairSide != "OPPOSITE" &&
+        payout + 1e-8 < minimumRequiredPayout
+    ) {
+        pendingOrdersByRequest.remove(reqId)
+        pendingIndexSymbols.remove(pending.symbol)
+
+        notifyEvent(
+            "Execution rejected",
+            "${pending.symbol} · Potential profit is below the required 30% target. No purchase submitted.",
+            "profit_target_rejected_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}"
+        )
+        return
+    }
+
+    notifyEvent(
+        "Profit target eligibility passed",
+        "${pending.symbol} · Original trade validation passed. Potential profit ${formatMoney(potentialProfit)}; fresh target distance ${String.format(java.util.Locale.US, "%.2f", freshDistance)}%.",
+        "profit_target_passed_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}"
+    )
+}
+
+// Recovery proceeds directly to the Deriv buy request.
+// Its 20% profit target is checked after the contract opens.
             val buyReqId = nextTradeRequestId()
             pendingOrdersByRequest.remove(reqId)
             pendingOrdersByRequest[buyReqId] = pending.copy(stage = "BUY")
