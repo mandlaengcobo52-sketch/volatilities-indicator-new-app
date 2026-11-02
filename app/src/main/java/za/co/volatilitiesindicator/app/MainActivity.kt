@@ -3617,7 +3617,7 @@ card.addView(label("TARGET FILTER: $filterStatus", 13f,
         }
         card.addView(label("TARGET DISTANCE: ${distance?.let { String.format(java.util.Locale.US, "%.3f%%", it) } ?: "—"}", 12f, blue, false))
         card.addView(label("TARGET FILTER: ${if (passes) "PASS" else "WAIT — NO VALID TARGET"}", 13f,
-            if (passes) green else yellow, true))
+            if (filterStatus == "PASS") green else yellow, true))
         page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
     }
 }
