@@ -638,10 +638,6 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
         val priorOutcomeExists = analysisHistoricalOutcomes(candles).any { it.direction == direction && it.confirmation.epoch != event.confirmation.epoch }
         val status = when {
     distance < 0.5 -> "WAIT — TARGET TOO CLOSE (MINIMUM 0.5%)"
-    lifecycle != "BUILDING UP" ->
-    if (lifecycle == "CONTINUATION")
-        "CONTINUATION — NO REVERSAL SETUP"
-    else lifecycle
     samples < 5 -> "GET READY — INSUFFICIENT PTPE SAMPLES"
     probability <= 55.0 -> "GET READY — PTPE PROBABILITY MUST BE GREATER THAN 55%"
     !priorOutcomeExists -> "GET READY — NO PRIOR SAME-DIRECTION OUTCOME"
@@ -653,7 +649,7 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
             return null
         }
         val decision = MasterDecision(symbol, decisionDirection, current, target, distance, probability, samples,
-            "Daily pivot 0.5% reversal classification + confirmed MSS/CHOCH/BOS + structural target + PTPE >55%; 3-day contract timeframe")
+            "Daily pivot 0.5% movement classification (reversal or continuation) + confirmed MSS/CHOCH/BOS + structural target + PTPE >55%; 3-day contract timeframe"
         lastDecisionByIndex[symbol] = decision
         notifyEvent("Trade qualified", "$symbol · ${decision.direction} · Target ${formatMarketPrice(decision.target)} · PTPE ${String.format(java.util.Locale.US, "%.1f", decision.targetProbability)}%",
             "qualified_${symbol}_${decision.direction}_${event.confirmation.epoch}_${executionMode}_${accountId}")
@@ -3470,9 +3466,11 @@ private fun addPtpeAnalysis() {
             } ?: "Unavailable"
         )
 
-        addCheck(
-            "REVERSAL CLASSIFICATION",
-            lifecycle?.let { it == "BUILDING UP" },
+                addCheck(
+            "PIVOT MOVEMENT CLASSIFICATION",
+            lifecycle?.let {
+                it == "BUILDING UP" || it == "CONTINUATION"
+            },
             lifecycle ?: "Unavailable"
         )
 
