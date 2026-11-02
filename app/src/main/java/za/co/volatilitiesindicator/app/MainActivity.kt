@@ -3572,11 +3572,42 @@ private fun addTargetFilterAnalysis() {
         } else {
             null
         }
-        val passes = targetPriceForDistance != null &&
-    distance != null &&
-    distance >= 0.5 &&
-    ((direction == "UP" && targetPriceForDistance > currentPriceForDistance) ||
-     (direction == "DOWN" && targetPriceForDistance < currentPriceForDistance))
+        val targetDirectionValid = targetPriceForDistance != null &&
+    current != null &&
+    (
+        (direction == "UP" && targetPriceForDistance > currentPriceForDistance) ||
+        (direction == "DOWN" && targetPriceForDistance < currentPriceForDistance)
+    )
+
+val filterStatus = when {
+    targetPriceForDistance == null ->
+        "WAIT — NO STRUCTURAL TARGET"
+
+    !targetDirectionValid ->
+        "WAIT — INVALID TARGET DIRECTION"
+
+    distance == null ->
+        "WAIT — TARGET DISTANCE UNAVAILABLE"
+
+    distance < 0.5 ->
+        "WAIT — TARGET TOO CLOSE (MINIMUM 0.5%)"
+
+    else -> "PASS"
+}
+
+card.addView(label("DIRECTION: ${direction.ifBlank { "WAITING" }}", 13f,
+    if (direction == "UP") green else if (direction == "DOWN") red else yellow, true))
+
+// Never render the actual target price for a regular user.
+if (platform == "ADMIN") {
+    card.addView(label("TARGET PRICE: ${target?.let { formatMarketPrice(it.price) } ?: "REJECTED / NOT AVAILABLE"}", 13f,
+        if (target != null) blue else yellow, true))
+}
+
+card.addView(label("TARGET DISTANCE: ${distance?.let { String.format(java.util.Locale.US, "%.3f%%", it) } ?: "—"}", 12f, blue, false))
+
+card.addView(label("TARGET FILTER: $filterStatus", 13f,
+    if (filterStatus == "PASS") green else yellow, true))
         card.addView(label("DIRECTION: ${direction.ifBlank { "WAITING" }}", 13f,
             if (direction == "UP") green else if (direction == "DOWN") red else yellow, true))
         // Never render the actual target price for a regular user.
