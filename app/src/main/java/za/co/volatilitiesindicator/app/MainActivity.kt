@@ -3608,16 +3608,6 @@ card.addView(label("TARGET DISTANCE: ${distance?.let { String.format(java.util.L
 
 card.addView(label("TARGET FILTER: $filterStatus", 13f,
     if (filterStatus == "PASS") green else yellow, true))
-        card.addView(label("DIRECTION: ${direction.ifBlank { "WAITING" }}", 13f,
-            if (direction == "UP") green else if (direction == "DOWN") red else yellow, true))
-        // Never render the actual target price for a regular user.
-        if (platform == "ADMIN") {
-            card.addView(label("TARGET PRICE: ${target?.let { formatMarketPrice(it.price) } ?: "REJECTED / NOT AVAILABLE"}", 13f,
-                if (target != null) blue else yellow, true))
-        }
-        card.addView(label("TARGET DISTANCE: ${distance?.let { String.format(java.util.Locale.US, "%.3f%%", it) } ?: "—"}", 12f, blue, false))
-        card.addView(label("TARGET FILTER: ${if (passes) "PASS" else "WAIT — NO VALID TARGET"}", 13f,
-            if (filterStatus == "PASS") green else yellow, true))
         page.addView(card, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
     }
 }
