@@ -4828,6 +4828,7 @@ if (stake > 0.0) {
         }
     }
 }
+                        }
                         derivApiClient.send(JSONObject().put("proposal_open_contract", 1).put("contract_id", id).put("subscribe", 1))
                     }
                 }
