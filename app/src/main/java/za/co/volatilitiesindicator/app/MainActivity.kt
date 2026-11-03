@@ -278,8 +278,8 @@ private fun startAndBindDerivService() {
         var peakProfit: Double = 0.0,
         var closeRequested: Boolean = false,
         var closeReason: String = "",
-        val pairId: String = "",
-        val pairSide: String = "",
+        var pairId: String = "",
+        var pairSide: String = "",
         val isRecovery: Boolean = false,
         var recoveryTriggered: Boolean = false
     )
@@ -1127,6 +1127,18 @@ if (!pending.isRecovery) {
     .putString(
         "contract_direction_${accountId}_${executionMode}_$contractId",
         pending.direction
+    )
+    .putString(
+        "contract_pair_${accountId}_${executionMode}_$contractId",
+        pending.pairId
+    )
+    .putString(
+        "contract_pair_side_${accountId}_${executionMode}_$contractId",
+        pending.pairSide
+    )
+    .putBoolean(
+        "contract_is_recovery_${accountId}_${executionMode}_$contractId",
+        pending.isRecovery
     )
     .apply()
 
@@ -4747,20 +4759,75 @@ derivApiClient.connectWithAccessToken(token, executionMode)
                             // Keep the structure target unknown unless Master Decision supplied it.
                             val barrier = 0.0
 val contractType = c.optString("contract_type", "").uppercase()
+
 val savedDirection = appPrefs.getString(
     "contract_direction_${accountId}_${executionMode}_$id",
     null
 )
+
 val direction = savedDirection
     ?.takeIf { it == "BUY" || it == "SELL" }
     ?: if (contractType.contains("PUT") || contractType.contains("FALL")) "SELL" else "BUY"
 
+val savedPairId = appPrefs.getString(
+    "contract_pair_${accountId}_${executionMode}_$id",
+    ""
+).orEmpty()
+
+val savedPairSide = appPrefs.getString(
+    "contract_pair_side_${accountId}_${executionMode}_$id",
+    ""
+).orEmpty()
+
+val savedIsRecovery = appPrefs.getBoolean(
+    "contract_is_recovery_${accountId}_${executionMode}_$id",
+    false
+)
+
 if (stake > 0.0) {
-    runningContracts[id] = RunningContract(
-        id, symbol, direction, stake, barrier, 0.0, executionMode
+    val restored = RunningContract(
+        id, symbol, direction, stake, barrier, 0.0, executionMode,
+        pairId = savedPairId,
+        pairSide = savedPairSide,
+        isRecovery = savedIsRecovery
     )
+
+    runningContracts[id] = restored
+
+    // Reconstruct an older original pair if its pairing data was not saved.
+    if (restored.pairId.isBlank() && !restored.isRecovery) {
+        val partner = runningContracts.values.firstOrNull {
+            it.contractId != id &&
+            it.symbol == symbol &&
+            it.mode == executionMode &&
+            it.direction != direction &&
+            it.pairId.isBlank() &&
+            !it.isRecovery
+        }
+
+        if (partner != null) {
+            val restoredPairId =
+                "restored_${accountId}_${executionMode}_$symbol"
+
+            restored.pairId = restoredPairId
+            restored.pairSide = "RESTORED"
+
+            partner.pairId = restoredPairId
+            partner.pairSide = "RESTORED"
+
+            appPrefs.edit()
+                .putString(
+                    "contract_pair_${accountId}_${executionMode}_$id",
+                    restoredPairId
+                )
+                .putString(
+                    "contract_pair_${accountId}_${executionMode}_${partner.contractId}",
+                    restoredPairId
+                )
+                .apply()
+        }
+    }
 }
-                        }
                         derivApiClient.send(JSONObject().put("proposal_open_contract", 1).put("contract_id", id).put("subscribe", 1))
                     }
                 }
