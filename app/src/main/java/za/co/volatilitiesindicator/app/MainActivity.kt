@@ -1256,21 +1256,6 @@ if (!running.closeRequested && profitOpen <= -(running.stake * 0.40)) {
                     running.peakProfit = maxOf(running.peakProfit, profitOpen)
                     appPrefs.edit().putBoolean("${trailStateKey}_activated", true).putString("${trailStateKey}_peak", running.peakProfit.toString()).apply()
                 }
-
-               // Standalone true trailing stop: activate at +10% of original stake,
-                // then trail the peak profit by 10% of original stake, with a break-even floor.
-                val trailingGap = tenPercentTarget
-                val protectedProfit = maxOf(0.0, running.peakProfit - trailingGap)
-                if (trailingStopEnabled && running.trailingActivated && !running.closeRequested &&
-                    profitOpen <= protectedProfit && running.peakProfit > tenPercentTarget) {
-                    running.closeRequested = true
-                    running.closeReason = "Trailing Stop Triggered"
-                    val sent = derivApiClient.send(JSONObject().put("sell", contractId).put("price", 0).put("req_id", nextTradeRequestId()))
-                    if (!sent) {
-                        running.closeRequested = false
-                        running.closeReason = ""
-                        notifyEvent("Trailing Stop Close Failed", "${running.symbol} · Contract $contractId · Deriv close request could not be sent; monitoring continues.",
-                            "trailing_close_failed_${accountId}_${executionMode}_$contractId")
                     } else {
                         notifyEvent("Trailing Stop Triggered", "${running.symbol} · Contract $contractId · Peak P/L ${formatMoney(running.peakProfit)} · Protected level ${formatMoney(protectedProfit)}. Waiting for Deriv confirmation.",
                             "trailing_stop_triggered_${accountId}_${executionMode}_$contractId")
