@@ -2286,11 +2286,10 @@ row.addView(
 )
         row.addView(label("Contract number: ${running.contractId}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
         row.addView(label("Stake: ${formatMoney(running.stake)}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
-        row.addView(pnlHidden)
                 val initialPnl = liveContractProfits[running.contractId] ?: 0.0
         val pnlHidden = label("P/L: ${formatMoney(initialPnl)}", 12f, profitColor(initialPnl), true)
             .apply { setPadding(0, dp(4), 0, 0) }
-
+        row.addView(pnlHidden)
         val entryBarrierView = label(
             "Actual Deriv entry barrier: ${if (running.entryBarrier > 0.0) formatMarketPrice(running.entryBarrier) else "Waiting for Deriv"}",
             12f, white, true
