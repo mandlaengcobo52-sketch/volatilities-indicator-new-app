@@ -1214,7 +1214,7 @@ if (!running.closeRequested && profitOpen <= -(running.stake * 0.40)) {
         )
     }
 }
-                                if (!running.targetNotified && profitOpen >= profitTarget) {
+if (!running.targetNotified && profitOpen >= profitTarget) {
                     running.targetNotified = true
                     running.trailingActivated = true
                     running.peakProfit = profitOpen
@@ -1256,7 +1256,8 @@ if (!running.closeRequested && profitOpen <= -(running.stake * 0.40)) {
                     running.peakProfit = maxOf(running.peakProfit, profitOpen)
                     appPrefs.edit().putBoolean("${trailStateKey}_activated", true).putString("${trailStateKey}_peak", running.peakProfit.toString()).apply()
                 }
-                // Standalone true trailing stop: activate at +10% of original stake,
+
+               // Standalone true trailing stop: activate at +10% of original stake,
                 // then trail the peak profit by 10% of original stake, with a break-even floor.
                 val trailingGap = tenPercentTarget
                 val protectedProfit = maxOf(0.0, running.peakProfit - trailingGap)
@@ -1275,15 +1276,11 @@ if (!running.closeRequested && profitOpen <= -(running.stake * 0.40)) {
                             "trailing_stop_triggered_${accountId}_${executionMode}_$contractId")
                     }
                 }
-                    } else {
-                        notifyEvent("Trailing Stop Triggered", "${running.symbol} · Contract $contractId · Peak P/L ${formatMoney(running.peakProfit)} · Protected level ${formatMoney(protectedProfit)}. Waiting for Deriv confirmation.",
-                            "trailing_stop_triggered_${accountId}_${executionMode}_$contractId")
-                    }
-                }
             } else {
                 val finalProfit = contract.optDouble("profit", contract.optDouble("profit_open", liveContractProfits[contractId] ?: 0.0))      
                 val reason = running.closeReason.ifBlank { if (status == "expired") "Contract Expired" else if (running.takeProfitRequested) "Target Close" else "Contract Closed" }
                 runningContracts.remove(contractId)
+                finishPairRecoveryIfClosed(running.pairId)
                 pendingIndexSymbols.remove(running.symbol)
                 liveContractProfits.remove(contractId)
                 liveContractProfitModes.remove(contractId)
@@ -1325,7 +1322,7 @@ private var ptpeAnalysisExpanded = true
 private var targetFilterExpanded = true
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
+        
         window.statusBarColor = bg
 window.navigationBarColor = bg
 window.decorView.systemUiVisibility = 0
