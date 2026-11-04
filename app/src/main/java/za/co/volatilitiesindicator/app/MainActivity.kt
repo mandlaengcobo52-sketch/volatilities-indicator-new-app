@@ -1180,7 +1180,7 @@ runningContracts[contractId] = RunningContract(contractId, pending.symbol, pendi
             if (!isClosed) {
                 liveContractProfits[contractId] = profitOpen
                 liveContractProfitModes[contractId] = "${accountId}_$executionMode"
-                val profitTarget = running.stake * if (running.isRecovery) 0.20 else 0.30
+                val profitTarget = running.stake * 0.80
                 val tenPercentTarget = running.stake * 0.10 // Preserve the existing trailing-stop threshold.
                 val liveSpot = contract.optDouble(
     "current_spot",
