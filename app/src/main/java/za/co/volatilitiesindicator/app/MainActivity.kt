@@ -366,19 +366,18 @@ private fun fixedDailyStake(): Double {
 
     private fun hasCapacityForTrades(count: Int): Boolean = runningAndPendingTradeCount() + count <= 4
 
-    /** One trading cycle at a time across all indexes: originals plus any recovery. */
-    private fun canStartPairedCycle(): Boolean {
-    val activePairIds = (
-        runningContracts.values
-            .filter { it.mode == executionMode }
-            .map { it.pairId } +
-        pendingOrdersByRequest.values
-            .filter { it.mode == executionMode }
-            .map { it.pairId }
-    ).filter { it.isNotBlank() }.toSet()
-
-    return activePairIds.size < 2
+    /** Only one trading cycle at a time across all indexes. */
+private fun canStartPairedCycle(): Boolean {
+    val hasRunningTrade = runningContracts.values.any {
+        it.mode == executionMode
     }
+
+    val hasPendingOrder = pendingOrdersByRequest.values.any {
+        it.mode == executionMode
+    }
+
+    return !hasRunningTrade && !hasPendingOrder
+}
 
     private fun normalizedSymbol(item: JSONObject): String = item.optString(
         "underlying", item.optString("underlying_symbol", item.optString("symbol", ""))
@@ -624,10 +623,21 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
         val decisionDirection = if (direction == "BULLISH") "BUY" else "SELL"
         val priorOutcomeExists = analysisHistoricalOutcomes(candles).any { it.direction == direction && it.confirmation.epoch != event.confirmation.epoch }
         val status = when {
-    distance < 0.5 -> "WAIT — TARGET TOO CLOSE (MINIMUM 0.5%)"
-    samples < 5 -> "GET READY — INSUFFICIENT PTPE SAMPLES"
-    probability < 55.0 -> "GET READY — PTPE PROBABILITY MUST BE AT LEAST 55%"
-    !priorOutcomeExists -> "GET READY — NO PRIOR SAME-DIRECTION OUTCOME"
+    lifecycle != "BUILDING UP" ->
+        "WAIT — PIVOT REVERSAL NOT CONFIRMED"
+
+    distance < 0.5 ->
+        "WAIT — TARGET TOO CLOSE (MINIMUM 0.5%)"
+
+    samples < 5 ->
+        "GET READY — INSUFFICIENT PTPE SAMPLES"
+
+    probability < 55.0 ->
+        "GET READY — PTPE PROBABILITY MUST BE AT LEAST 55%"
+
+    !priorOutcomeExists ->
+        "GET READY — NO PRIOR SAME-DIRECTION OUTCOME"
+
     else -> "QUALIFYING NOW"
         }
         lastPtpeByIndex[symbol] = PtpeDisplay(decisionDirection, target, distance, probability, samples, status, pivot)
