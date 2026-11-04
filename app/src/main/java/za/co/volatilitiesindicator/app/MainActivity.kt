@@ -2287,6 +2287,44 @@ row.addView(
         row.addView(label("Contract number: ${running.contractId}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
         row.addView(label("Stake: ${formatMoney(running.stake)}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
         row.addView(pnlHidden)
+                val initialPnl = liveContractProfits[running.contractId] ?: 0.0
+        val pnlHidden = label("P/L: ${formatMoney(initialPnl)}", 12f, profitColor(initialPnl), true)
+            .apply { setPadding(0, dp(4), 0, 0) }
+
+        val entryBarrierView = label(
+            "Actual Deriv entry barrier: ${if (running.entryBarrier > 0.0) formatMarketPrice(running.entryBarrier) else "Waiting for Deriv"}",
+            12f, white, true
+        ).apply { setPadding(0, dp(4), 0, 0) }
+
+        val profitTargetView = label(
+            "30% profit target: ${formatMoney(running.stake * 0.30)}",
+            12f, yellow, true
+        ).apply { setPadding(0, dp(4), 0, 0) }
+
+        val lossLimitView = label(
+            "40% loss limit: ${formatMoney(running.stake * 0.40)}",
+            12f, red, true
+        ).apply { setPadding(0, dp(4), 0, 0) }
+
+        val targetView = label(
+            "Structure target: ${running.target.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}",
+            12f, yellow, true
+        ).apply { setPadding(0, dp(4), 0, 0) }
+
+        val trailView = label(
+            "Trailing stop: ${if (running.trailingActivated) "ACTIVATED" else if (trailingStopEnabled) "ARMED" else "OFF"}",
+            12f, if (trailingStopEnabled) green else muted, true
+        ).apply { setPadding(0, dp(4), 0, 0) }
+
+        val spotView = label("Current value/spot: —", 12f, white, false)
+            .apply { setPadding(0, dp(4), 0, 0) }
+
+        val expiryView = label("Expiry: —", 12f, white, false)
+            .apply { setPadding(0, dp(4), 0, 0) }
+
+        val ptpeHidden = label("", 1f, white, false)
+
+        row.addView(pnlHidden)
         row.addView(entryBarrierView)
         row.addView(profitTargetView)
         row.addView(lossLimitView)
@@ -2294,15 +2332,17 @@ row.addView(
         row.addView(trailView)
         row.addView(spotView)
         row.addView(expiryView)
-    "Actual Deriv entry barrier: ${if (running.entryBarrier > 0.0) formatMarketPrice(running.entryBarrier) else "Waiting for Deriv"}",
-    12f, white, true
-).apply { setPadding(0, dp(4), 0, 0) }
-        val trailView = label("Trailing stop: ${if (running.trailingActivated) "ACTIVATED" else if (trailingStopEnabled) "ARMED" else "OFF"}", 12f, if (trailingStopEnabled) green else muted, true).apply { setPadding(0, dp(4), 0, 0) }
-        val spotView = label("Current value/spot: —", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
-        val expiryView = label("Expiry: —", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
-        val ptpeHidden = label("", 1f, white, false)
-        row.addView(pnlHidden); row.addView(profitTargetView); row.addView(targetView); row.addView(trailView); row.addView(spotView); row.addView(expiryView)
-        contractLiveViews[running.contractId] = ContractLiveViews(running.stake, running.symbol, running.target, running.targetProbability, pnlHidden, spotView, expiryView, ptpeHidden)
+
+        contractLiveViews[running.contractId] = ContractLiveViews(
+            running.stake,
+            running.symbol,
+            running.target,
+            running.targetProbability,
+            pnlHidden,
+            spotView,
+            expiryView,
+            ptpeHidden
+        )
         row.addView(button("CLOSE TRADE", true) {
             if (!connected) {
                 toast("Connect to the account holding this contract.")
