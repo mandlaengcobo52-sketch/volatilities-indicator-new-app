@@ -1375,41 +1375,7 @@ if (
                     }
                 }
             } else {
-                val finalProfit = contract.optDouble("profit", contract.optDouble("profit_open", liveContractProfits[contractId] ?: 0.0))
-                
-        running.closeReason.contains("Structural Target", ignoreCase = true) ||
-        running.closeReason.contains("30% Profit Target", ignoreCase = true) ||
-        finalProfit >= running.stake * 0.30
-    )
-) {
-                    pairedContract.closeRequested = true
-                    pairedContract.closeReason = "Paired trade closed"
-                    val pairedPartnerCloseReqId = nextTradeRequestId()
-                    pairedCloseRequests[pairedPartnerCloseReqId] = pairedContract.contractId
-                    if (!derivApiClient.send(
-                            JSONObject()
-                                .put("sell", pairedContract.contractId)
-                                .put("price", 0)
-                                .put("req_id", pairedPartnerCloseReqId)
-                        )) {
-                        pairedCloseRequests.remove(pairedPartnerCloseReqId)
-                        pairedContract.closeRequested = false
-                        pairedContract.closeReason = ""
-                        pendingPairedCloseRetries.add(pairedContract.contractId)
-                        notifyEvent(
-                            "Paired Trade Close Failed",
-                            "${pairedContract.symbol} · Contract ${pairedContract.contractId} could not be closed. The app will need to retry.",
-                            "paired_close_failed_${running.pairId}_${pairedContract.contractId}"
-                        )
-                    } else {
-                        notifyEvent(
-                            "Paired Trade Close Requested",
-                            "${running.symbol} · Contract ${pairedContract.contractId} is being closed because its paired trade closed.",
-                            "paired_close_requested_${running.pairId}_${pairedContract.contractId}"
-                        )
-                    }
-                }
-                
+                val finalProfit = contract.optDouble("profit", contract.optDouble("profit_open", liveContractProfits[contractId] ?: 0.0))      
                 val reason = running.closeReason.ifBlank { if (status == "expired") "Contract Expired" else if (running.takeProfitRequested) "Target Close" else "Contract Closed" }
                 runningContracts.remove(contractId)
                 finishPairRecoveryIfClosed(running.pairId)
