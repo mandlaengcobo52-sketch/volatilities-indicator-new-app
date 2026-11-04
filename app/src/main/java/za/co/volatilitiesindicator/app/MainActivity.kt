@@ -1280,7 +1280,6 @@ if (!running.targetNotified && profitOpen >= profitTarget) {
                 val finalProfit = contract.optDouble("profit", contract.optDouble("profit_open", liveContractProfits[contractId] ?: 0.0))      
                 val reason = running.closeReason.ifBlank { if (status == "expired") "Contract Expired" else if (running.takeProfitRequested) "Target Close" else "Contract Closed" }
                 runningContracts.remove(contractId)
-                finishPairRecoveryIfClosed(running.pairId)
                 pendingIndexSymbols.remove(running.symbol)
                 liveContractProfits.remove(contractId)
                 liveContractProfitModes.remove(contractId)
