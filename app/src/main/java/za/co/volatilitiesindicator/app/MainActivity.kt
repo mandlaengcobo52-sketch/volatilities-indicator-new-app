@@ -1261,7 +1261,7 @@ if (!running.targetNotified && profitOpen >= profitTarget) {
                 // then trail the peak profit by 10% of original stake, with a break-even floor.
                 val trailingGap = tenPercentTarget
                 val protectedProfit = maxOf(0.0, running.peakProfit - trailingGap)
-                if (trailingStopEnabled && running.trailingActivated && !running.closeRequested &&
+                if (false && trailingStopEnabled && running.trailingActivated && !running.closeRequested &&
                     profitOpen <= protectedProfit && running.peakProfit > tenPercentTarget) {
                     running.closeRequested = true
                     running.closeReason = "Trailing Stop Triggered"
