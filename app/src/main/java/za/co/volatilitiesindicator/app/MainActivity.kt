@@ -888,61 +888,6 @@ private fun retryPendingPairedCloses() {
         }
     }
 }
-    private fun finishPairRecoveryIfClosed(pairId: String) {
-    if (pairId.isBlank()) return
-
-    val survivor = pendingRecoveryWinners[pairId] ?: return
-    val losingContractId = pendingRecoveryLosers[pairId] ?: return
-
-    // Do not launch recovery until Deriv confirms the losing contract is gone.
-    if (runningContracts.containsKey(losingContractId)) return
-
-    val spot = pendingRecoverySpots[pairId]
-        ?: marketDataPrices[survivor.symbol]
-        ?: survivor.target
-
-    requestRecoveryTrade(survivor, spot)
-
-    if (survivor.recoveryTriggered) {
-        pendingRecoveryWinners.remove(pairId)
-        pendingRecoverySpots.remove(pairId)
-        pendingRecoveryLosers.remove(pairId)
-    }
-    }
-    private fun requestRecoveryTrade(winner: RunningContract, spot: Double) {
-        if (winner.isRecovery || winner.recoveryTriggered) return
-        if (!connected || spot <= 0.0 || !spot.isFinite()) return
-        val capital = dailyStartingCapital()
-        val stake = fixedRecoveryStake()
-        val requiredBalance = stake
-
-if (capital <= 0.0 || stake <= 0.0 || accountBalance < requiredBalance) {
-    notifyEvent(
-        "Recovery blocked",
-        "${winner.symbol} · Daily starting capital: ${formatMoney(capital)} · Current balance: ${formatMoney(accountBalance)} · Recovery stake: ${formatMoney(stake)} · Required recovery stake: ${formatMoney(requiredBalance)}.",
-        "recovery_funds_${winner.pairId}"
-    )
-    return
-}
-        winner.recoveryTriggered = true
-        val distance = spot * 0.005
-        val barrier = if (winner.direction.equals("BUY", true)) spot + distance else (spot - distance).coerceAtLeast(0.0000001)
-        val reqId = nextTradeRequestId()
-        val pending = PendingOrder(winner.symbol, winner.direction, spot, barrier, winner.targetProbability,
-            stake, winner.mode, "PROPOSAL", winner.pairId, winner.pairSide, true)
-        pendingOrdersByRequest[reqId] = pending
-        val proposal = JSONObject().put("proposal", 1).put("amount", stake).put("basis", "stake")
-            .put("contract_type", "ONETOUCH").put("currency", accountCurrency.ifBlank { "USD" })
-            .put("duration", 3).put("duration_unit", "d").put("underlying_symbol", winner.symbol)
-            .put("barrier", String.format(java.util.Locale.US, "%.2f", barrier)).put("req_id", reqId)
-        if (!derivApiClient.send(proposal)) {
-            pendingOrdersByRequest.remove(reqId)
-            winner.recoveryTriggered = false
-            notifyEvent("Recovery rejected", "${winner.symbol} · Deriv recovery proposal could not be sent.", "recovery_send_failed_${winner.pairId}")
-        } else {
-            notifyEvent("Recovery requested", "${winner.symbol} · ${winner.direction} recovery proposal submitted. Stake ${formatMoney(stake)} (40% of fixed daily starting capital); target 20% of stake.", "recovery_requested_${winner.pairId}")
-        }
-    }
 
     private fun handleMasterDecisionTradeResponse(json: JSONObject) {
         val msgType = json.optString("msg_type", "")
