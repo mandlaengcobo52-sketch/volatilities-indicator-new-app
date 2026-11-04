@@ -1075,10 +1075,7 @@ if (!pending.isRecovery) {
     val minimumRequiredPayout = pending.stake * (1.0 + requiredProfitRate)
     val potentialProfit = payout - pending.stake
 
-    if (
-        pending.pairSide != "OPPOSITE" &&
-        payout + 1e-8 < minimumRequiredPayout
-    ) {
+    if (payout + 1e-8 < minimumRequiredPayout) {
         pendingOrdersByRequest.remove(reqId)
         pendingIndexSymbols.remove(pending.symbol)
 
