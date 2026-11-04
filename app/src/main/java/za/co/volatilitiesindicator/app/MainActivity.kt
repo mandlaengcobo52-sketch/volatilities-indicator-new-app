@@ -2243,7 +2243,9 @@ val entryBarrierView = label(
         val expiryView = label("Expiry: $expiryText", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val ptpeHidden = label("", 1f, white, false)
         row.addView(pnlHidden)
+        row.addView(entryBarrierView)
         row.addView(profitTargetView)
+        row.addView(lossLimitView)
         row.addView(targetView)
         row.addView(trailView)
         row.addView(spotView)
@@ -2284,10 +2286,17 @@ row.addView(
 )
         row.addView(label("Contract number: ${running.contractId}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
         row.addView(label("Stake: ${formatMoney(running.stake)}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
-        val initialPnl = liveContractProfits[running.contractId] ?: 0.0
-        val pnlHidden = label("P/L: ${formatMoney(initialPnl)}", 12f, profitColor(initialPnl), true).apply { setPadding(0, dp(4), 0, 0) }
-        val targetView = label("Structure target: ${running.target.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
-        val profitTargetView = label("80% profit target: ${formatMoney(running.stake * 0.80)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
+        row.addView(pnlHidden)
+        row.addView(entryBarrierView)
+        row.addView(profitTargetView)
+        row.addView(lossLimitView)
+        row.addView(targetView)
+        row.addView(trailView)
+        row.addView(spotView)
+        row.addView(expiryView)
+    "Actual Deriv entry barrier: ${if (running.entryBarrier > 0.0) formatMarketPrice(running.entryBarrier) else "Waiting for Deriv"}",
+    12f, white, true
+).apply { setPadding(0, dp(4), 0, 0) }
         val trailView = label("Trailing stop: ${if (running.trailingActivated) "ACTIVATED" else if (trailingStopEnabled) "ARMED" else "OFF"}", 12f, if (trailingStopEnabled) green else muted, true).apply { setPadding(0, dp(4), 0, 0) }
         val spotView = label("Current value/spot: —", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val expiryView = label("Expiry: —", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
@@ -4512,7 +4521,15 @@ if (stake > 0.0) {
                             val expiryEpoch = contract.optLong("date_expiry", contract.optLong("expiry_time", 0L))
                             val expiryRemaining = if (expiryEpoch > 0L) (expiryEpoch - System.currentTimeMillis() / 1000L).coerceAtLeast(0L) else 0L
                             val expiryText = if (expiryEpoch > 0L) String.format(java.util.Locale.US, "%02d:%02d:%02d", expiryRemaining / 3600, (expiryRemaining % 3600) / 60, expiryRemaining % 60) else "—"
-                            views.barrierExpiry.text = "Expiry: $expiryText"
+                            val actualEntry = contract.optDouble(
+    "entry_tick",
+    contract.optDouble(
+        "entry_spot",
+        runningContracts[id]?.entryBarrier ?: 0.0
+    )
+)
+views.barrierExpiry.text =
+    "Actual Deriv entry barrier: ${if (actualEntry > 0.0) formatMarketPrice(actualEntry) else "Waiting for Deriv"}   |   Expiry: $expiryText"
                             views.ptpe.text = "PTPE: ${String.format(java.util.Locale.US, "%.1f", views.probability)}%"
                         }
                     }
