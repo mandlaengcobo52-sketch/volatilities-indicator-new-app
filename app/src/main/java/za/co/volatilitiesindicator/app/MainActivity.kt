@@ -260,7 +260,8 @@ private fun startAndBindDerivService() {
         val stage: String,
         val pairId: String = "",
         val pairSide: String = "",
-        val isRecovery: Boolean = false
+        val isRecovery: Boolean = false,
+        val proposalId: String = ""
     )
 
     private data class RunningContract(
@@ -363,7 +364,7 @@ private fun fixedDailyStake(): Double {
         runningContracts.values.count { it.mode == executionMode } +
             pendingOrdersByRequest.values.count { it.mode == executionMode }
 
-    private fun hasCapacityForTrades(count: Int): Boolean = runningAndPendingTradeCount() + count <= 6
+    private fun hasCapacityForTrades(count: Int): Boolean = runningAndPendingTradeCount() + count <= 4
 
     /** One trading cycle at a time across all indexes: originals plus any recovery. */
     private fun canStartPairedCycle(): Boolean {
@@ -515,7 +516,7 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
 
     appPrefs.edit().putInt(key, newCount).apply()
 
-    notifyEvent("Touch trade opened", "$symbol · Contract $contractId · Stake ${String.format(java.util.Locale.US, "%.2f", stake)} ${accountCurrency.ifBlank { "USD" }}")
+    notifyEvent("Rise/Fall trade opened", "$symbol · Contract $contractId · Stake ${String.format(java.util.Locale.US, "%.2f", stake)} ${accountCurrency.ifBlank { "USD" }}")
 }
 
 
@@ -625,7 +626,7 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
         val status = when {
     distance < 0.5 -> "WAIT — TARGET TOO CLOSE (MINIMUM 0.5%)"
     samples < 5 -> "GET READY — INSUFFICIENT PTPE SAMPLES"
-    probability <= 55.0 -> "GET READY — PTPE PROBABILITY MUST BE GREATER THAN 55%"
+    probability < 55.0 -> "GET READY — PTPE PROBABILITY MUST BE AT LEAST 55%"
     !priorOutcomeExists -> "GET READY — NO PRIOR SAME-DIRECTION OUTCOME"
     else -> "QUALIFYING NOW"
         }
@@ -635,7 +636,7 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
             return null
         }
         val decision = MasterDecision(symbol, decisionDirection, current, target, distance, probability, samples,
-    "Daily pivot 0.5% movement classification (reversal or continuation) + confirmed MSS/CHOCH/BOS + structural target + PTPE >55%; 3-day contract timeframe"
+    "Confirmed structural reversal + MSS/CHOCH/BOS + structural target + PTPE >=55%; simultaneous Rise and Fall; 24-hour duration"
 )
         lastDecisionByIndex[symbol] = decision
         notifyEvent("Trade qualified", "$symbol · ${decision.direction} · Target ${formatMarketPrice(decision.target)} · PTPE ${String.format(java.util.Locale.US, "%.1f", decision.targetProbability)}%",
@@ -702,48 +703,56 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
         val stake = fixedDailyStake()
         val capital = dailyStartingCapital()
         if (!canStartPairedCycle()) {
-            recordExecutionStage("Execution blocked", "$symbol · The maximum of 3 simultaneously running/pending paired cycles would be exceeded.", "blocked_trade_cap_${accountId}_${executionMode}")
+            recordExecutionStage("Execution blocked", "$symbol · The maximum of 2 simultaneously running/pending paired cycles would be exceeded.", "blocked_trade_cap_${accountId}_${executionMode}")
             return
         }
-        if (stake <= 0.0 || capital <= 0.0 || accountBalance < (stake * 2.0 + capital * 0.40)) {
-            notifyEvent("Execution rejected", "$symbol · Insufficient available balance to open both 10% Touch sides while preserving the 40% recovery reserve.",
+        if (stake <= 0.0 || capital <= 0.0 || accountBalance < (stake * 2.0)) {
+            notifyEvent("Execution rejected", "$symbol · Insufficient available balance to open both Rise and Fall contracts at 25% of original capital each.",
                 "insufficient_pair_funds_${accountId}_${executionMode}_${saDayKey()}_$symbol")
             return
         }
         val proposalSpot = marketDataPrices[symbol] ?: decision.entry
         val distance = kotlin.math.abs(decision.target - proposalSpot)
         if (!proposalSpot.isFinite() || proposalSpot <= 0.0 || !distance.isFinite() || distance <= 0.0) {
-            recordExecutionStage("Execution rejected", "$symbol · Invalid live price or target distance; paired Touch proposals were not sent.", "blocked_pair_barrier_$signalKey")
+            recordExecutionStage("Execution rejected", "$symbol · Invalid live price or target distance; paired Rise/Fall proposals were not sent.", "blocked_pair_barrier_$signalKey")
             return
         }
         
         val pairId = "${accountId}_${executionMode}_${symbol}_${System.currentTimeMillis()}"
-        val direction = if (decision.direction.equals("SELL", true)) "SELL" else "BUY"
-        val barrierPrice = decision.target
-        val side = "MASTER"
-        val reqId = nextTradeRequestId()
-        val pending = PendingOrder(
-            symbol, direction, proposalSpot, barrierPrice,
+        val riseReqId = nextTradeRequestId()
+        val fallReqId = nextTradeRequestId()
+        val risePending = PendingOrder(
+            symbol, "BUY", proposalSpot, decision.target,
             decision.targetProbability, stake, executionMode,
-            "PROPOSAL", pairId, side, false
+            "PROPOSAL", pairId, "RISE", false
         )
-        pendingOrdersByRequest[reqId] = pending
+        val fallPending = PendingOrder(
+            symbol, "SELL", proposalSpot, decision.target,
+            decision.targetProbability, stake, executionMode,
+            "PROPOSAL", pairId, "FALL", false
+        )
+        pendingOrdersByRequest[riseReqId] = risePending
+        pendingOrdersByRequest[fallReqId] = fallPending
         pendingIndexSymbols.add(symbol)
 
-        val proposal = JSONObject()
-            .put("proposal", 1)
-            .put("amount", stake)
-            .put("basis", "stake")
-            .put("contract_type", "ONETOUCH")
-            .put("currency", accountCurrency.ifBlank { "USD" })
-            .put("duration", 3)
-            .put("duration_unit", "d")
-            .put("underlying_symbol", symbol)
-            .put("barrier", String.format(java.util.Locale.US, "%.2f", barrierPrice))
-            .put("req_id", reqId)
+        fun riseFallProposal(contractType: String, requestId: Int): JSONObject =
+            JSONObject()
+                .put("proposal", 1)
+                .put("amount", stake)
+                .put("basis", "stake")
+                .put("contract_type", contractType)
+                .put("currency", accountCurrency.ifBlank { "USD" })
+                .put("duration", 24)
+                .put("duration_unit", "h")
+                .put("underlying_symbol", symbol)
+                .put("req_id", requestId)
 
-        if (!derivApiClient.send(proposal)) {
-            pendingOrdersByRequest.remove(reqId)
+        val proposal = riseFallProposal("CALL", riseReqId)
+        val fallProposal = riseFallProposal("PUT", fallReqId)
+
+        if (!derivApiClient.send(proposal) || !derivApiClient.send(fallProposal)) {
+            pendingOrdersByRequest.remove(riseReqId)
+            pendingOrdersByRequest.remove(fallReqId)
             notifyEvent(
                 "Execution rejected",
                 "$symbol · Could not send the Master Decision proposal.",
@@ -751,9 +760,11 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
             )
         } else {
             android.os.Handler(mainLooper).postDelayed({
-                val waiting = pendingOrdersByRequest[reqId]
-                if (waiting != null && waiting.stage == "PROPOSAL") {
-                    pendingOrdersByRequest.remove(reqId)
+                val waitingRise = pendingOrdersByRequest[riseReqId]
+                val waitingFall = pendingOrdersByRequest[fallReqId]
+                if (waitingRise != null || waitingFall != null) {
+                    pendingOrdersByRequest.remove(riseReqId)
+                    pendingOrdersByRequest.remove(fallReqId)
                     if (pendingOrdersByRequest.values.none {
                             it.symbol == symbol && it.mode == executionMode
                         } && runningContracts.values.none {
@@ -772,7 +783,7 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
 
         notifyEvent(
             "Master Decision requested",
-            "$symbol · $direction proposal submitted. Opposite original trade proposal submitted after the first purchase is confirmed.",
+            "$symbol · Rise and Fall proposals submitted together. Both must validate before purchases are sent.",
             "master_trade_requested_${pairId}"
         )
 
@@ -784,6 +795,29 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
             val failed = pendingOrdersByRequest.remove(reqId)
             if (failed != null) {
                 pendingIndexSymbols.remove(failed.symbol)
+                // If one purchase in a paired cycle fails after its sibling opened,
+                // close the already-open sibling to avoid unintended one-sided exposure.
+                val pairId = failed.pairId
+                if (pairId.isNotBlank()) {
+                    val openedSibling = runningContracts.values.firstOrNull {
+                        it.pairId == pairId && it.mode == executionMode && !it.closeRequested
+                    }
+                    if (openedSibling != null) {
+                        openedSibling.closeRequested = true
+                        openedSibling.closeReason = "Paired entry rollback after opposite-side failure"
+                        val rollbackSent = derivApiClient.send(
+                            JSONObject().put("sell", openedSibling.contractId)
+                                .put("price", 0).put("req_id", nextTradeRequestId())
+                        )
+                        if (!rollbackSent) {
+                            openedSibling.closeRequested = false
+                            openedSibling.closeReason = ""
+                            notifyEvent("Paired rollback failed", "${failed.symbol} · Could not close contract ${openedSibling.contractId} after its paired purchase failed. Check Deriv immediately.",
+                                "paired_rollback_failed_${pairId}")
+                        }
+                    }
+                    pendingOrdersByRequest.entries.removeAll { it.value.pairId == pairId }
+                }
                 val errorObject = json.optJSONObject("error")
                 val errorMessage = errorObject?.optString("message", "Deriv rejected the request.")
                     ?: "Deriv rejected the request."
@@ -801,116 +835,51 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
         }
         val pending = pendingOrdersByRequest[reqId]
         if (pending != null && msgType == "proposal") {
-            val proposal = json.optJSONObject("proposal")
-            val proposalId = proposal?.optString("id", "").orEmpty()
-            // Validate that Deriv returned a usable proposal before purchase.
-            val payout = proposal?.optDouble("payout", 0.0) ?: 0.0
+            val proposalObject = json.optJSONObject("proposal")
+            val proposalId = proposalObject?.optString("id", "").orEmpty()
+            val payout = proposalObject?.optDouble("payout", 0.0) ?: 0.0
             if (proposalId.isBlank() || payout <= 0.0) {
-                pendingOrdersByRequest.remove(reqId)
+                val pairId = pending.pairId
+                pendingOrdersByRequest.entries.removeAll { it.value.pairId == pairId }
                 pendingIndexSymbols.remove(pending.symbol)
-                notifyEvent("Execution rejected", "${pending.symbol} · Deriv returned an invalid proposal (missing proposal ID or non-positive payout).",
-                    "trade_open_failed_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
+                notifyEvent("Execution rejected", "${pending.symbol} · Deriv returned an invalid Rise/Fall proposal. Neither side will be purchased.",
+                    "paired_proposal_invalid_$pairId")
                 return
             }
-                        // Recovery trades bypass fresh-entry and proposal-profit qualification.
-// Original trades retain their normal validation.
-if (!pending.isRecovery) {
 
-    val freshDecision = if (pending.pairId.isBlank()) {
-        evaluateMasterDecision(pending.symbol)
-    } else {
-        lastDecisionByIndex[pending.symbol]
-    }
+            pendingOrdersByRequest[reqId] = pending.copy(stage = "PROPOSAL_READY", proposalId = proposalId)
+            val pairOrders = pendingOrdersByRequest.filterValues {
+                it.pairId == pending.pairId && it.mode == executionMode
+            }
+            if (pairOrders.size < 2 || pairOrders.values.any { it.stage != "PROPOSAL_READY" }) {
+                return
+            }
 
-    val livePrice = marketDataPrices[pending.symbol]
-
-    val freshDistance = if (
-        livePrice != null && livePrice.isFinite() && livePrice > 0.0
-    ) {
-        kotlin.math.abs(pending.target - livePrice) / livePrice * 100.0
-    } else {
-        0.0
-    }
-
-    val targetStillAhead = livePrice != null && when (pending.direction) {
-        "BUY" -> pending.target > livePrice
-        "SELL" -> pending.target < livePrice
-        else -> false
-    }
-
-    val analysisRequired = pending.pairSide != "OPPOSITE"
-
-    val sameSignal = !analysisRequired || (
-        freshDecision != null &&
-        freshDecision.direction == pending.direction &&
-        kotlin.math.abs(freshDecision.target - pending.target) <=
-            kotlin.math.max(
-                0.0000001,
-                kotlin.math.abs(pending.target) * 0.0000001
-            )
-    )
-
-    if (
-        (analysisRequired && freshDecision == null) ||
-        !sameSignal ||
-        !targetStillAhead
-    ) {
-        pendingOrdersByRequest.remove(reqId)
-        pendingIndexSymbols.remove(pending.symbol)
-
-        val reason = when {
-            freshDecision == null ->
-                "Master Decision no longer qualifies at the latest price."
-            !sameSignal ->
-                "The qualifying direction or structural target changed."
-            else ->
-                "The target is no longer ahead of the current entry price."
-        }
-
-        notifyEvent(
-            "Execution rejected",
-            "${pending.symbol} · Fresh-entry validation failed. $reason No purchase submitted.",
-            "fresh_entry_rejected_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}"
-        )
-        return
-    }
-
-    val requiredProfitRate = 0.30
-    val minimumRequiredPayout = pending.stake * (1.0 + requiredProfitRate)
-    val potentialProfit = payout - pending.stake
-
-    if (payout + 1e-8 < minimumRequiredPayout) {
-        pendingOrdersByRequest.remove(reqId)
-        pendingIndexSymbols.remove(pending.symbol)
-
-        notifyEvent(
-            "Execution rejected",
-            "${pending.symbol} · Potential profit is below the required 30% target. No purchase submitted.",
-            "profit_target_rejected_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}"
-        )
-        return
-    }
-
-    notifyEvent(
-        "Profit target eligibility passed",
-        "${pending.symbol} · Original trade validation passed. Potential profit ${formatMoney(potentialProfit)}; fresh target distance ${String.format(java.util.Locale.US, "%.2f", freshDistance)}%.",
-        "profit_target_passed_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}"
-    )
-}
-
-// Recovery proceeds directly to the Deriv buy request.
-// Its 20% profit target is checked after the contract opens.
-            val buyReqId = nextTradeRequestId()
-            pendingOrdersByRequest.remove(reqId)
-            pendingOrdersByRequest[buyReqId] = pending.copy(stage = "BUY")
-            if (!derivApiClient.send(JSONObject().put("buy", proposalId).put("price", pending.stake).put("req_id", buyReqId))) {
-                pendingOrdersByRequest.remove(buyReqId)
-                pendingIndexSymbols.remove(pending.symbol)
-                notifyEvent("Execution rejected", "${pending.symbol} · Proposal received, but the purchase request could not be sent.",
-                    "trade_open_failed_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
+            // Both quotes are now valid. Submit both purchases only after both proposals exist.
+            val readyOrders = pairOrders.toList()
+            val buyRequests = mutableListOf<Pair<Int, PendingOrder>>()
+            readyOrders.forEach { (proposalRequestId, ready) ->
+                val buyReqId = nextTradeRequestId()
+                pendingOrdersByRequest.remove(proposalRequestId)
+                val buyPending = ready.copy(stage = "BUY")
+                pendingOrdersByRequest[buyReqId] = buyPending
+                buyRequests.add(buyReqId to buyPending)
+            }
+            var allSent = true
+            buyRequests.forEach { (buyReqId, buyPending) ->
+                val proposalRequestId = readyOrders.firstOrNull { it.second.pairSide == buyPending.pairSide }?.second?.proposalId.orEmpty()
+                if (!derivApiClient.send(JSONObject().put("buy", proposalRequestId).put("price", buyPending.stake).put("req_id", buyReqId))) {
+                    allSent = false
+                    pendingOrdersByRequest.remove(buyReqId)
+                }
+            }
+            if (!allSent) {
+                // Any side already accepted remains monitored; failed/unsubmitted side is reported.
+                notifyEvent("Paired execution warning", "${pending.symbol} · One or more buy requests could not be sent. Check the open-contract portfolio immediately.",
+                    "paired_buy_send_warning_${pending.pairId}")
             } else {
-                notifyEvent("Execution requested", "${pending.symbol} · Deriv returned a valid proposal; purchase request sent.",
-                    "buy_requested_${accountId}_${executionMode}_${pending.symbol}_${pending.direction}_${String.format(java.util.Locale.US, "%.3f", pending.target)}")
+                notifyEvent("Rise and Fall submitted", "${pending.symbol} · Both 24-hour contracts submitted simultaneously, each at 25% of original capital.",
+                    "paired_buy_submitted_${pending.pairId}")
             }
             return
         }
@@ -951,73 +920,6 @@ runningContracts[contractId] = RunningContract(contractId, pending.symbol, pendi
             
             recordSuccessfulTrade(pending.symbol, pending.stake, contractId)
 
-            if (pending.pairSide == "MASTER" && !pending.isRecovery) {
-                val oppositeDirection = if (pending.direction == "BUY") "SELL" else "BUY"
-                val distance = kotlin.math.abs(pending.target - pending.entry)
-                val oppositeBarrier = if (oppositeDirection == "BUY") {
-                    pending.entry + distance
-                } else {
-                    (pending.entry - distance).coerceAtLeast(0.0000001)
-                }
-
-                val oppositeReqId = nextTradeRequestId()
-                val oppositePending = PendingOrder(
-                    pending.symbol,
-                    oppositeDirection,
-                    pending.entry,
-                    oppositeBarrier,
-                    pending.targetProbability,
-                    pending.stake,
-                    pending.mode,
-                    "PROPOSAL",
-                    pending.pairId,
-                    "OPPOSITE",
-                    false
-                )
-                pendingOrdersByRequest[oppositeReqId] = oppositePending
-                pendingIndexSymbols.add(pending.symbol)
-
-                val oppositeProposal = JSONObject()
-                    .put("proposal", 1)
-                    .put("amount", pending.stake)
-                    .put("basis", "stake")
-                    .put("contract_type", "ONETOUCH")
-                    .put("currency", accountCurrency.ifBlank { "USD" })
-                    .put("duration", 3)
-                    .put("duration_unit", "d")
-                    .put("underlying_symbol", pending.symbol)
-                    .put("barrier", String.format(
-                        java.util.Locale.US, "%.2f", oppositeBarrier
-                    ))
-                    .put("req_id", oppositeReqId)
-
-                if (!derivApiClient.send(oppositeProposal)) {
-                    pendingOrdersByRequest.remove(oppositeReqId)
-                    notifyEvent(
-                        "Trade 2 rejected",
-                        "${pending.symbol} · Trade 1 was accepted, but the opposite-direction proposal could not be sent.",
-                        "opposite_send_failed_${pending.pairId}"
-                    )
-                } else {
-                    notifyEvent(
-                        "Trade 2 requested",
-                        "${pending.symbol} · Trade 1 confirmed. $oppositeDirection proposal submitted.",
-                        "opposite_requested_${pending.pairId}"
-                    )
-                    android.os.Handler(mainLooper).postDelayed({
-                        val waiting = pendingOrdersByRequest[oppositeReqId]
-                        if (waiting != null && waiting.stage == "PROPOSAL") {
-                            pendingOrdersByRequest.remove(oppositeReqId)
-                            notifyEvent(
-                                "Trade 2 rejected",
-                                "${pending.symbol} · No response to the opposite proposal within 15 seconds.",
-                                "opposite_timeout_${pending.pairId}"
-                            )
-                        }
-                    }, 15000L)
-                }
-            }
-            
             pendingOrdersByRequest.remove(reqId)
             derivApiClient.send(JSONObject().put("proposal_open_contract", 1).put("contract_id", contractId).put("subscribe", 1))
             derivApiClient.requestOpenTrades()
@@ -1091,14 +993,14 @@ if (!running.targetNotified && profitOpen >= profitTarget) {
                         .apply()
 
                     notifyEvent(
-                        "${if (running.isRecovery) "20%" else "30%"} Profit Target Reached",
+                        "80% Profit Target Reached",
                         "${running.symbol} · Contract $contractId · Stake ${formatMoney(running.stake)} · Target ${formatMoney(profitTarget)} · Current P/L ${formatMoney(profitOpen)}.",
                         "profit_target_reached_${accountId}_${executionMode}_$contractId"
                     )
 
                     if (!running.closeRequested) {
                         running.closeRequested = true
-                        running.closeReason = if (running.isRecovery) "20% Recovery Profit Target Reached" else "30% Original Profit Target Reached"
+                        running.closeReason = "80% Stake Profit Target Reached"
 
                         val sent = derivApiClient.send(
                             JSONObject()
@@ -1213,6 +1115,7 @@ if (authToken.isNotBlank() && savedToken.isNotBlank() &&
     connectWithToken(savedToken)
 }
     }
+
     override fun onResume() {
         super.onResume()
 
@@ -1308,8 +1211,8 @@ mainScrollView = scroll
         if (selectedTab == "Analysis") {
     currentPriceViews.clear()
     marketDataPriceViews.clear()
-}
-when (selectedTab) {
+        }
+        when (selectedTab) {
                 "Analysis" -> {
     addMarketDataAnalysis()
     addMarketStructureAnalysis()
@@ -1908,7 +1811,6 @@ private fun addHeader() {
                     render()
                 }
             }
-
             card.addView(
                 b,
                 matchWrap().apply {
@@ -2193,7 +2095,7 @@ private fun addHeader() {
         setTextColor(statusColor)
     }
                             }
-  // =========================================================
+                            // =========================================================
 // TRADE SCREEN
 // =========================================================
 private fun addTradeScreen() {
@@ -2203,8 +2105,8 @@ private fun addTradeScreen() {
     page.addView(sectionTitle("TRADE"))
     val masterDecisionCard = card().apply {
     orientation = LinearLayout.VERTICAL
-}
-masterDecisionCard.addView(
+    }
+    masterDecisionCard.addView(
     label(
         if (autoTradeEnabled) "MASTER DECISION: ON"
         else "MASTER DECISION: OFF",
@@ -2302,7 +2204,7 @@ val targetLabel = when {
 }
 val targetView = label(targetLabel, 12f, yellow, true)
     .apply { setPadding(0, dp(4), 0, 0) }
-        val profitTargetView = label("30% profit target: ${formatMoney(stake * 0.30)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
+        val profitTargetView = label("80% profit target: ${formatMoney(stake * 0.80)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
         val trailView = label("Trailing stop: ${if (tracked?.trailingActivated == true) "ACTIVATED" else if (trailingStopEnabled) "ARMED" else "OFF"}", 12f, if (trailingStopEnabled) green else muted, true).apply { setPadding(0, dp(4), 0, 0) }
         val spotView = label("Current value/spot: ${if (currentValue > 0) formatMarketPrice(currentValue) else "—"}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val expiryView = label("Expiry: $expiryText", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
@@ -2352,7 +2254,7 @@ row.addView(
         val initialPnl = liveContractProfits[running.contractId] ?: 0.0
         val pnlHidden = label("P/L: ${formatMoney(initialPnl)}", 12f, profitColor(initialPnl), true).apply { setPadding(0, dp(4), 0, 0) }
         val targetView = label("Structure target: ${running.target.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
-        val profitTargetView = label("30% profit target: ${formatMoney(running.stake * 0.30)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
+        val profitTargetView = label("80% profit target: ${formatMoney(running.stake * 0.80)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
         val trailView = label("Trailing stop: ${if (running.trailingActivated) "ACTIVATED" else if (trailingStopEnabled) "ARMED" else "OFF"}", 12f, if (trailingStopEnabled) green else muted, true).apply { setPadding(0, dp(4), 0, 0) }
         val spotView = label("Current value/spot: —", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val expiryView = label("Expiry: —", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
@@ -3217,6 +3119,7 @@ private fun addPtpeAnalysis() {
             validTarget,
             target?.let { formatMarketPrice(it) } ?: "Unavailable"
         )
+
         addCheck(
             "TARGET DISTANCE (MINIMUM 0.5%)",
             targetDistance?.let { it >= 0.5 },
@@ -3723,10 +3626,10 @@ card.addView(label("TARGET FILTER: $filterStatus", 13f,
         page.addView(sectionTitle("RISK CATEGORIES"))
         page.addView(label("Trading capital range: R1,000 to R5,000. Interest is administrator-only. Users see plan name, interest period label only if permitted, subscription amount, period, trades used today, stake, target, trade limit, and assigned dates in My Profile.", 13f, muted, false))
         val rules = listOf(
-            listOf("MINIMUM RISK", "Interest per 30 days: 50%", "Subscription: 25% of capital", "Period: 30 days", "Stake: 10% per Touch side", "Target profit: 30% of stake", "Trades per day: 1"),
-            listOf("MEDIUM RISK", "Interest per 30 days: 100%", "Subscription: 75% of capital", "Period: 30 days", "Stake: 10% per Touch side", "Target profit: 30% of stake", "Trades per day: 2"),
-            listOf("MAXIMUM RISK", "Interest per 30 days: 200%", "Subscription: 100% of capital", "Period: 30 days", "Stake: 10% per Touch side", "Target profit: 30% of stake", "Trades per day: 3"),
-            listOf("SUPER MAXIMUM RISK", "Period: 30 days", "Stake: 10% per Touch side", "Target profit: 30% per stake", "Trades per day: Unlimited"),
+            listOf("MINIMUM RISK", "Interest per 30 days: 50%", "Subscription: 25% of capital", "Period: 30 days", "Stake: 25% per Rise/Fall side", "Target profit: 80% of stake", "Trades per day: 1"),
+            listOf("MEDIUM RISK", "Interest per 30 days: 100%", "Subscription: 75% of capital", "Period: 30 days", "Stake: 25% per Rise/Fall side", "Target profit: 80% of stake", "Trades per day: 2"),
+            listOf("MAXIMUM RISK", "Interest per 30 days: 200%", "Subscription: 100% of capital", "Period: 30 days", "Stake: 25% per Rise/Fall side", "Target profit: 80% of stake", "Trades per day: 3"),
+            listOf("SUPER MAXIMUM RISK", "Period: 30 days", "Stake: 25% per Rise/Fall side", "Target profit: 80% of stake", "Trades per day: Unlimited"),
         )
         rules.forEach { details ->
             val ruleCard = card().apply { orientation = LinearLayout.VERTICAL }
@@ -3972,8 +3875,7 @@ card.addView(label("TARGET FILTER: $filterStatus", 13f,
             // The in-app notification feed remains available if Android notification delivery fails.
         }
     }
-
-    // =========================================================
+       // =========================================================
     // ADMIN PREVIEW
     // =========================================================
     private fun addAdminPreview() {
@@ -4274,7 +4176,6 @@ card.addView(label("TARGET FILTER: $filterStatus", 13f,
         try { startActivity(Intent(Intent.ACTION_VIEW, url)) }
         catch (e: Exception) { toast("Unable to open Deriv login: ${e.message}") }
     }
-
     private fun handleOAuthCallback(intent: Intent?) {
         val data = intent?.data ?: return
         if (data.scheme != "volatilitiesindicator" || data.host != "oauth-callback") return
@@ -4662,8 +4563,7 @@ if (stake > 0.0) {
             // DerivApiClient manages automatic reconnection.
 // Do not start a second Activity-level reconnect.
 override fun onDestroy() {
-
-    // Remove Activity-level callbacks.
+// Remove Activity-level callbacks.
     profileRefreshHandler.removeCallbacks(profileRefreshRunnable)
 
     reconnectRunnable?.let {
