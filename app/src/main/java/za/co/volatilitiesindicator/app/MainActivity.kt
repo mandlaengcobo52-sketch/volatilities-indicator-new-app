@@ -1377,17 +1377,6 @@ if (
             } else {
                 val finalProfit = contract.optDouble("profit", contract.optDouble("profit_open", liveContractProfits[contractId] ?: 0.0))
                 
-                val pairedContract = runningContracts.values.firstOrNull {
-                    it.contractId != running.contractId &&
-                        it.pairId == running.pairId &&
-                        running.pairId.isNotBlank() &&
-                        !it.isRecovery &&
-                        !it.closeRequested
-                }
-                if (
-    !running.isRecovery && pairedContract != null &&
-    (
-        status == "won" ||
         running.closeReason.contains("Structural Target", ignoreCase = true) ||
         running.closeReason.contains("30% Profit Target", ignoreCase = true) ||
         finalProfit >= running.stake * 0.30
