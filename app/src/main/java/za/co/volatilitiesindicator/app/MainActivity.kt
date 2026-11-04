@@ -355,17 +355,16 @@ private val pairedCloseRequests = mutableMapOf<Int, Long>()
         return accountBalance
     }
 
-    /** Initial paired stake: 10% of the fixed daily starting capital per side. */
-    private fun fixedDailyStake(): Double {
-        val capital = dailyStartingCapital()
-        return if (capital > 0.0) kotlin.math.round(capital * 0.10 * 100.0) / 100.0 else 0.0
+    /** Each RISE/FALL contract uses 25% of fixed daily starting capital. */
+private fun fixedDailyStake(): Double {
+    val capital = dailyStartingCapital()
+    return if (capital > 0.0) {
+        kotlin.math.round(capital * 0.25 * 100.0) / 100.0
+    } else {
+        0.0
     }
+}
 
-    /** Recovery stake: 40% of the fixed daily starting capital. */
-    private fun fixedRecoveryStake(): Double {
-        val capital = dailyStartingCapital()
-        return if (capital > 0.0) kotlin.math.round(capital * 0.40 * 100.0) / 100.0 else 0.0
-    }
 
     private fun runningAndPendingTradeCount(): Int =
         runningContracts.values.count { it.mode == executionMode } +
@@ -375,22 +374,16 @@ private val pairedCloseRequests = mutableMapOf<Int, Long>()
 
     /** One trading cycle at a time across all indexes: originals plus any recovery. */
     private fun canStartPairedCycle(): Boolean {
-        val localActivity = runningContracts.values.any { it.mode == executionMode } ||
-            pendingOrdersByRequest.values.any { it.mode == executionMode }
-        if (localActivity) return false
+    val activePairIds = (
+        runningContracts.values
+            .filter { it.mode == executionMode }
+            .map { it.pairId } +
+        pendingOrdersByRequest.values
+            .filter { it.mode == executionMode }
+            .map { it.pairId }
+    ).filter { it.isNotBlank() }.toSet()
 
-        // Also respect contracts visible in Deriv's portfolio that have not yet been restored locally.
-        val root = openTradesResponse ?: return true
-        val portfolio = root.optJSONObject("portfolio")
-        val contracts = portfolio?.optJSONArray("contracts") ?: root.optJSONArray("contracts")
-        if (contracts != null) for (i in 0 until contracts.length()) {
-            val item = contracts.optJSONObject(i) ?: continue
-            val sold = item.optInt("is_sold", 0) == 1 ||
-                item.optString("is_sold", "").equals("true", true)
-            val status = item.optString("status", "open").lowercase()
-            if (!sold && status !in setOf("sold", "won", "lost", "expired")) return false
-        }
-        return true
+    return activePairIds.size < 2
     }
 
     private fun normalizedSymbol(item: JSONObject): String = item.optString(
