@@ -298,13 +298,6 @@ private fun startAndBindDerivService() {
     private val pendingOrdersByRequest = mutableMapOf<Int, PendingOrder>()
     private val pendingIndexSymbols = mutableSetOf<String>()
     private val runningContracts = mutableMapOf<Long, RunningContract>()
-    // Contracts awaiting a retry after a paired close request fails to send.
-private val pendingPairedCloseRetries = mutableSetOf<Long>()
-private val pairedCloseRequests = mutableMapOf<Int, Long>()
-    // Retain the winning side until Deriv confirms both contracts in its pair are closed.
-    private val pendingRecoveryWinners = mutableMapOf<String, RunningContract>()
-    private val pendingRecoverySpots = mutableMapOf<String, Double>()
-    private val pendingRecoveryLosers = mutableMapOf<String, Long>()
     private var nextTradeRequestId = 710000
     private var manualTradeDirection = "BUY"
     private val lastDecisionByIndex = mutableMapOf<String, MasterDecision>()
