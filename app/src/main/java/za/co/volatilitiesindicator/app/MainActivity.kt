@@ -1186,6 +1186,34 @@ runningContracts[contractId] = RunningContract(contractId, pending.symbol, pendi
     "current_spot",
     contract.optDouble("current_spot_display_value", 0.0)
 )
+                // Close each contract independently at a 40% loss.
+if (!running.closeRequested && profitOpen <= -(running.stake * 0.40)) {
+    running.closeRequested = true
+    running.closeReason = "40% Loss Limit Reached"
+
+    val sent = derivApiClient.send(
+        JSONObject()
+            .put("sell", contractId)
+            .put("price", 0)
+            .put("req_id", nextTradeRequestId())
+    )
+
+    if (!sent) {
+        running.closeRequested = false
+        running.closeReason = ""
+        notifyEvent(
+            "Loss Limit Close Failed",
+            "${running.symbol} · Contract $contractId · 40% loss reached; close request failed.",
+            "loss_limit_close_failed_${accountId}_${executionMode}_$contractId"
+        )
+    } else {
+        notifyEvent(
+            "40% Loss Limit Reached",
+            "${running.symbol} · Contract $contractId · Closing this contract independently.",
+            "loss_limit_close_requested_${accountId}_${executionMode}_$contractId"
+        )
+    }
+}
                                 if (!running.targetNotified && profitOpen >= profitTarget) {
                     running.targetNotified = true
                     running.trailingActivated = true
