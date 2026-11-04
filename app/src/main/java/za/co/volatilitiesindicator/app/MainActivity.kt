@@ -782,9 +782,6 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
         val reqId = json.optInt("req_id", -1)
         if (json.has("error")) {
             val failed = pendingOrdersByRequest.remove(reqId)
-            val failedCloseContractId = pairedCloseRequests.remove(reqId)
-
-if (failedCloseContractId != null) {
             if (failed != null) {
                 pendingIndexSymbols.remove(failed.symbol)
                 val errorObject = json.optJSONObject("error")
@@ -795,7 +792,7 @@ if (failedCloseContractId != null) {
                 val insufficientFunds = errorMessage.contains("balance", true) ||
                     errorMessage.contains("fund", true) || errorMessage.contains("insufficient", true)
                 notifyEvent(
-                    if (insufficientFunds) "Execution rejected" else "Execution rejected",
+                    "Execution rejected",
                     "${failed.symbol} · Deriv rejected ${failed.stage.lowercase()} request: $diagnostic",
                     "trade_open_failed_${accountId}_${executionMode}_${failed.symbol}_${failed.direction}_${String.format(java.util.Locale.US, "%.3f", failed.target)}"
                 )
@@ -806,9 +803,7 @@ if (failedCloseContractId != null) {
         if (pending != null && msgType == "proposal") {
             val proposal = json.optJSONObject("proposal")
             val proposalId = proposal?.optString("id", "").orEmpty()
-            // Deriv's proposal payout is the total return (stake + profit) for a winning
-            // ONETOUCH contract. Prefer 20% profit on stake, but accept a proposal when
-            // the available potential profit is at least 15% of stake.
+            // Validate that Deriv returned a usable proposal before purchase.
             val payout = proposal?.optDouble("payout", 0.0) ?: 0.0
             if (proposalId.isBlank() || payout <= 0.0) {
                 pendingOrdersByRequest.remove(reqId)
@@ -1218,7 +1213,6 @@ if (authToken.isNotBlank() && savedToken.isNotBlank() &&
     connectWithToken(savedToken)
 }
     }
-
     override fun onResume() {
         super.onResume()
 
@@ -2199,7 +2193,7 @@ private fun addHeader() {
         setTextColor(statusColor)
     }
                             }
-                            // =========================================================
+  // =========================================================
 // TRADE SCREEN
 // =========================================================
 private fun addTradeScreen() {
@@ -3223,7 +3217,6 @@ private fun addPtpeAnalysis() {
             validTarget,
             target?.let { formatMarketPrice(it) } ?: "Unavailable"
         )
-
         addCheck(
             "TARGET DISTANCE (MINIMUM 0.5%)",
             targetDistance?.let { it >= 0.5 },
@@ -4703,5 +4696,3 @@ override fun onDestroy() {
     super.onDestroy()
 }
                                         }
-                            
-    
