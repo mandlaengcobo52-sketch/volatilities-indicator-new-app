@@ -272,6 +272,7 @@ private fun startAndBindDerivService() {
         val target: Double,
         val targetProbability: Double,
         val mode: String,
+        var entryBarrier: Double = 0.0,
         var takeProfitRequested: Boolean = false,
         var openContractConfirmed: Boolean = false,
         var targetNotified: Boolean = false,
@@ -942,6 +943,21 @@ runningContracts[contractId] = RunningContract(contractId, pending.symbol, pendi
             val contractId = contract.optLong("contract_id", 0L)
             val running = runningContracts[contractId] ?: return
             val status = contract.optString("status", "")
+            val actualEntryBarrier = contract.optDouble(
+    "entry_tick",
+    contract.optDouble("entry_spot", 0.0)
+)
+
+if (actualEntryBarrier > 0.0) {
+    running.entryBarrier = actualEntryBarrier
+
+    appPrefs.edit()
+        .putString(
+            "contract_entry_barrier_${accountId}_${executionMode}_$contractId",
+            actualEntryBarrier.toString()
+        )
+        .apply()
+}
             if (!running.openContractConfirmed && status !in setOf("sold", "won", "lost", "expired") && contractId > 0L) {
                 running.openContractConfirmed = true
                 notifyEvent("Open contract confirmed", "${running.symbol} · Contract $contractId · Deriv confirms status ${status.ifBlank { "open" }.uppercase()}.",
