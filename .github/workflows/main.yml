@@ -1,3 +1,4 @@
+
 name: Build Volatilities Indicator APK
 
 on:
@@ -8,7 +9,7 @@ on:
 
 jobs:
   build:
-    name: Build APK
+    name: Build Signed Release APK
     runs-on: ubuntu-latest
 
     steps:
@@ -36,22 +37,49 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Check project
-        run: |
-          echo "Java:"
-          java -version
-          echo "Gradle:"
-          gradle --version
-          echo "Project files:"
-          find . -maxdepth 4 -type f | sort
+      - name: Build Release APK
+        run: gradle --no-daemon assembleRelease
 
-      - name: Build APK
+      - name: Decode Android Keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
-          gradle --no-daemon assembleDebug
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/volatilities-release.jks"
 
-      - name: Upload APK
+      - name: Align and Sign Release APK
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          UNSIGNED_APK=$(find . -path "*/build/outputs/apk/release/*-unsigned.apk" -print -quit)
+
+          if [ -z "$UNSIGNED_APK" ]; then
+            echo "Unsigned release APK not found"
+            exit 1
+          fi
+
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
+
+          "$BUILD_TOOLS/zipalign" -f -p 4 \
+            "$UNSIGNED_APK" \
+            "$RUNNER_TEMP/volatilities-aligned.apk"
+
+          "$BUILD_TOOLS/apksigner" sign \
+            --ks "$RUNNER_TEMP/volatilities-release.jks" \
+            --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass env:KEYSTORE_PASSWORD \
+            --key-pass env:KEY_PASSWORD \
+            --out "$RUNNER_TEMP/volatilities-indicator-release.apk" \
+            "$RUNNER_TEMP/volatilities-aligned.apk"
+
+          "$BUILD_TOOLS/apksigner" verify \
+            --verbose \
+            "$RUNNER_TEMP/volatilities-indicator-release.apk"
+
+      - name: Upload Signed Release APK
         uses: actions/upload-artifact@v4
         with:
-          name: volatilities-indicator-debug-apk
-          path: '**/build/outputs/apk/debug/*.apk'
+          name: volatilities-indicator-signed-release
+          path: ${{ runner.temp }}/volatilities-indicator-release.apk
           
