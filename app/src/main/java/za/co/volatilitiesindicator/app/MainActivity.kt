@@ -510,13 +510,23 @@ private fun canPlaceTrade(showToast: Boolean = true): Boolean {
     return true
 }
 
-private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Long) {
+private fun recordSuccessfulExecution(symbol: String, stake: Double, pairId: String) {
+    val executionKey = "execution_counted_$pairId"
+
+    if (appPrefs.getBoolean(executionKey, false)) return
+
     val key = dailyTradeCounterKey()
     val newCount = dailyTradeCount() + 1
 
-    appPrefs.edit().putInt(key, newCount).apply()
+    appPrefs.edit()
+        .putBoolean(executionKey, true)
+        .putInt(key, newCount)
+        .apply()
 
-    notifyEvent("Rise/Fall trade opened", "$symbol · Contract $contractId · Stake ${String.format(java.util.Locale.US, "%.2f", stake)} ${accountCurrency.ifBlank { "USD" }}")
+    notifyEvent(
+        "Paired execution counted",
+        "$symbol · RISE and FALL opened successfully. Daily executions: $newCount."
+    )
 }
 
 
@@ -929,7 +939,17 @@ runningContracts[contractId] = RunningContract(contractId, pending.symbol, pendi
             notifyEvent("Execution accepted", "${pending.symbol} · Deriv accepted the buy request and returned contract $contractId.",
                 "execution_accepted_${accountId}_${executionMode}_$contractId")
             
-            recordSuccessfulTrade(pending.symbol, pending.stake, contractId)
+            if (runningContracts.values.count {
+        it.pairId == pending.pairId &&
+        it.mode == executionMode
+    } >= 2
+) {
+    recordSuccessfulExecution(
+        pending.symbol,
+        pending.stake,
+        pending.pairId
+    )
+            }
 
             pendingOrdersByRequest.remove(reqId)
             derivApiClient.send(JSONObject().put("proposal_open_contract", 1).put("contract_id", contractId).put("subscribe", 1))
