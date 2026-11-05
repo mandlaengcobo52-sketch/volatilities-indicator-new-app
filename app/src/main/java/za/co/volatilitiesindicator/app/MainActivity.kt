@@ -647,7 +647,7 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
             return null
         }
         val decision = MasterDecision(symbol, decisionDirection, current, target, distance, probability, samples,
-    "Confirmed structural reversal + MSS/CHOCH/BOS + structural target + PTPE >=55%; simultaneous Rise and Fall; 24-hour duration"
+    "Confirmed structural reversal + MSS/CHOCH/BOS + structural target + PTPE >=55%; simultaneous Rise and Fall; 12-hour duration"
 )
         lastDecisionByIndex[symbol] = decision
         notifyEvent("Trade qualified", "$symbol · ${decision.direction} · Target ${formatMarketPrice(decision.target)} · PTPE ${String.format(java.util.Locale.US, "%.1f", decision.targetProbability)}%",
@@ -753,7 +753,7 @@ private fun recordSuccessfulTrade(symbol: String, stake: Double, contractId: Lon
                 .put("basis", "stake")
                 .put("contract_type", contractType)
                 .put("currency", accountCurrency.ifBlank { "USD" })
-                .put("duration", 24)
+                .put("duration", 12)
                 .put("duration_unit", "h")
                 .put("underlying_symbol", symbol)
                 .put("req_id", requestId)
