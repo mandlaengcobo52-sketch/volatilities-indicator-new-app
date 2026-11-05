@@ -350,11 +350,11 @@ private fun startAndBindDerivService() {
         return accountBalance
     }
 
-    /** Each RISE/FALL contract uses 25% of fixed daily starting capital. */
+    /** Each RISE/FALL contract uses 50% of fixed daily starting capital. */
 private fun fixedDailyStake(): Double {
     val capital = dailyStartingCapital()
     return if (capital > 0.0) {
-        kotlin.math.round(capital * 0.25 * 100.0) / 100.0
+        kotlin.math.round(capital * 0.50 * 100.0) / 100.0
     } else {
         0.0
     }
