@@ -350,11 +350,11 @@ private fun startAndBindDerivService() {
         return accountBalance
     }
 
-    /** Each RISE/FALL contract uses 50% of fixed daily starting capital. */
+    /** Each RISE/FALL contract uses 25% of fixed daily starting capital. */
 private fun fixedDailyStake(): Double {
     val capital = dailyStartingCapital()
     return if (capital > 0.0) {
-        kotlin.math.round(capital * 0.50 * 100.0) / 100.0
+        kotlin.math.round(capital * 0.25 * 100.0) / 100.0
     } else {
         0.0
     }
@@ -364,6 +364,13 @@ private fun fixedDailyStake(): Double {
     private fun runningAndPendingTradeCount(): Int =
         runningContracts.values.count { it.mode == executionMode } +
             pendingOrdersByRequest.values.count { it.mode == executionMode }
+
+    private fun hasCapacityForTrades(count: Int): Boolean = runningAndPendingTradeCount() + count <= 4
+
+    /** Allow up to two paired executions simultaneously across different indexes. */
+private fun canStartPairedCycle(): Boolean {
+    return hasCapacityForTrades(2)
+}
 
     private fun normalizedSymbol(item: JSONObject): String = item.optString(
         "underlying", item.optString("underlying_symbol", item.optString("symbol", ""))
@@ -414,7 +421,13 @@ private fun fixedDailyStake(): Double {
     private fun riskPlanName(): String = currentProfile?.optString("risk_profile", "")?.trim()?.lowercase().orEmpty()
 
     private fun maxTradesPerDay(): Int {
-    return Int.MAX_VALUE
+        return when (riskPlanName()) {
+            "minimum" -> 2
+            "medium" -> 4
+            "maximum" -> 6
+            "super maximum", "super_maximum", "super-maximum", "privilege" -> Int.MAX_VALUE
+            else -> 0
+        }
     }
 
     private fun riskPlanIsActive(): Boolean {
@@ -471,8 +484,6 @@ private fun canPlaceTrade(showToast: Boolean = true): Boolean {
         if (showToast) toast("Trading is locked: an active risk plan must be assigned by the administrator.")
         return false
     }
-    return true
-}
     val limit = maxTradesPerDay()
     if (limit <= 0) {
         if (showToast) toast("Trading is locked: your risk plan is not recognised.")
@@ -704,8 +715,12 @@ private fun recordSuccessfulExecution(symbol: String, stake: Double, pairId: Str
         }
         val stake = fixedDailyStake()
         val capital = dailyStartingCapital()
+        if (!canStartPairedCycle()) {
+            recordExecutionStage("Execution blocked", "$symbol · The maximum of 2 simultaneously running/pending paired executions (4 contracts) would be exceeded.", "blocked_trade_cap_${accountId}_${executionMode}")
+            return
+        }
         if (stake <= 0.0 || capital <= 0.0 || accountBalance < (stake * 2.0)) {
-            notifyEvent("Execution rejected", "$symbol · Insufficient available balance to open both Rise and Fall contracts at 50% of current available capital each.",
+            notifyEvent("Execution rejected", "$symbol · Insufficient available balance to open both Rise and Fall contracts at 25% of original capital each.",
                 "insufficient_pair_funds_${accountId}_${executionMode}_${saDayKey()}_$symbol")
             return
         }
@@ -740,8 +755,8 @@ private fun recordSuccessfulExecution(symbol: String, stake: Double, pairId: Str
                 .put("basis", "stake")
                 .put("contract_type", contractType)
                 .put("currency", accountCurrency.ifBlank { "USD" })
-                .put("duration", 5)
-                .put("duration_unit", "d")
+                .put("duration", 12)
+                .put("duration_unit", "h")
                 .put("underlying_symbol", symbol)
                 .put("req_id", requestId)
 
@@ -1496,7 +1511,7 @@ private fun addLoginScreen() {
                         authPrefs.edit().putString("mobile_auth_token", authToken).apply()
                         currentProfile = result.optJSONObject("user")
                         val role = currentProfile?.optString("role", "user") ?: "user"
-platform = if (role.equals("admin", ignoreCase = true)) "ADMIN" else "USER"
+                        platform = if (role.equals("admin", ignoreCase = true)) "ADMIN" else "USER"
                         selectedTab = "My profile"
                         drawerOpen = false
                         render()
@@ -1799,7 +1814,6 @@ private fun addHeader() {
         card.addView(
             label("NAVIGATION", 13f, green, true)
         )
-
         val items = if (platform == "ADMIN") {
             listOf(
                 "Dashboard",
@@ -2293,7 +2307,7 @@ row.addView(
         ).apply { setPadding(0, dp(4), 0, 0) }
 
         val profitTargetView = label(
-            "80% profit target: ${formatMoney(running.stake * 0.80)}",
+            "30% profit target: ${formatMoney(running.stake * 0.30)}",
             12f, yellow, true
         ).apply { setPadding(0, dp(4), 0, 0) }
 
@@ -2386,7 +2400,7 @@ row.addView(
             .map { item.optString(it, "").trim() }
             .firstOrNull { it.isNotBlank() && it != "null" }
             .orEmpty()
-        val symbol = rawSymbol.ifBlank {
+            val symbol = rawSymbol.ifBlank {
             runningContracts[contractId]?.symbol
                 ?: when {
                     historyDescription.contains("Volatility 10 Index", true) -> "R_10"
@@ -2983,7 +2997,7 @@ private fun addQualificationAnalysis() {
                 12f, if (hasConfirmedEvent) green else yellow, true
             )
         )
-           // Keep the target-price value on the administrator interface only.
+          // Keep the target-price value on the administrator interface only.
         if (platform == "ADMIN") {
             qualificationCard.addView(
                 label(
@@ -3284,7 +3298,7 @@ private fun addTargetFilterAnalysis() {
         val targetDirectionValid = targetPriceForDistance != null &&
     current != null &&
     (
-        (direction == "UP" && targetPriceForDistance > currentPriceForDistance) ||
+            (direction == "UP" && targetPriceForDistance > currentPriceForDistance) ||
         (direction == "DOWN" && targetPriceForDistance < currentPriceForDistance)
     )
 
@@ -4147,7 +4161,6 @@ card.addView(label("TARGET FILTER: $filterStatus", 13f,
 
         return b
     }
-
     private fun card(): LinearLayout {
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
