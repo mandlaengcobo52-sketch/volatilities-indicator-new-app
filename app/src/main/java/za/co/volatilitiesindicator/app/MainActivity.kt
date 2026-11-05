@@ -367,17 +367,9 @@ private fun fixedDailyStake(): Double {
 
     private fun hasCapacityForTrades(count: Int): Boolean = runningAndPendingTradeCount() + count <= 4
 
-    /** Only one trading cycle at a time across all indexes. */
+    /** Allow up to two paired executions simultaneously across different indexes. */
 private fun canStartPairedCycle(): Boolean {
-    val hasRunningTrade = runningContracts.values.any {
-        it.mode == executionMode
-    }
-
-    val hasPendingOrder = pendingOrdersByRequest.values.any {
-        it.mode == executionMode
-    }
-
-    return !hasRunningTrade && !hasPendingOrder
+    return hasCapacityForTrades(2)
 }
 
     private fun normalizedSymbol(item: JSONObject): String = item.optString(
@@ -724,7 +716,7 @@ private fun recordSuccessfulExecution(symbol: String, stake: Double, pairId: Str
         val stake = fixedDailyStake()
         val capital = dailyStartingCapital()
         if (!canStartPairedCycle()) {
-            recordExecutionStage("Execution blocked", "$symbol · The maximum of 2 simultaneously running/pending paired cycles would be exceeded.", "blocked_trade_cap_${accountId}_${executionMode}")
+            recordExecutionStage("Execution blocked", "$symbol · The maximum of 2 simultaneously running/pending paired executions (4 contracts) would be exceeded.", "blocked_trade_cap_${accountId}_${executionMode}")
             return
         }
         if (stake <= 0.0 || capital <= 0.0 || accountBalance < (stake * 2.0)) {
