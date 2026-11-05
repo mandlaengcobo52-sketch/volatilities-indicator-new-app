@@ -755,8 +755,8 @@ private fun recordSuccessfulExecution(symbol: String, stake: Double, pairId: Str
                 .put("basis", "stake")
                 .put("contract_type", contractType)
                 .put("currency", accountCurrency.ifBlank { "USD" })
-                .put("duration", 12)
-                .put("duration_unit", "h")
+                .put("duration", 5)
+                .put("duration_unit", "d")
                 .put("underlying_symbol", symbol)
                 .put("req_id", requestId)
 
