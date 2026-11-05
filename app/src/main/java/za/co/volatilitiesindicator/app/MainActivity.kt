@@ -416,7 +416,6 @@ private fun fixedDailyStake(): Double {
     private fun maxTradesPerDay(): Int {
     return Int.MAX_VALUE
     }
-    }
 
     private fun riskPlanIsActive(): Boolean {
         val user = currentProfile ?: return false
