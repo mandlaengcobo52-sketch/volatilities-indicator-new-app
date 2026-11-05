@@ -365,13 +365,6 @@ private fun fixedDailyStake(): Double {
         runningContracts.values.count { it.mode == executionMode } +
             pendingOrdersByRequest.values.count { it.mode == executionMode }
 
-    private fun hasCapacityForTrades(count: Int): Boolean = runningAndPendingTradeCount() + count <= 4
-
-    /** Allow up to two paired executions simultaneously across different indexes. */
-private fun canStartPairedCycle(): Boolean {
-    return hasCapacityForTrades(2)
-}
-
     private fun normalizedSymbol(item: JSONObject): String = item.optString(
         "underlying", item.optString("underlying_symbol", item.optString("symbol", ""))
     ).uppercase()
