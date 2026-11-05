@@ -350,9 +350,9 @@ private fun startAndBindDerivService() {
         return accountBalance
     }
 
-    /** Each RISE/FALL contract uses 50% of fixed daily starting capital. */
-private fun fixedDailyStake(): Double {
-    val capital = dailyStartingCapital()
+    /** Each RISE/FALL contract uses 50% of the current available account balance. */
+private fun currentCapitalStake(): Double {
+    val capital = accountBalance
     return if (capital > 0.0) {
         kotlin.math.round(capital * 0.50 * 100.0) / 100.0
     } else {
@@ -366,10 +366,8 @@ private fun fixedDailyStake(): Double {
             pendingOrdersByRequest.values.count { it.mode == executionMode }
 private fun hasCapacityForTrades(count: Int): Boolean = runningAndPendingTradeCount() + count <= 4
 
-/** Allow up to two paired executions simultaneously across different indexes. */
-private fun canStartPairedCycle(): Boolean {
-    return hasCapacityForTrades(2)
-}
+/** No global cap: new paired executions may open while earlier contracts remain active. */
+private fun canStartPairedCycle(): Boolean = true
     private fun normalizedSymbol(item: JSONObject): String = item.optString(
         "underlying", item.optString("underlying_symbol", item.optString("symbol", ""))
     ).uppercase()
@@ -418,15 +416,7 @@ private fun canStartPairedCycle(): Boolean {
 
     private fun riskPlanName(): String = currentProfile?.optString("risk_profile", "")?.trim()?.lowercase().orEmpty()
 
-    private fun maxTradesPerDay(): Int {
-        return when (riskPlanName()) {
-            "minimum" -> 2
-            "medium" -> 4
-            "maximum" -> 6
-            "super maximum", "super_maximum", "super-maximum", "privilege" -> Int.MAX_VALUE
-            else -> 0
-        }
-    }
+    private fun maxTradesPerDay(): Int = Int.MAX_VALUE
 
     private fun riskPlanIsActive(): Boolean {
         val user = currentProfile ?: return false
@@ -480,21 +470,6 @@ private fun dailyTradeCount(): Int {
 private fun canPlaceTrade(showToast: Boolean = true): Boolean {
     if (!riskPlanIsActive()) {
         if (showToast) toast("Trading is locked: an active risk plan must be assigned by the administrator.")
-        return false
-    }
-    val limit = maxTradesPerDay()
-    if (limit <= 0) {
-        if (showToast) toast("Trading is locked: your risk plan is not recognised.")
-        return false
-    }
-    if (dailyTradeCount() >= limit) {
-        if (showToast) toast("Daily risk-plan limit reached (${if (limit == Int.MAX_VALUE) "unlimited" else limit} trades).")
-        val eventKey = "risk_limit_notice_${accountId}_${executionMode}_${saDayKey()}"
-        if (!appPrefs.getBoolean(eventKey, false)) {
-            appPrefs.edit().putBoolean(eventKey, true).apply()
-            notifyEvent("Daily limit reached", "No additional trades can be opened until the South African day resets.",
-                "daily_limit_${accountId}_${executionMode}_${saDayKey()}")
-        }
         return false
     }
     return true
@@ -626,8 +601,7 @@ private fun recordSuccessfulExecution(symbol: String, stake: Double, pairId: Str
         val status = when {
     lifecycle != "BUILDING UP" ->
         "WAIT — PIVOT REVERSAL NOT CONFIRMED"
-
-    distance < 0.5 ->
+            distance < 0.5 ->
         "WAIT — TARGET TOO CLOSE (MINIMUM 0.5%)"
 
     samples < 5 ->
@@ -647,7 +621,7 @@ private fun recordSuccessfulExecution(symbol: String, stake: Double, pairId: Str
             return null
         }
         val decision = MasterDecision(symbol, decisionDirection, current, target, distance, probability, samples,
-    "Confirmed structural reversal + MSS/CHOCH/BOS + structural target + PTPE >=55%; simultaneous Rise and Fall; 12-hour duration"
+    "Confirmed structural reversal + MSS/CHOCH/BOS + structural target + PTPE >=55%; simultaneous Rise and Fall; 5-day duration"
 )
         lastDecisionByIndex[symbol] = decision
         notifyEvent("Trade qualified", "$symbol · ${decision.direction} · Target ${formatMarketPrice(decision.target)} · PTPE ${String.format(java.util.Locale.US, "%.1f", decision.targetProbability)}%",
@@ -692,17 +666,9 @@ private fun recordSuccessfulExecution(symbol: String, stake: Double, pairId: Str
             )
             return
         }
-        if (activeContractForIndex(symbol)) {
-            recordExecutionStage(
-                "Execution blocked",
-                "$symbol · Deriv's confirmed portfolio or local confirmed-contract state shows an open contract for this index.",
-                "blocked_open_contract_${accountId}_${executionMode}_${symbol}"
-            )
-            return
-        }
         if (!canPlaceTrade(showToast = false)) {
             val reason = if (!riskPlanIsActive()) "Risk plan is inactive or expired."
-                else "Daily risk-plan trade limit has been reached or the risk plan is unrecognised."
+                else "Risk plan is not recognised."
             recordExecutionStage("Execution blocked", "$symbol · $reason", "blocked_risk_$signalKey")
             return
         }
@@ -711,14 +677,10 @@ private fun recordSuccessfulExecution(symbol: String, stake: Double, pairId: Str
                 "insufficient_funds_${accountId}_${executionMode}_${saDayKey()}_$symbol")
             return
         }
-        val stake = fixedDailyStake()
-        val capital = dailyStartingCapital()
-        if (!canStartPairedCycle()) {
-            recordExecutionStage("Execution blocked", "$symbol · The maximum of 2 simultaneously running/pending paired executions (4 contracts) would be exceeded.", "blocked_trade_cap_${accountId}_${executionMode}")
-            return
-        }
+        val stake = currentCapitalStake()
+        val capital = accountBalance
         if (stake <= 0.0 || capital <= 0.0 || accountBalance < (stake * 2.0)) {
-            notifyEvent("Execution rejected", "$symbol · Insufficient available balance to open both Rise and Fall contracts at 25% of original capital each.",
+            notifyEvent("Execution rejected", "$symbol · Insufficient available balance to open both Rise and Fall contracts at 50% of current available account balance each.",
                 "insufficient_pair_funds_${accountId}_${executionMode}_${saDayKey()}_$symbol")
             return
         }
@@ -889,7 +851,7 @@ private fun recordSuccessfulExecution(symbol: String, stake: Double, pairId: Str
                 notifyEvent("Paired execution warning", "${pending.symbol} · One or more buy requests could not be sent. Check the open-contract portfolio immediately.",
                     "paired_buy_send_warning_${pending.pairId}")
             } else {
-                notifyEvent("Rise and Fall submitted", "${pending.symbol} · Both 24-hour contracts submitted simultaneously, each at 25% of original capital.",
+                notifyEvent("Rise and Fall submitted", "${pending.symbol} · Both 5-day contracts submitted simultaneously, each at 50% of fixed daily starting capital.",
                     "paired_buy_submitted_${pending.pairId}")
             }
             return
@@ -940,7 +902,6 @@ runningContracts[contractId] = RunningContract(contractId, pending.symbol, pendi
         pending.pairId
     )
             }
-
             pendingOrdersByRequest.remove(reqId)
             derivApiClient.send(JSONObject().put("proposal_open_contract", 1).put("contract_id", contractId).put("subscribe", 1))
             derivApiClient.requestOpenTrades()
@@ -990,34 +951,6 @@ if (actualEntryBarrier > 0.0) {
     "current_spot",
     contract.optDouble("current_spot_display_value", 0.0)
 )
-                // Close each contract independently at a 40% loss.
-if (!running.closeRequested && profitOpen <= -(running.stake * 0.40)) {
-    running.closeRequested = true
-    running.closeReason = "40% Loss Limit Reached"
-
-    val sent = derivApiClient.send(
-        JSONObject()
-            .put("sell", contractId)
-            .put("price", 0)
-            .put("req_id", nextTradeRequestId())
-    )
-
-    if (!sent) {
-        running.closeRequested = false
-        running.closeReason = ""
-        notifyEvent(
-            "Loss Limit Close Failed",
-            "${running.symbol} · Contract $contractId · 40% loss reached; close request failed.",
-            "loss_limit_close_failed_${accountId}_${executionMode}_$contractId"
-        )
-    } else {
-        notifyEvent(
-            "40% Loss Limit Reached",
-            "${running.symbol} · Contract $contractId · Closing this contract independently.",
-            "loss_limit_close_requested_${accountId}_${executionMode}_$contractId"
-        )
-    }
-}
 if (!running.targetNotified && profitOpen >= profitTarget) {
                     running.targetNotified = true
                     running.trailingActivated = true
@@ -1267,7 +1200,7 @@ mainScrollView = scroll
                     page.addView(button("SIGN IN", true) { selectedTab = "Login"; render() }, matchWrap())
                 } else addTradeScreen()
             }
-"Register" -> {
+            "Register" -> {
     addRegistrationScreen()
     page.addView(
         button("BACK TO HOME", false) {
@@ -1587,15 +1520,7 @@ private fun addUserProfileScreen(page: LinearLayout) {
         profileField("Subscription amount", subscriptionText)
         profileField("Period", periodText)
         profileField("Trading capital range", "R1,000 to R5,000")
-        val riskLimitText = when (risk.lowercase()) {
-            "minimum" -> "1 trade per day"
-            "medium" -> "2 trades per day"
-            "maximum" -> "3 trades per day"
-            "super maximum", "super_maximum", "super-maximum", "privilege" -> "Unlimited trades per day"
-            "trial" -> "Trade limit not configured"
-            else -> "Trading disabled until assigned"
-        }
-        profileField("Trades used today", "${dailyTradeCount()} / ${if (maxTradesPerDay() == Int.MAX_VALUE) "Unlimited" else maxTradesPerDay()}")
+        profileField("Trades opened today", dailyTradeCount().toString())
         profileField("Start of risk plan", u.optString("start_date", "").takeUnless { it == "null" }.orEmpty())
         profileField("Expiry of risk plan", u.optString("expiry_date", "").takeUnless { it == "null" }.orEmpty())
         val status = u.optString("status", "approved").uppercase()
@@ -2240,7 +2165,6 @@ val targetLabel = when {
 val targetView = label(targetLabel, 12f, yellow, true)
     .apply { setPadding(0, dp(4), 0, 0) }
         val profitTargetView = label("80% profit target: ${formatMoney(stake * 0.80)}", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
-        val lossLimitView = label("40% loss limit: ${formatMoney(stake * 0.40)}", 12f, red, true).apply { setPadding(0, dp(4), 0, 0) }
 val actualBarrier = tracked?.entryBarrier?.takeIf { it > 0.0 }
     ?: item.optDouble("entry_tick", item.optDouble("entry_spot", 0.0))
 val entryBarrierView = label(
@@ -2254,7 +2178,6 @@ val entryBarrierView = label(
         row.addView(pnlHidden)
         row.addView(entryBarrierView)
         row.addView(profitTargetView)
-        row.addView(lossLimitView)
         row.addView(targetView)
         row.addView(trailView)
         row.addView(spotView)
@@ -2309,11 +2232,6 @@ row.addView(
             12f, yellow, true
         ).apply { setPadding(0, dp(4), 0, 0) }
 
-        val lossLimitView = label(
-            "40% loss limit: ${formatMoney(running.stake * 0.40)}",
-            12f, red, true
-        ).apply { setPadding(0, dp(4), 0, 0) }
-
         val targetView = label(
             "Structure target: ${running.target.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}",
             12f, yellow, true
@@ -2335,7 +2253,6 @@ row.addView(
         row.addView(pnlHidden)
         row.addView(entryBarrierView)
         row.addView(profitTargetView)
-        row.addView(lossLimitView)
         row.addView(targetView)
         row.addView(trailView)
         row.addView(spotView)
@@ -2883,7 +2800,6 @@ private fun addDirectionStructuralTargetAnalysis() {
                 true
             )
         )
-
         // Target prices are confidential and must be visible to administrators only.
         if (platform == "ADMIN") {
             indexCard.addView(
@@ -3188,8 +3104,7 @@ private fun addPtpeAnalysis() {
                 String.format(java.util.Locale.US, "%.3f%%", it)
             } ?: "Unavailable"
         )
-
-                addCheck(
+        addCheck(
             "PIVOT MOVEMENT CLASSIFICATION",
             lifecycle?.let {
                 it == "BUILDING UP" || it == "CONTINUATION"
@@ -3607,7 +3522,7 @@ card.addView(label("TARGET FILTER: $filterStatus", 13f,
             addView(phone)
             addView(label("Risk plan (30 days)", 14f, yellow, true))
             addView(riskSpinner)
-            addView(label("Minimum: 2/day · Medium: 4/day · Maximum: 6/day · Super Maximum: unlimited/day", 12f, white, false))
+            addView(label("No daily trade-count restriction applies to any active risk plan.", 12f, white, false))
             addView(password)
         }
         android.app.AlertDialog.Builder(this)
@@ -3625,13 +3540,7 @@ card.addView(label("TARGET FILTER: $filterStatus", 13f,
                         val contact = phone.text.toString().trim()
                         val newPassword = password.text.toString()
                         val selectedRisk = riskPlans[riskSpinner.selectedItemPosition]
-                        val tradesPerDay = when (selectedRisk) {
-    "Minimum" -> "2"
-    "Medium" -> "4"
-                            "Maximum" -> "6"
-    "Super Maximum" -> "unlimited"
-    else -> "2"
-                        }
+                        val tradesPerDay = "unlimited"
                         val planDays = 30
                         val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).apply { timeZone = dailyCapitalTimeZone }
                         val planStartDate = dateFormat.format(java.util.Date())
@@ -3714,12 +3623,12 @@ card.addView(label("TARGET FILTER: $filterStatus", 13f,
     }
     private fun addRiskCategoriesScreen() {
         page.addView(sectionTitle("RISK CATEGORIES"))
-        page.addView(label("Trading capital range: R1,000 to R5,000. Interest is administrator-only. Users see plan name, interest period label only if permitted, subscription amount, period, trades used today, stake, target, trade limit, and assigned dates in My Profile.", 13f, muted, false))
+        page.addView(label("Trading capital range: R1,000 to R5,000. Interest is administrator-only. Users see plan name, subscription amount, period, trades opened today, stake, target, and assigned dates in My Profile. No daily trade-count restriction applies.", 13f, muted, false))
         val rules = listOf(
-            listOf("MINIMUM RISK", "Interest per 30 days: 50%", "Subscription: 25% of capital", "Period: 30 days", "Stake: 25% per Rise/Fall side", "Target profit: 80% of stake", "Trades per day: 1"),
-            listOf("MEDIUM RISK", "Interest per 30 days: 100%", "Subscription: 75% of capital", "Period: 30 days", "Stake: 25% per Rise/Fall side", "Target profit: 80% of stake", "Trades per day: 2"),
-            listOf("MAXIMUM RISK", "Interest per 30 days: 200%", "Subscription: 100% of capital", "Period: 30 days", "Stake: 25% per Rise/Fall side", "Target profit: 80% of stake", "Trades per day: 3"),
-            listOf("SUPER MAXIMUM RISK", "Period: 30 days", "Stake: 25% per Rise/Fall side", "Target profit: 80% of stake", "Trades per day: Unlimited"),
+            listOf("MINIMUM RISK", "Interest per 30 days: 50%", "Subscription: 25% of capital", "Period: 30 days", "Stake: 50% per Rise/Fall side", "Target profit: 80% of stake", "Daily trade limit: None"),
+            listOf("MEDIUM RISK", "Interest per 30 days: 100%", "Subscription: 75% of capital", "Period: 30 days", "Stake: 50% per Rise/Fall side", "Target profit: 80% of stake", "Daily trade limit: None"),
+            listOf("MAXIMUM RISK", "Interest per 30 days: 200%", "Subscription: 100% of capital", "Period: 30 days", "Stake: 50% per Rise/Fall side", "Target profit: 80% of stake", "Daily trade limit: None"),
+            listOf("SUPER MAXIMUM RISK", "Period: 30 days", "Stake: 50% per Rise/Fall side", "Target profit: 80% of stake", "Daily trade limit: None"),
         )
         rules.forEach { details ->
             val ruleCard = card().apply { orientation = LinearLayout.VERTICAL }
