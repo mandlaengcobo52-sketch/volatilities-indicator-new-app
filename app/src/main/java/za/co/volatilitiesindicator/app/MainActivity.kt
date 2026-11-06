@@ -743,7 +743,7 @@ private fun recordSuccessfulExecution(symbol: String, stake: Double, pairId: Str
         }
 
                         // Twin Touch: absolute barriers calculated at 45% of stake.
-        val barrierOffset = stake * 0.45
+        val barrierOffset = minOf(distance * 0.45, proposalSpot * 0.45)
         val upperBarrier = proposalSpot + barrierOffset
         val lowerBarrier = proposalSpot - barrierOffset
 
