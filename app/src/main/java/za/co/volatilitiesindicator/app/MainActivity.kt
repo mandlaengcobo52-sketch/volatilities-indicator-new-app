@@ -1515,7 +1515,7 @@ private fun addUserProfileScreen(page: LinearLayout) {
         profileField("Email address", u.optString("email", ""))
         profileField("Contact number", u.optString("phone", ""))
         val risk = u.optString("risk_profile", "")
-        val riskText = if (risk.isBlank() || risk == "null") "Not assigned" else "${risk.replaceFirstChar { it.uppercase() }} risk""
+        val riskText = if (risk.isBlank() || risk == "null") "Not assigned" else "${risk.replaceFirstChar { it.uppercase() }} risk"
         profileField("Risk plan", riskText)
         val riskKey = risk.lowercase().replace("_", " ").replace("-", " ")
         val targetText = when (riskKey) {
