@@ -304,6 +304,7 @@ private fun startAndBindDerivService() {
 
     private val pendingOrdersByRequest = mutableMapOf<Int, PendingOrder>()
     private val pendingIndexSymbols = mutableSetOf<String>()
+    private val lastPairedProfitRejectionNotification = mutableMapOf<String, Long>()
     // Prevent repeated proposal requests after a paired quote fails the minimum-profit gate.
 private val pairedQuoteCooldownUntil = mutableMapOf<String, Long>()
     private val runningContracts = mutableMapOf<Long, RunningContract>()
@@ -645,6 +646,9 @@ private fun recordSuccessfulExecution(symbol: String, stake: Double, pairId: Str
         // This decision was evaluated from the latest tick immediately before this call.
         // The proposal-response path still performs its own fresh validation before purchase.
         val signalKey = "${accountId}_${executionMode}_${symbol}_${decision.direction}_${String.format(java.util.Locale.US, "%.3f", decision.target)}"
+        lastPairedProfitRejectionNotification.remove(
+    "${accountId}_${executionMode}_$symbol"
+)
         if (!autoTradeEnabled) {
             recordExecutionStage("Execution blocked", "$symbol · Auto Trade is OFF.", "blocked_auto_$signalKey")
             return
@@ -886,11 +890,19 @@ if (quoteCooldownExpiry != 0L) pairedQuoteCooldownUntil.remove(quoteCooldownKey)
                 }
                 pendingIndexSymbols.remove(pending.symbol)
 
-                notifyEvent(
-                    "Execution rejected",
-                    "${pending.symbol} · Quoted profit ${formatMoney(quotedProfit)} is below the required 45% of stake (${formatMoney(minimumProfit)}). Neither contract will be purchased.",
-                    "paired_profit_below_minimum_$pairId"
-                )
+                val notificationKey = "${accountId}_${executionMode}_${pending.symbol}"
+val now = System.currentTimeMillis()
+val lastNotification = lastPairedProfitRejectionNotification[notificationKey] ?: 0L
+
+if (now - lastNotification >= 3_600_000L) {
+    lastPairedProfitRejectionNotification[notificationKey] = now
+
+    notifyEvent(
+        "Execution rejected",
+        "${pending.symbol} · Quoted profit ${formatMoney(quotedProfit)} is below the required 45% of stake (${formatMoney(minimumProfit)}). Neither contract will be purchased.",
+        "paired_profit_below_minimum_$notificationKey"
+    )
+}
                 return
             }
             if (proposalId.isBlank() || payout <= 0.0) {
