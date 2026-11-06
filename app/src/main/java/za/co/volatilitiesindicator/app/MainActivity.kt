@@ -2598,22 +2598,35 @@ private fun analysisHistoricalOutcomes(candles: List<DerivApiClient.Candle>): Li
     }
 }
 private fun analysisStructuralTarget(
-    candles: List<DerivApiClient.Candle>, currentPrice: Double, direction: String, confirmationEpoch: Long
+    candles: List<DerivApiClient.Candle>,
+    currentPrice: Double,
+    direction: String,
+    confirmationEpoch: Long
 ): AnalysisPivot? {
     val pivots = analysisPivots(candles)
+
     val eligible = pivots.filter { pivot ->
-        if (pivot.confirmedEpoch > confirmationEpoch) return@filter false
         candles.none { candle ->
-            candle.epoch > pivot.confirmedEpoch && candle.epoch <= confirmationEpoch &&
-                ((pivot.type == "HIGH" && candle.close > pivot.price) ||
-                 (pivot.type == "LOW" && candle.close < pivot.price))
+            candle.epoch > pivot.confirmedEpoch &&
+            candle.epoch <= candles.last().epoch &&
+            (
+                (pivot.type == "HIGH" && candle.close > pivot.price) ||
+                (pivot.type == "LOW" && candle.close < pivot.price)
+            )
         }
     }
+
     return when (direction) {
-        "UP" -> eligible.filter { it.type == "HIGH" && it.price > currentPrice }
-            .sortedWith(compareBy<AnalysisPivot> { it.price }.thenByDescending { it.epoch }).firstOrNull()
-        "DOWN" -> eligible.filter { it.type == "LOW" && it.price < currentPrice }
-            .sortedWith(compareByDescending<AnalysisPivot> { it.price }.thenByDescending { it.epoch }).firstOrNull()
+        "UP" -> eligible
+            .filter { it.type == "HIGH" && it.price > currentPrice }
+            .sortedBy { it.price }
+            .firstOrNull()
+
+        "DOWN" -> eligible
+            .filter { it.type == "LOW" && it.price < currentPrice }
+            .sortedByDescending { it.price }
+            .firstOrNull()
+
         else -> null
     }
 }
