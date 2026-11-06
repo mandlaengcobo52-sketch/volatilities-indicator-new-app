@@ -350,11 +350,11 @@ private fun startAndBindDerivService() {
         return accountBalance
     }
 
-    /** Each RISE/FALL contract uses 50% of the current available account balance. */
+    /** Each contract uses 50% of current available account balance. */
 private fun currentCapitalStake(): Double {
     val capital = accountBalance
     return if (capital > 0.0) {
-        kotlin.math.round(capital * 0.50 * 100.0) / 100.0
+        kotlin.math.floor(capital * 0.50 * 100.0) / 100.0
     } else {
         0.0
     }
@@ -679,7 +679,7 @@ private fun recordSuccessfulExecution(symbol: String, stake: Double, pairId: Str
         }
         val stake = currentCapitalStake()
         val capital = accountBalance
-        if (stake <= 0.0 || capital <= 0.0 || accountBalance < (stake * 2.0)) {
+        if (stake <= 0.0 || capital <= 0.0) {
             notifyEvent("Execution rejected", "$symbol · Insufficient available balance to open both Rise and Fall contracts at 50% of current available account balance each.",
                 "insufficient_pair_funds_${accountId}_${executionMode}_${saDayKey()}_$symbol")
             return
