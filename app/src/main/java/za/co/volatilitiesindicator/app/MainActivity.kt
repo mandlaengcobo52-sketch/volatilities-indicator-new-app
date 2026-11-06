@@ -742,20 +742,48 @@ private fun recordSuccessfulExecution(symbol: String, stake: Double, pairId: Str
             return proposal
         }
 
-                // Twin Touch uses absolute upper and lower barrier prices.
-        val upperBarrier = proposalSpot + distance
-        val lowerBarrier = proposalSpot - distance
+                        // Twin Touch: absolute barriers calculated at 45% of stake.
+        val barrierOffset = stake * 0.45
+        val upperBarrier = proposalSpot + barrierOffset
+        val lowerBarrier = proposalSpot - barrierOffset
 
-        if (twinTouch && lowerBarrier <= 0.0) {
+        if (
+            twinTouch &&
+            (
+                !upperBarrier.isFinite() ||
+                !lowerBarrier.isFinite() ||
+                lowerBarrier <= 0.0
+            )
+        ) {
             pendingOrdersByRequest.remove(riseReqId)
             pendingOrdersByRequest.remove(fallReqId)
             pendingIndexSymbols.remove(symbol)
             recordExecutionStage(
                 "Execution rejected",
-                "$symbol · Invalid lower absolute barrier.",
+                "$symbol · Invalid Twin Touch absolute barrier.",
                 "blocked_twin_barrier_$signalKey"
             )
             return
+        }
+
+        val proposal = if (twinTouch) {
+            pairedProposal(
+                "ONETOUCH",
+                String.format(java.util.Locale.US, "%.8f", upperBarrier),
+                riseReqId
+            )
+        } else {
+            pairedProposal("CALL", null, riseReqId)
+        }
+
+        val fallProposal = if (twinTouch) {
+            pairedProposal(
+                "ONETOUCH",
+                String.format(java.util.Locale.US, "%.8f", lowerBarrier),
+                fallReqId
+            )
+        } else {
+            pairedProposal("PUT", null, fallReqId)
         }
 
         val upperBarrierText = String.format(
