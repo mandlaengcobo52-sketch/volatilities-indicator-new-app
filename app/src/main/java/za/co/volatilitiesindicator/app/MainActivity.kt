@@ -423,16 +423,10 @@ private fun canStartPairedCycle(): Boolean = true
 
     private fun maxTradesPerDay(): Int = Int.MAX_VALUE
 
-    // Deriv contract duration is selected from the user's assigned risk plan.
-    private fun riskContractDurationDays(): Int {
-        return when (riskPlanName().replace("_", " ").replace("-", " ")) {
-            "minimum" -> 30
-            "medium" -> 15
-            "super maximum", "supermaximum" -> 4
-            "unlimited" -> 30
-            else -> 5
-        }
-    }
+    // All Deriv contracts must have a fixed 5-day duration.
+private fun riskContractDurationDays(): Int {
+    return 5
+}
 
     private fun riskPlanIsActive(): Boolean {
         val user = currentProfile ?: return false
