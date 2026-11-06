@@ -868,6 +868,23 @@ private fun recordSuccessfulExecution(symbol: String, stake: Double, pairId: Str
             val proposalObject = json.optJSONObject("proposal")
             val proposalId = proposalObject?.optString("id", "").orEmpty()
             val payout = proposalObject?.optDouble("payout", 0.0) ?: 0.0
+                        val minimumProfit = pending.stake * 0.45
+            val quotedProfit = payout - pending.stake
+
+            if (quotedProfit + 0.00000001 < minimumProfit) {
+                val pairId = pending.pairId
+                pendingOrdersByRequest.entries.removeAll {
+                    it.value.pairId == pairId
+                }
+                pendingIndexSymbols.remove(pending.symbol)
+
+                notifyEvent(
+                    "Execution rejected",
+                    "${pending.symbol} · Quoted profit ${formatMoney(quotedProfit)} is below the required 45% of stake (${formatMoney(minimumProfit)}). Neither contract will be purchased.",
+                    "paired_profit_below_minimum_$pairId"
+                )
+                return
+            }
             if (proposalId.isBlank() || payout <= 0.0) {
                 val pairId = pending.pairId
                 pendingOrdersByRequest.entries.removeAll { it.value.pairId == pairId }
