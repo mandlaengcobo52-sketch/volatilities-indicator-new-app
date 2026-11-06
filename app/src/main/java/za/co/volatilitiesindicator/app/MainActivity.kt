@@ -2106,7 +2106,8 @@ private fun addHeader() {
         status.contains("MSS/CHOCH") -> "MSS WAIT"
         status.contains("STRUCTURAL TARGET") -> "TARGET WAIT"
         status.contains("INVALID TARGET") -> "INVALID TARGET"
-        status.contains("CONTINUATION") -> "CONTINUATION"
+        status.contains("PIVOT REVERSAL") -> "PIVOT REVERSAL WAIT"
+        status.contains("CONTINUATION") -> "CONTINUATION WAIT"
         status.contains("BUILDING UP") -> "BUILDING UP"
         status.contains("GET READY") -> "GET READY"
         status.contains("QUALIFYING NOW") -> "QUALIFYING NOW"
@@ -2402,8 +2403,8 @@ row.addView(
                     historyDescription.contains("Volatility 100 Index", true) -> "R_100"
                     else -> "INDEX UNAVAILABLE"
                 }
-        }
-        val buyPrice = item.optDouble("buy_price", 0.0)
+            }
+            val buyPrice = item.optDouble("buy_price", 0.0)
         val sellPrice = item.optDouble("sell_price", 0.0)
         val profit = sellPrice - buyPrice
         val epoch = item.optLong("purchase_time", item.optLong("date_start", 0L))
@@ -2699,8 +2700,8 @@ private fun addMarketStructureAnalysis() {
         }
         page.addView(structureCard, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
     }
-}
-// =========================================================
+                                        }
+                                       // =========================================================
 // ANALYSIS — MSS / CHOCH CONFIRMATION
 // =========================================================
 private fun addMssChochAnalysis() {
@@ -3002,7 +3003,7 @@ private fun addQualificationAnalysis() {
                 "HISTORICAL DIRECTION SAMPLE: ${if (hasHistory) "PASS — ${history.size} event(s)" else "WAIT — NO HISTORICAL SAMPLE"}",
                 12f, if (hasHistory) green else yellow, true
             )
-        )
+            )
         val currentPriceForDistance = current ?: 0.0
         val targetPriceForDistance = target?.price
         val targetDistance: Double? = if (targetPriceForDistance != null && currentPriceForDistance > 0.0) {
@@ -3181,12 +3182,14 @@ private fun addPtpeAnalysis() {
             } ?: "Unavailable"
         )
 
-                addCheck(
+        addCheck(
             "PIVOT MOVEMENT CLASSIFICATION",
-            lifecycle?.let {
-                it == "BUILDING UP" || it == "CONTINUATION"
-            },
-            lifecycle ?: "Unavailable"
+            lifecycle == "BUILDING UP",
+            when (lifecycle) {
+                "BUILDING UP" -> "BUILDING UP — PIVOT REVERSAL CONFIRMED"
+                "CONTINUATION" -> "CONTINUATION — WAIT (PIVOT REVERSAL REQUIRED)"
+                else -> lifecycle ?: "Unavailable"
+            }
         )
 
         addCheck(
@@ -3300,7 +3303,7 @@ val filterStatus = when {
         "WAIT — INVALID TARGET DIRECTION"
 
     distance == null ->
-        "WAIT — TARGET DISTANCE UNAVAILABLE"
+    "WAIT — TARGET DISTANCE UNAVAILABLE"
 
     distance < 0.5 ->
         "WAIT — TARGET TOO CLOSE (MINIMUM 0.5%)"
@@ -3893,7 +3896,7 @@ private fun registerCurrentPriceView(symbol: String, section: String, view: Text
     private fun addNotificationFeedItem(message: String) {
         val stamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).apply { timeZone = dailyCapitalTimeZone }.format(java.util.Date())
         val entry = "$stamp · $message"
-        val current = appPrefs.getString("notification_feed", "").orEmpty().lines().filter { it.isNotBlank() }.toMutableList()
+      val current = appPrefs.getString("notification_feed", "").orEmpty().lines().filter { it.isNotBlank() }.toMutableList()
         current.add(0, entry)
         appPrefs.edit().putString("notification_feed", current.take(50).joinToString("\n")).apply()
     }
@@ -4194,7 +4197,7 @@ private fun registerCurrentPriceView(symbol: String, section: String, view: Text
         stroke: Int,
         radius: Int,
         strokeDp: Int
-    ): GradientDrawable {
+        ): GradientDrawable {
         return GradientDrawable().apply {
             setColor(color)
             cornerRadius = dp(radius).toFloat()
