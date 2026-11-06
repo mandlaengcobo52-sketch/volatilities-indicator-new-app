@@ -769,7 +769,7 @@ private fun recordSuccessfulExecution(symbol: String, stake: Double, pairId: Str
         val proposal = if (twinTouch) {
             pairedProposal(
                 "ONETOUCH",
-                String.format(java.util.Locale.US, "%.8f", upperBarrier),
+                String.format(java.util.Locale.US, "%.4f", upperBarrier),
                 riseReqId
             )
         } else {
@@ -779,7 +779,7 @@ private fun recordSuccessfulExecution(symbol: String, stake: Double, pairId: Str
         val fallProposal = if (twinTouch) {
             pairedProposal(
                 "ONETOUCH",
-                String.format(java.util.Locale.US, "%.8f", lowerBarrier),
+                String.format(java.util.Locale.US, "%.4f", lowerBarrier),
                 fallReqId
             )
         } else {
