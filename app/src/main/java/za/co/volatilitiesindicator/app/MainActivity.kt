@@ -646,9 +646,6 @@ private fun recordSuccessfulExecution(symbol: String, stake: Double, pairId: Str
         // This decision was evaluated from the latest tick immediately before this call.
         // The proposal-response path still performs its own fresh validation before purchase.
         val signalKey = "${accountId}_${executionMode}_${symbol}_${decision.direction}_${String.format(java.util.Locale.US, "%.3f", decision.target)}"
-        lastPairedProfitRejectionNotification.remove(
-    "${accountId}_${executionMode}_$symbol"
-)
         if (!autoTradeEnabled) {
             recordExecutionStage("Execution blocked", "$symbol · Auto Trade is OFF.", "blocked_auto_$signalKey")
             return
@@ -911,6 +908,7 @@ if (now - lastNotification >= 3_600_000L) {
                 pendingIndexSymbols.remove(pending.symbol)
                 pairedQuoteCooldownUntil["${accountId}_${executionMode}_${pending.symbol}"] =
     System.currentTimeMillis() + 30_000L
+                val notificationKey = "${accountId}_${executionMode}_${pending.symbol}"
                 notifyEvent("Execution rejected", "${pending.symbol} · Deriv returned an invalid ${if (pending.pairSide.contains("TOUCH")) "Touch" else "Rise/Fall"} proposal. Neither side will be purchased.",
                     "paired_proposal_invalid_$pairId")
                 return
