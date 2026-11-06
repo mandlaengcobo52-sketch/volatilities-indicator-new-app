@@ -786,25 +786,6 @@ private fun recordSuccessfulExecution(symbol: String, stake: Double, pairId: Str
             pairedProposal("PUT", null, fallReqId)
         }
 
-        val upperBarrierText = String.format(
-            java.util.Locale.US, "%.8f", upperBarrier
-        )
-        val lowerBarrierText = String.format(
-            java.util.Locale.US, "%.8f", lowerBarrier
-        )
-
-        val proposal = if (twinTouch) {
-            pairedProposal("ONETOUCH", "+$upperBarrierText", riseReqId)
-        } else {
-            pairedProposal("CALL", null, riseReqId)
-        }
-
-        val fallProposal = if (twinTouch) {
-            pairedProposal("ONETOUCH", "-$lowerBarrierText", fallReqId)
-        } else {
-            pairedProposal("PUT", null, fallReqId)
-        }
-
         if (!derivApiClient.send(proposal) || !derivApiClient.send(fallProposal)) {
             pendingOrdersByRequest.remove(riseReqId)
             pendingOrdersByRequest.remove(fallReqId)
