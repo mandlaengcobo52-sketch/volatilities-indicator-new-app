@@ -304,6 +304,8 @@ private fun startAndBindDerivService() {
 
     private val pendingOrdersByRequest = mutableMapOf<Int, PendingOrder>()
     private val pendingIndexSymbols = mutableSetOf<String>()
+    // Prevent repeated proposal requests after a paired quote fails the minimum-profit gate.
+private val pairedQuoteCooldownUntil = mutableMapOf<String, Long>()
     private val runningContracts = mutableMapOf<Long, RunningContract>()
     private var nextTradeRequestId = 710000
     private var manualTradeDirection = "BUY"
@@ -665,6 +667,12 @@ private fun recordSuccessfulExecution(symbol: String, stake: Double, pairId: Str
             recordExecutionStage("Execution blocked", "$symbol · Unsupported index.", "blocked_index_$signalKey")
             return
         }
+        val quoteCooldownKey = "${accountId}_${executionMode}_$symbol"
+val quoteCooldownNow = System.currentTimeMillis()
+val quoteCooldownExpiry = pairedQuoteCooldownUntil[quoteCooldownKey] ?: 0L
+
+if (quoteCooldownExpiry > quoteCooldownNow) return
+if (quoteCooldownExpiry != 0L) pairedQuoteCooldownUntil.remove(quoteCooldownKey)
         if (pendingOrdersByRequest.values.any { it.symbol == symbol && it.mode == executionMode }) {
             val stage = pendingOrdersByRequest.values.firstOrNull {
                 it.symbol == symbol && it.mode == executionMode
@@ -889,6 +897,8 @@ private fun recordSuccessfulExecution(symbol: String, stake: Double, pairId: Str
                 val pairId = pending.pairId
                 pendingOrdersByRequest.entries.removeAll { it.value.pairId == pairId }
                 pendingIndexSymbols.remove(pending.symbol)
+                pairedQuoteCooldownUntil["${accountId}_${executionMode}_${pending.symbol}"] =
+    System.currentTimeMillis() + 30_000L
                 notifyEvent("Execution rejected", "${pending.symbol} · Deriv returned an invalid ${if (pending.pairSide.contains("TOUCH")) "Touch" else "Rise/Fall"} proposal. Neither side will be purchased.",
                     "paired_proposal_invalid_$pairId")
                 return
