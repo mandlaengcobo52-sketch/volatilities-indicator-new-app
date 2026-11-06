@@ -1800,7 +1800,6 @@ private fun addHeader() {
 
     private fun addDrawer() {
         val card = card()
-
         card.orientation = LinearLayout.VERTICAL
 
         card.addView(
@@ -1955,10 +1954,12 @@ private fun addHeader() {
                 "R_75" -> red
                 else -> Color.rgb(190, 75, 255)
             }
+            // Use two display rows so long live prices cannot be squeezed into
+            // a narrow column or wrap one digit per line on smaller screens.
             val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
+                orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(8), dp(8), dp(8), dp(8))
+                setPadding(dp(10), dp(9), dp(10), dp(9))
                 background = shape(panel, accent, 10, 1)
             }
             val dashboardIndexName = when (symbol) {
@@ -1969,19 +1970,46 @@ private fun addHeader() {
                 "R_100" -> "VOLATILITY INDEX 100"
                 else -> symbol
             }
-            row.addView(label(dashboardIndexName, 13f, accent, true), LinearLayout.LayoutParams(dp(170), -2))
-            val price = marketDataPrices[symbol]
-            val priceView = label(price?.let { formatMarketPrice(it) } ?: "PRICE WAITING", 12f, muted, false)
-            dashboardPriceViews[symbol] = priceView
-            row.addView(priceView, LinearLayout.LayoutParams(0, -2, 1f))
+            val headingRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            headingRow.addView(
+                label(dashboardIndexName, 13f, accent, true),
+                LinearLayout.LayoutParams(0, -2, 1f)
+            )
             val initialStatus = dashboardDecisionStatus(symbol)
-            val statusView = label(initialStatus.first, 10f, initialStatus.second, true)
+            val statusView = label(initialStatus.first, 10f, initialStatus.second, true).apply {
+                gravity = Gravity.END or Gravity.CENTER_VERTICAL
+                maxLines = 2
+            }
             dashboardStatusViews[symbol] = statusView
-            row.addView(statusView)
+            headingRow.addView(statusView, LinearLayout.LayoutParams(-2, -2))
+            row.addView(headingRow, matchWrap())
+
+            val price = marketDataPrices[symbol]
+            val priceView = label(
+                price?.let { formatMarketPrice(it) } ?: "PRICE WAITING",
+                14f,
+                muted,
+                false
+            ).apply {
+                gravity = Gravity.CENTER
+                maxLines = 1
+                includeFontPadding = false
+            }
+            dashboardPriceViews[symbol] = priceView
+            row.addView(
+                priceView,
+                LinearLayout.LayoutParams(-1, -2).apply {
+                    topMargin = dp(7)
+                }
+            )
+
             // Index monitor rows are display-only and must not navigate to Analysis.
             row.isClickable = false
             row.isFocusable = false
-            monitorCard.addView(row, matchWrap().apply { bottomMargin = dp(5) })
+            monitorCard.addView(row, matchWrap().apply { bottomMargin = dp(6) })
         }
         page.addView(monitorCard, matchWrap().apply { bottomMargin = dp(12) })
         if (connected && !marketDataRequested) {
@@ -2971,7 +2999,6 @@ private fun addQualificationAnalysis() {
         val hasHistory = history.isNotEmpty()
         val masterDecision = evaluateMasterDecision(symbol)
         val qualified = masterDecision != null
-
         val qualificationCard = card().apply { orientation = LinearLayout.VERTICAL }
         qualificationCard.addView(label("INDEX ${symbol.removePrefix("R_")}", 17f, green, true))
         val priceView = label("CURRENT PRICE: ${formatMarketPrice(current)}", 14f, blue, true)
@@ -4449,7 +4476,7 @@ derivApiClient.connectWithAccessToken(token, executionMode)
                 if (decision != null) attemptMasterDecisionExecution(symbol, decision)
             }
         }
-    }
+        }
 }
 
     override fun onTradeData(json: JSONObject) {
