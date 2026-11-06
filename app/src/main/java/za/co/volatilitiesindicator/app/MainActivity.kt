@@ -612,8 +612,7 @@ private fun recordSuccessfulExecution(symbol: String, stake: Double, pairId: Str
         val status = when {
     lifecycle != "BUILDING UP" ->
         "WAIT — PIVOT REVERSAL NOT CONFIRMED"
-
-    distance < 0.5 ->
+            distance < 0.5 ->
         "WAIT — TARGET TOO CLOSE (MINIMUM 0.5%)"
 
     samples < 5 ->
@@ -912,7 +911,6 @@ appPrefs.edit()
     .apply()
             notifyEvent("Execution accepted", "${pending.symbol} · Deriv accepted the buy request and returned contract $contractId.",
                 "execution_accepted_${accountId}_${executionMode}_$contractId")
-            
             if (runningContracts.values.count {
         it.pairId == pending.pairId &&
         it.mode == executionMode
@@ -1517,22 +1515,9 @@ private fun addUserProfileScreen(page: LinearLayout) {
         profileField("Email address", u.optString("email", ""))
         profileField("Contact number", u.optString("phone", ""))
         val risk = u.optString("risk_profile", "")
-        val riskPercent = u.optInt("risk_percent", 0)
-        val riskText = if (risk.isBlank() || risk == "null") "Not assigned" else "${risk.replaceFirstChar { it.uppercase() }} risk${if (riskPercent > 0) " — $riskPercent% stake" else ""}"
+        val riskText = if (risk.isBlank() || risk == "null") "Not assigned" else "${risk.replaceFirstChar { it.uppercase() }} risk""
         profileField("Risk plan", riskText)
         val riskKey = risk.lowercase().replace("_", " ").replace("-", " ")
-        val subscriptionText = when (riskKey) {
-            "minimum", "medium", "super maximum", "unlimited" -> "50% stake from current capital"
-            "trial" -> "Free"
-            else -> "As assigned by administrator"
-        }
-        val contractDurationText = when (riskKey) {
-            "minimum" -> "30 days"
-            "medium" -> "15 days"
-            "super maximum" -> "4 days"
-            "unlimited" -> "30 days"
-            else -> "Not assigned"
-        }
         val targetText = when (riskKey) {
             "minimum" -> "50% in 30 days"
             "medium" -> "100% in 30 days"
@@ -1540,8 +1525,6 @@ private fun addUserProfileScreen(page: LinearLayout) {
             "unlimited" -> "No profit target"
             else -> "Not assigned"
         }
-        profileField("Stake", subscriptionText)
-        profileField("Deriv contract duration", contractDurationText)
         profileField("30-day target", targetText)
         profileField("Trading capital range", "R1,000 to R5,000")
         val riskLimitText = when (riskKey) {
@@ -1555,13 +1538,17 @@ private fun addUserProfileScreen(page: LinearLayout) {
         profileField("Account status", status)
         if (connected && accountId.isNotBlank()) {
             profileCard.addView(label("APPLY FOR A RISK PLAN", 14f, green, true).apply { setPadding(0, dp(12), 0, dp(4)) })
-            val riskOptions = listOf("Minimum — 30 days", "Medium — 15 days", "Super Maximum — 4 days", "Unlimited — 30 days")
-            val riskValues = listOf("minimum", "medium", "super maximum", "unlimited")
+            val riskOptions = listOf(
+                "Minimum — 50% in 30 days",
+                "Medium — 100% in 30 days",
+                "Super Maximum — 200% in 30 days"
+            )
+            val riskValues = listOf("minimum", "medium", "super maximum")
             val riskSpinner = Spinner(this).apply {
                 adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, riskOptions)
             }
             profileCard.addView(riskSpinner, matchWrap())
-            profileCard.addView(label("Stake: 50% of current capital per contract. Deriv contract duration and 30-day target depend on the selected risk plan. Applying does not activate a plan; the administrator must assign the plan and dates.", 12f, muted, false).apply { setPadding(0, dp(5), 0, dp(5)) })
+            profileCard.addView(label("Expected profit is shown for each plan. Applying does not activate a plan; the administrator must assign the plan and dates.", 12f, muted, false).apply { setPadding(0, dp(5), 0, dp(5)) })
             profileCard.addView(button("SUBMIT RISK-PLAN APPLICATION", true) {
                 val chosen = riskValues[riskSpinner.selectedItemPosition]
                 val fee = "50% stake from current capital"
@@ -1789,6 +1776,7 @@ private fun addHeader() {
             val b = button("  $item", false)
 
             b.gravity = Gravity.START or Gravity.CENTER_VERTICAL
+
             b.setOnClickListener {
                 if (item == "Logout") {
                     performPlatformLogout()
@@ -1816,7 +1804,6 @@ private fun addHeader() {
     // =========================================================
     // PLATFORM SELECTOR
     // =========================================================
-
     private fun addPlatformSelector() {
     // Only an authenticated administrator may see this section.
         if (currentProfile?.optString("role", "user")
@@ -1920,7 +1907,15 @@ private fun addHeader() {
                 setPadding(dp(8), dp(8), dp(8), dp(8))
                 background = shape(panel, accent, 10, 1)
             }
-            row.addView(label(symbol, 17f, accent, true), LinearLayout.LayoutParams(dp(78), -2))
+            val dashboardIndexName = when (symbol) {
+                "R_10" -> "VOLATILITY INDEX 10"
+                "R_25" -> "VOLATILITY INDEX 25"
+                "R_50" -> "VOLATILITY INDEX 50"
+                "R_75" -> "VOLATILITY INDEX 75"
+                "R_100" -> "VOLATILITY INDEX 100"
+                else -> symbol
+            }
+            row.addView(label(dashboardIndexName, 13f, accent, true), LinearLayout.LayoutParams(dp(170), -2))
             val price = marketDataPrices[symbol]
             val priceView = label(price?.let { formatMarketPrice(it) } ?: "PRICE WAITING", 12f, muted, false)
             dashboardPriceViews[symbol] = priceView
@@ -1929,10 +1924,11 @@ private fun addHeader() {
             val statusView = label(initialStatus.first, 10f, initialStatus.second, true)
             dashboardStatusViews[symbol] = statusView
             row.addView(statusView)
-            row.setOnClickListener { selectedTab = "Analysis"; render() }
+            // Index monitor rows are display-only and must not navigate to Analysis.
+            row.isClickable = false
+            row.isFocusable = false
             monitorCard.addView(row, matchWrap().apply { bottomMargin = dp(5) })
         }
-        monitorCard.addView(label("Select an index to open its detailed market analysis.", 11f, muted, false))
         page.addView(monitorCard, matchWrap().apply { bottomMargin = dp(12) })
         if (connected && !marketDataRequested) {
             marketDataRequested = true
@@ -2386,6 +2382,7 @@ private data class AnalysisMssEvent(
     val broken: AnalysisPivot,
     val confirmation: DerivApiClient.Candle
 )
+
 private data class AnalysisHistoricalOutcome(
     val direction: String,
     val pivot: AnalysisPivot,
@@ -2408,7 +2405,7 @@ private fun analysisCompletedCandles(symbol: String): List<DerivApiClient.Candle
         .filter { candle ->
             listOf(candle.epoch.toDouble(), candle.open, candle.high, candle.low, candle.close).all { it.isFinite() }
         }
-        .sortedBy { it.epoch }
+            .sortedBy { it.epoch }
     if (all.size < 2) return all
     val now = System.currentTimeMillis() / 1000L
     val completed = all.filter { now - it.epoch >= 3600L }
@@ -2985,6 +2982,7 @@ qualificationCard.addView(label(
         page.addView(qualificationCard, matchWrap().apply { topMargin = dp(6); bottomMargin = dp(6) })
     }
 }
+
 private fun addPtpeAnalysis() {
     val header = card().apply { orientation = LinearLayout.VERTICAL }
     val row = horizontalRow()
@@ -3004,7 +3002,6 @@ private fun addPtpeAnalysis() {
 
     header.addView(row)
     page.addView(header, matchWrap().apply { bottomMargin = dp(8) })
-
     if (!ptpeAnalysisExpanded) return
 
     page.addView(label(
@@ -3532,7 +3529,7 @@ card.addView(label("TARGET FILTER: $filterStatus", 13f,
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
             setSingleLine(true)
         }
-        val riskPlans = listOf("Minimum", "Medium", "Super Maximum", "Unlimited")
+        val riskPlans = listOf("Minimum", "Medium", "Super Maximum")
         val riskSpinner = Spinner(this).apply {
             adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, riskPlans)
             val existingRisk = user.optString("risk_profile", "").replaceFirstChar { it.uppercase() }
@@ -3549,7 +3546,7 @@ card.addView(label("TARGET FILTER: $filterStatus", 13f,
             addView(phone)
             addView(label("Risk plan and Deriv contract duration", 14f, yellow, true))
             addView(riskSpinner)
-            addView(label("Minimum: 30 days · Medium: 15 days · Super Maximum: 4 days · Unlimited: 30 days. Stake: 50% of current capital.", 12f, white, false))
+            addView(label("Minimum: 30 days · Medium: 15 days · Super Maximum: 4 days. Stake: 50% of current capital.", 12f, white, false))
             addView(password)
         }
         android.app.AlertDialog.Builder(this)
@@ -3906,7 +3903,6 @@ card.addView(label("TARGET FILTER: $filterStatus", 13f,
     // =========================================================
     private fun addAdminPreview() {
         page.addView(sectionTitle("ADMINISTRATION"))
-
         val card = card()
 
         card.orientation = LinearLayout.VERTICAL
@@ -4156,7 +4152,7 @@ card.addView(label("TARGET FILTER: $filterStatus", 13f,
             Toast.LENGTH_SHORT
         ).show()
     }
-    // =========================================================
+       // =========================================================
     // DERIV OAUTH CONNECTION (existing OAuth + PKCE flow)
     // =========================================================
     private fun beginDerivConnection() {
@@ -4466,7 +4462,7 @@ if (stake > 0.0) {
                     "contract_pair_${accountId}_${executionMode}_${partner.contractId}",
                     restoredPairId
                 )
-                     .apply()
+                .apply()
         }
     }
 }
