@@ -2536,7 +2536,16 @@ views.barrierExpiry.text =
     candles: List<DerivApiClient.Candle>
 ) {
     runOnUiThread {
-        // Historical candles are no longer processed; live index quotes remain active.
+        val cutoffEpoch = System.currentTimeMillis() / 1000L - (30L * 24L * 60L * 60L)
+
+marketDataCandles[symbol] = candles
+    .filter { it.epoch >= cutoffEpoch }
+    .sortedBy { it.epoch }
+
+android.util.Log.i(
+    "SupportResistance",
+    "$symbol: ${marketDataCandles[symbol]?.size ?: 0} candles stored for the rolling 30-day analysis."
+)
     }
     }
     override fun onMarketDataError(
