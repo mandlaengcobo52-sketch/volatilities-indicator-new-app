@@ -1164,8 +1164,10 @@ if (
 
     val candles = marketDataCandles[symbol].orEmpty()
 
-    val supports = calculateSupportResistance(candles, true)
-    val resistances = calculateSupportResistance(candles, false)
+    val currentPrice = marketDataPrices[symbol]
+
+val supports = calculateSupportResistance(candles, true, currentPrice)
+val resistances = calculateSupportResistance(candles, false, currentPrice)
 
     row.addView(label("SUPPORT LEVELS", 12f, green, true))
 
@@ -2316,8 +2318,8 @@ private fun evaluateMasterEngine(symbol: String) {
 
     val latest = candles.last()
 
-    val supports = calculateSupportResistance(candles, true)
-    val resistances = calculateSupportResistance(candles, false)
+    val supports = calculateSupportResistance(candles, true, price)
+val resistances = calculateSupportResistance(candles, false, price)
 
     val bullishSR = supports.any {
         latest.low <= it.price * 1.0015 &&
