@@ -300,6 +300,44 @@ private fun requestTouchAvailability(symbol: String) {
     private fun normalizedSymbol(item: JSONObject): String = item.optString(
         "underlying", item.optString("underlying_symbol", item.optString("symbol", ""))
     ).uppercase()
+    private fun isThreeDayTouchAvailable(symbol: String): Boolean {
+    val contracts = touchContractsBySymbol[symbol] ?: return false
+
+    for (i in 0 until contracts.length()) {
+        val contract = contracts.optJSONObject(i) ?: continue
+
+        if (contract.optString("contract_type") != "ONETOUCH") continue
+
+        val minDuration = contract.optString("min_contract_duration")
+        val maxDuration = contract.optString("max_contract_duration")
+
+        if (minDuration.isBlank() || maxDuration.isBlank()) continue
+
+        val minSeconds = durationToSeconds(minDuration)
+        val maxSeconds = durationToSeconds(maxDuration)
+
+        if (minSeconds > 0L && maxSeconds >= 259200L &&
+            minSeconds <= 259200L
+        ) {
+            return true
+        }
+    }
+
+    return false
+}
+
+private fun durationToSeconds(value: String): Long {
+    val number = value.dropLast(1).toLongOrNull() ?: return -1L
+
+    return when (value.last().lowercaseChar()) {
+        's' -> number
+        'm' -> number * 60L
+        'h' -> number * 3600L
+        'd' -> number * 86400L
+        'y' -> number * 31536000L
+        else -> -1L
+    }
+}
     private fun requestOpenTradesIfNeeded() {
         if (!connected || accountId.isBlank() || portfolioLoadedForAccount) return
         val now = android.os.SystemClock.elapsedRealtime()
@@ -3359,6 +3397,9 @@ derivApiClient.connectWithAccessToken(token, executionMode)
         derivApiClient.requestTradeHistory()
         marketDataRequested = true
         connected = true
+        marketDataIndexes.forEach { symbol ->
+    requestTouchAvailability(symbol)
+        }
         render()
         toast("Deriv $executionMode connected.")
     }
