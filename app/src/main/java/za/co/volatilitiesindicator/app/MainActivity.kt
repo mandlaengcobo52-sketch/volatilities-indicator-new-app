@@ -1506,6 +1506,150 @@ private fun registerCurrentPriceView(symbol: String, section: String, view: Text
         return java.text.SimpleDateFormat("yyyy/MM/dd, HH:mm:ss", java.util.Locale("en", "ZA"))
             .format(java.util.Date(epoch * 1000L))
     }
+    // =============================================================
+// ANALYSIS - SUPPORT AND RESISTANCE
+// =============================================================
+private data class SupportResistanceLevel(
+    val price: Double,
+    val createdAt: Long,
+    val touches: Int,
+    val reversalPercent: Double,
+    val lastTouch: Long,
+    val score: Double
+)
+
+private fun calculateSupportResistance(
+    candles: List<DerivApiClient.Candle>,
+    support: Boolean
+): List<SupportResistanceLevel> {
+
+    if (candles.size < 5) return emptyList()
+
+    val pivots = mutableListOf<Pair<Double, Long>>()
+
+    for (i in 2 until candles.size - 2) {
+        val candle = candles[i]
+
+        val confirmed = if (support) {
+            candle.low < candles[i - 1].low &&
+            candle.low < candles[i - 2].low &&
+            candle.low < candles[i + 1].low &&
+            candle.low < candles[i + 2].low
+        } else {
+            candle.high > candles[i - 1].high &&
+            candle.high > candles[i - 2].high &&
+            candle.high > candles[i + 1].high &&
+            candle.high > candles[i + 2].high
+        }
+
+        if (confirmed) {
+            pivots.add(
+                (if (support) candle.low else candle.high) to candle.epoch
+            )
+        }
+    }
+
+    val results = mutableListOf<SupportResistanceLevel>()
+    val used = mutableSetOf<Int>()
+
+    for (i in pivots.indices) {
+        if (i in used) continue
+
+        val basePrice = pivots[i].first
+        val tolerance = basePrice * 0.0015
+
+        val group = pivots.indices.filter {
+            kotlin.math.abs(pivots[it].first - basePrice) <= tolerance
+        }
+
+        used.addAll(group)
+
+        val levelPrice = if (support) {
+            group.map { pivots[it].first }.average()
+        } else {
+            group.map { pivots[it].first }.average()
+        }
+
+        val createdAt = group.minOf { pivots[it].second }
+
+        var touches = 0
+        var lastTouch = createdAt
+        var strongestReversal = 0.0
+
+        for (index in group) {
+            val pivotEpoch = pivots[index].second
+            val pivotPosition = candles.indexOfFirst {
+                it.epoch == pivotEpoch
+            }
+
+            if (pivotPosition < 0) continue
+
+            val endPosition = minOf(
+                candles.lastIndex,
+                pivotPosition + 6
+            )
+
+            val nextCandles = candles.subList(
+                pivotPosition + 1,
+                endPosition + 1
+            )
+
+            if (nextCandles.isNotEmpty()) {
+                val reversal = if (support) {
+                    (nextCandles.maxOf { it.high } - levelPrice) /
+                        levelPrice * 100.0
+                } else {
+                    (levelPrice - nextCandles.minOf { it.low }) /
+                        levelPrice * 100.0
+                }
+
+                strongestReversal = maxOf(
+                    strongestReversal,
+                    reversal.coerceAtLeast(0.0)
+                )
+            }
+        }
+
+        for (candle in candles) {
+            if (candle.epoch <= createdAt) continue
+
+            val touched = if (support) {
+                kotlin.math.abs(candle.low - levelPrice) <= tolerance
+            } else {
+                kotlin.math.abs(candle.high - levelPrice) <= tolerance
+            }
+
+            if (touched) {
+                touches++
+                lastTouch = maxOf(lastTouch, candle.epoch)
+            }
+        }
+
+        val recencyDays = (
+            (System.currentTimeMillis() / 1000L - lastTouch) / 86400.0
+        ).coerceAtLeast(0.0)
+
+        val score =
+            (touches * 100.0) +
+            (strongestReversal * 10.0) +
+            (30.0 - recencyDays).coerceAtLeast(0.0)
+
+        results.add(
+            SupportResistanceLevel(
+                price = levelPrice,
+                createdAt = createdAt,
+                touches = touches,
+                reversalPercent = strongestReversal,
+                lastTouch = lastTouch,
+                score = score
+            )
+        )
+    }
+
+    return results
+        .sortedByDescending { it.score }
+        .take(2)
+}
     // =========================================================
     // ADMIN USER APPROVAL — server verifies administrator role
     // =========================================================
