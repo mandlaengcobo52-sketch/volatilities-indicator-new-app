@@ -331,10 +331,6 @@ private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
 
     return "MONITORING" to yellow
 }
-    if (!connected) return "DISCONNECTED" to red
-    if (marketDataPrices[symbol] == null) return "WAITING FOR PRICE" to yellow
-    return "MONITORING" to green
-}
 private var marketDataRequested = false
 private var marketStructureExpanded = true
     override fun onCreate(savedInstanceState: Bundle?) {
