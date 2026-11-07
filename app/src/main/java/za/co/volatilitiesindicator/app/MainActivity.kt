@@ -266,7 +266,8 @@ private fun startAndBindDerivService() {
         val pairId: String = "",
         val pairSide: String = "",
         val isRecovery: Boolean = false,
-        val proposalId: String = ""
+        val proposalId: String = "",
+        val potentialPayout: Double = 0.0
     )
 
     private data class RunningContract(
@@ -288,7 +289,8 @@ private fun startAndBindDerivService() {
         var pairId: String = "",
         var pairSide: String = "",
         val isRecovery: Boolean = false,
-        var recoveryTriggered: Boolean = false
+        var recoveryTriggered: Boolean = false,
+        var potentialPayout: Double = 0.0
     )
     private data class ContractLiveViews(
         val stake: Double,
@@ -301,7 +303,6 @@ private fun startAndBindDerivService() {
         val ptpe: TextView
     )
     private val contractLiveViews = mutableMapOf<Long, ContractLiveViews>()
-
     private val pendingOrdersByRequest = mutableMapOf<Int, PendingOrder>()
     private val pendingIndexSymbols = mutableSetOf<String>()
     private val lastPairedProfitRejectionNotification = mutableMapOf<String, Long>()
@@ -916,7 +917,11 @@ if (quoteCooldownExpiry != 0L) pairedQuoteCooldownUntil.remove(quoteCooldownKey)
                 return
             }
 
-            pendingOrdersByRequest[reqId] = pending.copy(stage = "PROPOSAL_READY", proposalId = proposalId)
+            pendingOrdersByRequest[reqId] = pending.copy(
+                stage = "PROPOSAL_READY",
+                proposalId = proposalId,
+                potentialPayout = payout
+            )
 
             // Recovery is a single opposite-direction contract, not a paired proposal.
             if (pending.isRecovery) {
@@ -1004,7 +1009,8 @@ if (quoteCooldownExpiry != 0L) pairedQuoteCooldownUntil.remove(quoteCooldownKey)
 val newRunning = RunningContract(
     contractId, pending.symbol, pending.direction,
     pending.stake, pending.target, pending.targetProbability, pending.mode,
-    pairId = pending.pairId, pairSide = pending.pairSide, isRecovery = pending.isRecovery
+    pairId = pending.pairId, pairSide = pending.pairSide, isRecovery = pending.isRecovery,
+    potentialPayout = pending.potentialPayout
 )
 newRunning.trailingActivated = pending.isRecovery
 newRunning.peakProfit = 0.0
@@ -1085,7 +1091,7 @@ if (actualEntryBarrier > 0.0) {
                         .putBoolean("${trailStateKey}_target_notified", true)
                         .apply()
                     notifyEvent(
-                        "45% Trailing Level Reached",
+                        "Trailing Level Reached",
                         "${running.symbol} · Contract $contractId · Stake ${formatMoney(running.stake)} · Profit ${formatMoney(profitOpen)}. Staged trailing protection remains active.",
                         "profit_target_reached_${accountId}_${executionMode}_$contractId"
                     )
@@ -1163,7 +1169,7 @@ if (actualEntryBarrier > 0.0) {
                 if (running.trailingActivated && protectedProfit > 0.0 &&
                     !running.closeRequested && profitOpen < protectedProfit) {
                     running.closeRequested = true
-                    running.closeReason = "Staged Trailing Stop (${(protectedProfit / running.stake * 100.0).toInt()}% stake profit protected)"
+                    running.closeReason = "Staged Trailing Stop"
                     val sent = derivApiClient.send(
                         JSONObject().put("sell", contractId).put("price", 0)
                             .put("req_id", nextTradeRequestId())
@@ -2103,7 +2109,7 @@ private fun addHeader() {
     },
     weighted()
 )
-        page.addView(row)
+       page.addView(row)
     }
 
     // Five-index live monitor shown on the dashboard.
@@ -2437,7 +2443,14 @@ val targetLabel = when {
 }
 val targetView = label(targetLabel, 12f, yellow, true)
     .apply { setPadding(0, dp(4), 0, 0) }
-        val profitTargetView = label("Trailing levels: 45% · 55% · 65% · 75% · 85% · 95%", 12f, yellow, true).apply { setPadding(0, dp(4), 0, 0) }
+        val proposalPayout = tracked?.potentialPayout?.takeIf { it > 0.0 }
+            ?: item.optDouble("payout", 0.0).takeIf { it > 0.0 }
+            ?: 0.0
+        val potentialProfit = (proposalPayout - stake).coerceAtLeast(0.0)
+        val potentialProfitView = label(
+            "Potential profit: ${if (proposalPayout > 0.0) formatMoney(potentialProfit) else "Awaiting Deriv payout"}",
+            12f, green, true
+        ).apply { setPadding(0, dp(4), 0, 0) }
 val actualBarrier = tracked?.entryBarrier?.takeIf { it > 0.0 }
     ?: item.optDouble("entry_tick", item.optDouble("entry_spot", 0.0))
 val entryBarrierView = label(
@@ -2450,7 +2463,7 @@ val entryBarrierView = label(
         val ptpeHidden = label("", 1f, white, false)
         row.addView(pnlHidden)
         row.addView(entryBarrierView)
-        row.addView(profitTargetView)
+        row.addView(potentialProfitView)
         row.addView(targetView)
         row.addView(trailView)
         row.addView(spotView)
@@ -2500,9 +2513,10 @@ row.addView(
             12f, white, true
         ).apply { setPadding(0, dp(4), 0, 0) }
 
-        val profitTargetView = label(
-            "Trailing levels: 45% · 55% · 65% · 75% · 85% · 95%",
-            12f, yellow, true
+        val potentialProfit = (running.potentialPayout - running.stake).coerceAtLeast(0.0)
+        val potentialProfitView = label(
+            "Potential profit: ${if (running.potentialPayout > 0.0) formatMoney(potentialProfit) else "Awaiting Deriv payout"}",
+            12f, green, true
         ).apply { setPadding(0, dp(4), 0, 0) }
 
         val targetView = label(
@@ -2525,7 +2539,7 @@ row.addView(
 
         row.addView(pnlHidden)
         row.addView(entryBarrierView)
-        row.addView(profitTargetView)
+        row.addView(potentialProfitView)
         row.addView(targetView)
         row.addView(trailView)
         row.addView(spotView)
@@ -2694,7 +2708,6 @@ private fun analysisPivots(candles: List<DerivApiClient.Candle>): List<AnalysisP
     lows.forEachIndexed { i, pivot -> pivot.label = if (i > 0 && pivot.price > lows[i-1].price) "HL" else "LL" }
     return collapsed
 }
-
 private fun analysisMssEvents(candles: List<DerivApiClient.Candle>): List<AnalysisMssEvent> {
     if (candles.size < 20) return emptyList()
     val pivots = analysisPivots(candles)
@@ -3588,7 +3601,6 @@ private fun registerCurrentPriceView(symbol: String, section: String, view: Text
             val user = users.optJSONObject(i) ?: continue
             val userStatus = user.optString("status", "pending").uppercase()
             if (userStatus == "PENDING") pendingCount++
-
             val userCard = card().apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(12), dp(12), dp(12), dp(12))
@@ -4178,6 +4190,9 @@ private fun registerCurrentPriceView(symbol: String, section: String, view: Text
             manager.notify(notificationId, notification)
         } catch (_: Exception) {
             // The in-app notification feed remains available if Android notification delivery fails.
+        }
+    }
+          // The in-app notification feed remains available if Android notification delivery fails.
         }
     }
        // =========================================================
@@ -4904,5 +4919,3 @@ override fun onDestroy() {
     super.onDestroy()
 }
                                         }
-
-                          
