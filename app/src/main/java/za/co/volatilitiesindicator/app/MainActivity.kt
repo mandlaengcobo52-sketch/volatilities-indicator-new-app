@@ -1719,6 +1719,148 @@ private fun calculateLiquidityLevels(
         .take(2)
 }
 // =============================================================
+// ANALYSIS - BULLISH AND BEARISH ORDER BLOCKS
+// =============================================================
+
+private data class OrderBlockEvent(
+    val number: Int,
+    val direction: String,
+    val low: Double,
+    val high: Double,
+    val createdAt: Long,
+    val valid: Boolean,
+    val invalidatedAt: Long
+)
+
+private data class OrderBlockAnalysis(
+    val bullish: List<OrderBlockEvent>,
+    val bearish: List<OrderBlockEvent>
+)
+
+private fun calculateOrderBlocks(
+    candles: List<DerivApiClient.Candle>
+): OrderBlockAnalysis {
+
+    val sorted = candles.sortedBy { it.epoch }
+
+    if (sorted.size < 10) {
+        return OrderBlockAnalysis(emptyList(), emptyList())
+    }
+
+    val bullishBlocks = mutableListOf<OrderBlockEvent>()
+    val bearishBlocks = mutableListOf<OrderBlockEvent>()
+
+    val usedBullish = mutableSetOf<Long>()
+    val usedBearish = mutableSetOf<Long>()
+
+    var bullishNumber = 0
+    var bearishNumber = 0
+
+    for (i in 2 until sorted.size - 2) {
+
+        val swingHigh =
+            sorted[i].high > sorted[i - 1].high &&
+            sorted[i].high > sorted[i - 2].high &&
+            sorted[i].high > sorted[i + 1].high &&
+            sorted[i].high > sorted[i + 2].high
+
+        val swingLow =
+            sorted[i].low < sorted[i - 1].low &&
+            sorted[i].low < sorted[i - 2].low &&
+            sorted[i].low < sorted[i + 1].low &&
+            sorted[i].low < sorted[i + 2].low
+
+        // BULLISH ORDER BLOCK
+        if (swingHigh) {
+
+            val breakIndex = (i + 3 until sorted.size)
+                .firstOrNull { sorted[it].close > sorted[i].high }
+
+            if (breakIndex != null) {
+
+                val obIndex = (breakIndex - 1 downTo i)
+                    .firstOrNull {
+                        sorted[it].close < sorted[it].open
+                    }
+
+                if (obIndex != null) {
+
+                    val ob = sorted[obIndex]
+
+                    if (usedBullish.add(ob.epoch)) {
+
+                        val invalidation = (obIndex + 1 until sorted.size)
+                            .firstOrNull {
+                                sorted[it].close < ob.low
+                            }
+
+                        bullishNumber++
+
+                        bullishBlocks.add(
+                            OrderBlockEvent(
+                                bullishNumber,
+                                "BULLISH",
+                                ob.low,
+                                ob.high,
+                                ob.epoch,
+                                invalidation == null,
+                                invalidation?.let { sorted[it].epoch } ?: 0L
+                            )
+                        )
+                    }
+                }
+            }
+        }
+
+        // BEARISH ORDER BLOCK
+        if (swingLow) {
+
+            val breakIndex = (i + 3 until sorted.size)
+                .firstOrNull { sorted[it].close < sorted[i].low }
+
+            if (breakIndex != null) {
+
+                val obIndex = (breakIndex - 1 downTo i)
+                    .firstOrNull {
+                        sorted[it].close > sorted[it].open
+                    }
+
+                if (obIndex != null) {
+
+                    val ob = sorted[obIndex]
+
+                    if (usedBearish.add(ob.epoch)) {
+
+                        val invalidation = (obIndex + 1 until sorted.size)
+                            .firstOrNull {
+                                sorted[it].close > ob.high
+                            }
+
+                        bearishNumber++
+
+                        bearishBlocks.add(
+                            OrderBlockEvent(
+                                bearishNumber,
+                                "BEARISH",
+                                ob.low,
+                                ob.high,
+                                ob.epoch,
+                                invalidation == null,
+                                invalidation?.let { sorted[it].epoch } ?: 0L
+                            )
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    return OrderBlockAnalysis(
+        bullish = bullishBlocks.takeLast(10),
+        bearish = bearishBlocks.takeLast(10)
+    )
+}
+// =============================================================
 // ANALYSIS - MARKET STRUCTURE AND CHANGE OF CHARACTER
 // =============================================================
 
