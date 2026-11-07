@@ -905,7 +905,11 @@ if (quoteCooldownExpiry != 0L) pairedQuoteCooldownUntil.remove(quoteCooldownKey)
             val proposalObject = json.optJSONObject("proposal")
             val proposalId = proposalObject?.optString("id", "").orEmpty()
             val payout = proposalObject?.optDouble("payout", 0.0) ?: 0.0
-            if (proposalId.isBlank() || payout <= 0.0) {
+            val minimumRequiredPayout = pending.stake * 1.50
+
+if (proposalId.isBlank() ||
+    payout <= 0.0 ||
+    payout + 0.0001 < minimumRequiredPayout) {
                 val pairId = pending.pairId
                 pendingOrdersByRequest.entries.removeAll { it.value.pairId == pairId }
                 pendingIndexSymbols.remove(pending.symbol)
@@ -2445,13 +2449,15 @@ val targetLabel = when {
 val targetView = label(targetLabel, 12f, yellow, true)
     .apply { setPadding(0, dp(4), 0, 0) }
         val proposalPayout = tracked?.potentialPayout?.takeIf { it > 0.0 }
-            ?: item.optDouble("payout", 0.0).takeIf { it > 0.0 }
-            ?: 0.0
-        val potentialProfit = stake * 0.50
-        val potentialProfitView = label(
-            "Potential profit: ${if (proposalPayout > 0.0) formatMoney(potentialProfit) else "Awaiting Deriv payout"}",
-            12f, green, true
-        ).apply { setPadding(0, dp(4), 0, 0) }
+    ?: item.optDouble("payout", 0.0).takeIf { it > 0.0 }
+    ?: 0.0
+
+val potentialProfit = (proposalPayout - stake).coerceAtLeast(0.0)
+
+val potentialProfitView = label(
+    "Potential payout: ${if (proposalPayout > 0.0) formatMoney(proposalPayout) else "Awaiting Deriv payout"} · Profit: ${formatMoney(potentialProfit)}",
+    12f, green, true
+).apply { setPadding(0, dp(4), 0, 0) }
 val actualBarrier = tracked?.entryBarrier?.takeIf { it > 0.0 }
     ?: item.optDouble("entry_tick", item.optDouble("entry_spot", 0.0))
 val entryBarrierView = label(
@@ -2514,11 +2520,11 @@ row.addView(
             12f, white, true
         ).apply { setPadding(0, dp(4), 0, 0) }
 
-        val potentialProfit = running.stake * 0.50
-        val potentialProfitView = label(
-            "Potential profit: ${if (running.potentialPayout > 0.0) formatMoney(potentialProfit) else "Awaiting Deriv payout"}",
-            12f, green, true
-        ).apply { setPadding(0, dp(4), 0, 0) }
+        val potentialProfit = (running.potentialPayout - running.stake).coerceAtLeast(0.0)
+val potentialProfitView = label(
+    "Potential payout: ${if (running.potentialPayout > 0.0) formatMoney(running.potentialPayout) else "Awaiting Deriv payout"} · Profit: ${formatMoney(potentialProfit)}",
+    12f, green, true
+).apply { setPadding(0, dp(4), 0, 0) }
 
         val targetView = label(
             "Structure target: ${running.target.takeIf { it.isFinite() && it > 0.0 }?.let { formatMarketPrice(it) } ?: "Not available"}",
