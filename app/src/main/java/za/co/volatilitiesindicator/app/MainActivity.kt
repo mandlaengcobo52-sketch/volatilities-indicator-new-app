@@ -2376,7 +2376,27 @@ orderBlockQualified =
     )
 
     masterEngineDecisions[symbol] = decision
+val analysisText =
+    "SUPPORT / RESISTANCE: " +
+        (if (decision.supportResistanceQualified) "QUALIFIED" else "WAITING") +
+    "\nLIQUIDITY: " +
+        (if (decision.liquidityQualified) "QUALIFIED" else "WAITING") +
+    "\nMARKET STRUCTURE: " +
+        (if (decision.marketStructureQualified) "QUALIFIED" else "WAITING") +
+    "\nCHOCH: " +
+        (if (decision.chochQualified) "QUALIFIED" else "WAITING") +
+    "\nORDER BLOCK: " +
+        (if (decision.orderBlockQualified) "QUALIFIED" else "WAITING")
 
+dashboardAnalysisViews[symbol]?.apply {
+    text = analysisText
+    setTextColor(
+        if (decision.qualified)
+            android.graphics.Color.GREEN
+        else
+            android.graphics.Color.YELLOW
+    )
+}
     if (decision.qualified) {
         val eventKey =
             "${saDayKey()}_${accountId}_${executionMode}_${symbol}_${direction}_${latest.epoch}"
