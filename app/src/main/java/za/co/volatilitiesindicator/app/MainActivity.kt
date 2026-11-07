@@ -1654,6 +1654,73 @@ private fun calculateSupportResistance(
     // =========================================================
     // ADMIN USER APPROVAL — server verifies administrator role
     // =========================================================
+   private fun addAdminSupportResistanceScreen() {
+    page.addView(sectionTitle("ANALYSIS - SUPPORT AND RESISTANCE"))
+
+    val profile = currentProfile
+
+    if (authToken.isBlank()) {
+        page.addView(label("Sign in with the administrator account.", 14f, yellow, false))
+        return
+    }
+
+    if (profile == null) {
+        page.addView(label("Loading administrator account...", 14f, yellow, false))
+        if (!profileLoading) refreshProfile(showMessage = false)
+        return
+    }
+
+    if (!profile.optString("role", "user").equals("admin", ignoreCase = true)) {
+        page.addView(label("ACCESS DENIED. ADMINISTRATORS ONLY.", 14f, red, false))
+        return
+    }
+
+    page.addView(label("HISTORICAL WINDOW: ROLLING 30 DAYS", 13f, muted, false))
+
+    marketDataIndexes.forEach { symbol ->
+        val candles = marketDataCandles[symbol].orEmpty()
+
+        page.addView(sectionTitle(symbol))
+
+        if (candles.isEmpty()) {
+            page.addView(label("Waiting for historical candles...", 13f, yellow, false))
+            return@forEach
+        }
+
+        val supports = calculateSupportResistance(candles, true)
+        val resistances = calculateSupportResistance(candles, false)
+
+        page.addView(label("STRONGEST SUPPORT LEVELS", 13f, green, true))
+
+        if (supports.isEmpty()) {
+            page.addView(label("No confirmed support levels found.", 13f, muted, false))
+        } else {
+            supports.take(2).forEachIndexed { index, level ->
+                page.addView(
+                    label(
+                        "SUPPORT ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | TOUCHES: ${level.touches} | REVERSAL: ${String.format(java.util.Locale.US, "%.2f", level.reversalPercent)}%",
+                        13f, green, false
+                    )
+                )
+            }
+        }
+
+        page.addView(label("STRONGEST RESISTANCE LEVELS", 13f, red, true))
+
+        if (resistances.isEmpty()) {
+            page.addView(label("No confirmed resistance levels found.", 13f, muted, false))
+        } else {
+            resistances.take(2).forEachIndexed { index, level ->
+                page.addView(
+                    label(
+                        "RESISTANCE ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | TOUCHES: ${level.touches} | REVERSAL: ${String.format(java.util.Locale.US, "%.2f", level.reversalPercent)}%",
+                        13f, red, false
+                    )
+                )
+            }
+        }
+    }
+   }
     private fun addAdminUsersScreen() {
         page.addView(sectionTitle("USER APPROVALS"))
         val profile = currentProfile
