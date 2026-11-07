@@ -916,8 +916,12 @@ if (proposalId.isBlank() ||
                 pairedQuoteCooldownUntil["${accountId}_${executionMode}_${pending.symbol}"] =
     System.currentTimeMillis() + 30_000L
                 val notificationKey = "${accountId}_${executionMode}_${pending.symbol}"
-                notifyEvent("Execution rejected", "${pending.symbol} · Deriv returned an invalid ${if (pending.pairSide.contains("TOUCH")) "Touch" else "Rise/Fall"} proposal. Neither side will be purchased.",
-                    "paired_proposal_invalid_$pairId")
+                val responseDetails = json.toString().take(900)
+notifyEvent(
+    "Execution rejected",
+    "${pending.symbol} · Side: ${pending.pairSide} · Request: $reqId · Proposal ID: ${proposalId.ifBlank { "MISSING" }} · Payout: $payout · Deriv response: $responseDetails",
+    "paired_proposal_invalid_$pairId"
+)
                 return
             }
 
