@@ -3353,9 +3353,11 @@ derivApiClient.connectWithAccessToken(token, executionMode)
 val engineQualified =
     masterEngineDecisions[symbol]?.qualified == true
 
+val (statusText, statusColor) = dashboardDecisionStatus(symbol)
+
 dashboardStatusViews[symbol]?.apply {
-    text = if (engineQualified) "QUALIFIED" else "MONITORING"
-    setTextColor(green)
+    text = statusText
+    setTextColor(statusColor)
 }
 
 dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
