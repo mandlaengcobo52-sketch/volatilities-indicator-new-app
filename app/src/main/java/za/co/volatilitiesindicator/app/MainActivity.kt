@@ -308,6 +308,8 @@ private val marketDataCandles =
 private val dashboardPriceViews = mutableMapOf<String, TextView>()
 private val currentPriceViews = mutableMapOf<String, MutableList<TextView>>()
 private val dashboardStatusViews = mutableMapOf<String, TextView>()
+private val dashboardAnalysisViews =
+    mutableMapOf<String, TextView>()
 private val marketDataErrors =
     mutableMapOf<String, String>()
 private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
