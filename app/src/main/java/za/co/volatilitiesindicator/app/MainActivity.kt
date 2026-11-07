@@ -279,8 +279,22 @@ private fun startAndBindDerivService() {
     private var autoTradeEnabled: Boolean
         get() = appPrefs.getBoolean("autoTradeEnabled", false)
         set(value) { appPrefs.edit().putBoolean("autoTradeEnabled", value).apply() }
+        private val touchAvailabilityPending = mutableSetOf<String>()
 
+private fun requestTouchAvailability(symbol: String) {
+    if (!connected) return
+    if (!touchAvailabilityPending.add(symbol)) return
 
+    val sent = derivApiClient.send(
+        JSONObject()
+            .put("contracts_for", symbol)
+            .put("req_id", nextTradeRequestId())
+    )
+
+    if (!sent) {
+        touchAvailabilityPending.remove(symbol)
+    }
+}
 
     private fun normalizedSymbol(item: JSONObject): String = item.optString(
         "underlying", item.optString("underlying_symbol", item.optString("symbol", ""))
