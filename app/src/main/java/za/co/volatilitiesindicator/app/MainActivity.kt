@@ -2163,7 +2163,8 @@ private data class SupportResistanceLevel(
 
 private fun calculateSupportResistance(
     candles: List<DerivApiClient.Candle>,
-    support: Boolean
+    support: Boolean,
+    currentPrice: Double? = null
 ): List<SupportResistanceLevel> {
 
     if (candles.size < 5) return emptyList()
@@ -2289,9 +2290,24 @@ private fun calculateSupportResistance(
         )
     }
 
-    return results
-        .sortedByDescending { it.score }
+    val sevenDaysAgo =
+    System.currentTimeMillis() / 1000L - (7L * 24L * 60L * 60L)
+
+val recentLevels = results.filter {
+    it.createdAt >= sevenDaysAgo
+}
+
+return if (currentPrice != null && currentPrice > 0.0) {
+    recentLevels
+        .filter {
+            if (support) it.price < currentPrice
+            else it.price > currentPrice
+        }
+        .sortedBy { kotlin.math.abs(it.price - currentPrice) }
         .take(2)
+} else {
+    recentLevels.sortedByDescending { it.score }.take(2)
+}
 }
 private fun evaluateMasterEngine(symbol: String) {
     val candles = marketDataCandles[symbol].orEmpty()
