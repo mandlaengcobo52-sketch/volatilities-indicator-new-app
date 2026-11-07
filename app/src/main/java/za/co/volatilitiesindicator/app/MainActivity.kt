@@ -1544,6 +1544,105 @@ private fun registerCurrentPriceView(symbol: String, section: String, view: Text
             .format(java.util.Date(epoch * 1000L))
     }
     // =============================================================
+// ANALYSIS - LIQUIDITY AND LIQUIDITY SWEEP
+// =============================================================
+
+private data class LiquidityLevel(
+    val price: Double,
+    val createdAt: Long,
+    val sweepAt: Long,
+    val occurrences: Int
+)
+
+private fun calculateLiquidityLevels(
+    candles: List<DerivApiClient.Candle>,
+    bullish: Boolean
+): List<LiquidityLevel> {
+
+    if (candles.size < 10) return emptyList()
+
+    val sorted = candles.sortedBy { it.epoch }
+    val pivots = mutableListOf<Pair<Int, Double>>()
+
+    for (i in 2 until sorted.size - 2) {
+        val price = if (bullish) sorted[i].low else sorted[i].high
+
+        val confirmed = if (bullish) {
+            price < sorted[i - 1].low &&
+            price < sorted[i - 2].low &&
+            price < sorted[i + 1].low &&
+            price < sorted[i + 2].low
+        } else {
+            price > sorted[i - 1].high &&
+            price > sorted[i - 2].high &&
+            price > sorted[i + 1].high &&
+            price > sorted[i + 2].high
+        }
+
+        if (confirmed) pivots.add(i to price)
+    }
+
+    val tolerance = 0.0015
+    val used = mutableSetOf<Int>()
+    val results = mutableListOf<LiquidityLevel>()
+
+    pivots.forEachIndexed { index, pivot ->
+        if (index in used) return@forEachIndexed
+
+        val basePrice = pivot.second
+
+        val group = pivots.filterIndexed { otherIndex, other ->
+            otherIndex !in used &&
+            kotlin.math.abs(other.second - basePrice) /
+                basePrice.coerceAtLeast(0.000001) <= tolerance
+        }
+
+        group.forEachIndexed { _, member ->
+            val memberIndex = pivots.indexOf(member)
+            if (memberIndex >= 0) used.add(memberIndex)
+        }
+
+        if (group.size < 2) return@forEachIndexed
+
+        val levelPrice = group.map { it.second }.average()
+        val firstPivotIndex = group.minOf { it.first }
+        val lastPivotIndex = group.maxOf { it.first }
+
+        var sweepAt = 0L
+
+        for (i in lastPivotIndex + 1 until sorted.size) {
+            val candle = sorted[i]
+
+            val swept = if (bullish) {
+                candle.low < levelPrice && candle.close > levelPrice
+            } else {
+                candle.high > levelPrice && candle.close < levelPrice
+            }
+
+            if (swept) {
+                sweepAt = candle.epoch
+                break
+            }
+        }
+
+        results.add(
+            LiquidityLevel(
+                price = levelPrice,
+                createdAt = sorted[firstPivotIndex].epoch,
+                sweepAt = sweepAt,
+                occurrences = group.size
+            )
+        )
+    }
+
+    return results
+        .sortedWith(
+            compareByDescending<LiquidityLevel> { it.occurrences }
+                .thenByDescending { it.createdAt }
+        )
+        .take(2)
+}
+    // =============================================================
 // ANALYSIS - SUPPORT AND RESISTANCE
 // =============================================================
 private data class SupportResistanceLevel(
