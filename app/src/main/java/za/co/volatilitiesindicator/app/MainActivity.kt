@@ -231,6 +231,46 @@ private fun startAndBindDerivService() {
     private var openContractResponse: JSONObject? = null
     private var tradeHistoryResponse: JSONObject? = null
 
+    // Running-trade state required by the trade screen and Deriv portfolio updates.
+    private data class RunningContract(
+        val contractId: Long,
+        val symbol: String,
+        val direction: String,
+        val stake: Double,
+        val target: Double,
+        val targetProbability: Double,
+        val mode: String,
+        var entryBarrier: Double = 0.0,
+        var takeProfitRequested: Boolean = false,
+        var openContractConfirmed: Boolean = false,
+        var targetNotified: Boolean = false,
+        var trailingActivated: Boolean = false,
+        var peakProfit: Double = 0.0,
+        var closeRequested: Boolean = false,
+        var closeReason: String = "",
+        var pairId: String = "",
+        var pairSide: String = "",
+        val isRecovery: Boolean = false,
+        var recoveryTriggered: Boolean = false,
+        var potentialPayout: Double = 0.0
+    )
+
+    private data class ContractLiveViews(
+        val stake: Double,
+        val symbol: String,
+        val target: Double?,
+        val probability: Double,
+        val pnl: TextView,
+        val spot: TextView,
+        val barrierExpiry: TextView,
+        val ptpe: TextView
+    )
+
+    private val contractLiveViews = mutableMapOf<Long, ContractLiveViews>()
+    private val runningContracts = mutableMapOf<Long, RunningContract>()
+    private var nextTradeRequestIdValue = 710000
+    private fun nextTradeRequestId(): Int = ++nextTradeRequestIdValue
+
     
     private val dailyCapitalTimeZone = java.util.TimeZone.getTimeZone("Africa/Johannesburg")
     private fun saDayKey(): String = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).apply { timeZone = dailyCapitalTimeZone }.format(java.util.Date())
@@ -262,8 +302,7 @@ private val marketDataIndexes = listOf(
 
 private val marketDataCandles =
     mutableMapOf<String, List<DerivApiClient.Candle>>()
-
-private val marketDataPrices =
+    private val marketDataPrices =
     mutableMapOf<String, Double>()
     private val marketDataPriceViews = mutableMapOf<String, TextView>()
 private val dashboardPriceViews = mutableMapOf<String, TextView>()
@@ -861,7 +900,6 @@ private fun addHeader() {
             contentDescription = "Notifications"
             setOnClickListener { selectedTab = "Notifications"; drawerOpen = false; render() }
         }
-
         row.addView(
             bell,
             LinearLayout.LayoutParams(dp(42), dp(52))
@@ -1296,7 +1334,7 @@ val entryBarrierView = label(
         row.addView(potentialProfitView)
         row.addView(spotView)
         row.addView(expiryView)
-        contractLiveViews[contractId] = ContractLiveViews(stake, symbol, tracked?.target, tracked?.targetProbability ?: 0.0, pnlHidden, spotView, expiryView, ptpeHidden)
+        contractLiveViews[contractId] = ContractLiveViews(stake, symbol, tracked?.target, tracked?.targetProbability ?: 0.0, pnlHidden, spotView, expiryView, TextView(this))
         row.addView(button("CLOSE TRADE", true) {
             if (!connected) {
                 toast("Connect to the account holding this contract.")
@@ -1470,7 +1508,7 @@ private fun registerCurrentPriceView(symbol: String, section: String, view: Text
             page.addView(label("Sign in with the administrator account to manage registrations.", 14f, yellow, false))
             page.addView(button("SIGN IN", true) { selectedTab = "Login"; render() }, matchWrap())
             return
-        }
+            }
         if (profile == null) {
             page.addView(label("Loading your account role…", 14f, yellow, false))
             if (!profileLoading) refreshProfile(showMessage = false)
@@ -1770,7 +1808,7 @@ private fun registerCurrentPriceView(symbol: String, section: String, view: Text
             clearTradeNotificationBadges()
             appPrefs.edit().remove("notification_feed").apply()
             render()
-        }, matchWrap().apply { topMargin = dp(6) })
+            }, matchWrap().apply { topMargin = dp(6) })
         page.addView(card, matchWrap().apply { bottomMargin = dp(10) })
         page.addView(sectionTitle("RECENT NOTIFICATIONS"))
         val saved = appPrefs.getString("notification_feed", "").orEmpty().lines().filter { it.isNotBlank() }
@@ -1880,9 +1918,10 @@ private fun registerCurrentPriceView(symbol: String, section: String, view: Text
             val notificationId = 4200 + (stableKey.hashCode() and 0x7fffffff) % 100000
             manager.notify(notificationId, notification)
         } catch (_: Exception) {
-                // Ignore notification delivery failures.
-}
+            // Ignore notification delivery failures.
+        }
     }
+
     // =========================================================
     // ADMIN PREVIEW
     // =========================================================
@@ -2071,7 +2110,6 @@ private fun registerCurrentPriceView(symbol: String, section: String, view: Text
                 action()
             }
         }
-
         return b
     }
     private fun card(): LinearLayout {
@@ -2374,7 +2412,6 @@ val savedIsRecovery = appPrefs.getBoolean(
     "contract_is_recovery_${accountId}_${executionMode}_$id",
     false
 )
-
 if (stake > 0.0) {
     val restored = RunningContract(
         id, symbol, direction, stake, barrier, 0.0, executionMode,
@@ -2562,7 +2599,5 @@ override fun onDestroy() {
     derivServiceBound = false
 
     super.onDestroy()
-}
-}
 }
                             }
