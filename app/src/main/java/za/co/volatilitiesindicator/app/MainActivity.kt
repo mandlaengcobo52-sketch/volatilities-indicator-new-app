@@ -1114,8 +1114,9 @@ if (actualEntryBarrier > 0.0) {
                 }
 
                 // At +50% on an original winner, close its opposing original once.
-                if (!running.isRecovery && running.trailingActivated &&
-                    profitOpen >= running.stake * 0.50 && !running.recoveryTriggered) {
+                if (!running.isRecovery &&
+    profitOpen >= running.stake * 0.50 &&
+    !running.recoveryTriggered) {
                     val opposing = runningContracts.values.firstOrNull {
                         it.contractId != running.contractId &&
                         it.pairId == running.pairId &&
