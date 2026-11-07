@@ -1206,7 +1206,8 @@ if (bearishLiquidity.isEmpty()) {
 
 row.addView(label("ANALYSIS - MARKET STRUCTURE AND CHOCH", 13f, green, true))
 
-val structureAnalysis = calculateMarketStructure(candles)
+val structureCandles = marketDataCandles[symbol].orEmpty()
+val structureAnalysis = calculateMarketStructure(structureCandles)
 
 row.addView(label("MARKET STRUCTURE", 12f, green, true))
 
