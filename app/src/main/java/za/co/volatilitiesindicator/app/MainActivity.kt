@@ -4192,9 +4192,6 @@ private fun registerCurrentPriceView(symbol: String, section: String, view: Text
             // The in-app notification feed remains available if Android notification delivery fails.
         }
     }
-          // The in-app notification feed remains available if Android notification delivery fails.
-        }
-    }
        // =========================================================
     // ADMIN PREVIEW
     // =========================================================
