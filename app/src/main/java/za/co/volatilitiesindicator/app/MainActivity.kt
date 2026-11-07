@@ -300,7 +300,6 @@ private val marketDataIndexes = listOf(
     "R_75",
     "R_100"
 )
-
 private val marketDataCandles =
     mutableMapOf<String, List<DerivApiClient.Candle>>()
     private val marketDataPrices =
@@ -309,29 +308,12 @@ private val marketDataCandles =
 private val dashboardPriceViews = mutableMapOf<String, TextView>()
 private val currentPriceViews = mutableMapOf<String, MutableList<TextView>>()
 private val dashboardStatusViews = mutableMapOf<String, TextView>()
-private val dashboardAnalysisViews =
-    mutableMapOf<String, TextView>()
 private val marketDataErrors =
     mutableMapOf<String, String>()
 private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
     if (marketDataErrors.containsKey(symbol) && marketDataPrices[symbol] == null) {
         return "FEED ERROR" to red
     }
-
-    if (!connected) return "DISCONNECTED" to red
-
-    if (marketDataPrices[symbol] == null) {
-        return "WAITING FOR PRICE" to yellow
-    }
-
-    val decision = masterEngineDecisions[symbol]
-
-    if (decision?.qualified == true) {
-        return "QUALIFIED ${decision.direction}" to green
-    }
-
-    return "MONITORING" to yellow
-}
     if (!connected) return "DISCONNECTED" to red
     if (marketDataPrices[symbol] == null) return "WAITING FOR PRICE" to yellow
     return "MONITORING" to green
@@ -1143,21 +1125,6 @@ private fun addHeader() {
                     topMargin = dp(7)
                 }
             )
-            val analysisView = label(
-    "SUPPORT / RESISTANCE: WAITING\n" +
-    "LIQUIDITY: WAITING\n" +
-    "MARKET STRUCTURE: WAITING\n" +
-    "CHOCH: WAITING\n" +
-    "ORDER BLOCK: WAITING",
-    11f,
-    yellow,
-    false
-).apply {
-    setPadding(dp(4), dp(8), dp(4), dp(4))
-}
-
-dashboardAnalysisViews[symbol] = analysisView
-row.addView(analysisView, matchWrap())
 // =========================================================
 // ADMIN ONLY — SUPPORT AND RESISTANCE
 // =========================================================
@@ -1237,7 +1204,6 @@ if (bearishLiquidity.isEmpty()) {
 // =========================================================
 
 row.addView(label("ANALYSIS - MARKET STRUCTURE AND CHOCH", 13f, green, true))
-
 val structureCandles = marketDataCandles[symbol].orEmpty()
 val structureAnalysis = calculateMarketStructure(structureCandles)
 
@@ -1835,7 +1801,6 @@ private fun calculateOrderBlocks(
 
     val usedBullish = mutableSetOf<Long>()
     val usedBearish = mutableSetOf<Long>()
-
     var bullishNumber = 0
     var bearishNumber = 0
 
@@ -2139,24 +2104,7 @@ private fun calculateMarketStructure(
         chochs = chochs.takeLast(10)
     )
 }
-private data class MasterEngineDecision(
-    val symbol: String,
-    val direction: String,
-    val supportResistanceQualified: Boolean,
-    val liquidityQualified: Boolean,
-    val marketStructureQualified: Boolean,
-    val chochQualified: Boolean,
-    val orderBlockQualified: Boolean,
-    val qualified: Boolean,
-    val updatedAt: Long
-)
-
-private val masterEngineDecisions =
-    mutableMapOf<String, MasterEngineDecision>()
-
-private val masterEngineNotificationKeys =
-    mutableSetOf<String>()
-    // =============================================================
+// =============================================================
 // ANALYSIS - SUPPORT AND RESISTANCE
 // =============================================================
 private data class SupportResistanceLevel(
@@ -2299,134 +2247,6 @@ private fun calculateSupportResistance(
     return results
         .sortedByDescending { it.score }
         .take(2)
-}
-private fun evaluateMasterEngine(symbol: String) {
-    val candles = marketDataCandles[symbol].orEmpty()
-    val price = marketDataPrices[symbol] ?: return
-    if (candles.size < 20) return
-
-    val latest = candles.last()
-
-    val supports = calculateSupportResistance(candles, true)
-    val resistances = calculateSupportResistance(candles, false)
-
-    val bullishSR = supports.any {
-        latest.low <= it.price * 1.0015 &&
-        latest.close > it.price
-    }
-
-    val bearishSR = resistances.any {
-        latest.high >= it.price * 0.9985 &&
-        latest.close < it.price
-    }
-
-    val bullishLiquidity = calculateLiquidityLevels(candles, true)
-    val bearishLiquidity = calculateLiquidityLevels(candles, false)
-
-    val bullishSweep = bullishLiquidity.any {
-        it.sweepAt > 0L && latest.epoch > it.sweepAt &&
-        latest.close > latest.open
-    }
-
-    val bearishSweep = bearishLiquidity.any {
-        it.sweepAt > 0L && latest.epoch > it.sweepAt &&
-        latest.close < latest.open
-    }
-
-    val structure = calculateMarketStructure(candles)
-    val marketDirection =
-        structure.structures.lastOrNull()?.direction ?: ""
-
-    val chochDirection =
-        structure.chochs.lastOrNull()?.direction ?: ""
-
-    val orderBlocks = calculateOrderBlocks(candles)
-
-    val bullishOB = orderBlocks.bullish.any {
-        it.valid && marketDirection == "BULLISH" &&
-        chochDirection == "BULLISH"
-    }
-
-    val bearishOB = orderBlocks.bearish.any {
-        it.valid && marketDirection == "BEARISH" &&
-        chochDirection == "BEARISH"
-    }
-
-    val bullishQualified =
-        bullishSR && bullishSweep &&
-        marketDirection == "BULLISH" &&
-        chochDirection == "BULLISH" &&
-        bullishOB
-
-    val bearishQualified =
-        bearishSR && bearishSweep &&
-        marketDirection == "BEARISH" &&
-        chochDirection == "BEARISH" &&
-        bearishOB
-
-    val direction = when {
-        bullishQualified -> "BUY"
-        bearishQualified -> "SELL"
-        else -> "WAIT"
-    }
-
-    val decision = MasterEngineDecision(
-        symbol = symbol,
-        direction = direction,
-        supportResistanceQualified =
-    bullishSR || bearishSR,
-
-liquidityQualified =
-    bullishSweep || bearishSweep,
-
-marketStructureQualified =
-    marketDirection == "BULLISH" ||
-    marketDirection == "BEARISH",
-
-chochQualified =
-    chochDirection == "BULLISH" ||
-    chochDirection == "BEARISH",
-
-orderBlockQualified =
-    bullishOB || bearishOB,
-        qualified = direction != "WAIT",
-        updatedAt = System.currentTimeMillis()
-    )
-
-    masterEngineDecisions[symbol] = decision
-val analysisText =
-    "SUPPORT / RESISTANCE: " +
-        (if (decision.supportResistanceQualified) "QUALIFIED" else "WAITING") +
-    "\nLIQUIDITY: " +
-        (if (decision.liquidityQualified) "QUALIFIED" else "WAITING") +
-    "\nMARKET STRUCTURE: " +
-        (if (decision.marketStructureQualified) "QUALIFIED" else "WAITING") +
-    "\nCHOCH: " +
-        (if (decision.chochQualified) "QUALIFIED" else "WAITING") +
-    "\nORDER BLOCK: " +
-        (if (decision.orderBlockQualified) "QUALIFIED" else "WAITING")
-
-dashboardAnalysisViews[symbol]?.apply {
-    text = analysisText
-    setTextColor(
-        if (decision.qualified)
-            android.graphics.Color.GREEN
-        else
-            android.graphics.Color.YELLOW
-    )
-}
-    if (decision.qualified) {
-        val eventKey =
-            "${saDayKey()}_${accountId}_${executionMode}_${symbol}_${direction}_${latest.epoch}"
-
-        if (masterEngineNotificationKeys.add(eventKey)) {
-            notifyEvent(
-                "Master Engine Qualified",
-                "$symbol · $direction · All five conditions qualified.",
-                "master_engine_$eventKey"
-            )
-        }
-    }
 }
     // =========================================================
     // ADMIN USER APPROVAL — server verifies administrator role
@@ -3186,8 +3006,7 @@ dashboardAnalysisViews[symbol]?.apply {
             bytes,
             Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
         )
-        }
-
+    }
     private fun createCodeChallenge(verifier: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
             .digest(verifier.toByteArray(Charsets.US_ASCII))
@@ -3356,16 +3175,10 @@ derivApiClient.connectWithAccessToken(token, executionMode)
         if (symbol in marketDataIndexes && quote.isFinite()) {
             marketDataPrices[symbol] = quote
             marketDataErrors.remove(symbol)
-            evaluateMasterEngine(symbol)
-
-val engineQualified =
-    masterEngineDecisions[symbol]?.qualified == true
-
-val (statusText, statusColor) = dashboardDecisionStatus(symbol)
 
 dashboardStatusViews[symbol]?.apply {
-    text = statusText
-    setTextColor(statusColor)
+    text = "MONITORING"
+    setTextColor(green)
 }
 
 dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
@@ -3500,7 +3313,7 @@ if (stake > 0.0) {
                             val expiryText = if (expiryEpoch > 0L) String.format(java.util.Locale.US, "%02d:%02d:%02d", expiryRemaining / 3600, (expiryRemaining % 3600) / 60, expiryRemaining % 60) else "—"
                             val actualEntry = contract.optDouble(
     "entry_tick",
-    contract.optDouble(
+                                contract.optDouble(
         "entry_spot",
         runningContracts[id]?.entryBarrier ?: 0.0
     )
@@ -3542,7 +3355,6 @@ views.barrierExpiry.text =
 marketDataCandles[symbol] = candles
     .filter { it.epoch >= cutoffEpoch }
     .sortedBy { it.epoch }
-    evaluateMasterEngine(symbol)
 
 android.util.Log.i(
     "SupportResistance",
