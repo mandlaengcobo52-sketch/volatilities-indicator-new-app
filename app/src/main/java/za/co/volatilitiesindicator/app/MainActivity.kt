@@ -1126,7 +1126,39 @@ private fun addHeader() {
                     topMargin = dp(7)
                 }
             )
+// =========================================================
+// ADMIN ONLY — SUPPORT AND RESISTANCE
+// =========================================================
+if (currentProfile?.optString("role", "user")
+        .equals("admin", ignoreCase = true)) {
 
+    val candles = marketDataCandles[symbol].orEmpty()
+
+    val supports = calculateSupportResistance(candles, true)
+    val resistances = calculateSupportResistance(candles, false)
+
+    row.addView(label("SUPPORT LEVELS", 12f, green, true))
+
+    supports.take(2).forEachIndexed { index, level ->
+        row.addView(
+            label(
+                "S${index + 1}: ${formatMarketPrice(level.price)} | ${formatMarketTime(level.createdAt)}",
+                11f, green, false
+            )
+        )
+    }
+
+    row.addView(label("RESISTANCE LEVELS", 12f, red, true))
+
+    resistances.take(2).forEachIndexed { index, level ->
+        row.addView(
+            label(
+                "R${index + 1}: ${formatMarketPrice(level.price)} | ${formatMarketTime(level.createdAt)}",
+                11f, red, false
+            )
+        )
+    }
+}
             // Index monitor rows are display-only.
             row.isClickable = false
             row.isFocusable = false
