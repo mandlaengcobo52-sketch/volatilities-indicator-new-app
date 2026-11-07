@@ -1166,8 +1166,9 @@ if (currentProfile?.optString("role", "user")
         }
         page.addView(monitorCard, matchWrap().apply { bottomMargin = dp(12) })
         if (connected && !marketDataRequested) {
-            marketDataRequested = true
-            }
+    marketDataRequested = true
+    derivApiClient.requestHistoricalCandles()
+        }
     }
 
      // =========================================================
