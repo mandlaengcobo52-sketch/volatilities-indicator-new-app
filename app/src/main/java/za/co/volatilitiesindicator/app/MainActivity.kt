@@ -2447,7 +2447,7 @@ val targetView = label(targetLabel, 12f, yellow, true)
         val proposalPayout = tracked?.potentialPayout?.takeIf { it > 0.0 }
             ?: item.optDouble("payout", 0.0).takeIf { it > 0.0 }
             ?: 0.0
-        val potentialProfit = (proposalPayout - stake).coerceAtLeast(0.0)
+        val potentialProfit = stake * 0.50
         val potentialProfitView = label(
             "Potential profit: ${if (proposalPayout > 0.0) formatMoney(potentialProfit) else "Awaiting Deriv payout"}",
             12f, green, true
@@ -2514,7 +2514,7 @@ row.addView(
             12f, white, true
         ).apply { setPadding(0, dp(4), 0, 0) }
 
-        val potentialProfit = (running.potentialPayout - running.stake).coerceAtLeast(0.0)
+        val potentialProfit = running.stake * 0.50
         val potentialProfitView = label(
             "Potential profit: ${if (running.potentialPayout > 0.0) formatMoney(potentialProfit) else "Awaiting Deriv payout"}",
             12f, green, true
