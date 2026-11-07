@@ -1162,6 +1162,42 @@ if (
         )
     }
 }
+// =========================================================
+// ADMIN ONLY — LIQUIDITY AND LIQUIDITY SWEEP
+// =========================================================
+
+val bullishLiquidity = calculateLiquidityLevels(candles, true)
+val bearishLiquidity = calculateLiquidityLevels(candles, false)
+
+row.addView(label("BULLISH LIQUIDITY (SSL)", 12f, green, true))
+
+if (bullishLiquidity.isEmpty()) {
+    row.addView(label("No confirmed bullish liquidity.", 11f, muted, false))
+} else {
+    bullishLiquidity.take(2).forEachIndexed { index, level ->
+        row.addView(
+            label(
+                "SSL ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepAt > 0L) formatMarketTime(level.sweepAt) else "NOT SWEPT"} | OCCURRENCES: ${level.occurrences}",
+                11f, green, false
+            )
+        )
+    }
+}
+
+row.addView(label("BEARISH LIQUIDITY (BSL)", 12f, red, true))
+
+if (bearishLiquidity.isEmpty()) {
+    row.addView(label("No confirmed bearish liquidity.", 11f, muted, false))
+} else {
+    bearishLiquidity.take(2).forEachIndexed { index, level ->
+        row.addView(
+            label(
+                "BSL ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepAt > 0L) formatMarketTime(level.sweepAt) else "NOT SWEPT"} | OCCURRENCES: ${level.occurrences}",
+                11f, red, false
+            )
+        )
+    }
+}
             // Index monitor rows are display-only.
             row.isClickable = false
             row.isFocusable = false
