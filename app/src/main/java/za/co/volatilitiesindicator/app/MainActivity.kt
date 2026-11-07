@@ -1129,8 +1129,11 @@ private fun addHeader() {
 // =========================================================
 // ADMIN ONLY — SUPPORT AND RESISTANCE
 // =========================================================
-if (currentProfile?.optString("role", "user")
-        .equals("admin", ignoreCase = true)) {
+if (
+    platform == "ADMIN" &&
+    currentProfile?.optString("role", "user")
+        .equals("admin", ignoreCase = true)
+) {
 
     val candles = marketDataCandles[symbol].orEmpty()
 
@@ -2612,7 +2615,13 @@ derivApiClient.connectWithAccessToken(token, executionMode)
         if (symbol in marketDataIndexes && quote.isFinite()) {
             marketDataPrices[symbol] = quote
             marketDataErrors.remove(symbol)
-            dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
+
+dashboardStatusViews[symbol]?.apply {
+    text = "MONITORING"
+    setTextColor(green)
+}
+
+dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
             currentPriceViews[symbol]?.forEach { priceView ->
                 priceView.text = "CURRENT PRICE: ${formatMarketPrice(quote)}"
                 priceView.setTextColor(blue)
