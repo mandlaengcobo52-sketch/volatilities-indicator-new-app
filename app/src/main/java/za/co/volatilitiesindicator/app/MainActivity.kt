@@ -4883,8 +4883,8 @@ views.barrierExpiry.text =
             }
         }
     }
-                                        }
-            // DerivApiClient manages automatic reconnection.
+                                        
+        // DerivApiClient manages automatic reconnection.
 // Do not start a second Activity-level reconnect.
 override fun onDestroy() {
 // Remove Activity-level callbacks.
