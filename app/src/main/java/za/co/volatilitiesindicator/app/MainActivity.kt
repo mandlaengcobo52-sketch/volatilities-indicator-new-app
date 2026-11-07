@@ -1200,6 +1200,43 @@ if (bearishLiquidity.isEmpty()) {
         )
     }
 }
+// =========================================================
+// ADMIN ONLY — MARKET STRUCTURE AND CHOCH DISPLAY
+// =========================================================
+
+row.addView(label("ANALYSIS - MARKET STRUCTURE AND CHOCH", 13f, green, true))
+
+val structureAnalysis = calculateMarketStructure(candles)
+
+row.addView(label("MARKET STRUCTURE", 12f, green, true))
+
+if (structureAnalysis.structures.isEmpty()) {
+    row.addView(label("No confirmed market structure available.", 11f, muted, false))
+} else {
+    structureAnalysis.structures.forEach { event ->
+        row.addView(
+            label(
+                "${event.number}. ${event.direction} | PRICE: ${formatMarketPrice(event.price)} | CREATED: ${formatMarketTime(event.startedAt)}",
+                11f, white, false
+            )
+        )
+    }
+}
+
+row.addView(label("CHANGE OF CHARACTER (CHOCH)", 12f, yellow, true))
+
+if (structureAnalysis.chochs.isEmpty()) {
+    row.addView(label("No confirmed CHOCH available.", 11f, muted, false))
+} else {
+    structureAnalysis.chochs.forEach { event ->
+        row.addView(
+            label(
+                "${event.number}. ${event.direction} | PRICE: ${formatMarketPrice(event.price)} | CONFIRMED: ${formatMarketTime(event.changedAt)}",
+                11f, yellow, false
+            )
+        )
+    }
+}
             // Index monitor rows are display-only.
             row.isClickable = false
             row.isFocusable = false
