@@ -309,12 +309,29 @@ private val marketDataCandles =
 private val dashboardPriceViews = mutableMapOf<String, TextView>()
 private val currentPriceViews = mutableMapOf<String, MutableList<TextView>>()
 private val dashboardStatusViews = mutableMapOf<String, TextView>()
+private val dashboardAnalysisViews =
+    mutableMapOf<String, TextView>()
 private val marketDataErrors =
     mutableMapOf<String, String>()
 private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
     if (marketDataErrors.containsKey(symbol) && marketDataPrices[symbol] == null) {
         return "FEED ERROR" to red
     }
+
+    if (!connected) return "DISCONNECTED" to red
+
+    if (marketDataPrices[symbol] == null) {
+        return "WAITING FOR PRICE" to yellow
+    }
+
+    val decision = masterEngineDecisions[symbol]
+
+    if (decision?.qualified == true) {
+        return "QUALIFIED ${decision.direction}" to green
+    }
+
+    return "MONITORING" to yellow
+}
     if (!connected) return "DISCONNECTED" to red
     if (marketDataPrices[symbol] == null) return "WAITING FOR PRICE" to yellow
     return "MONITORING" to green
@@ -1126,6 +1143,21 @@ private fun addHeader() {
                     topMargin = dp(7)
                 }
             )
+            val analysisView = label(
+    "SUPPORT / RESISTANCE: WAITING\n" +
+    "LIQUIDITY: WAITING\n" +
+    "MARKET STRUCTURE: WAITING\n" +
+    "CHOCH: WAITING\n" +
+    "ORDER BLOCK: WAITING",
+    11f,
+    yellow,
+    false
+).apply {
+    setPadding(dp(4), dp(8), dp(4), dp(4))
+}
+
+dashboardAnalysisViews[symbol] = analysisView
+row.addView(analysisView, matchWrap())
 // =========================================================
 // ADMIN ONLY — SUPPORT AND RESISTANCE
 // =========================================================
@@ -2342,19 +2374,47 @@ private fun evaluateMasterEngine(symbol: String) {
         symbol = symbol,
         direction = direction,
         supportResistanceQualified =
-            if (direction == "BUY") bullishSR else if (direction == "SELL") bearishSR else false,
-        liquidityQualified =
-            if (direction == "BUY") bullishSweep else if (direction == "SELL") bearishSweep else false,
-        marketStructureQualified = direction != "WAIT",
-        chochQualified = direction != "WAIT",
-        orderBlockQualified =
-            if (direction == "BUY") bullishOB else if (direction == "SELL") bearishOB else false,
+    bullishSR || bearishSR,
+
+liquidityQualified =
+    bullishSweep || bearishSweep,
+
+marketStructureQualified =
+    marketDirection == "BULLISH" ||
+    marketDirection == "BEARISH",
+
+chochQualified =
+    chochDirection == "BULLISH" ||
+    chochDirection == "BEARISH",
+
+orderBlockQualified =
+    bullishOB || bearishOB,
         qualified = direction != "WAIT",
         updatedAt = System.currentTimeMillis()
     )
 
     masterEngineDecisions[symbol] = decision
+val analysisText =
+    "SUPPORT / RESISTANCE: " +
+        if (decision.supportResistanceQualified) "QUALIFIED" else "WAITING" +
+    "\nLIQUIDITY: " +
+        if (decision.liquidityQualified) "QUALIFIED" else "WAITING" +
+    "\nMARKET STRUCTURE: " +
+        if (decision.marketStructureQualified) "QUALIFIED" else "WAITING" +
+    "\nCHOCH: " +
+        if (decision.chochQualified) "QUALIFIED" else "WAITING" +
+    "\nORDER BLOCK: " +
+        if (decision.orderBlockQualified) "QUALIFIED" else "WAITING"
 
+dashboardAnalysisViews[symbol]?.apply {
+    text = analysisText
+    setTextColor(
+        if (decision.qualified)
+            android.graphics.Color.GREEN
+        else
+            android.graphics.Color.YELLOW
+    )
+}
     if (decision.qualified) {
         val eventKey =
             "${saDayKey()}_${accountId}_${executionMode}_${symbol}_${direction}_${latest.epoch}"
@@ -3301,9 +3361,11 @@ derivApiClient.connectWithAccessToken(token, executionMode)
 val engineQualified =
     masterEngineDecisions[symbol]?.qualified == true
 
+val (statusText, statusColor) = dashboardDecisionStatus(symbol)
+
 dashboardStatusViews[symbol]?.apply {
-    text = if (engineQualified) "QUALIFIED" else "MONITORING"
-    setTextColor(green)
+    text = statusText
+    setTextColor(statusColor)
 }
 
 dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
