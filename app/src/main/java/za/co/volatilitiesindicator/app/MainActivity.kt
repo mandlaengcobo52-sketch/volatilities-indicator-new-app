@@ -1127,6 +1127,21 @@ private fun addHeader() {
                     topMargin = dp(7)
                 }
             )
+            val analysisView = label(
+    "SUPPORT / RESISTANCE: WAITING\n" +
+    "LIQUIDITY: WAITING\n" +
+    "MARKET STRUCTURE: WAITING\n" +
+    "CHOCH: WAITING\n" +
+    "ORDER BLOCK: WAITING",
+    11f,
+    yellow,
+    false
+).apply {
+    setPadding(dp(4), dp(8), dp(4), dp(4))
+}
+
+dashboardAnalysisViews[symbol] = analysisView
+row.addView(analysisView, matchWrap())
 // =========================================================
 // ADMIN ONLY — SUPPORT AND RESISTANCE
 // =========================================================
