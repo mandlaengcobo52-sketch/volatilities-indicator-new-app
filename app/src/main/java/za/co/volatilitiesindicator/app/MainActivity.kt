@@ -1238,6 +1238,57 @@ if (structureAnalysis.chochs.isEmpty()) {
         )
     }
 }
+// =========================================================
+// ADMIN ONLY — BULLISH AND BEARISH ORDER BLOCKS
+// =========================================================
+
+if (
+    platform == "ADMIN" &&
+    currentProfile?.optString("role", "user")
+        .equals("admin", ignoreCase = true)
+) {
+
+    val orderBlockCandles = marketDataCandles[symbol].orEmpty()
+    val orderBlocks = calculateOrderBlocks(orderBlockCandles)
+
+    row.addView(
+        label("BULLISH ORDER BLOCKS", 12f, green, true)
+    )
+
+    if (orderBlocks.bullish.isEmpty()) {
+        row.addView(
+            label("No bullish order blocks found.", 11f, muted, false)
+        )
+    } else {
+        orderBlocks.bullish.forEach { block ->
+            row.addView(
+                label(
+                    "BULLISH OB ${block.number} | ZONE: ${formatMarketPrice(block.low)} - ${formatMarketPrice(block.high)} | CREATED: ${formatMarketTime(block.createdAt)} | STATUS: ${if (block.valid) "VALID" else "INVALID"} | INVALIDATED: ${if (block.invalidatedAt > 0L) formatMarketTime(block.invalidatedAt) else "—"}",
+                    11f, green, false
+                )
+            )
+        }
+    }
+
+    row.addView(
+        label("BEARISH ORDER BLOCKS", 12f, red, true)
+    )
+
+    if (orderBlocks.bearish.isEmpty()) {
+        row.addView(
+            label("No bearish order blocks found.", 11f, muted, false)
+        )
+    } else {
+        orderBlocks.bearish.forEach { block ->
+            row.addView(
+                label(
+                    "BEARISH OB ${block.number} | ZONE: ${formatMarketPrice(block.low)} - ${formatMarketPrice(block.high)} | CREATED: ${formatMarketTime(block.createdAt)} | STATUS: ${if (block.valid) "VALID" else "INVALID"} | INVALIDATED: ${if (block.invalidatedAt > 0L) formatMarketTime(block.invalidatedAt) else "—"}",
+                    11f, red, false
+                )
+            )
+        }
+    }
+}
             // Index monitor rows are display-only.
             row.isClickable = false
             row.isFocusable = false
