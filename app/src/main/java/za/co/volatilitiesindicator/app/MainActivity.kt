@@ -1880,7 +1880,10 @@ private fun registerCurrentPriceView(symbol: String, section: String, view: Text
             val notificationId = 4200 + (stableKey.hashCode() and 0x7fffffff) % 100000
             manager.notify(notificationId, notification)
         } catch (_: Exception) {
-         // =========================================================
+                // Ignore notification delivery failures.
+}
+    }
+    // =========================================================
     // ADMIN PREVIEW
     // =========================================================
     private fun addAdminPreview() {
@@ -1943,7 +1946,7 @@ private fun registerCurrentPriceView(symbol: String, section: String, view: Text
         val tabs = if (authToken.isBlank()) {
             listOf("⌂" to "Home", "↪" to "Login", "+" to "Register")
         } else if (platform == "ADMIN") {
-            listOf("⌂" to "Home", "▥" to "Trade", "⌁" to "🔔" to "Notifications", "⚙" to "Settings")
+            listOf("⌂" to "Home", "▥" to "Trade", "🔔" to "Notifications", "⚙" to "Settings")
         } else {
             listOf("⌂" to "Home", "▥" to "Trade", "🔔" to "Notifications", "♙" to "My profile")
         }
