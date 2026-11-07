@@ -60,7 +60,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val appPrefs by lazy {
     getSharedPreferences("volatilities_app_settings", MODE_PRIVATE)
 }
-
+private val notificationsEnabled: Boolean
+    get() = appPrefs.getBoolean("notificationsEnabled", false)
 private var platform = "USER"
     set(value) {
         field = value
@@ -310,7 +311,14 @@ private val currentPriceViews = mutableMapOf<String, MutableList<TextView>>()
 private val dashboardStatusViews = mutableMapOf<String, TextView>()
 private val marketDataErrors =
     mutableMapOf<String, String>()
-
+private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
+    if (marketDataErrors.containsKey(symbol) && marketDataPrices[symbol] == null) {
+        return "FEED ERROR" to red
+    }
+    if (!connected) return "DISCONNECTED" to red
+    if (marketDataPrices[symbol] == null) return "WAITING FOR PRICE" to yellow
+    return "MONITORING" to green
+}
 private var marketDataRequested = false
 private var marketStructureExpanded = true
     override fun onCreate(savedInstanceState: Bundle?) {
