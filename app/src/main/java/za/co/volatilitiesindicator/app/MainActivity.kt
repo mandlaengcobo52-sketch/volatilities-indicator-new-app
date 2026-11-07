@@ -929,13 +929,14 @@ private fun addHeader() {
         )
         val items = if (platform == "ADMIN") {
             listOf(
-                "Dashboard",
-                    "User Accounts",
-                "Notifications",
-                "Trading Logs",
-                    "System Settings",
-                "Logout"
-            )
+    "Dashboard",
+    "ANALYSIS - SUPPORT AND RESISTANCE",
+    "User Accounts",
+    "Notifications",
+    "Trading Logs",
+    "System Settings",
+    "Logout"
+)
             } else {
             listOf(
                 "Home",
