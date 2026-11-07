@@ -1680,6 +1680,202 @@ private fun calculateLiquidityLevels(
         )
         .take(2)
 }
+// =============================================================
+// ANALYSIS - MARKET STRUCTURE AND CHANGE OF CHARACTER
+// =============================================================
+
+private data class MarketStructureEvent(
+    val number: Int,
+    val direction: String,
+    val price: Double,
+    val startedAt: Long
+)
+
+private data class ChochEvent(
+    val number: Int,
+    val direction: String,
+    val price: Double,
+    val changedAt: Long
+)
+
+private data class MarketStructureAnalysis(
+    val structures: List<MarketStructureEvent>,
+    val chochs: List<ChochEvent>
+)
+
+private fun calculateMarketStructure(
+    candles: List<DerivApiClient.Candle>
+): MarketStructureAnalysis {
+
+    val sorted = candles.sortedBy { it.epoch }
+
+    if (sorted.size < 10) {
+        return MarketStructureAnalysis(emptyList(), emptyList())
+    }
+
+    val highs = mutableListOf<Pair<Int, Double>>()
+    val lows = mutableListOf<Pair<Int, Double>>()
+
+    for (i in 2 until sorted.size - 2) {
+
+        if (
+            sorted[i].high > sorted[i - 1].high &&
+            sorted[i].high > sorted[i - 2].high &&
+            sorted[i].high > sorted[i + 1].high &&
+            sorted[i].high > sorted[i + 2].high
+        ) {
+            highs.add(i to sorted[i].high)
+        }
+
+        if (
+            sorted[i].low < sorted[i - 1].low &&
+            sorted[i].low < sorted[i - 2].low &&
+            sorted[i].low < sorted[i + 1].low &&
+            sorted[i].low < sorted[i + 2].low
+        ) {
+            lows.add(i to sorted[i].low)
+        }
+    }
+
+    val structures = mutableListOf<MarketStructureEvent>()
+    val chochs = mutableListOf<ChochEvent>()
+
+    var structureNumber = 0
+    var chochNumber = 0
+    var trend = ""
+
+    var previousHigh: Pair<Int, Double>? = null
+    var previousLow: Pair<Int, Double>? = null
+
+    var bullishStart = 0L
+    var bearishStart = 0L
+
+    val pivotHighs = highs.associate { it.first to it.second }
+    val pivotLows = lows.associate { it.first to it.second }
+
+    for (i in sorted.indices) {
+
+        val currentHigh = pivotHighs[i]
+        val currentLow = pivotLows[i]
+
+        if (currentHigh != null) {
+            val previous = previousHigh
+
+            if (previous != null) {
+                if (currentHigh > previous.second) {
+                    if (trend != "BULLISH") bullishStart = sorted[previous.first].epoch
+                    trend = "BULLISH"
+                    structureNumber++
+
+                    structures.add(
+                        MarketStructureEvent(
+                            structureNumber,
+                            "BULLISH",
+                            currentHigh,
+                            bullishStart
+                        )
+                    )
+                } else if (currentHigh < previous.second) {
+                    if (trend != "BEARISH") bearishStart = sorted[previous.first].epoch
+                    trend = "BEARISH"
+                    structureNumber++
+
+                    structures.add(
+                        MarketStructureEvent(
+                            structureNumber,
+                            "BEARISH",
+                            currentHigh,
+                            bearishStart
+                        )
+                    )
+                }
+            }
+
+            previousHigh = i to currentHigh
+        }
+
+        if (currentLow != null) {
+            val previous = previousLow
+
+            if (previous != null) {
+                if (currentLow > previous.second) {
+                    if (trend != "BULLISH") bullishStart = sorted[previous.first].epoch
+                    trend = "BULLISH"
+                    structureNumber++
+
+                    structures.add(
+                        MarketStructureEvent(
+                            structureNumber,
+                            "BULLISH",
+                            currentLow,
+                            bullishStart
+                        )
+                    )
+                } else if (currentLow < previous.second) {
+                    if (trend != "BEARISH") bearishStart = sorted[previous.first].epoch
+                    trend = "BEARISH"
+                    structureNumber++
+
+                    structures.add(
+                        MarketStructureEvent(
+                            structureNumber,
+                            "BEARISH",
+                            currentLow,
+                            bearishStart
+                        )
+                    )
+                }
+            }
+
+            previousLow = i to currentLow
+        }
+
+        val candle = sorted[i]
+
+        if (trend == "BEARISH") {
+            val breakLevel = previousHigh
+            if (
+                breakLevel != null &&
+                i > breakLevel.first &&
+                candle.close > breakLevel.second
+            ) {
+                chochNumber++
+                chochs.add(
+                    ChochEvent(
+                        chochNumber,
+                        "BULLISH",
+                        breakLevel.second,
+                        candle.epoch
+                    )
+                )
+                trend = "BULLISH"
+            }
+        } else if (trend == "BULLISH") {
+            val breakLevel = previousLow
+            if (
+                breakLevel != null &&
+                i > breakLevel.first &&
+                candle.close < breakLevel.second
+            ) {
+                chochNumber++
+                chochs.add(
+                    ChochEvent(
+                        chochNumber,
+                        "BEARISH",
+                        breakLevel.second,
+                        candle.epoch
+                    )
+                )
+                trend = "BEARISH"
+            }
+        }
+    }
+
+    return MarketStructureAnalysis(
+        structures = structures.takeLast(10),
+        chochs = chochs.takeLast(10)
+    )
+}
     // =============================================================
 // ANALYSIS - SUPPORT AND RESISTANCE
 // =============================================================
