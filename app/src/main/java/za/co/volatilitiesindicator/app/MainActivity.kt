@@ -2396,15 +2396,15 @@ orderBlockQualified =
     masterEngineDecisions[symbol] = decision
 val analysisText =
     "SUPPORT / RESISTANCE: " +
-        if (decision.supportResistanceQualified) "QUALIFIED" else "WAITING" +
+        (if (decision.supportResistanceQualified) "QUALIFIED" else "WAITING") +
     "\nLIQUIDITY: " +
-        if (decision.liquidityQualified) "QUALIFIED" else "WAITING" +
+        (if (decision.liquidityQualified) "QUALIFIED" else "WAITING") +
     "\nMARKET STRUCTURE: " +
-        if (decision.marketStructureQualified) "QUALIFIED" else "WAITING" +
+        (if (decision.marketStructureQualified) "QUALIFIED" else "WAITING") +
     "\nCHOCH: " +
-        if (decision.chochQualified) "QUALIFIED" else "WAITING" +
+        (if (decision.chochQualified) "QUALIFIED" else "WAITING") +
     "\nORDER BLOCK: " +
-        if (decision.orderBlockQualified) "QUALIFIED" else "WAITING"
+        (if (decision.orderBlockQualified) "QUALIFIED" else "WAITING")
 
 dashboardAnalysisViews[symbol]?.apply {
     text = analysisText
