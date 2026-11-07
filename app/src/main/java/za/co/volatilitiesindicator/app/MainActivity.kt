@@ -316,6 +316,21 @@ private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
     if (marketDataErrors.containsKey(symbol) && marketDataPrices[symbol] == null) {
         return "FEED ERROR" to red
     }
+
+    if (!connected) return "DISCONNECTED" to red
+
+    if (marketDataPrices[symbol] == null) {
+        return "WAITING FOR PRICE" to yellow
+    }
+
+    val decision = masterEngineDecisions[symbol]
+
+    if (decision?.qualified == true) {
+        return "QUALIFIED ${decision.direction}" to green
+    }
+
+    return "MONITORING" to yellow
+}
     if (!connected) return "DISCONNECTED" to red
     if (marketDataPrices[symbol] == null) return "WAITING FOR PRICE" to yellow
     return "MONITORING" to green
