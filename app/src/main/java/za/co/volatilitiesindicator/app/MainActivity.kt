@@ -2107,6 +2107,23 @@ private fun calculateMarketStructure(
         chochs = chochs.takeLast(10)
     )
 }
+private data class MasterEngineDecision(
+    val symbol: String,
+    val direction: String,
+    val supportResistanceQualified: Boolean,
+    val liquidityQualified: Boolean,
+    val marketStructureQualified: Boolean,
+    val chochQualified: Boolean,
+    val orderBlockQualified: Boolean,
+    val qualified: Boolean,
+    val updatedAt: Long
+)
+
+private val masterEngineDecisions =
+    mutableMapOf<String, MasterEngineDecision>()
+
+private val masterEngineNotificationKeys =
+    mutableSetOf<String>()
     // =============================================================
 // ANALYSIS - SUPPORT AND RESISTANCE
 // =============================================================
@@ -2250,6 +2267,106 @@ private fun calculateSupportResistance(
     return results
         .sortedByDescending { it.score }
         .take(2)
+}
+private fun evaluateMasterEngine(symbol: String) {
+    val candles = marketDataCandles[symbol].orEmpty()
+    val price = marketDataPrices[symbol] ?: return
+    if (candles.size < 20) return
+
+    val latest = candles.last()
+
+    val supports = calculateSupportResistance(candles, true)
+    val resistances = calculateSupportResistance(candles, false)
+
+    val bullishSR = supports.any {
+        latest.low <= it.price * 1.0015 &&
+        latest.close > it.price
+    }
+
+    val bearishSR = resistances.any {
+        latest.high >= it.price * 0.9985 &&
+        latest.close < it.price
+    }
+
+    val bullishLiquidity = calculateLiquidityLevels(candles, true)
+    val bearishLiquidity = calculateLiquidityLevels(candles, false)
+
+    val bullishSweep = bullishLiquidity.any {
+        it.sweepAt > 0L && latest.epoch > it.sweepAt &&
+        latest.close > latest.open
+    }
+
+    val bearishSweep = bearishLiquidity.any {
+        it.sweepAt > 0L && latest.epoch > it.sweepAt &&
+        latest.close < latest.open
+    }
+
+    val structure = calculateMarketStructure(candles)
+    val marketDirection =
+        structure.structures.lastOrNull()?.direction ?: ""
+
+    val chochDirection =
+        structure.chochs.lastOrNull()?.direction ?: ""
+
+    val orderBlocks = calculateOrderBlocks(candles)
+
+    val bullishOB = orderBlocks.bullish.any {
+        it.valid && marketDirection == "BULLISH" &&
+        chochDirection == "BULLISH"
+    }
+
+    val bearishOB = orderBlocks.bearish.any {
+        it.valid && marketDirection == "BEARISH" &&
+        chochDirection == "BEARISH"
+    }
+
+    val bullishQualified =
+        bullishSR && bullishSweep &&
+        marketDirection == "BULLISH" &&
+        chochDirection == "BULLISH" &&
+        bullishOB
+
+    val bearishQualified =
+        bearishSR && bearishSweep &&
+        marketDirection == "BEARISH" &&
+        chochDirection == "BEARISH" &&
+        bearishOB
+
+    val direction = when {
+        bullishQualified -> "BUY"
+        bearishQualified -> "SELL"
+        else -> "WAIT"
+    }
+
+    val decision = MasterEngineDecision(
+        symbol = symbol,
+        direction = direction,
+        supportResistanceQualified =
+            if (direction == "BUY") bullishSR else if (direction == "SELL") bearishSR else false,
+        liquidityQualified =
+            if (direction == "BUY") bullishSweep else if (direction == "SELL") bearishSweep else false,
+        marketStructureQualified = direction != "WAIT",
+        chochQualified = direction != "WAIT",
+        orderBlockQualified =
+            if (direction == "BUY") bullishOB else if (direction == "SELL") bearishOB else false,
+        qualified = direction != "WAIT",
+        updatedAt = System.currentTimeMillis()
+    )
+
+    masterEngineDecisions[symbol] = decision
+
+    if (decision.qualified) {
+        val eventKey =
+            "${saDayKey()}_${accountId}_${executionMode}_${symbol}_${direction}_${latest.epoch}"
+
+        if (masterEngineNotificationKeys.add(eventKey)) {
+            notifyEvent(
+                "Master Engine Qualified",
+                "$symbol · $direction · All five conditions qualified.",
+                "master_engine_$eventKey"
+            )
+        }
+    }
 }
     // =========================================================
     // ADMIN USER APPROVAL — server verifies administrator role
@@ -3179,9 +3296,13 @@ derivApiClient.connectWithAccessToken(token, executionMode)
         if (symbol in marketDataIndexes && quote.isFinite()) {
             marketDataPrices[symbol] = quote
             marketDataErrors.remove(symbol)
+            evaluateMasterEngine(symbol)
+
+val engineQualified =
+    masterEngineDecisions[symbol]?.qualified == true
 
 dashboardStatusViews[symbol]?.apply {
-    text = "MONITORING"
+    text = if (engineQualified) "QUALIFIED" else "MONITORING"
     setTextColor(green)
 }
 
@@ -3359,6 +3480,7 @@ views.barrierExpiry.text =
 marketDataCandles[symbol] = candles
     .filter { it.epoch >= cutoffEpoch }
     .sortedBy { it.epoch }
+    evaluateMasterEngine(symbol)
 
 android.util.Log.i(
     "SupportResistance",
