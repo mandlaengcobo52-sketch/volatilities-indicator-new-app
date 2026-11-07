@@ -1231,8 +1231,6 @@ page.addView(
     accountCard.addView(label("Connection: ${if (connected) "CONNECTED" else "DISCONNECTED"}", 12f, if (connected) green else red, true))
     accountCard.addView(label("Account ID: ${accountId.ifBlank { "—" }}", 12f, muted, false))
     page.addView(accountCard, matchWrap().apply { bottomMargin = dp(10) })
-
-
     page.addView(sectionTitle("RUNNING TRADES"))
     val runningCard = card().apply { orientation = LinearLayout.VERTICAL }
     val portfolioArray = openTradesResponse?.optJSONObject("portfolio")?.optJSONArray("contracts")
@@ -1537,7 +1535,7 @@ private fun registerCurrentPriceView(symbol: String, section: String, view: Text
                                         toast(result.optString("message", if (ok) "User reactivated." else "Unable to reactivate user."))
                                         if (ok) loadAdminUsers()
                                     }
-                                }.show()
+                                    }.show()
                         },
                         matchWrap().apply { topMargin = dp(6) }
                     )
