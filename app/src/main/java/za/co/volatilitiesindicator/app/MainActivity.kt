@@ -296,7 +296,6 @@ private fun startAndBindDerivService() {
         val target: Double?,
         val probability: Double,
         val pnl: TextView,
-        val potentialProfit: TextView,
         val spot: TextView,
         val barrierExpiry: TextView,
         val ptpe: TextView
