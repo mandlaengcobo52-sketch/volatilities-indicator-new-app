@@ -280,7 +280,8 @@ private fun startAndBindDerivService() {
         get() = appPrefs.getBoolean("autoTradeEnabled", false)
         set(value) { appPrefs.edit().putBoolean("autoTradeEnabled", value).apply() }
         private val touchAvailabilityPending = mutableSetOf<String>()
-
+private val touchContractsBySymbol =
+    mutableMapOf<String, org.json.JSONArray>()
 private fun requestTouchAvailability(symbol: String) {
     if (!connected) return
     if (!touchAvailabilityPending.add(symbol)) return
@@ -3406,6 +3407,27 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
         val messageType = json.optString("msg_type", "")
 
         when (messageType) {
+            "contracts_for" -> {
+    val symbol = json.optJSONObject("echo_req")
+        ?.optString("contracts_for", "")
+        ?.uppercase()
+        .orEmpty()
+
+    val available = json.optJSONObject("contracts_for")
+        ?.optJSONArray("available")
+
+    if (symbol.isNotBlank()) {
+        touchAvailabilityPending.remove(symbol)
+
+        if (available != null) {
+            touchContractsBySymbol[symbol] = available
+            android.util.Log.i(
+                "TouchAvailability",
+                "$symbol: ${available.length()} contract types received."
+            )
+        }
+    }
+            }
             "portfolio" -> {
                 openTradesResponse = json
                 portfolioLoadedForAccount = true
