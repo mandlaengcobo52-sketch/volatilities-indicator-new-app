@@ -2356,13 +2356,21 @@ private fun evaluateMasterEngine(symbol: String) {
         symbol = symbol,
         direction = direction,
         supportResistanceQualified =
-            if (direction == "BUY") bullishSR else if (direction == "SELL") bearishSR else false,
-        liquidityQualified =
-            if (direction == "BUY") bullishSweep else if (direction == "SELL") bearishSweep else false,
-        marketStructureQualified = direction != "WAIT",
-        chochQualified = direction != "WAIT",
-        orderBlockQualified =
-            if (direction == "BUY") bullishOB else if (direction == "SELL") bearishOB else false,
+    bullishSR || bearishSR,
+
+liquidityQualified =
+    bullishSweep || bearishSweep,
+
+marketStructureQualified =
+    marketDirection == "BULLISH" ||
+    marketDirection == "BEARISH",
+
+chochQualified =
+    chochDirection == "BULLISH" ||
+    chochDirection == "BEARISH",
+
+orderBlockQualified =
+    bullishOB || bearishOB,
         qualified = direction != "WAIT",
         updatedAt = System.currentTimeMillis()
     )
