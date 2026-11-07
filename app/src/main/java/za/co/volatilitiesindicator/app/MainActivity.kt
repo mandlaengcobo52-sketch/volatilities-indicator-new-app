@@ -1166,8 +1166,10 @@ if (
 // ADMIN ONLY — LIQUIDITY AND LIQUIDITY SWEEP
 // =========================================================
 
-val bullishLiquidity = calculateLiquidityLevels(candles, true)
-val bearishLiquidity = calculateLiquidityLevels(candles, false)
+val liquidityCandles = marketDataCandles[symbol].orEmpty()
+
+val bullishLiquidity = calculateLiquidityLevels(liquidityCandles, true)
+val bearishLiquidity = calculateLiquidityLevels(liquidityCandles, false)
 
 row.addView(label("BULLISH LIQUIDITY (SSL)", 12f, green, true))
 
