@@ -3724,24 +3724,40 @@ if (stake > 0.0) {
                         val liveProfit = contract.optDouble("profit", contract.optDouble("profit_open", liveContractProfits[id] ?: 0.0))
                         val running = runningContracts[id]
 
-if (
-    running != null &&
-    running.mode == executionMode &&
-    running.target > 0.0 &&
-    liveProfit >= running.target &&
-    !running.closeRequested
-) {
-    running.closeRequested = true
+if (running != null && running.mode == executionMode) {
 
-    val sent = derivApiClient.send(
-        JSONObject()
-            .put("sell", id)
-            .put("price", 0)
-            .put("req_id", nextTradeRequestId())
-    )
+    if (liveProfit >= running.target) {
+        running.trailingActivated = true
+    }
 
-    if (!sent) {
-        running.closeRequested = false
+    if (running.trailingActivated) {
+        running.peakProfit = maxOf(running.peakProfit, liveProfit)
+
+        val protectedPercent =
+            kotlin.math.floor(
+                (running.peakProfit / running.stake) * 10.0
+            ) * 10.0
+
+        val protectedProfit =
+            running.stake * (protectedPercent / 100.0)
+
+        if (
+            liveProfit < protectedProfit &&
+            !running.closeRequested
+        ) {
+            running.closeRequested = true
+
+            val sent = derivApiClient.send(
+                JSONObject()
+                    .put("sell", id)
+                    .put("price", 0)
+                    .put("req_id", nextTradeRequestId())
+            )
+
+            if (!sent) {
+                running.closeRequested = false
+            }
+        }
     }
 }
                         val views = contractLiveViews[id]
