@@ -325,7 +325,62 @@ private fun threeDayTradeStake(): Double {
         private val touchAvailabilityPending = mutableSetOf<String>()
 private val touchContractsBySymbol =
     mutableMapOf<String, org.json.JSONArray>()
-private fun requestTouchAvailability(symbol: String) {
+private fun submitTouchProposal(
+    symbol: String,
+    direction: String,
+    barrier: Double
+) {
+    if (!connected || !autoTradeEnabled) return
+    if (direction != "BUY" && direction != "SELL") return
+    if (!touchExecutionLocks.add(symbol)) return
+
+    val stake = threeDayTradeStake()
+    if (stake <= 0.0 || accountCurrency.isBlank()) {
+        touchExecutionLocks.remove(symbol)
+        return
+    }
+
+    val requestId = nextTradeRequestId()
+
+    val order = PendingTouchOrder(
+        symbol = symbol,
+        direction = direction,
+        stake = stake,
+        target = stake * 0.30,
+        mode = executionMode,
+        proposalRequestId = requestId
+    )
+
+    pendingTouchOrders[requestId] = order
+    pendingTouchBySymbol[symbol] = requestId
+
+    val signedBarrier = if (direction == "BUY") {
+        "+$barrier"
+    } else {
+        "-$barrier"
+    }
+
+    val sent = derivApiClient.send(
+        JSONObject()
+            .put("proposal", 1)
+            .put("amount", stake)
+            .put("basis", "stake")
+            .put("contract_type", "ONETOUCH")
+            .put("currency", accountCurrency)
+            .put("duration", 3)
+            .put("duration_unit", "d")
+            .put("symbol", symbol)
+            .put("barrier", signedBarrier)
+            .put("req_id", requestId)
+    )
+
+    if (!sent) {
+        pendingTouchOrders.remove(requestId)
+        pendingTouchBySymbol.remove(symbol)
+        touchExecutionLocks.remove(symbol)
+    }
+}
+    private fun requestTouchAvailability(symbol: String) {
     if (!connected) return
     if (!touchAvailabilityPending.add(symbol)) return
 
@@ -3490,12 +3545,7 @@ derivApiClient.connectWithAccessToken(token, executionMode)
             marketDataPrices[symbol] = quote
             marketDataErrors.remove(symbol)
             evaluateMasterEngine(symbol)
-            if (isTouchExecutionReady(symbol)) {
-    android.util.Log.i(
-        "TradeExecution",
-        "$symbol qualified and ready for execution"
-    )
-            }
+            
 
 val engineQualified =
     masterEngineDecisions[symbol]?.qualified == true
