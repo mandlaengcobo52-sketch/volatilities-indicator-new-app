@@ -1,338 +1,26 @@
-package za.co.volatilitiesindicator.app
+private fun isTouchExecutionReady(symbol: String): Boolean {
+    if (!connected) return false
+    if (!autoTradeEnabled) return false
+    if (symbol !in marketDataIndexes) return false
+    if (touchAvailabilityPending.contains(symbol)) return false
+    if (!isThreeDayTouchAvailable(symbol)) return false
 
-import android.app.Activity
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
-import android.Manifest
-import android.content.pm.PackageManager
-import android.os.Build
-import android.content.Intent
-import android.net.Uri
-import okhttp3.Call
-import okhttp3.Callback
-import okhttp3.FormBody
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.Response
-import org.json.JSONObject
-import org.json.JSONArray
-import java.io.IOException
-import java.util.UUID
-import android.graphics.Color
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
-import android.os.Bundle
-import android.os.Handler
-import android.view.Gravity
-import android.view.View
-import android.widget.Button
-import android.widget.EditText
-import android.widget.ImageView
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.TextView
-import android.widget.Spinner
-import android.widget.ArrayAdapter
-import android.widget.Toast
-import android.util.Base64
-import java.security.MessageDigest
-import java.security.SecureRandom
-import android.content.ComponentName
-import android.content.ServiceConnection
-import android.os.IBinder
-/** Volatilities Indicator Android app. */
-class MainActivity : Activity(), DerivApiClient.Callback {
+    val decision = masterEngineDecisions[symbol] ?: return false
 
-    private val bg = Color.rgb(3, 8, 6)
-    private val panel = Color.rgb(8, 20, 18)
-    private val panel2 = Color.rgb(16, 34, 39)
-    private val green = Color.rgb(0, 255, 92)
-    private val greenDark = Color.rgb(0, 120, 48)
-    private val white = Color.rgb(255, 220, 45)
-    private val muted = Color.rgb(242, 248, 245)
-    private val yellow = Color.rgb(255, 220, 45)
-    private val red = Color.rgb(255, 65, 75)
-    private val cyan = Color.rgb(0, 225, 235)
-    private val blue = Color.rgb(70, 155, 255)
+    if (!decision.qualified) return false
+    if (decision.direction != "BUY" && decision.direction != "SELL") {
+        return false
+    }
 
-    private val appPrefs by lazy {
-    getSharedPreferences("volatilities_app_settings", MODE_PRIVATE)
+    val alreadyRunning = runningContracts.values.any {
+        it.symbol.equals(symbol, ignoreCase = true) &&
+        it.mode == executionMode
+    }
+
+    if (alreadyRunning) return false
+
+    return true
 }
-private val notificationsEnabled: Boolean
-    get() = appPrefs.getBoolean("notificationsEnabled", false)
-private var platform = "USER"
-    set(value) {
-        field = value
-        appPrefs.edit().putString("platform", value).apply()
-    }
-
-private var executionMode = "DEMO"
-    set(value) {
-        field = value
-        appPrefs.edit().putString("executionMode", value).apply()
-    }
-
-private var selectedTab = "Home"
-    set(value) {
-        field = value
-        appPrefs.edit().putString("selectedTab", value).apply()
-    }
-
-private var drawerOpen = false
-
-    private lateinit var page: LinearLayout
-    private var mainScrollView: ScrollView? = null
-    private val profileRefreshHandler by lazy { Handler(mainLooper) }
-    private val profileRefreshRunnable = object : Runnable {
-        override fun run() {
-            if (authToken.isNotBlank() && platform != "ADMIN") refreshProfile(showMessage = false)
-            profileRefreshHandler.postDelayed(this, 15_000L)
-        }
-    }
-    private var lastRenderedTab: String? = null
-    private lateinit var accountStatus: TextView
-    private lateinit var accountIdView: TextView
-    private lateinit var balanceView: TextView
-    private lateinit var openPlView: TextView
-    private val liveContractProfits = mutableMapOf<Long, Double>()
-    private val liveContractProfitModes = mutableMapOf<Long, String>()
-    private var runningTotalPlView: TextView? = null
-    private var historyAccountKey: String = ""
-    private var connected = false
-    // Automatic Deriv recovery while the user has not manually disconnected.
-    private val reconnectHandler by lazy { Handler(mainLooper) }
-    private var reconnectAttempt = 0
-    private var reconnectScheduled = false
-    private var reconnectRunnable: Runnable? = null
-    private fun scheduleDerivReconnect() {
-        if (authToken.isBlank() || appPrefs.getBoolean("deriv_manually_disconnected", false)) return
-        if (connected || reconnectScheduled) return
-        val tokenKey = if (executionMode == "REAL") "real_token" else "demo_token"
-        val savedToken = prefs.getString(tokenKey, "").orEmpty()
-        if (savedToken.isBlank()) return
-        reconnectScheduled = true
-        val delayMs = minOf(30_000L, 2_000L * (1L shl minOf(reconnectAttempt, 4)))
-        reconnectAttempt = (reconnectAttempt + 1).coerceAtMost(4)
-        reconnectRunnable = Runnable {
-            reconnectScheduled = false
-            if (!connected && !appPrefs.getBoolean("deriv_manually_disconnected", false)) connectWithToken(savedToken)
-        }
-        reconnectHandler.postDelayed(reconnectRunnable!!, delayMs)
-    }
-    private fun cancelDerivReconnect() {
-        reconnectRunnable?.let { reconnectHandler.removeCallbacks(it) }
-        reconnectRunnable = null
-        reconnectScheduled = false
-        reconnectAttempt = 0
-    }
-    // onCreate already initiates the first connection; only run the recovery check
-    // on later returns to the foreground.
-    private var hasResumedOnce = false
-    private var accountId = ""
-    private var accountType = ""
-    private var accountBalance = 0.0
-    private var accountCurrency = ""
-    // DerivApiClient is owned by DerivConnectionService.
-private lateinit var derivApiClient: DerivApiClient
-
-private var derivService: DerivConnectionService? = null
-private var derivServiceBound = false
-private var pendingDerivToken: String? = null
-private var pendingResumeCheck = false
-
-private val derivServiceConnection = object : ServiceConnection {
-
-    override fun onServiceConnected(
-        name: ComponentName?,
-        binder: IBinder?
-    ) {
-        val service =
-            (binder as? DerivConnectionService.LocalBinder)?.getService()
-                ?: return
-
-        derivService = service
-        derivApiClient = service.client
-
-        service.attachActivity(this@MainActivity)
-        derivServiceBound = true
-
-        val token = pendingDerivToken
-        pendingDerivToken = null
-
-        if (!token.isNullOrBlank()) {
-            derivApiClient.ensureConnectedOnResume(token, executionMode)
-
-        } else if (
-            pendingResumeCheck &&
-            authToken.isNotBlank() &&
-            !appPrefs.getBoolean("deriv_manually_disconnected", false)
-        ) {
-            val key =
-                if (executionMode == "REAL") "real_token"
-                else "demo_token"
-
-            val saved = prefs.getString(key, "").orEmpty()
-
-            if (saved.isNotBlank()) {
-                derivApiClient.ensureConnectedOnResume(
-                    saved,
-                    executionMode
-                )
-            }
-        }
-
-        pendingResumeCheck = false
-    }
-
-    override fun onServiceDisconnected(name: ComponentName?) {
-        derivService?.detachActivity(this@MainActivity)
-
-        derivService = null
-        derivServiceBound = false
-    }
-}
-
-private fun startAndBindDerivService() {
-
-    if (derivServiceBound) return
-
-    val serviceIntent =
-        Intent(this, DerivConnectionService::class.java)
-
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        startForegroundService(serviceIntent)
-    } else {
-        startService(serviceIntent)
-    }
-
-    derivServiceBound = bindService(
-        serviceIntent,
-        derivServiceConnection,
-        BIND_AUTO_CREATE
-    )
-}
-    private val httpClient = OkHttpClient()
-    private val prefs by lazy { getSharedPreferences("deriv_oauth", MODE_PRIVATE) }
-    private val authPrefs by lazy { getSharedPreferences("vi_platform_auth", MODE_PRIVATE) }
-    private val authEndpoint = "https://volatilitiesindicator.org.za/mobile-auth.php"
-    private var authToken: String = ""
-    private var currentProfile: JSONObject? = null
-    private var profileLoading: Boolean = false
-    // Every login/logout changes this generation. Async responses from older
-    // sessions are ignored so one user's profile cannot overwrite another's.
-    private var authSessionGeneration: Long = 0L
-    private var adminUsers: JSONArray? = null
-    private var adminUsersLoading: Boolean = false
-    private var openTradesResponse: JSONObject? = null
-    private var portfolioLoadedForAccount: Boolean = false
-    // Throttle retries while waiting for Deriv's portfolio response.
-    private var lastOpenTradesRequestAt: Long = 0L
-    private var openContractResponse: JSONObject? = null
-    private var tradeHistoryResponse: JSONObject? = null
-
-    // Running-trade state required by the trade screen and Deriv portfolio updates.
-    private data class RunningContract(
-        val contractId: Long,
-        val symbol: String,
-        val direction: String,
-        val stake: Double,
-        val target: Double,
-        val targetProbability: Double,
-        val mode: String,
-        var entryBarrier: Double = 0.0,
-        var takeProfitRequested: Boolean = false,
-        var openContractConfirmed: Boolean = false,
-        var targetNotified: Boolean = false,
-        var trailingActivated: Boolean = false,
-        var peakProfit: Double = 0.0,
-        var closeRequested: Boolean = false,
-        var closeReason: String = "",
-        var pairId: String = "",
-        var pairSide: String = "",
-        val isRecovery: Boolean = false,
-        var recoveryTriggered: Boolean = false,
-        var potentialPayout: Double = 0.0
-    )
-
-    private data class ContractLiveViews(
-        val stake: Double,
-        val symbol: String,
-        val target: Double?,
-        val probability: Double,
-        val pnl: TextView,
-        val spot: TextView,
-        val barrierExpiry: TextView,
-        val ptpe: TextView
-    )
-
-    private val contractLiveViews = mutableMapOf<Long, ContractLiveViews>()
-    private val runningContracts = mutableMapOf<Long, RunningContract>()
-    private var nextTradeRequestIdValue = 710000
-    private fun nextTradeRequestId(): Int = ++nextTradeRequestIdValue
-
-    
-    private val dailyCapitalTimeZone = java.util.TimeZone.getTimeZone("Africa/Johannesburg")
-    private fun saDayKey(): String = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).apply { timeZone = dailyCapitalTimeZone }.format(java.util.Date())
-
-    private var autoTradeEnabled: Boolean
-    private val touchAvailabilityPending = mutableSetOf<String>()
-
-private fun requestTouchAvailability(symbol: String) {
-    if (!connected) return
-    if (!touchAvailabilityPending.add(symbol)) return
-
-    val sent = derivApiClient.send(
-        JSONObject()
-            .put("contracts_for", symbol)
-            .put("req_id", nextTradeRequestId())
-    )
-
-    if (!sent) {
-        touchAvailabilityPending.remove(symbol)
-    }
-}
-private val touchContractsBySymbol =
-    mutableMapOf<String, org.json.JSONArray>()
-        get() = appPrefs.getBoolean("autoTradeEnabled", false)
-        set(value) { appPrefs.edit().putBoolean("autoTradeEnabled", value).apply() }
-        private val touchAvailabilityPending = mutableSetOf<String>()
-private val touchContractsBySymbol =
-    mutableMapOf<String, org.json.JSONArray>()
-private fun requestTouchAvailability(symbol: String) {
-    if (!connected) return
-    if (!touchAvailabilityPending.add(symbol)) return
-
-    val sent = derivApiClient.send(
-        JSONObject()
-            .put("contracts_for", symbol)
-            .put("req_id", nextTradeRequestId())
-    )
-
-    if (!sent) {
-        touchAvailabilityPending.remove(symbol)
-    }
-}
-
-    private fun normalizedSymbol(item: JSONObject): String = item.optString(
-        "underlying", item.optString("underlying_symbol", item.optString("symbol", ""))
-    ).uppercase()
-    private fun isThreeDayTouchAvailable(symbol: String): Boolean {
-    val contracts = touchContractsBySymbol[symbol] ?: return false
-
-    for (i in 0 until contracts.length()) {
-        val contract = contracts.optJSONObject(i) ?: continue
-        if (contract.optString("contract_type") != "ONETOUCH") continue
-
-        val minDuration = contract.optString("min_contract_duration")
-        val maxDuration = contract.optString("max_contract_duration")
-
-        if (minDuration.isBlank() || maxDuration.isBlank()) continue
-
-        val minSeconds = durationToSeconds(minDuration)
-        val maxSeconds = durationToSeconds(maxDuration)
-
         if (minSeconds > 0L && maxSeconds >= 259200L &&
             minSeconds <= 259200L
         ) {
@@ -355,7 +43,6 @@ private fun durationToSeconds(value: String): Long {
         else -> -1L
     }
 }
-    private fun isTouchExecutionReady(symbol: String): Boolean {
     private fun requestOpenTradesIfNeeded() {
         if (!connected || accountId.isBlank() || portfolioLoadedForAccount) return
         val now = android.os.SystemClock.elapsedRealtime()
@@ -620,6 +307,7 @@ private fun addRegistrationScreen() {
     val registrationCard = card().apply { orientation = LinearLayout.VERTICAL }
     registrationCard.addView(label("Register your Volatilities Indicator account", 17f, white, true))
     registrationCard.addView(label("Your application will remain pending until an administrator approves it.", 14f, yellow, false))
+
     fun textInput(hintText: String, inputType: Int = android.text.InputType.TYPE_CLASS_TEXT): android.widget.EditText {
         return android.widget.EditText(this).apply {
             hint = hintText
@@ -926,7 +614,7 @@ private fun addHeader() {
         orientation = LinearLayout.HORIZONTAL
         setPadding(dp(2), dp(4), dp(2), dp(4))
     }
-    val menu = label("☰", 28f, white, true).apply {
+        val menu = label("☰", 28f, white, true).apply {
             gravity = Gravity.CENTER
             setOnClickListener {
                 drawerOpen = !drawerOpen
@@ -1219,9 +907,8 @@ private fun addHeader() {
     false
 ).apply {
     setPadding(dp(4), dp(8), dp(4), dp(4))
-}
-
-dashboardAnalysisViews[symbol] = analysisView
+            }
+            dashboardAnalysisViews[symbol] = analysisView
 row.addView(analysisView, matchWrap())
 // =========================================================
 // ADMIN ONLY — SUPPORT AND RESISTANCE
@@ -1284,6 +971,7 @@ if (bullishLiquidity.isEmpty()) {
         )
     }
 }
+
 row.addView(label("BEARISH LIQUIDITY (BSL)", 12f, red, true))
 
 if (bearishLiquidity.isEmpty()) {
@@ -1589,7 +1277,7 @@ val originalTarget = tracked?.target?.takeIf { it.isFinite() && it > 0.0 }
         val potentialProfitView = label(
             "Potential profit: ${if (proposalPayout > 0.0) formatMoney(potentialProfit) else "Awaiting Deriv payout"}",
             12f, green, true
-            ).apply { setPadding(0, dp(4), 0, 0) }
+        ).apply { setPadding(0, dp(4), 0, 0) }
 val actualBarrier = tracked?.entryBarrier?.takeIf { it > 0.0 }
     ?: item.optDouble("entry_tick", item.optDouble("entry_spot", 0.0))
 val entryBarrierView = label(
@@ -1820,7 +1508,6 @@ private fun calculateLiquidityLevels(
             kotlin.math.abs(other.second - basePrice) /
                 basePrice.coerceAtLeast(0.000001) <= tolerance
         }
-
         group.forEachIndexed { _, member ->
             val memberIndex = pivots.indexOf(member)
             if (memberIndex >= 0) used.add(memberIndex)
@@ -1894,6 +1581,7 @@ private fun calculateOrderBlocks(
     if (sorted.size < 10) {
         return OrderBlockAnalysis(emptyList(), emptyList())
     }
+
     val bullishBlocks = mutableListOf<OrderBlockEvent>()
     val bearishBlocks = mutableListOf<OrderBlockEvent>()
 
@@ -2201,7 +1889,7 @@ private fun calculateMarketStructure(
         structures = structures.takeLast(10),
         chochs = chochs.takeLast(10)
     )
-    }
+}
 private data class MasterEngineDecision(
     val symbol: String,
     val direction: String,
@@ -2425,7 +2113,6 @@ val resistances = calculateSupportResistance(candles, false, price)
         it.valid && marketDirection == "BULLISH" &&
         chochDirection == "BULLISH"
     }
-
     val bearishOB = orderBlocks.bearish.any {
         it.valid && marketDirection == "BEARISH" &&
         chochDirection == "BEARISH"
@@ -2494,7 +2181,7 @@ dashboardAnalysisViews[symbol]?.apply {
             android.graphics.Color.YELLOW
     )
 }
-if (decision.qualified) {
+    if (decision.qualified) {
         val eventKey =
             "${saDayKey()}_${accountId}_${executionMode}_${symbol}_${direction}_${latest.epoch}"
 
@@ -2728,7 +2415,6 @@ if (decision.qualified) {
         ).joinToString("\n\n")
         android.app.AlertDialog.Builder(this).setTitle("User view").setMessage(details).setPositiveButton("CLOSE", null).show()
     }
-
     private fun showEditUserDialog(user: JSONObject) {
         val firstName = android.widget.EditText(this).apply {
             hint = "First name"
@@ -3030,7 +2716,6 @@ if (decision.qualified) {
                 }
             )
         }
-
         page.addView(
             card,
             matchWrap().apply {
@@ -3100,7 +2785,8 @@ if (decision.qualified) {
 
         outer.addView(nav, LinearLayout.LayoutParams(-1, dp(76)))
     }
-        // =========================================================
+
+    // =========================================================
     // UI HELPERS
     // =========================================================
 
@@ -3322,7 +3008,7 @@ if (decision.qualified) {
                 if (!response.isSuccessful) {
                     runOnUiThread { toast("OAuth failed (HTTP ${response.code}): ${oauthError(text)}") }
                     return
-                    }
+                }
                 try {
                     val token = JSONObject(text).optString("access_token", "")
                     if (token.isBlank()) { runOnUiThread { toast("Deriv did not return an access token.") }; return }
@@ -3355,7 +3041,8 @@ if (decision.qualified) {
     accountCurrency = ""
 
     render()
-    if (!derivServiceBound || !::derivApiClient.isInitialized) {
+
+if (!derivServiceBound || !::derivApiClient.isInitialized) {
     pendingDerivToken = token
     startAndBindDerivService()
     return
@@ -3721,3 +3408,4 @@ override fun onDestroy() {
 }
                             }
                             
+                
