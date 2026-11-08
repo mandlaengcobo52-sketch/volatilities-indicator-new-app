@@ -269,55 +269,13 @@ private fun startAndBindDerivService() {
 
     private val contractLiveViews = mutableMapOf<Long, ContractLiveViews>()
     private val runningContracts = mutableMapOf<Long, RunningContract>()
-    private data class PendingTouchOrder(
-    val symbol: String,
-    val direction: String,
-    val stake: Double,
-    val target: Double,
-    val mode: String,
-    val proposalRequestId: Int,
-    var proposalId: String = "",
-    var barrier: String = "",
-    var potentialPayout: Double = 0.0,
-    var buyRequestId: Int = 0,
-    var barrierSearchAttempts: Int = 0)
-
-private val pendingTouchOrders = mutableMapOf<Int, PendingTouchOrder>()
-private val pendingTouchBySymbol = mutableMapOf<String, Int>()
     private var nextTradeRequestIdValue = 710000
     private fun nextTradeRequestId(): Int = ++nextTradeRequestIdValue
 
     
     private val dailyCapitalTimeZone = java.util.TimeZone.getTimeZone("Africa/Johannesburg")
     private fun saDayKey(): String = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).apply { timeZone = dailyCapitalTimeZone }.format(java.util.Date())
-    private fun threeDayCycleCapital(): Double {
-    val key = "three_day_capital_${accountId}_$executionMode"
-    val timeKey = "${key}_start_time"
-    val now = System.currentTimeMillis()
-    val savedCapital = appPrefs.getFloat(key, 0f).toDouble()
-    val cycleStart = appPrefs.getLong(timeKey, 0L)
 
-    if (
-        savedCapital <= 0.0 ||
-        cycleStart <= 0L ||
-        now - cycleStart >= 259200000L
-    ) {
-        if (accountBalance <= 0.0) return 0.0
-
-        appPrefs.edit()
-            .putFloat(key, accountBalance.toFloat())
-            .putLong(timeKey, now)
-            .apply()
-
-        return accountBalance
-    }
-
-    return savedCapital
-}
-
-private fun threeDayTradeStake(): Double {
-    return threeDayCycleCapital() * 0.33
-}
     private var autoTradeEnabled: Boolean
         get() = appPrefs.getBoolean("autoTradeEnabled", false)
         set(value) { appPrefs.edit().putBoolean("autoTradeEnabled", value).apply() }
@@ -338,7 +296,8 @@ private fun requestTouchAvailability(symbol: String) {
         touchAvailabilityPending.remove(symbol)
     }
 }
-private fun normalizedSymbol(item: JSONObject): String = item.optString(
+
+    private fun normalizedSymbol(item: JSONObject): String = item.optString(
         "underlying", item.optString("underlying_symbol", item.optString("symbol", ""))
     ).uppercase()
     private fun isThreeDayTouchAvailable(symbol: String): Boolean {
@@ -346,7 +305,6 @@ private fun normalizedSymbol(item: JSONObject): String = item.optString(
 
     for (i in 0 until contracts.length()) {
         val contract = contracts.optJSONObject(i) ?: continue
-
         if (contract.optString("contract_type") != "ONETOUCH") continue
 
         val minDuration = contract.optString("min_contract_duration")
@@ -643,7 +601,6 @@ private fun addRegistrationScreen() {
     val registrationCard = card().apply { orientation = LinearLayout.VERTICAL }
     registrationCard.addView(label("Register your Volatilities Indicator account", 17f, white, true))
     registrationCard.addView(label("Your application will remain pending until an administrator approves it.", 14f, yellow, false))
-
     fun textInput(hintText: String, inputType: Int = android.text.InputType.TYPE_CLASS_TEXT): android.widget.EditText {
         return android.widget.EditText(this).apply {
             hint = hintText
@@ -950,7 +907,7 @@ private fun addHeader() {
         orientation = LinearLayout.HORIZONTAL
         setPadding(dp(2), dp(4), dp(2), dp(4))
     }
-        val menu = label("☰", 28f, white, true).apply {
+    val menu = label("☰", 28f, white, true).apply {
             gravity = Gravity.CENTER
             setOnClickListener {
                 drawerOpen = !drawerOpen
@@ -1173,17 +1130,6 @@ private fun addHeader() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(10), dp(8), dp(10), dp(8))
         }
-                val summaryView = label(
-            "MONITORING: ${if (connected) "ON" else "OFF"}    QUALIFIED: 0/5",
-            12f,
-            if (connected) green else muted,
-            true
-        ).apply {
-            setPadding(dp(6), dp(8), dp(6), dp(12))
-        }
-
-        dashboardMonitorSummaryView = summaryView
-        monitorCard.addView(summaryView, matchWrap())
         marketDataIndexes.forEach { symbol ->
             val accent = when (symbol) {
                 "R_10" -> cyan
@@ -1319,7 +1265,6 @@ if (bullishLiquidity.isEmpty()) {
         )
     }
 }
-
 row.addView(label("BEARISH LIQUIDITY (BSL)", 12f, red, true))
 
 if (bearishLiquidity.isEmpty()) {
@@ -1419,25 +1364,6 @@ if (
                     11f, red, false
                 )
             )
-        }
-    }
-}
-dashboardIndexExpanded[symbol] = false
-
-for (i in 1 until row.childCount) {
-    if (i != 2) {
-        row.getChildAt(i).visibility = View.GONE
-    }
-}
-
-headingRow.setOnClickListener {
-    val expanded = dashboardIndexExpanded[symbol] != true
-    dashboardIndexExpanded[symbol] = expanded
-
-    for (i in 1 until row.childCount) {
-        if (i != 2) {
-            row.getChildAt(i).visibility =
-                if (expanded) View.VISIBLE else View.GONE
         }
     }
 }
@@ -1577,7 +1503,7 @@ masterDecisionCard.addView(
         autoTradeEnabled
     ) {
         autoTradeEnabled = !autoTradeEnabled
-        toast(if (autoTradeEnabled) "Master Decision is ON. Qualified signals may execute." else "Master Decision is OFF. Trade execution is paused.")
+        toast(if (autoTradeEnabled) "Master Decision display is ON. Trade execution is disabled." else "Master Decision display is OFF.")
         render()
     },
     matchWrap().apply { topMargin = dp(8) }
@@ -1644,7 +1570,7 @@ val originalTarget = tracked?.target?.takeIf { it.isFinite() && it > 0.0 }
         val potentialProfitView = label(
             "Potential profit: ${if (proposalPayout > 0.0) formatMoney(potentialProfit) else "Awaiting Deriv payout"}",
             12f, green, true
-        ).apply { setPadding(0, dp(4), 0, 0) }
+            ).apply { setPadding(0, dp(4), 0, 0) }
 val actualBarrier = tracked?.entryBarrier?.takeIf { it > 0.0 }
     ?: item.optDouble("entry_tick", item.optDouble("entry_spot", 0.0))
 val entryBarrierView = label(
@@ -1949,7 +1875,6 @@ private fun calculateOrderBlocks(
     if (sorted.size < 10) {
         return OrderBlockAnalysis(emptyList(), emptyList())
     }
-
     val bullishBlocks = mutableListOf<OrderBlockEvent>()
     val bearishBlocks = mutableListOf<OrderBlockEvent>()
 
@@ -2257,7 +2182,7 @@ private fun calculateMarketStructure(
         structures = structures.takeLast(10),
         chochs = chochs.takeLast(10)
     )
-}
+    }
 private data class MasterEngineDecision(
     val symbol: String,
     val direction: String,
@@ -2267,7 +2192,6 @@ private data class MasterEngineDecision(
     val chochQualified: Boolean,
     val orderBlockQualified: Boolean,
     val qualified: Boolean,
-    val directionConflict: Boolean,
     val updatedAt: Long
 )
 
@@ -2526,92 +2450,32 @@ chochQualified =
 orderBlockQualified =
     bullishOB || bearishOB,
         qualified = direction != "WAIT",
-
-directionConflict =
-    (bullishSR || bullishSweep ||
-     marketDirection == "BULLISH" ||
-     chochDirection == "BULLISH" || bullishOB) &&
-    (bearishSR || bearishSweep ||
-     marketDirection == "BEARISH" ||
-     chochDirection == "BEARISH" || bearishOB),
-
-updatedAt = System.currentTimeMillis()
+        updatedAt = System.currentTimeMillis()
     )
 
     masterEngineDecisions[symbol] = decision
 val analysisText =
     "SUPPORT / RESISTANCE: " +
-    when {
-        bullishSR && bearishSR ->
-            "SUPPORT: BUY | RESISTANCE: SELL"
-        bullishSR ->
-            "SUPPORT: QUALIFIED BUY"
-        bearishSR ->
-            "RESISTANCE: QUALIFIED SELL"
-        else ->
-            "WAITING"
-    } +
+        (if (decision.supportResistanceQualified) "QUALIFIED" else "WAITING") +
     "\nLIQUIDITY: " +
-        when {
-            bullishSweep -> "QUALIFIED BUY"
-            bearishSweep -> "QUALIFIED SELL"
-            else -> "WAITING"
-        } +
+        (if (decision.liquidityQualified) "QUALIFIED" else "WAITING") +
     "\nMARKET STRUCTURE: " +
-        when (marketDirection) {
-            "BULLISH" -> "QUALIFIED BUY"
-            "BEARISH" -> "QUALIFIED SELL"
-            else -> "WAITING"
-        } +
+        (if (decision.marketStructureQualified) "QUALIFIED" else "WAITING") +
     "\nCHOCH: " +
-        when (chochDirection) {
-            "BULLISH" -> "QUALIFIED BUY"
-            "BEARISH" -> "QUALIFIED SELL"
-            else -> "WAITING"
-        } +
+        (if (decision.chochQualified) "QUALIFIED" else "WAITING") +
     "\nORDER BLOCK: " +
-        when {
-            bullishOB -> "QUALIFIED BUY"
-            bearishOB -> "QUALIFIED SELL"
-            else -> "WAITING"
-        }
+        (if (decision.orderBlockQualified) "QUALIFIED" else "WAITING")
 
 dashboardAnalysisViews[symbol]?.apply {
-    val grey = muted
-    val greenColor = green
-
-    val spannable = android.text.SpannableString(analysisText)
-
-    val results = listOf(
-        decision.supportResistanceQualified,
-        decision.liquidityQualified,
-        decision.marketStructureQualified,
-        decision.chochQualified,
-        decision.orderBlockQualified
-    )
-
-    var searchFrom = 0
-
-    val directionPattern = Regex("QUALIFIED BUY|QUALIFIED SELL|BUY|SELL|WAITING")
-
-directionPattern.findAll(analysisText).forEach { match ->
-    val color = when {
-        match.value.endsWith("BUY") || match.value == "BUY" -> green
-        match.value.endsWith("SELL") || match.value == "SELL" -> red
-        else -> muted
-    }
-
-    spannable.setSpan(
-        android.text.style.ForegroundColorSpan(color),
-        match.range.first,
-        match.range.last + 1,
-        android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+    text = analysisText
+    setTextColor(
+        if (decision.qualified)
+            android.graphics.Color.GREEN
+        else
+            android.graphics.Color.YELLOW
     )
 }
-
-    text = spannable
-}
-    if (decision.qualified) {
+if (decision.qualified) {
         val eventKey =
             "${saDayKey()}_${accountId}_${executionMode}_${symbol}_${direction}_${latest.epoch}"
 
@@ -3019,7 +2883,7 @@ directionPattern.findAll(analysisText).forEach { match ->
         decisionCard.addView(label(if (autoTradeEnabled) "MASTER DECISION: ON" else "MASTER DECISION: OFF", 15f, if (autoTradeEnabled) green else red, true))
         decisionCard.addView(button(if (autoTradeEnabled) "TURN MASTER DECISION OFF" else "TURN MASTER DECISION ON", autoTradeEnabled) {
             autoTradeEnabled = !autoTradeEnabled
-            toast(if (autoTradeEnabled) "Master Decision is ON. Qualified signals may execute." else "Master Decision is OFF. Trade execution is paused.")
+            toast(if (autoTradeEnabled) "Master Decision display is ON. Trade execution is disabled." else "Master Decision display is OFF.")
             render()
         }, matchWrap().apply { topMargin = dp(8) })
         page.addView(decisionCard, matchWrap().apply { bottomMargin = dp(10) })
@@ -3217,8 +3081,7 @@ directionPattern.findAll(analysisText).forEach { match ->
 
         outer.addView(nav, LinearLayout.LayoutParams(-1, dp(76)))
     }
-
-    // =========================================================
+        // =========================================================
     // UI HELPERS
     // =========================================================
 
@@ -3473,8 +3336,7 @@ directionPattern.findAll(analysisText).forEach { match ->
     accountCurrency = ""
 
     render()
-
-if (!derivServiceBound || !::derivApiClient.isInitialized) {
+    if (!derivServiceBound || !::derivApiClient.isInitialized) {
     pendingDerivToken = token
     startAndBindDerivService()
     return
@@ -3555,7 +3417,6 @@ derivApiClient.connectWithAccessToken(token, executionMode)
             marketDataPrices[symbol] = quote
             marketDataErrors.remove(symbol)
             evaluateMasterEngine(symbol)
-            attemptTouchExecution(symbol)
 
 val engineQualified =
     masterEngineDecisions[symbol]?.qualified == true
@@ -3565,14 +3426,6 @@ val (statusText, statusColor) = dashboardDecisionStatus(symbol)
 dashboardStatusViews[symbol]?.apply {
     text = statusText
     setTextColor(statusColor)
-}
-val qualifiedCount = marketDataIndexes.count {
-    masterEngineDecisions[it]?.qualified == true
-}
-
-dashboardMonitorSummaryView?.apply {
-    text = "MONITORING: ${if (connected) "ON" else "OFF"}    QUALIFIED: $qualifiedCount/5"
-    setTextColor(if (qualifiedCount > 0) green else muted)
 }
 
 dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
@@ -3587,90 +3440,8 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
     override fun onTradeData(json: JSONObject) {
     runOnUiThread {
         val messageType = json.optString("msg_type", "")
-if (json.has("error")) {
-    val requestId = json.optJSONObject("echo_req")
-        ?.optInt("req_id", 0) ?: 0
 
-    val failedOrder = pendingTouchOrders.entries.firstOrNull {
-        it.key == requestId || it.value.buyRequestId == requestId
-    }
-
-    if (failedOrder != null) {
-        val symbol = failedOrder.value.symbol
-
-        pendingTouchOrders.remove(failedOrder.key)
-        pendingTouchBySymbol.remove(symbol)
-
-        val errorMessage = json.optJSONObject("error")
-            ?.optString("message", "Unknown Deriv error")
-            ?: "Unknown Deriv error"
-
-        android.util.Log.e(
-            "TouchExecution",
-            "$symbol: $errorMessage"
-        )
-
-        toast("Touch order failed: $errorMessage")
-    }
-
-    return@runOnUiThread
-}
         when (messageType) {
-            "proposal" -> {
-    handleTouchProposal(json)
-            }
-            "buy" -> {
-    val buyRequestId = json.optJSONObject("echo_req")
-        ?.optInt("req_id", 0) ?: 0
-
-    val orderEntry = pendingTouchOrders.entries.firstOrNull {
-        it.value.buyRequestId == buyRequestId
-    }
-
-    if (orderEntry != null) {
-        val order = orderEntry.value
-        val buy = json.optJSONObject("buy")
-        val contractId = buy?.optLong("contract_id", 0L) ?: 0L
-
-        if (contractId > 0L) {
-            val entryBarrier = order.barrier.toDoubleOrNull() ?: 0.0
-
-            runningContracts[contractId] = RunningContract(
-                contractId,
-                order.symbol,
-                order.direction,
-                order.stake,
-                order.target,
-                0.0,
-                order.mode,
-                entryBarrier = entryBarrier,
-                openContractConfirmed = true,
-                potentialPayout = order.potentialPayout
-            )
-
-            appPrefs.edit()
-                .putString(
-                    "contract_direction_${accountId}_${executionMode}_$contractId",
-                    order.direction
-                )
-                .apply()
-
-            derivApiClient.send(
-                JSONObject()
-                    .put("proposal_open_contract", 1)
-                    .put("contract_id", contractId)
-                    .put("subscribe", 1)
-            )
-
-            toast("Touch contract opened: ${order.symbol}")
-        } else {
-            toast("Touch purchase failed: contract ID missing.")
-        }
-
-        pendingTouchOrders.remove(orderEntry.key)
-        pendingTouchBySymbol.remove(order.symbol)
-    }
-            }
             "contracts_for" -> {
     val symbol = json.optJSONObject("echo_req")
         ?.optString("contracts_for", "")
@@ -3797,44 +3568,6 @@ if (stake > 0.0) {
                     }
                     if (id > 0L) {
                         val liveProfit = contract.optDouble("profit", contract.optDouble("profit_open", liveContractProfits[id] ?: 0.0))
-                        val running = runningContracts[id]
-
-if (running != null && running.mode == executionMode) {
-
-    if (liveProfit >= running.target) {
-        running.trailingActivated = true
-    }
-
-    if (running.trailingActivated) {
-        running.peakProfit = maxOf(running.peakProfit, liveProfit)
-
-        val protectedPercent =
-            kotlin.math.floor(
-                (running.peakProfit / running.stake) * 10.0
-            ) * 10.0
-
-        val protectedProfit =
-            running.stake * (protectedPercent / 100.0)
-
-        if (
-            liveProfit < protectedProfit &&
-            !running.closeRequested
-        ) {
-            running.closeRequested = true
-
-            val sent = derivApiClient.send(
-                JSONObject()
-                    .put("sell", id)
-                    .put("price", 0)
-                    .put("req_id", nextTradeRequestId())
-            )
-
-            if (!sent) {
-                running.closeRequested = false
-            }
-        }
-    }
-}
                         val views = contractLiveViews[id]
                         if (views != null) {
                             views.pnl.text = "Stake: ${formatMoney(views.stake)}   P/L: ${formatMoney(liveProfit)}"
@@ -3879,186 +3612,7 @@ views.barrierExpiry.text =
         // The explicit Refresh button requests fresh account/trade data when needed.
     }
     }
-private fun handleTouchProposal(json: JSONObject) {
-    val echoRequest = json.optJSONObject("echo_req") ?: return
-    val proposalRequestId = echoRequest.optInt("req_id", 0)
 
-    val order = pendingTouchOrders[proposalRequestId] ?: return
-
-    val proposal = json.optJSONObject("proposal")
-
-    if (json.has("error") || proposal == null) {
-        pendingTouchOrders.remove(proposalRequestId)
-        pendingTouchBySymbol.remove(order.symbol)
-        toast("Touch proposal failed for ${order.symbol}.")
-        return
-    }
-
-    val proposalId = proposal.optString("id", "")
-    val payout = proposal.optDouble("payout", 0.0)
-    val askPrice = proposal.optDouble("ask_price", 0.0)
-
-        if (proposalId.isBlank() || askPrice <= 0.0) {
-        pendingTouchOrders.remove(proposalRequestId)
-        pendingTouchBySymbol.remove(order.symbol)
-        toast("Invalid Touch proposal for ${order.symbol}.")
-        return
-    }
-
-    if (payout < order.stake * 1.30) {
-        if (order.barrierSearchAttempts >= 100) {
-            pendingTouchOrders.remove(proposalRequestId)
-            pendingTouchBySymbol.remove(order.symbol)
-            toast("No suitable Touch barrier found for ${order.symbol}.")
-            return
-        }
-
-        val currentPrice = marketDataPrices[order.symbol] ?: run {
-            pendingTouchOrders.remove(proposalRequestId)
-            pendingTouchBySymbol.remove(order.symbol)
-            return
-        }
-
-        val decimals = currentPrice.toString()
-            .substringAfter(".", "")
-            .length.coerceIn(2, 8)
-
-        val step = Math.pow(10.0, -decimals.toDouble())
-        val oldBarrier = order.barrier.toDoubleOrNull() ?: currentPrice
-
-        val nextBarrier = if (order.direction == "BUY") {
-            oldBarrier + step
-        } else {
-            oldBarrier - step
-        }
-
-        order.barrier = String.format(
-            java.util.Locale.US,
-            "%.${decimals}f",
-            nextBarrier
-        )
-
-        order.barrierSearchAttempts++
-
-        val nextRequestId = nextTradeRequestId()
-        pendingTouchOrders.remove(proposalRequestId)
-        pendingTouchOrders[nextRequestId] = order
-
-        val sent = derivApiClient.send(
-            JSONObject()
-                .put("proposal", 1)
-                .put("amount", order.stake)
-                .put("basis", "stake")
-                .put("contract_type", "ONETOUCH")
-                .put("currency", accountCurrency)
-                .put("duration", 259200)
-                .put("duration_unit", "s")
-                .put("underlying_symbol", order.symbol)
-                .put("barrier", order.barrier)
-                .put("req_id", nextRequestId)
-        )
-
-        if (!sent) {
-            pendingTouchOrders.remove(nextRequestId)
-            pendingTouchBySymbol.remove(order.symbol)
-        }
-        return
-    }
-
-    order.proposalId = proposalId
-    order.potentialPayout = payout
-
-    val buyRequestId = nextTradeRequestId()
-    order.buyRequestId = buyRequestId
-
-    val sent = derivApiClient.send(
-        JSONObject()
-            .put("buy", proposalId)
-            .put("price", askPrice)
-            .put("req_id", buyRequestId)
-    )
-
-    if (!sent) {
-        pendingTouchOrders.remove(proposalRequestId)
-        pendingTouchBySymbol.remove(order.symbol)
-        toast("Touch purchase request could not be sent.")
-    }
-}
-private fun attemptTouchExecution(symbol: String) {
-    if (!autoTradeEnabled || !connected) return
-    if (accountId.isBlank() || accountCurrency.isBlank()) return
-    if (!isThreeDayTouchAvailable(symbol)) return
-
-    val decision = masterEngineDecisions[symbol] ?: return
-    if (!decision.qualified) return
-
-    val direction = decision.direction
-    if (direction != "BUY" && direction != "SELL") return
-
-    if (pendingTouchBySymbol.containsKey(symbol)) return
-
-    val activeContract = runningContracts.values.any {
-        it.symbol == symbol && it.mode == executionMode
-    }
-    if (activeContract) return
-
-    val price = marketDataPrices[symbol] ?: return
-    if (price <= 0.0) return
-
-    val stake = threeDayTradeStake()
-    if (stake <= 0.0 || stake > accountBalance) return
-
-    val decimals = price.toString()
-        .substringAfter(".", "")
-        .length.coerceIn(2, 8)
-
-    val tick = Math.pow(10.0, -decimals.toDouble())
-    val barrierValue = if (direction == "BUY") {
-        price + tick
-    } else {
-        price - tick
-    }
-
-    val barrier = String.format(
-        java.util.Locale.US,
-        "%.${decimals}f",
-        barrierValue
-    )
-
-    val requestId = nextTradeRequestId()
-
-    val order = PendingTouchOrder(
-        symbol = symbol,
-        direction = direction,
-        stake = stake,
-        target = stake * 0.30,
-        mode = executionMode,
-        proposalRequestId = requestId,
-        barrier = barrier
-    )
-
-    pendingTouchOrders[requestId] = order
-    pendingTouchBySymbol[symbol] = requestId
-
-    val sent = derivApiClient.send(
-        JSONObject()
-            .put("proposal", 1)
-            .put("amount", stake)
-            .put("basis", "stake")
-            .put("contract_type", "ONETOUCH")
-            .put("currency", accountCurrency)
-            .put("duration", 259200)
-            .put("duration_unit", "s")
-            .put("underlying_symbol", symbol)
-            .put("barrier", barrier)
-            .put("req_id", requestId)
-    )
-
-    if (!sent) {
-        pendingTouchOrders.remove(requestId)
-        pendingTouchBySymbol.remove(symbol)
-    }
-}
     override fun onCandles(
     symbol: String,
     candles: List<DerivApiClient.Candle>
@@ -4147,3 +3701,4 @@ override fun onDestroy() {
     super.onDestroy()
 }
                             }
+                            
