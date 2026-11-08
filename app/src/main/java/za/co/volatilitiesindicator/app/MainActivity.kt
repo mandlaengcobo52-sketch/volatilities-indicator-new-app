@@ -3509,6 +3509,9 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
         val messageType = json.optString("msg_type", "")
 
         when (messageType) {
+            "proposal" -> {
+    handleTouchProposal(json)
+            }
             "contracts_for" -> {
     val symbol = json.optJSONObject("echo_req")
         ?.optString("contracts_for", "")
