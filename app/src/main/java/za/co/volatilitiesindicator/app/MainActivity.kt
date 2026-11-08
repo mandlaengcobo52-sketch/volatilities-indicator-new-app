@@ -3479,6 +3479,12 @@ derivApiClient.connectWithAccessToken(token, executionMode)
             marketDataPrices[symbol] = quote
             marketDataErrors.remove(symbol)
             evaluateMasterEngine(symbol)
+            if (isTouchExecutionReady(symbol)) {
+    android.util.Log.i(
+        "TradeExecution",
+        "$symbol qualified and ready for execution"
+    )
+            }
 
 val engineQualified =
     masterEngineDecisions[symbol]?.qualified == true
