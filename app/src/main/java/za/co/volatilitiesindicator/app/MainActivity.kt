@@ -1297,12 +1297,6 @@ private fun addHeader() {
             dashboardStatusViews[symbol] = statusView
             headingRow.addView(statusView, LinearLayout.LayoutParams(-2, -2))
             row.addView(headingRow, matchWrap())
-            val isAdminDashboard =
-    platform == "ADMIN" &&
-    currentProfile?.optString("role", "user")
-        .equals("admin", ignoreCase = true)
-
-if (isAdminDashboard) {
 
             val price = marketDataPrices[symbol]
             val priceView = label(
