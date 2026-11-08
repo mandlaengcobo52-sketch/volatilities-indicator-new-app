@@ -281,6 +281,8 @@ private fun startAndBindDerivService() {
 
 private val pendingTouchOrders = mutableMapOf<Int, PendingTouchOrder>()
 private val pendingTouchBySymbol = mutableMapOf<String, Int>()
+private val touchExecutionLocks = mutableSetOf<String>()
+private val consumedTouchQualifications = mutableMapOf<String, Long>()
     private var nextTradeRequestIdValue = 710000
     private fun nextTradeRequestId(): Int = ++nextTradeRequestIdValue
 
@@ -385,6 +387,14 @@ private fun isTouchExecutionReady(symbol: String): Boolean {
     if (!isThreeDayTouchAvailable(symbol)) return false
 
     val decision = masterEngineDecisions[symbol] ?: return false
+    if (touchExecutionLocks.contains(symbol)) return false
+
+val qualificationEpoch =
+    marketDataCandles[symbol]?.lastOrNull()?.epoch ?: return false
+
+if (consumedTouchQualifications[symbol] == qualificationEpoch) {
+    return false
+}
 
     if (!decision.qualified) return false
     if (decision.direction != "BUY" && decision.direction != "SELL") {
