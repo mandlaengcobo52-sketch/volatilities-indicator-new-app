@@ -3722,6 +3722,28 @@ if (stake > 0.0) {
                     }
                     if (id > 0L) {
                         val liveProfit = contract.optDouble("profit", contract.optDouble("profit_open", liveContractProfits[id] ?: 0.0))
+                        val running = runningContracts[id]
+
+if (
+    running != null &&
+    running.mode == executionMode &&
+    running.target > 0.0 &&
+    liveProfit >= running.target &&
+    !running.closeRequested
+) {
+    running.closeRequested = true
+
+    val sent = derivApiClient.send(
+        JSONObject()
+            .put("sell", id)
+            .put("price", 0)
+            .put("req_id", nextTradeRequestId())
+    )
+
+    if (!sent) {
+        running.closeRequested = false
+    }
+}
                         val views = contractLiveViews[id]
                         if (views != null) {
                             views.pnl.text = "Stake: ${formatMoney(views.stake)}   P/L: ${formatMoney(liveProfit)}"
@@ -3918,7 +3940,7 @@ private fun attemptTouchExecution(symbol: String) {
         symbol = symbol,
         direction = direction,
         stake = stake,
-        target = 0.0,
+        target = stake * 0.30,
         mode = executionMode,
         proposalRequestId = requestId,
         barrier = barrier
