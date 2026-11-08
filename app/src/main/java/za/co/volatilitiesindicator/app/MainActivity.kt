@@ -355,29 +355,7 @@ private fun durationToSeconds(value: String): Long {
         else -> -1L
     }
 }
-private fun isTouchExecutionReady(symbol: String): Boolean {
-    if (!connected) return false
-    if (!autoTradeEnabled) return false
-    if (symbol !in marketDataIndexes) return false
-    if (touchAvailabilityPending.contains(symbol)) return false
-    if (!isThreeDayTouchAvailable(symbol)) return false
-
-    val decision = masterEngineDecisions[symbol] ?: return false
-
-    if (!decision.qualified) return false
-    if (decision.direction != "BUY" && decision.direction != "SELL") {
-        return false
-    }
-
-    val alreadyRunning = runningContracts.values.any {
-        it.symbol.equals(symbol, ignoreCase = true) &&
-        it.mode == executionMode
-    }
-
-    if (alreadyRunning) return false
-
-    return true
-}
+    private fun isTouchExecutionReady(symbol: String): Boolean {
     private fun requestOpenTradesIfNeeded() {
         if (!connected || accountId.isBlank() || portfolioLoadedForAccount) return
         val now = android.os.SystemClock.elapsedRealtime()
