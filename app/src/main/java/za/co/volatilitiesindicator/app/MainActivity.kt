@@ -279,8 +279,8 @@ private fun startAndBindDerivService() {
     var proposalId: String = "",
     var barrier: String = "",
     var potentialPayout: Double = 0.0,
-    var buyRequestId: Int = 0
-)
+    var buyRequestId: Int = 0,
+    var barrierSearchAttempts: Int = 0)
 
 private val pendingTouchOrders = mutableMapOf<Int, PendingTouchOrder>()
 private val pendingTouchBySymbol = mutableMapOf<String, Int>()
@@ -3488,6 +3488,7 @@ derivApiClient.connectWithAccessToken(token, executionMode)
             marketDataPrices[symbol] = quote
             marketDataErrors.remove(symbol)
             evaluateMasterEngine(symbol)
+            attemptTouchExecution(symbol)
 
 val engineQualified =
     masterEngineDecisions[symbol]?.qualified == true
@@ -3757,14 +3758,70 @@ private fun handleTouchProposal(json: JSONObject) {
     val payout = proposal.optDouble("payout", 0.0)
     val askPrice = proposal.optDouble("ask_price", 0.0)
 
-    if (
-        proposalId.isBlank() ||
-        payout < order.stake * 1.30 ||
-        askPrice <= 0.0
-    ) {
+        if (proposalId.isBlank() || askPrice <= 0.0) {
         pendingTouchOrders.remove(proposalRequestId)
         pendingTouchBySymbol.remove(order.symbol)
-        toast("Touch proposal rejected: 30% profit target not met.")
+        toast("Invalid Touch proposal for ${order.symbol}.")
+        return
+    }
+
+    if (payout < order.stake * 1.30) {
+        if (order.barrierSearchAttempts >= 100) {
+            pendingTouchOrders.remove(proposalRequestId)
+            pendingTouchBySymbol.remove(order.symbol)
+            toast("No suitable Touch barrier found for ${order.symbol}.")
+            return
+        }
+
+        val currentPrice = marketDataPrices[order.symbol] ?: run {
+            pendingTouchOrders.remove(proposalRequestId)
+            pendingTouchBySymbol.remove(order.symbol)
+            return
+        }
+
+        val decimals = currentPrice.toString()
+            .substringAfter(".", "")
+            .length.coerceIn(2, 8)
+
+        val step = Math.pow(10.0, -decimals)
+        val oldBarrier = order.barrier.toDoubleOrNull() ?: currentPrice
+
+        val nextBarrier = if (order.direction == "BUY") {
+            oldBarrier + step
+        } else {
+            oldBarrier - step
+        }
+
+        order.barrier = String.format(
+            java.util.Locale.US,
+            "%.${decimals}f",
+            nextBarrier
+        )
+
+        order.barrierSearchAttempts++
+
+        val nextRequestId = nextTradeRequestId()
+        pendingTouchOrders.remove(proposalRequestId)
+        pendingTouchOrders[nextRequestId] = order
+
+        val sent = derivApiClient.send(
+            JSONObject()
+                .put("proposal", 1)
+                .put("amount", order.stake)
+                .put("basis", "stake")
+                .put("contract_type", "ONETOUCH")
+                .put("currency", accountCurrency)
+                .put("duration", 259200)
+                .put("duration_unit", "s")
+                .put("underlying_symbol", order.symbol)
+                .put("barrier", order.barrier)
+                .put("req_id", nextRequestId)
+        )
+
+        if (!sent) {
+            pendingTouchOrders.remove(nextRequestId)
+            pendingTouchBySymbol.remove(order.symbol)
+        }
         return
     }
 
@@ -3785,6 +3842,81 @@ private fun handleTouchProposal(json: JSONObject) {
         pendingTouchOrders.remove(proposalRequestId)
         pendingTouchBySymbol.remove(order.symbol)
         toast("Touch purchase request could not be sent.")
+    }
+}
+private fun attemptTouchExecution(symbol: String) {
+    if (!autoTradeEnabled || !connected) return
+    if (accountId.isBlank() || accountCurrency.isBlank()) return
+    if (!isThreeDayTouchAvailable(symbol)) return
+
+    val decision = masterEngineDecisions[symbol] ?: return
+    if (!decision.qualified) return
+
+    val direction = decision.direction
+    if (direction != "BUY" && direction != "SELL") return
+
+    if (pendingTouchBySymbol.containsKey(symbol)) return
+
+    val activeContract = runningContracts.values.any {
+        it.symbol == symbol && it.mode == executionMode
+    }
+    if (activeContract) return
+
+    val price = marketDataPrices[symbol] ?: return
+    if (price <= 0.0) return
+
+    val stake = threeDayTradeStake()
+    if (stake <= 0.0 || stake > accountBalance) return
+
+    val decimals = price.toString()
+        .substringAfter(".", "")
+        .length.coerceIn(2, 8)
+
+    val tick = Math.pow(10.0, -decimals)
+    val barrierValue = if (direction == "BUY") {
+        price + tick
+    } else {
+        price - tick
+    }
+
+    val barrier = String.format(
+        java.util.Locale.US,
+        "%.${decimals}f",
+        barrierValue
+    )
+
+    val requestId = nextTradeRequestId()
+
+    val order = PendingTouchOrder(
+        symbol = symbol,
+        direction = direction,
+        stake = stake,
+        target = 0.0,
+        mode = executionMode,
+        proposalRequestId = requestId,
+        barrier = barrier
+    )
+
+    pendingTouchOrders[requestId] = order
+    pendingTouchBySymbol[symbol] = requestId
+
+    val sent = derivApiClient.send(
+        JSONObject()
+            .put("proposal", 1)
+            .put("amount", stake)
+            .put("basis", "stake")
+            .put("contract_type", "ONETOUCH")
+            .put("currency", accountCurrency)
+            .put("duration", 259200)
+            .put("duration_unit", "s")
+            .put("underlying_symbol", symbol)
+            .put("barrier", barrier)
+            .put("req_id", requestId)
+    )
+
+    if (!sent) {
+        pendingTouchOrders.remove(requestId)
+        pendingTouchBySymbol.remove(symbol)
     }
 }
     override fun onCandles(
