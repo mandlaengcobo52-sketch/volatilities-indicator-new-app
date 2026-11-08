@@ -3512,7 +3512,34 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
     override fun onTradeData(json: JSONObject) {
     runOnUiThread {
         val messageType = json.optString("msg_type", "")
+if (json.has("error")) {
+    val requestId = json.optJSONObject("echo_req")
+        ?.optInt("req_id", 0) ?: 0
 
+    val failedOrder = pendingTouchOrders.entries.firstOrNull {
+        it.key == requestId || it.value.buyRequestId == requestId
+    }
+
+    if (failedOrder != null) {
+        val symbol = failedOrder.value.symbol
+
+        pendingTouchOrders.remove(failedOrder.key)
+        pendingTouchBySymbol.remove(symbol)
+
+        val errorMessage = json.optJSONObject("error")
+            ?.optString("message", "Unknown Deriv error")
+            ?: "Unknown Deriv error"
+
+        android.util.Log.e(
+            "TouchExecution",
+            "$symbol: $errorMessage"
+        )
+
+        toast("Touch order failed: $errorMessage")
+    }
+
+    return@runOnUiThread
+}
         when (messageType) {
             "proposal" -> {
     handleTouchProposal(json)
