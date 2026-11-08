@@ -434,46 +434,6 @@ private val dashboardAnalysisViews =
 private val marketDataErrors =
     mutableMapOf<String, String>()
 private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
-    if (marketDataErrors.containsKey(symbol) && marketDataPrices[symbol] == null) {
-        return "FEED ERROR" to red
-    }
-
-    if (!connected) return "DISCONNECTED" to red
-
-    if (marketDataPrices[symbol] == null) {
-        return "WAITING FOR PRICE" to muted
-    }
-
-    val decision = masterEngineDecisions[symbol]
-
-    if (decision?.qualified == true) {
-        return "QUALIFIED ${decision.direction}" to green
-    }
-
-    if (decision?.directionConflict == true) {
-        return "WAIT — DIRECTION CONFLICT" to red
-    }
-
-    return "MONITORING" to muted
-}
-    if (marketDataErrors.containsKey(symbol) && marketDataPrices[symbol] == null) {
-        return "FEED ERROR" to red
-    }
-
-    if (!connected) return "DISCONNECTED" to red
-
-    if (marketDataPrices[symbol] == null) {
-        return "WAITING FOR PRICE" to muted
-    }
-
-    val decision = masterEngineDecisions[symbol]
-
-    if (decision?.qualified == true) {
-        return "QUALIFIED ${decision.direction}" to green
-    }
-
-    return "MONITORING" to muted
-}
 private var marketDataRequested = false
 private var marketStructureExpanded = true
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -4195,3 +4155,4 @@ override fun onDestroy() {
 
     super.onDestroy()
 }
+                            }
