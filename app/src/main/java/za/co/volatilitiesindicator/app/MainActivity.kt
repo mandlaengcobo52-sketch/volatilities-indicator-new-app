@@ -2558,11 +2558,16 @@ orderBlockQualified =
     masterEngineDecisions[symbol] = decision
 val analysisText =
     "SUPPORT / RESISTANCE: " +
-        when {
-            bullishSR -> "QUALIFIED ${if (bullishSR) "BUY" else "SELL"}"
-            bearishSR -> "QUALIFIED SELL"
-            else -> "WAITING"
-        } +
+    when {
+        bullishSR && bearishSR ->
+            "SUPPORT: BUY | RESISTANCE: SELL"
+        bullishSR ->
+            "SUPPORT: QUALIFIED BUY"
+        bearishSR ->
+            "RESISTANCE: QUALIFIED SELL"
+        else ->
+            "WAITING"
+    } +
     "\nLIQUIDITY: " +
         when {
             bullishSweep -> "QUALIFIED BUY"
