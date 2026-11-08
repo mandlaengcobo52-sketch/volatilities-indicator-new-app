@@ -276,7 +276,8 @@ private fun startAndBindDerivService() {
     val target: Double,
     val mode: String,
     val proposalRequestId: Int,
-    var proposalId: String = ""
+    var proposalId: String = "",
+    var buyRequestId: Int = 0
 )
 
 private val pendingTouchOrders = mutableMapOf<Int, PendingTouchOrder>()
