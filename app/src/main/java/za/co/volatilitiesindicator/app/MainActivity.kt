@@ -3488,6 +3488,7 @@ derivApiClient.connectWithAccessToken(token, executionMode)
             marketDataPrices[symbol] = quote
             marketDataErrors.remove(symbol)
             evaluateMasterEngine(symbol)
+            attemptTouchExecution(symbol)
 
 val engineQualified =
     masterEngineDecisions[symbol]?.qualified == true
@@ -3513,6 +3514,61 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
         val messageType = json.optString("msg_type", "")
 
         when (messageType) {
+            "proposal" -> {
+    handleTouchProposal(json)
+            }
+            "buy" -> {
+    val buyRequestId = json.optJSONObject("echo_req")
+        ?.optInt("req_id", 0) ?: 0
+
+    val orderEntry = pendingTouchOrders.entries.firstOrNull {
+        it.value.buyRequestId == buyRequestId
+    }
+
+    if (orderEntry != null) {
+        val order = orderEntry.value
+        val buy = json.optJSONObject("buy")
+        val contractId = buy?.optLong("contract_id", 0L) ?: 0L
+
+        if (contractId > 0L) {
+            val entryBarrier = order.barrier.toDoubleOrNull() ?: 0.0
+
+            runningContracts[contractId] = RunningContract(
+                contractId,
+                order.symbol,
+                order.direction,
+                order.stake,
+                order.target,
+                0.0,
+                order.mode,
+                entryBarrier = entryBarrier,
+                openContractConfirmed = true,
+                potentialPayout = order.potentialPayout
+            )
+
+            appPrefs.edit()
+                .putString(
+                    "contract_direction_${accountId}_${executionMode}_$contractId",
+                    order.direction
+                )
+                .apply()
+
+            derivApiClient.send(
+                JSONObject()
+                    .put("proposal_open_contract", 1)
+                    .put("contract_id", contractId)
+                    .put("subscribe", 1)
+            )
+
+            toast("Touch contract opened: ${order.symbol}")
+        } else {
+            toast("Touch purchase failed: contract ID missing.")
+        }
+
+        pendingTouchOrders.remove(orderEntry.key)
+        pendingTouchBySymbol.remove(order.symbol)
+    }
+            }
             "contracts_for" -> {
     val symbol = json.optJSONObject("echo_req")
         ?.optString("contracts_for", "")
@@ -3683,7 +3739,55 @@ views.barrierExpiry.text =
         // The explicit Refresh button requests fresh account/trade data when needed.
     }
     }
+private fun handleTouchProposal(json: JSONObject) {
+    val echoRequest = json.optJSONObject("echo_req") ?: return
+    val proposalRequestId = echoRequest.optInt("req_id", 0)
 
+    val order = pendingTouchOrders[proposalRequestId] ?: return
+
+    val proposal = json.optJSONObject("proposal")
+
+    if (json.has("error") || proposal == null) {
+        pendingTouchOrders.remove(proposalRequestId)
+        pendingTouchBySymbol.remove(order.symbol)
+        toast("Touch proposal failed for ${order.symbol}.")
+        return
+    }
+
+    val proposalId = proposal.optString("id", "")
+    val payout = proposal.optDouble("payout", 0.0)
+    val askPrice = proposal.optDouble("ask_price", 0.0)
+
+    if (
+        proposalId.isBlank() ||
+        payout < order.stake * 1.30 ||
+        askPrice <= 0.0
+    ) {
+        pendingTouchOrders.remove(proposalRequestId)
+        pendingTouchBySymbol.remove(order.symbol)
+        toast("Touch proposal rejected: 30% profit target not met.")
+        return
+    }
+
+    order.proposalId = proposalId
+    order.potentialPayout = payout
+
+    val buyRequestId = nextTradeRequestId()
+    order.buyRequestId = buyRequestId
+
+    val sent = derivApiClient.send(
+        JSONObject()
+            .put("buy", proposalId)
+            .put("price", askPrice)
+            .put("req_id", buyRequestId)
+    )
+
+    if (!sent) {
+        pendingTouchOrders.remove(proposalRequestId)
+        pendingTouchBySymbol.remove(order.symbol)
+        toast("Touch purchase request could not be sent.")
+    }
+}
     override fun onCandles(
     symbol: String,
     candles: List<DerivApiClient.Candle>
