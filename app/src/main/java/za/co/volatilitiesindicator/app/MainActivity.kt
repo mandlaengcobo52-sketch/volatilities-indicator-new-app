@@ -428,6 +428,9 @@ private val currentPriceViews = mutableMapOf<String, MutableList<TextView>>()
 private val dashboardStatusViews = mutableMapOf<String, TextView>()
 private val dashboardAnalysisViews =
     mutableMapOf<String, TextView>()
+    private val dashboardIndexExpanded =
+    mutableMapOf<String, Boolean>()
+    private var dashboardMonitorSummaryView: TextView? = null
 private val marketDataErrors =
     mutableMapOf<String, String>()
 private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
@@ -1197,6 +1200,17 @@ private fun addHeader() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(10), dp(8), dp(10), dp(8))
         }
+                val summaryView = label(
+            "MONITORING: ${if (connected) "ON" else "OFF"}    QUALIFIED: 0/5",
+            12f,
+            if (connected) green else muted,
+            true
+        ).apply {
+            setPadding(dp(6), dp(8), dp(6), dp(12))
+        }
+
+        dashboardMonitorSummaryView = summaryView
+        monitorCard.addView(summaryView, matchWrap())
         marketDataIndexes.forEach { symbol ->
             val accent = when (symbol) {
                 "R_10" -> cyan
@@ -1432,6 +1446,25 @@ if (
                     11f, red, false
                 )
             )
+        }
+    }
+}
+dashboardIndexExpanded[symbol] = false
+
+for (i in 1 until row.childCount) {
+    if (i != 2) {
+        row.getChildAt(i).visibility = View.GONE
+    }
+}
+
+headingRow.setOnClickListener {
+    val expanded = dashboardIndexExpanded[symbol] != true
+    dashboardIndexExpanded[symbol] = expanded
+
+    for (i in 1 until row.childCount) {
+        if (i != 2) {
+            row.getChildAt(i).visibility =
+                if (expanded) View.VISIBLE else View.GONE
         }
     }
 }
@@ -2536,13 +2569,44 @@ val analysisText =
         (if (decision.orderBlockQualified) "QUALIFIED" else "WAITING")
 
 dashboardAnalysisViews[symbol]?.apply {
-    text = analysisText
-    setTextColor(
-        if (decision.qualified)
-            android.graphics.Color.GREEN
-        else
-            android.graphics.Color.YELLOW
+    val grey = muted
+    val greenColor = green
+
+    val spannable = android.text.SpannableString(analysisText)
+
+    val results = listOf(
+        decision.supportResistanceQualified,
+        decision.liquidityQualified,
+        decision.marketStructureQualified,
+        decision.chochQualified,
+        decision.orderBlockQualified
     )
+
+    var searchFrom = 0
+
+    results.forEach { qualified ->
+        val start = analysisText.indexOf(
+            if (qualified) "QUALIFIED" else "WAITING",
+            searchFrom
+        )
+
+        if (start >= 0) {
+            val end = start + if (qualified) 9 else 7
+
+            spannable.setSpan(
+                android.text.style.ForegroundColorSpan(
+                    if (qualified) greenColor else grey
+                ),
+                start,
+                end,
+                android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+
+            searchFrom = end
+        }
+    }
+
+    text = spannable
 }
     if (decision.qualified) {
         val eventKey =
@@ -3498,6 +3562,14 @@ val (statusText, statusColor) = dashboardDecisionStatus(symbol)
 dashboardStatusViews[symbol]?.apply {
     text = statusText
     setTextColor(statusColor)
+}
+val qualifiedCount = marketDataIndexes.count {
+    masterEngineDecisions[it]?.qualified == true
+}
+
+dashboardMonitorSummaryView?.apply {
+    text = "MONITORING: ${if (connected) "ON" else "OFF"}    QUALIFIED: $qualifiedCount/5"
+    setTextColor(if (qualifiedCount > 0) green else muted)
 }
 
 dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
