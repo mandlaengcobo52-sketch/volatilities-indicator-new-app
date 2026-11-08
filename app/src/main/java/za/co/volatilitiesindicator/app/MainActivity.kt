@@ -3617,6 +3617,40 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
         touchExecutionLocks.remove(order.symbol)
     }
             }
+            "buy" -> {
+    val requestId = json.optInt("req_id", 0)
+
+    val entry = pendingTouchOrders.entries.firstOrNull {
+        it.value.buyRequestId == requestId
+    } ?: return@runOnUiThread
+
+    val order = entry.value
+    val buy = json.optJSONObject("buy")
+
+    if (buy == null) {
+        pendingTouchOrders.remove(entry.key)
+        pendingTouchBySymbol.remove(order.symbol)
+        touchExecutionLocks.remove(order.symbol)
+        return@runOnUiThread
+    }
+
+    val contractId = buy.optLong("contract_id", 0L)
+
+    if (contractId <= 0L) {
+        pendingTouchOrders.remove(entry.key)
+        pendingTouchBySymbol.remove(order.symbol)
+        touchExecutionLocks.remove(order.symbol)
+        return@runOnUiThread
+    }
+
+    pendingTouchOrders.remove(entry.key)
+    pendingTouchBySymbol.remove(order.symbol)
+
+    android.util.Log.i(
+        "TradeExecution",
+        "${order.symbol} contract opened: $contractId"
+    )
+            }
             "contracts_for" -> {
     val symbol = json.optJSONObject("echo_req")
         ?.optString("contracts_for", "")
