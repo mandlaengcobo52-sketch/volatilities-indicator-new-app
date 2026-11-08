@@ -2609,27 +2609,22 @@ dashboardAnalysisViews[symbol]?.apply {
 
     var searchFrom = 0
 
-    results.forEach { qualified ->
-        val start = analysisText.indexOf(
-            if (qualified) "QUALIFIED" else "WAITING",
-            searchFrom
-        )
+    val directionPattern = Regex("QUALIFIED BUY|QUALIFIED SELL|BUY|SELL|WAITING")
 
-        if (start >= 0) {
-            val end = start + if (qualified) 9 else 7
-
-            spannable.setSpan(
-                android.text.style.ForegroundColorSpan(
-                    if (qualified) greenColor else grey
-                ),
-                start,
-                end,
-                android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-            )
-
-            searchFrom = end
-        }
+directionPattern.findAll(analysisText).forEach { match ->
+    val color = when {
+        match.value.endsWith("BUY") || match.value == "BUY" -> green
+        match.value.endsWith("SELL") || match.value == "SELL" -> red
+        else -> muted
     }
+
+    spannable.setSpan(
+        android.text.style.ForegroundColorSpan(color),
+        match.range.first,
+        match.range.last + 1,
+        android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+    )
+}
 
     text = spannable
 }
