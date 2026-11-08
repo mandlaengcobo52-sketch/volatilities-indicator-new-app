@@ -466,6 +466,50 @@ if (consumedTouchQualifications[symbol] == qualificationEpoch) {
 
     return true
 }
+private fun requestTouchProposal(symbol: String) {
+    if (!isTouchExecutionReady(symbol)) return
+    if (pendingTouchBySymbol.containsKey(symbol)) return
+
+    val decision = masterEngineDecisions[symbol] ?: return
+    val stake = threeDayTradeStake()
+
+    if (stake <= 0.0 || accountCurrency.isBlank()) return
+
+    val direction = decision.direction
+    val barrier = if (direction == "BUY") "+30%" else "-30%"
+    val requestId = nextTradeRequestId()
+
+    val order = PendingTouchOrder(
+        symbol = symbol,
+        direction = direction,
+        stake = stake,
+        target = 0.0,
+        mode = executionMode,
+        proposalRequestId = requestId
+    )
+
+    pendingTouchOrders[requestId] = order
+    pendingTouchBySymbol[symbol] = requestId
+
+    val sent = derivApiClient.send(
+        JSONObject()
+            .put("proposal", 1)
+            .put("amount", stake)
+            .put("basis", "stake")
+            .put("contract_type", "ONETOUCH")
+            .put("currency", accountCurrency)
+            .put("duration", 3)
+            .put("duration_unit", "d")
+            .put("symbol", symbol)
+            .put("barrier", barrier)
+            .put("req_id", requestId)
+    )
+
+    if (!sent) {
+        pendingTouchOrders.remove(requestId)
+        pendingTouchBySymbol.remove(symbol)
+    }
+}
     private fun requestOpenTradesIfNeeded() {
         if (!connected || accountId.isBlank() || portfolioLoadedForAccount) return
         val now = android.os.SystemClock.elapsedRealtime()
