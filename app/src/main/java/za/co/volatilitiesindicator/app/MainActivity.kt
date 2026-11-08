@@ -269,13 +269,55 @@ private fun startAndBindDerivService() {
 
     private val contractLiveViews = mutableMapOf<Long, ContractLiveViews>()
     private val runningContracts = mutableMapOf<Long, RunningContract>()
+    private data class PendingTouchOrder(
+    val symbol: String,
+    val direction: String,
+    val stake: Double,
+    val target: Double,
+    val mode: String,
+    val proposalRequestId: Int,
+    var proposalId: String = ""
+    var barrier: String = "",
+    var potentialPayout: Double = 0.0,
+    var buyRequestId: Int = 0
+)
+
+private val pendingTouchOrders = mutableMapOf<Int, PendingTouchOrder>()
+private val pendingTouchBySymbol = mutableMapOf<String, Int>()
     private var nextTradeRequestIdValue = 710000
     private fun nextTradeRequestId(): Int = ++nextTradeRequestIdValue
 
     
     private val dailyCapitalTimeZone = java.util.TimeZone.getTimeZone("Africa/Johannesburg")
     private fun saDayKey(): String = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).apply { timeZone = dailyCapitalTimeZone }.format(java.util.Date())
+    private fun threeDayCycleCapital(): Double {
+    val key = "three_day_capital_${accountId}_$executionMode"
+    val timeKey = "${key}_start_time"
+    val now = System.currentTimeMillis()
+    val savedCapital = appPrefs.getFloat(key, 0f).toDouble()
+    val cycleStart = appPrefs.getLong(timeKey, 0L)
 
+    if (
+        savedCapital <= 0.0 ||
+        cycleStart <= 0L ||
+        now - cycleStart >= 259200000L
+    ) {
+        if (accountBalance <= 0.0) return 0.0
+
+        appPrefs.edit()
+            .putFloat(key, accountBalance.toFloat())
+            .putLong(timeKey, now)
+            .apply()
+
+        return accountBalance
+    }
+
+    return savedCapital
+}
+
+private fun threeDayTradeStake(): Double {
+    return threeDayCycleCapital() * 0.33
+}
     private var autoTradeEnabled: Boolean
         get() = appPrefs.getBoolean("autoTradeEnabled", false)
         set(value) { appPrefs.edit().putBoolean("autoTradeEnabled", value).apply() }
