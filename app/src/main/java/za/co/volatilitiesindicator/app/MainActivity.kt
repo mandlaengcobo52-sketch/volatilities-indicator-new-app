@@ -606,7 +606,6 @@ mainScrollView = scroll
         page.addView(button("SIGN IN", true) { selectedTab = "Login"; render() }, matchWrap())
     }
 }
-
 "Logout" -> {
     performPlatformLogout()
 }
@@ -1506,7 +1505,6 @@ if (
         card.addView(openPlView, matchWrap().apply { topMargin = dp(4) })
 
         val buttons = horizontalRow()
-
         buttons.addView(
             button(if (connected) "↗  DISCONNECT" else "↗  CONNECT", true) {
                 if (connected) disconnectDeriv() else beginDerivConnection()
@@ -3318,7 +3316,6 @@ dashboardAnalysisViews[symbol]?.apply {
             Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
         )
     }
-
     private fun startDerivOAuth() {
         val state = "android-" + UUID.randomUUID().toString()
         val verifier = createCodeVerifier()
@@ -3612,7 +3609,6 @@ val savedPairId = appPrefs.getString(
     "contract_pair_${accountId}_${executionMode}_$id",
     ""
 ).orEmpty()
-
 val savedPairSide = appPrefs.getString(
     "contract_pair_side_${accountId}_${executionMode}_$id",
     ""
@@ -3869,4 +3865,3 @@ override fun onDestroy() {
     super.onDestroy()
 }
                             }
-                            
