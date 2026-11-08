@@ -2553,7 +2553,16 @@ chochQualified =
 orderBlockQualified =
     bullishOB || bearishOB,
         qualified = direction != "WAIT",
-        updatedAt = System.currentTimeMillis()
+
+directionConflict =
+    (bullishSR || bullishSweep ||
+     marketDirection == "BULLISH" ||
+     chochDirection == "BULLISH" || bullishOB) &&
+    (bearishSR || bearishSweep ||
+     marketDirection == "BEARISH" ||
+     chochDirection == "BEARISH" || bearishOB),
+
+updatedAt = System.currentTimeMillis()
     )
 
     masterEngineDecisions[symbol] = decision
