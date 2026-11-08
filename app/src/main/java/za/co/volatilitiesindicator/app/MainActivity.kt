@@ -3483,6 +3483,9 @@ derivApiClient.connectWithAccessToken(token, executionMode)
         if (symbol in marketDataIndexes && quote.isFinite()) {
             marketDataPrices[symbol] = quote
             marketDataErrors.remove(symbol)
+            evaluateMasterEngine(symbol)
+            attemptTouchExecution(symbol)
+            
 
 val engineQualified =
     masterEngineDecisions[symbol]?.qualified == true
