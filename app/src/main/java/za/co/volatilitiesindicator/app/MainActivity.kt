@@ -3484,6 +3484,7 @@ derivApiClient.connectWithAccessToken(token, executionMode)
             marketDataPrices[symbol] = quote
             marketDataErrors.remove(symbol)
             evaluateMasterEngine(symbol)
+            attemptTouchExecution(symbol)
 
 val engineQualified =
     masterEngineDecisions[symbol]?.qualified == true
@@ -3509,6 +3510,9 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
         val messageType = json.optString("msg_type", "")
 
         when (messageType) {
+            "proposal" -> {
+    handleTouchProposal(json)
+            }
             "contracts_for" -> {
     val symbol = json.optJSONObject("echo_req")
         ?.optString("contracts_for", "")
