@@ -3642,6 +3642,16 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
         touchExecutionLocks.remove(order.symbol)
         return@runOnUiThread
     }
+    runningContracts[contractId] = RunningContract(
+    contractId = contractId,
+    symbol = order.symbol,
+    direction = order.direction,
+    stake = order.stake,
+    target = order.target,
+    targetProbability = 0.0,
+    mode = order.mode,
+    potentialPayout = order.stake * 1.30
+)
 
     pendingTouchOrders.remove(entry.key)
     pendingTouchBySymbol.remove(order.symbol)
@@ -3808,7 +3818,18 @@ views.barrierExpiry.text =
                         text = "TOTAL OPEN P/L: ${formatMoney(pl)}"
                         setTextColor(profitColor(pl))
                     }
-                    if ((status == "sold" || status == "won" || status == "lost" || contract.optInt("is_sold", 0) == 1) && selectedTab == "Trade") render()
+                    if (status == "sold" || status == "won" ||
+    status == "lost" || contract.optInt("is_sold", 0) == 1
+) {
+    val closedTrade = runningContracts.remove(id)
+
+    if (closedTrade != null) {
+        touchExecutionLocks.remove(closedTrade.symbol)
+        pendingTouchBySymbol.remove(closedTrade.symbol)
+    }
+
+    if (selectedTab == "Trade") render()
+                    }
                 }
             }
             "profit_table" -> {
