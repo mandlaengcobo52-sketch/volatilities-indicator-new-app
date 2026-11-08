@@ -3573,6 +3573,50 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
         val messageType = json.optString("msg_type", "")
 
         when (messageType) {
+            "proposal" -> {
+    val requestId = json.optInt("req_id", 0)
+    val order = pendingTouchOrders[requestId] ?: return@runOnUiThread
+
+    val proposal = json.optJSONObject("proposal")
+
+    if (proposal == null) {
+        pendingTouchOrders.remove(requestId)
+        pendingTouchBySymbol.remove(order.symbol)
+        touchExecutionLocks.remove(order.symbol)
+        return@runOnUiThread
+    }
+
+    val payout = proposal.optDouble("payout", 0.0)
+    val askPrice = proposal.optDouble("ask_price", 0.0)
+    val proposalId = proposal.optString("id", "")
+
+    if (payout < order.stake * 1.30 ||
+        askPrice <= 0.0 ||
+        proposalId.isBlank()
+    ) {
+        pendingTouchOrders.remove(requestId)
+        pendingTouchBySymbol.remove(order.symbol)
+        touchExecutionLocks.remove(order.symbol)
+        return@runOnUiThread
+    }
+
+    val buyRequestId = nextTradeRequestId()
+    order.proposalId = proposalId
+    order.buyRequestId = buyRequestId
+
+    val sent = derivApiClient.send(
+        JSONObject()
+            .put("buy", proposalId)
+            .put("price", askPrice)
+            .put("req_id", buyRequestId)
+    )
+
+    if (!sent) {
+        pendingTouchOrders.remove(requestId)
+        pendingTouchBySymbol.remove(order.symbol)
+        touchExecutionLocks.remove(order.symbol)
+    }
+            }
             "contracts_for" -> {
     val symbol = json.optJSONObject("echo_req")
         ?.optString("contracts_for", "")
