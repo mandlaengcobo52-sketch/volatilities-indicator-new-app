@@ -3543,9 +3543,9 @@ derivApiClient.connectWithAccessToken(token, executionMode)
         cancelDerivReconnect()
         try { derivApiClient.disconnect() } catch (_: Exception) {}
         appPrefs.edit().putBoolean("deriv_manually_disconnected", true).apply()
-        if (clearSavedTokens) {
-            prefs.edit().remove("demo_token").remove("real_token").remove("oauth_state")
-                .remove("code_verifier").remove("oauth_mode").apply()
+        if (isTouchExecutionReady(symbol)) {
+    val decision = masterEngineDecisions[symbol] ?: return@runOnUiThread
+    val latest = marketDataCandles[symbol]?.lastOrNull() ?: return@runOnUiThread
         }
         connected = false
         marketDataRequested = false
