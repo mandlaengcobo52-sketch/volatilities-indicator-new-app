@@ -3783,7 +3783,7 @@ private fun handleTouchProposal(json: JSONObject) {
             .substringAfter(".", "")
             .length.coerceIn(2, 8)
 
-        val step = Math.pow(10.0, -decimals)
+        val step = Math.pow(10.0, -decimals.toDouble())
         val oldBarrier = order.barrier.toDoubleOrNull() ?: currentPrice
 
         val nextBarrier = if (order.direction == "BUY") {
@@ -3872,7 +3872,7 @@ private fun attemptTouchExecution(symbol: String) {
         .substringAfter(".", "")
         .length.coerceIn(2, 8)
 
-    val tick = Math.pow(10.0, -decimals)
+    val tick = Math.pow(10.0, -decimals.toDouble())
     val barrierValue = if (direction == "BUY") {
         price + tick
     } else {
