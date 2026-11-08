@@ -276,10 +276,7 @@ private fun startAndBindDerivService() {
     val target: Double,
     val mode: String,
     val proposalRequestId: Int,
-    var proposalId: String = "",
-            var barrier: String = "",
-    var potentialPayout: Double = 0.0,
-    var buyRequestId: Int = 0
+    var proposalId: String = ""
 )
 
 private val pendingTouchOrders = mutableMapOf<Int, PendingTouchOrder>()
@@ -311,7 +308,6 @@ private val pendingTouchBySymbol = mutableMapOf<String, Int>()
 
         return accountBalance
     }
-
     return savedCapital
 }
 
@@ -1515,7 +1511,7 @@ if (
             weighted()
         )
         buttons.addView(
-          button("⟳  REFRESH", false) {
+            button("⟳  REFRESH", false) {
                 if (connected) {
                     derivApiClient.requestBalance()
                     derivApiClient.requestOpenTrades()
@@ -2116,7 +2112,6 @@ private fun calculateMarketStructure(
     var structureNumber = 0
     var chochNumber = 0
     var trend = ""
-
     var previousHigh: Pair<Int, Double>? = null
     var previousLow: Pair<Int, Double>? = null
 
@@ -2420,7 +2415,7 @@ return if (currentPrice != null && currentPrice > 0.0) {
             if (support) it.price < currentPrice
             else it.price > currentPrice
         }
-        .sortedBy { kotlin.math.abs(it.price - currentPrice) }
+           .sortedBy { kotlin.math.abs(it.price - currentPrice) }
         .take(2)
 } else {
     recentLevels.sortedByDescending { it.score }.take(2)
@@ -2715,7 +2710,7 @@ dashboardAnalysisViews[symbol]?.apply {
                         },
                         matchWrap().apply { topMargin = dp(6) }
                     )
-                }
+                    }
                 if (!user.optString("role", "user").equals("admin", ignoreCase = true)) {
                     userCard.addView(
                         button("DELETE USER", false) {
@@ -3483,7 +3478,7 @@ derivApiClient.connectWithAccessToken(token, executionMode)
         if (symbol in marketDataIndexes && quote.isFinite()) {
             marketDataPrices[symbol] = quote
             marketDataErrors.remove(symbol)
-            
+            evaluateMasterEngine(symbol)
 
 val engineQualified =
     masterEngineDecisions[symbol]?.qualified == true
@@ -3509,9 +3504,6 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
         val messageType = json.optString("msg_type", "")
 
         when (messageType) {
-            "proposal" -> {
-    handleTouchProposal(json)
-            }
             "contracts_for" -> {
     val symbol = json.optJSONObject("echo_req")
         ?.optString("contracts_for", "")
@@ -3771,3 +3763,4 @@ override fun onDestroy() {
     super.onDestroy()
 }
                             }
+                            
