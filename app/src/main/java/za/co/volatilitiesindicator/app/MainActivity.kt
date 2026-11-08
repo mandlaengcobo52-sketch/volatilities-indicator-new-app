@@ -2558,15 +2558,35 @@ orderBlockQualified =
     masterEngineDecisions[symbol] = decision
 val analysisText =
     "SUPPORT / RESISTANCE: " +
-        (if (decision.supportResistanceQualified) "QUALIFIED" else "WAITING") +
+        when {
+            bullishSR -> "QUALIFIED ${if (bullishSR) "BUY" else "SELL"}"
+            bearishSR -> "QUALIFIED SELL"
+            else -> "WAITING"
+        } +
     "\nLIQUIDITY: " +
-        (if (decision.liquidityQualified) "QUALIFIED" else "WAITING") +
+        when {
+            bullishSweep -> "QUALIFIED BUY"
+            bearishSweep -> "QUALIFIED SELL"
+            else -> "WAITING"
+        } +
     "\nMARKET STRUCTURE: " +
-        (if (decision.marketStructureQualified) "QUALIFIED" else "WAITING") +
+        when (marketDirection) {
+            "BULLISH" -> "QUALIFIED BUY"
+            "BEARISH" -> "QUALIFIED SELL"
+            else -> "WAITING"
+        } +
     "\nCHOCH: " +
-        (if (decision.chochQualified) "QUALIFIED" else "WAITING") +
+        when (chochDirection) {
+            "BULLISH" -> "QUALIFIED BUY"
+            "BEARISH" -> "QUALIFIED SELL"
+            else -> "WAITING"
+        } +
     "\nORDER BLOCK: " +
-        (if (decision.orderBlockQualified) "QUALIFIED" else "WAITING")
+        when {
+            bullishOB -> "QUALIFIED BUY"
+            bearishOB -> "QUALIFIED SELL"
+            else -> "WAITING"
+        }
 
 dashboardAnalysisViews[symbol]?.apply {
     val grey = muted
