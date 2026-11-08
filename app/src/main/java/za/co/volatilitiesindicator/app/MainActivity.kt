@@ -438,7 +438,7 @@ private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
     if (!connected) return "DISCONNECTED" to red
 
     if (marketDataPrices[symbol] == null) {
-        return "WAITING FOR PRICE" to yellow
+        return "WAITING FOR PRICE" to muted
     }
 
     val decision = masterEngineDecisions[symbol]
@@ -447,7 +447,7 @@ private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
         return "QUALIFIED ${decision.direction}" to green
     }
 
-    return "MONITORING" to yellow
+    return "MONITORING" to muted
 }
 private var marketDataRequested = false
 private var marketStructureExpanded = true
