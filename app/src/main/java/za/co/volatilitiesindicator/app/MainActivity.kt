@@ -307,7 +307,6 @@ private fun addRegistrationScreen() {
     val registrationCard = card().apply { orientation = LinearLayout.VERTICAL }
     registrationCard.addView(label("Register your Volatilities Indicator account", 17f, white, true))
     registrationCard.addView(label("Your application will remain pending until an administrator approves it.", 14f, yellow, false))
-
     fun textInput(hintText: String, inputType: Int = android.text.InputType.TYPE_CLASS_TEXT): android.widget.EditText {
         return android.widget.EditText(this).apply {
             hint = hintText
@@ -1203,7 +1202,7 @@ private fun addTradeScreen() {
         true
     )
 )
-masterDecisionCard.addView(
+  masterDecisionCard.addView(
     button(
         if (autoTradeEnabled) "TURN MASTER DECISION OFF"
         else "TURN MASTER DECISION ON",
@@ -1502,12 +1501,12 @@ private fun calculateLiquidityLevels(
         if (index in used) return@forEachIndexed
 
         val basePrice = pivot.second
-
         val group = pivots.filterIndexed { otherIndex, other ->
             otherIndex !in used &&
             kotlin.math.abs(other.second - basePrice) /
                 basePrice.coerceAtLeast(0.000001) <= tolerance
         }
+
         group.forEachIndexed { _, member ->
             val memberIndex = pivots.indexOf(member)
             if (memberIndex >= 0) used.add(memberIndex)
@@ -1804,7 +1803,6 @@ private fun calculateMarketStructure(
                     )
                 }
             }
-
             previousHigh = i to currentHigh
         }
 
@@ -2103,7 +2101,6 @@ val resistances = calculateSupportResistance(candles, false, price)
     val structure = calculateMarketStructure(candles)
     val marketDirection =
         structure.structures.lastOrNull()?.direction ?: ""
-
     val chochDirection =
         structure.chochs.lastOrNull()?.direction ?: ""
 
@@ -2113,6 +2110,7 @@ val resistances = calculateSupportResistance(candles, false, price)
         it.valid && marketDirection == "BULLISH" &&
         chochDirection == "BULLISH"
     }
+
     val bearishOB = orderBlocks.bearish.any {
         it.valid && marketDirection == "BEARISH" &&
         chochDirection == "BEARISH"
@@ -2415,6 +2413,7 @@ dashboardAnalysisViews[symbol]?.apply {
         ).joinToString("\n\n")
         android.app.AlertDialog.Builder(this).setTitle("User view").setMessage(details).setPositiveButton("CLOSE", null).show()
     }
+
     private fun showEditUserDialog(user: JSONObject) {
         val firstName = android.widget.EditText(this).apply {
             hint = "First name"
@@ -2716,6 +2715,7 @@ dashboardAnalysisViews[symbol]?.apply {
                 }
             )
         }
+
         page.addView(
             card,
             matchWrap().apply {
@@ -3408,4 +3408,3 @@ override fun onDestroy() {
 }
                             }
                             
-                
