@@ -2294,6 +2294,7 @@ private data class MasterEngineDecision(
     val chochQualified: Boolean,
     val orderBlockQualified: Boolean,
     val qualified: Boolean,
+    val directionConflict: Boolean,
     val updatedAt: Long
 )
 
