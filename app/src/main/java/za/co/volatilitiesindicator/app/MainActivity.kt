@@ -3546,6 +3546,12 @@ derivApiClient.connectWithAccessToken(token, executionMode)
             marketDataErrors.remove(symbol)
             evaluateMasterEngine(symbol)
             if (isTouchExecutionReady(symbol)) {
+    android.util.Log.i(
+        "TradeExecution",
+        "$symbol approved by Master Decision. Execution pathway triggered."
+    )
+            }
+            if (isTouchExecutionReady(symbol)) {
     val decision = masterEngineDecisions[symbol] ?: return@runOnUiThread
     val latest = marketDataCandles[symbol]?.lastOrNull() ?: return@runOnUiThread
             }
