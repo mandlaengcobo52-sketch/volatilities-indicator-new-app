@@ -2598,27 +2598,94 @@ orderBlockQualified =
     )
 
     masterEngineDecisions[symbol] = decision
-val analysisText =
-    "SUPPORT / RESISTANCE: " +
-        (if (decision.supportResistanceQualified) "QUALIFIED" else "WAITING") +
-    "\nLIQUIDITY: " +
-        (if (decision.liquidityQualified) "QUALIFIED" else "WAITING") +
-    "\nMARKET STRUCTURE: " +
-        (if (decision.marketStructureQualified) "QUALIFIED" else "WAITING") +
-    "\nCHOCH: " +
-        (if (decision.chochQualified) "QUALIFIED" else "WAITING") +
-    "\nORDER BLOCK: " +
-        (if (decision.orderBlockQualified) "QUALIFIED" else "WAITING")
-
-dashboardAnalysisViews[symbol]?.apply {
-    text = analysisText
-    setTextColor(
-        if (decision.qualified)
-            android.graphics.Color.GREEN
-        else
-            android.graphics.Color.YELLOW
+val analysisLines = listOf(
+    Triple(
+        "SUPPORT / RESISTANCE",
+        when {
+            bullishSR -> "QUALIFIED BUY"
+            bearishSR -> "QUALIFIED SELL"
+            else -> "WAITING"
+        },
+        when {
+            bullishSR -> green
+            bearishSR -> red
+            else -> yellow
+        }
+    ),
+    Triple(
+        "LIQUIDITY",
+        when {
+            bullishSweep -> "QUALIFIED BUY"
+            bearishSweep -> "QUALIFIED SELL"
+            else -> "WAITING"
+        },
+        when {
+            bullishSweep -> green
+            bearishSweep -> red
+            else -> yellow
+        }
+    ),
+    Triple(
+        "MARKET STRUCTURE",
+        when (marketDirection) {
+            "BULLISH" -> "QUALIFIED BUY"
+            "BEARISH" -> "QUALIFIED SELL"
+            else -> "WAITING"
+        },
+        when (marketDirection) {
+            "BULLISH" -> green
+            "BEARISH" -> red
+            else -> yellow
+        }
+    ),
+    Triple(
+        "CHOCH",
+        when (chochDirection) {
+            "BULLISH" -> "QUALIFIED BUY"
+            "BEARISH" -> "QUALIFIED SELL"
+            else -> "WAITING"
+        },
+        when (chochDirection) {
+            "BULLISH" -> green
+            "BEARISH" -> red
+            else -> yellow
+        }
+    ),
+    Triple(
+        "ORDER BLOCK",
+        when {
+            bullishOB -> "QUALIFIED BUY"
+            bearishOB -> "QUALIFIED SELL"
+            else -> "WAITING"
+        },
+        when {
+            bullishOB -> green
+            bearishOB -> red
+            else -> yellow
+        }
     )
+)
+
+val analysisText = android.text.SpannableStringBuilder()
+
+analysisLines.forEachIndexed { index, item ->
+    val start = analysisText.length
+    val line = "${item.first}: ${item.second}"
+    analysisText.append(line)
+
+    analysisText.setSpan(
+        android.text.style.ForegroundColorSpan(item.third),
+        start,
+        analysisText.length,
+        android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+    )
+
+    if (index < analysisLines.lastIndex) {
+        analysisText.append("\n")
+    }
 }
+
+dashboardAnalysisViews[symbol]?.text = analysisText
     if (decision.qualified) {
         val eventKey =
             "${saDayKey()}_${accountId}_${executionMode}_${symbol}_${direction}_${latest.epoch}"
