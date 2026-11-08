@@ -3158,8 +3158,21 @@ dashboardAnalysisViews[symbol]?.text = analysisText
         if (!notificationsEnabled) return
         try {
             val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-            val channelId = "vi_trade_events_v2"
-            val vibrationPattern = longArrayOf(0L, 250L, 150L, 250L, 150L, 250L)
+            val vibrationCount = when (title) {
+    "Master Engine Qualified" -> 1
+    "TOUCH executed" -> 2
+    "Trade closed" -> 3
+    else -> 0
+}
+
+val vibrationPattern = when (vibrationCount) {
+    1 -> longArrayOf(0L, 250L)
+    2 -> longArrayOf(0L, 250L, 150L, 250L)
+    3 -> longArrayOf(0L, 250L, 150L, 250L, 150L, 250L)
+    else -> longArrayOf(0L)
+}
+
+val channelId = "vi_trade_events_${vibrationCount}_pulse_v3"
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val channel = NotificationChannel(channelId, "Trading notifications", NotificationManager.IMPORTANCE_DEFAULT).apply {
                     setShowBadge(true)
@@ -3734,7 +3747,11 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
     mode = order.mode,
     potentialPayout = order.stake * 1.30
 )
-
+notifyEvent(
+    "TOUCH executed",
+    "${order.symbol} · Contract $contractId opened.",
+    "touch_executed_$contractId"
+)
     pendingTouchOrders.remove(entry.key)
     pendingTouchBySymbol.remove(order.symbol)
 
@@ -3906,6 +3923,11 @@ views.barrierExpiry.text =
     val closedTrade = runningContracts.remove(id)
 
     if (closedTrade != null) {
+        notifyEvent(
+    "Trade closed",
+    "${closedTrade.symbol} · Contract $id closed.",
+    "trade_closed_$id"
+)
         touchExecutionLocks.remove(closedTrade.symbol)
         pendingTouchBySymbol.remove(closedTrade.symbol)
     }
