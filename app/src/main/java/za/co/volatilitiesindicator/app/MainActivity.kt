@@ -338,8 +338,7 @@ private fun requestTouchAvailability(symbol: String) {
         touchAvailabilityPending.remove(symbol)
     }
 }
-
-    private fun normalizedSymbol(item: JSONObject): String = item.optString(
+private fun normalizedSymbol(item: JSONObject): String = item.optString(
         "underlying", item.optString("underlying_symbol", item.optString("symbol", ""))
     ).uppercase()
     private fun isThreeDayTouchAvailable(symbol: String): Boolean {
@@ -380,29 +379,6 @@ private fun durationToSeconds(value: String): Long {
         else -> -1L
     }
 }
-private fun isTouchExecutionReady(symbol: String): Boolean {
-    if (!connected) return false
-    if (!autoTradeEnabled) return false
-    if (symbol !in marketDataIndexes) return false
-    if (touchAvailabilityPending.contains(symbol)) return false
-    if (!isThreeDayTouchAvailable(symbol)) return false
-
-    val decision = masterEngineDecisions[symbol] ?: return false
-
-    if (!decision.qualified) return false
-    if (decision.direction != "BUY" && decision.direction != "SELL") {
-        return false
-    }
-
-    val alreadyRunning = runningContracts.values.any {
-        it.symbol.equals(symbol, ignoreCase = true) &&
-        it.mode == executionMode
-    }
-
-    if (alreadyRunning) return false
-
-    return true
-}
     private fun requestOpenTradesIfNeeded() {
         if (!connected || accountId.isBlank() || portfolioLoadedForAccount) return
         val now = android.os.SystemClock.elapsedRealtime()
@@ -428,12 +404,27 @@ private val currentPriceViews = mutableMapOf<String, MutableList<TextView>>()
 private val dashboardStatusViews = mutableMapOf<String, TextView>()
 private val dashboardAnalysisViews =
     mutableMapOf<String, TextView>()
-    private val dashboardIndexExpanded =
-    mutableMapOf<String, Boolean>()
-    private var dashboardMonitorSummaryView: TextView? = null
 private val marketDataErrors =
     mutableMapOf<String, String>()
 private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
+    if (marketDataErrors.containsKey(symbol) && marketDataPrices[symbol] == null) {
+        return "FEED ERROR" to red
+    }
+
+    if (!connected) return "DISCONNECTED" to red
+
+    if (marketDataPrices[symbol] == null) {
+        return "WAITING FOR PRICE" to yellow
+    }
+
+    val decision = masterEngineDecisions[symbol]
+
+    if (decision?.qualified == true) {
+        return "QUALIFIED ${decision.direction}" to green
+    }
+
+    return "MONITORING" to yellow
+}
 private var marketDataRequested = false
 private var marketStructureExpanded = true
     override fun onCreate(savedInstanceState: Bundle?) {
