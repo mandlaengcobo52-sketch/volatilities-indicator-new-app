@@ -313,9 +313,8 @@ private val consumedTouchQualifications = mutableMapOf<String, Long>()
     }
 
     return savedCapital
-}
-
-private fun threeDayTradeStake(): Double {
+    }
+    private fun threeDayTradeStake(): Double {
     return threeDayCycleCapital() * 0.33
 }
 
@@ -466,50 +465,6 @@ if (consumedTouchQualifications[symbol] == qualificationEpoch) {
 
     return true
 }
-private fun requestTouchProposal(symbol: String) {
-    if (!isTouchExecutionReady(symbol)) return
-    if (pendingTouchBySymbol.containsKey(symbol)) return
-
-    val decision = masterEngineDecisions[symbol] ?: return
-    val stake = threeDayTradeStake()
-
-    if (stake <= 0.0 || accountCurrency.isBlank()) return
-
-    val direction = decision.direction
-    val barrier = if (direction == "BUY") "+30%" else "-30%"
-    val requestId = nextTradeRequestId()
-
-    val order = PendingTouchOrder(
-        symbol = symbol,
-        direction = direction,
-        stake = stake,
-        target = 0.0,
-        mode = executionMode,
-        proposalRequestId = requestId
-    )
-
-    pendingTouchOrders[requestId] = order
-    pendingTouchBySymbol[symbol] = requestId
-
-    val sent = derivApiClient.send(
-        JSONObject()
-            .put("proposal", 1)
-            .put("amount", stake)
-            .put("basis", "stake")
-            .put("contract_type", "ONETOUCH")
-            .put("currency", accountCurrency)
-            .put("duration", 3)
-            .put("duration_unit", "d")
-            .put("symbol", symbol)
-            .put("barrier", barrier)
-            .put("req_id", requestId)
-    )
-
-    if (!sent) {
-        pendingTouchOrders.remove(requestId)
-        pendingTouchBySymbol.remove(symbol)
-    }
-}
     private fun requestOpenTradesIfNeeded() {
         if (!connected || accountId.isBlank() || portfolioLoadedForAccount) return
         val now = android.os.SystemClock.elapsedRealtime()
@@ -658,8 +613,8 @@ if (savedToken.isNotBlank()) {
     isFillViewport = true
     overScrollMode = View.OVER_SCROLL_NEVER
     isSmoothScrollingEnabled = true
-}
-mainScrollView = scroll
+        }
+        mainScrollView = scroll
 
         page = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1259,7 +1214,6 @@ private fun addHeader() {
         liveContractProfitModes.clear()
         historyAccountKey = ""
     }
-
     private fun formatMoney(value: Double): String = String.format(java.util.Locale.US, "%.2f", value)
     private fun profitColor(value: Double): Int = when { value > 0.000001 -> green; value < -0.000001 -> red; else -> white }
 
@@ -1543,28 +1497,6 @@ if (
             // Index monitor rows are display-only.
             row.isClickable = false
             row.isFocusable = false
-            // COLLAPSIBLE INDEX INDICATOR — COLLAPSED BY DEFAULT
-val expandIndicator = label("⌄", 18f, accent, true)
-headingRow.addView(expandIndicator)
-
-for (i in 1 until row.childCount) {
-    if (i != 2) {
-        row.getChildAt(i).visibility = View.GONE
-    }
-}
-
-headingRow.setOnClickListener {
-    val isExpanded = priceView.visibility == View.VISIBLE
-
-    for (i in 1 until row.childCount) {
-        if (i != 2) {
-            row.getChildAt(i).visibility =
-                if (isExpanded) View.GONE else View.VISIBLE
-        }
-    }
-
-    expandIndicator.text = if (isExpanded) "⌄" else "⌃"
-}
             monitorCard.addView(row, matchWrap().apply { bottomMargin = dp(6) })
         }
         page.addView(monitorCard, matchWrap().apply { bottomMargin = dp(12) })
@@ -1810,7 +1742,7 @@ row.addView(
         14f,
         if (running.direction == "BUY") green else red,
         true
-    ).apply { setPadding(0, dp(4), 0, 0) }
+        ).apply { setPadding(0, dp(4), 0, 0) }
 )
         row.addView(label("Contract number: ${running.contractId}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
         row.addView(label("Stake: ${formatMoney(running.stake)}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) })
@@ -2109,7 +2041,6 @@ private fun calculateOrderBlocks(
                     val ob = sorted[obIndex]
 
                     if (usedBullish.add(ob.epoch)) {
-
                         val invalidation = (obIndex + 1 until sorted.size)
                             .firstOrNull {
                                 sorted[it].close < ob.low
@@ -2405,7 +2336,6 @@ private data class SupportResistanceLevel(
     val lastTouch: Long,
     val score: Double
 )
-
 private fun calculateSupportResistance(
     candles: List<DerivApiClient.Candle>,
     support: Boolean,
@@ -2680,7 +2610,7 @@ dashboardAnalysisViews[symbol]?.apply {
         }
     }
 }
-    // =========================================================
+// =========================================================
     // ADMIN USER APPROVAL — server verifies administrator role
     // =========================================================
    private fun addAdminSupportResistanceScreen() {
@@ -2983,7 +2913,6 @@ dashboardAnalysisViews[symbol]?.apply {
                 show()
             }
     }
-
     private fun loadAdminUsers() {
         if (authToken.isBlank()) {
             toast("Sign in with the administrator account first.")
@@ -3324,7 +3253,6 @@ dashboardAnalysisViews[symbol]?.apply {
             this.text = text
             textSize = 13f
             isAllCaps = false
-
             typeface = Typeface.create(
                 "sans-serif",
                 Typeface.BOLD
@@ -3543,6 +3471,10 @@ derivApiClient.connectWithAccessToken(token, executionMode)
         cancelDerivReconnect()
         try { derivApiClient.disconnect() } catch (_: Exception) {}
         appPrefs.edit().putBoolean("deriv_manually_disconnected", true).apply()
+        if (clearSavedTokens) {
+            prefs.edit().remove("demo_token").remove("real_token").remove("oauth_state")
+                .remove("code_verifier").remove("oauth_mode").apply()
+        }
         connected = false
         marketDataRequested = false
         accountId = ""
@@ -3562,10 +3494,9 @@ derivApiClient.connectWithAccessToken(token, executionMode)
 
     override fun onConnecting(message: String) {
         runOnUiThread {
-            if (isTouchExecutionReady(symbol)) {
-    val decision = masterEngineDecisions[symbol] ?: return@runOnUiThread
-    val barrier = quote * 0.30
-    submitTouchProposal(symbol, decision.direction, barrier)
+            if (::accountStatus.isInitialized) {
+                accountStatus.text = "●  CONNECTING TO DERIV"
+                accountStatus.setTextColor(yellow)
             }
         }
     }
@@ -3609,12 +3540,6 @@ derivApiClient.connectWithAccessToken(token, executionMode)
             marketDataErrors.remove(symbol)
             evaluateMasterEngine(symbol)
             if (isTouchExecutionReady(symbol)) {
-    android.util.Log.i(
-        "TradeExecution",
-        "$symbol approved by Master Decision. Execution pathway triggered."
-    )
-            }
-            if (isTouchExecutionReady(symbol)) {
     val decision = masterEngineDecisions[symbol] ?: return@runOnUiThread
     val latest = marketDataCandles[symbol]?.lastOrNull() ?: return@runOnUiThread
             }
@@ -3627,7 +3552,6 @@ dashboardStatusViews[symbol]?.apply {
     text = statusText
     setTextColor(statusColor)
 }
-
 dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
             currentPriceViews[symbol]?.forEach { priceView ->
                 priceView.text = "CURRENT PRICE: ${formatMarketPrice(quote)}"
@@ -4000,3 +3924,4 @@ override fun onDestroy() {
     super.onDestroy()
 }
                             }
+                            
