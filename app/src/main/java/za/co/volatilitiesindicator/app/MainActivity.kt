@@ -277,6 +277,24 @@ private fun startAndBindDerivService() {
     private fun saDayKey(): String = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).apply { timeZone = dailyCapitalTimeZone }.format(java.util.Date())
 
     private var autoTradeEnabled: Boolean
+    private val touchAvailabilityPending = mutableSetOf<String>()
+
+private fun requestTouchAvailability(symbol: String) {
+    if (!connected) return
+    if (!touchAvailabilityPending.add(symbol)) return
+
+    val sent = derivApiClient.send(
+        JSONObject()
+            .put("contracts_for", symbol)
+            .put("req_id", nextTradeRequestId())
+    )
+
+    if (!sent) {
+        touchAvailabilityPending.remove(symbol)
+    }
+}
+private val touchContractsBySymbol =
+    mutableMapOf<String, org.json.JSONArray>()
         get() = appPrefs.getBoolean("autoTradeEnabled", false)
         set(value) { appPrefs.edit().putBoolean("autoTradeEnabled", value).apply() }
         private val touchAvailabilityPending = mutableSetOf<String>()
@@ -336,6 +354,29 @@ private fun durationToSeconds(value: String): Long {
         'y' -> number * 31536000L
         else -> -1L
     }
+}
+private fun isTouchExecutionReady(symbol: String): Boolean {
+    if (!connected) return false
+    if (!autoTradeEnabled) return false
+    if (symbol !in marketDataIndexes) return false
+    if (touchAvailabilityPending.contains(symbol)) return false
+    if (!isThreeDayTouchAvailable(symbol)) return false
+
+    val decision = masterEngineDecisions[symbol] ?: return false
+
+    if (!decision.qualified) return false
+    if (decision.direction != "BUY" && decision.direction != "SELL") {
+        return false
+    }
+
+    val alreadyRunning = runningContracts.values.any {
+        it.symbol.equals(symbol, ignoreCase = true) &&
+        it.mode == executionMode
+    }
+
+    if (alreadyRunning) return false
+
+    return true
 }
     private fun requestOpenTradesIfNeeded() {
         if (!connected || accountId.isBlank() || portfolioLoadedForAccount) return
