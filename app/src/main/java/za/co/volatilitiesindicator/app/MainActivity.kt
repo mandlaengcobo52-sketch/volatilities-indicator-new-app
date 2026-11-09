@@ -1653,7 +1653,7 @@ masterDecisionCard.addView(
         autoTradeEnabled
     ) {
         autoTradeEnabled = !autoTradeEnabled
-        toast(if (autoTradeEnabled) "Master Decision display is ON. Trade execution is disabled." else "Master Decision display is OFF.")
+        toast(if (autoTradeEnabled) "Master Decision is ON. Trade execution is enabled." else "Master Decision is OFF.")
         render()
     },
     matchWrap().apply { topMargin = dp(8) }
@@ -3086,7 +3086,7 @@ dashboardAnalysisViews[symbol]?.text = analysisText
         decisionCard.addView(label(if (autoTradeEnabled) "MASTER DECISION: ON" else "MASTER DECISION: OFF", 15f, if (autoTradeEnabled) green else red, true))
         decisionCard.addView(button(if (autoTradeEnabled) "TURN MASTER DECISION OFF" else "TURN MASTER DECISION ON", autoTradeEnabled) {
             autoTradeEnabled = !autoTradeEnabled
-            toast(if (autoTradeEnabled) "Master Decision display is ON. Trade execution is disabled." else "Master Decision display is OFF.")
+            toast(if (autoTradeEnabled) "Master Decision is ON. Trade execution is enabled." else "Master Decision is OFF.")
             render()
         }, matchWrap().apply { topMargin = dp(8) })
         page.addView(decisionCard, matchWrap().apply { bottomMargin = dp(10) })
