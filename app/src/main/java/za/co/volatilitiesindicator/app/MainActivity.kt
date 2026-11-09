@@ -360,7 +360,7 @@ private fun submitTouchProposal(
 
     val barrierValue = String.format(
     java.util.Locale.US,
-    "%.3f",
+    "%.2f",
     kotlin.math.abs(barrier)
 )
 
