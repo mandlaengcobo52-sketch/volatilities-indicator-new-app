@@ -1274,13 +1274,74 @@ private fun addHeader() {
                 background = shape(panel, accent, 10, 1)
             }
             val dashboardIndexName = when (symbol) {
-                "R_10" -> "VOLATILITY INDEX 10"
-                "R_25" -> "VOLATILITY INDEX 25"
-                "R_50" -> "VOLATILITY INDEX 50"
-                "R_75" -> "VOLATILITY INDEX 75"
-                "R_100" -> "VOLATILITY INDEX 100"
+                "R_10" -> "Volatility 10 Index"
+                "R_25" -> "Volatility 25 Index"
+                "R_50" -> "Volatility 50 Index"
+                "R_75" -> "Volatility 75 Index"
+                "R_100" -> "Volatility 100 Index"
                 else -> symbol
             }
+                        if (
+                !(platform == "ADMIN" &&
+                    currentProfile?.optString("role", "user")
+                        .equals("admin", ignoreCase = true))
+            ) {
+                val userRow = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(dp(8), dp(12), dp(8), dp(12))
+                    background = shape(panel, accent, 10, 1)
+                }
+
+                userRow.addView(
+                    label(dashboardIndexName, 12f, accent, true),
+                    LinearLayout.LayoutParams(0, -2, 1.5f)
+                )
+
+                val userPriceView = label(
+                    marketDataPrices[symbol]?.let {
+                        formatMarketPrice(it)
+                    } ?: "WAIT",
+                    12f,
+                    white,
+                    false
+                ).apply {
+                    gravity = Gravity.CENTER
+                    maxLines = 1
+                }
+
+                dashboardPriceViews[symbol] = userPriceView
+                userRow.addView(
+                    userPriceView,
+                    LinearLayout.LayoutParams(0, -2, 1f)
+                )
+
+                val userStatus = dashboardDecisionStatus(symbol)
+                val userStatusView = label(
+                    userStatus.first,
+                    10f,
+                    userStatus.second,
+                    true
+                ).apply {
+                    gravity = Gravity.END or Gravity.CENTER_VERTICAL
+                    maxLines = 2
+                }
+
+                dashboardStatusViews[symbol] = userStatusView
+                userRow.addView(
+                    userStatusView,
+                    LinearLayout.LayoutParams(0, -2, 1f)
+                )
+
+                monitorCard.addView(
+                    userRow,
+                    matchWrap().apply {
+                        bottomMargin = dp(6)
+                    }
+                )
+
+                return@forEach
+                        }
             val headingRow = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
