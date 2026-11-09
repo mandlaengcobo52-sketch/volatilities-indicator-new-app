@@ -358,11 +358,17 @@ private fun submitTouchProposal(
     pendingTouchOrders[requestId] = order
     pendingTouchBySymbol[symbol] = requestId
 
-    val signedBarrier = if (direction == "BUY") {
-        "+$barrier"
-    } else {
-        "-$barrier"
-    }
+    val barrierValue = String.format(
+    java.util.Locale.US,
+    "%.3f",
+    kotlin.math.abs(barrier)
+)
+
+val signedBarrier = if (direction == "BUY") {
+    "+$barrierValue"
+} else {
+    "-$barrierValue"
+}
 
     val sent = derivApiClient.send(
         JSONObject()
