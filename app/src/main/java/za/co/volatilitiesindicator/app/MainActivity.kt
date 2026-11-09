@@ -399,7 +399,7 @@ private fun submitTouchProposal(
     private fun normalizedSymbol(item: JSONObject): String = item.optString(
         "underlying", item.optString("underlying_symbol", item.optString("symbol", ""))
     ).uppercase()
-    private fun isThreeDayTouchAvailable(symbol: String): Boolean {
+    private fun isOneDayTouchAvailable(symbol: String): Boolean {
     val contracts = touchContractsBySymbol[symbol] ?: return false
 
     for (i in 0 until contracts.length()) {
@@ -414,9 +414,9 @@ private fun submitTouchProposal(
         val minSeconds = durationToSeconds(minDuration)
         val maxSeconds = durationToSeconds(maxDuration)
 
-        if (minSeconds > 0L && maxSeconds >= 259200L &&
-            minSeconds <= 259200L
-        ) {
+        if (minSeconds > 0L && maxSeconds >= 86400L &&
+    minSeconds <= 86400L
+) {
             return true
         }
     }
@@ -441,7 +441,7 @@ private fun isTouchExecutionReady(symbol: String): Boolean {
     if (!autoTradeEnabled) return false
     if (symbol !in marketDataIndexes) return false
     if (touchAvailabilityPending.contains(symbol)) return false
-    if (!isThreeDayTouchAvailable(symbol)) return false
+    if (!isOneDayTouchAvailable(symbol)) return false
 
     val decision = masterEngineDecisions[symbol] ?: return false
     if (touchExecutionLocks.contains(symbol)) return false
