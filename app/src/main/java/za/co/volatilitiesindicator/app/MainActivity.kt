@@ -1298,39 +1298,46 @@ private fun addHeader() {
             headingRow.addView(statusView, LinearLayout.LayoutParams(-2, -2))
             row.addView(headingRow, matchWrap())
 
-            val price = marketDataPrices[symbol]
-            val priceView = label(
-                price?.let { formatMarketPrice(it) } ?: "PRICE WAITING",
-                14f,
-                muted,
-                false
-            ).apply {
-                gravity = Gravity.CENTER
-                maxLines = 1
-                includeFontPadding = false
-            }
-            dashboardPriceViews[symbol] = priceView
-            row.addView(
-                priceView,
-                LinearLayout.LayoutParams(-1, -2).apply {
-                    topMargin = dp(7)
+                        if (
+                platform == "ADMIN" &&
+                currentProfile?.optString("role", "user")
+                    .equals("admin", ignoreCase = true)
+            ) {
+                val price = marketDataPrices[symbol]
+                val priceView = label(
+                    price?.let { formatMarketPrice(it) } ?: "PRICE WAITING",
+                    14f,
+                    muted,
+                    false
+                ).apply {
+                    gravity = Gravity.CENTER
+                    maxLines = 1
+                    includeFontPadding = false
                 }
-            )
-            val analysisView = label(
-    "SUPPORT / RESISTANCE: WAITING\n" +
-    "LIQUIDITY: WAITING\n" +
-    "MARKET STRUCTURE: WAITING\n" +
-    "CHOCH: WAITING\n" +
-    "ORDER BLOCK: WAITING",
-    11f,
-    yellow,
-    false
-).apply {
-    setPadding(dp(4), dp(8), dp(4), dp(4))
-}
+                dashboardPriceViews[symbol] = priceView
+                row.addView(
+                    priceView,
+                    LinearLayout.LayoutParams(-1, -2).apply {
+                        topMargin = dp(7)
+                    }
+                )
 
-dashboardAnalysisViews[symbol] = analysisView
-row.addView(analysisView, matchWrap())
+                val analysisView = label(
+                    "SUPPORT / RESISTANCE: WAITING\n" +
+                    "LIQUIDITY: WAITING\n" +
+                    "MARKET STRUCTURE: WAITING\n" +
+                    "CHOCH: WAITING\n" +
+                    "ORDER BLOCK: WAITING",
+                    11f,
+                    yellow,
+                    false
+                ).apply {
+                    setPadding(dp(4), dp(8), dp(4), dp(4))
+                }
+
+                dashboardAnalysisViews[symbol] = analysisView
+                row.addView(analysisView, matchWrap())
+                        }
 // =========================================================
 // ADMIN ONLY — SUPPORT AND RESISTANCE
 // =========================================================
