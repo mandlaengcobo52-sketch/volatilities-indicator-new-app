@@ -311,7 +311,6 @@ private val consumedTouchQualifications = mutableMapOf<String, Long>()
 
         return accountBalance
     }
-
     return savedCapital
     }
     private fun threeDayTradeStake(): Double {
@@ -629,6 +628,7 @@ if (savedToken.isNotBlank()) {
         )
         setContentView(outer)
         addHeader()
+
         if (drawerOpen) {
             addDrawer()
         }
@@ -1232,7 +1232,7 @@ private fun addHeader() {
         beginDerivConnection()
     },
     weighted()
-    )
+)
         row.addView(space(dp(8)))
 
         row.addView(
@@ -1273,74 +1273,13 @@ private fun addHeader() {
                 background = shape(panel, accent, 10, 1)
             }
             val dashboardIndexName = when (symbol) {
-                "R_10" -> "Volatility 10 Index"
-                "R_25" -> "Volatility 25 Index"
-                "R_50" -> "Volatility 50 Index"
-                "R_75" -> "Volatility 75 Index"
-                "R_100" -> "Volatility 100 Index"
+                "R_10" -> "VOLATILITY INDEX 10"
+                "R_25" -> "VOLATILITY INDEX 25"
+                "R_50" -> "VOLATILITY INDEX 50"
+                "R_75" -> "VOLATILITY INDEX 75"
+                "R_100" -> "VOLATILITY INDEX 100"
                 else -> symbol
             }
-                        if (
-                !(platform == "ADMIN" &&
-                    currentProfile?.optString("role", "user")
-                        .equals("admin", ignoreCase = true))
-            ) {
-                val userRow = LinearLayout(this).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    setPadding(dp(8), dp(12), dp(8), dp(12))
-                    background = shape(panel, accent, 10, 1)
-                }
-
-                userRow.addView(
-                    label(dashboardIndexName, 12f, accent, true),
-                    LinearLayout.LayoutParams(0, -2, 1.5f)
-                )
-
-                val userPriceView = label(
-                    marketDataPrices[symbol]?.let {
-                        formatMarketPrice(it)
-                    } ?: "WAIT",
-                    12f,
-                    white,
-                    false
-                ).apply {
-                    gravity = Gravity.CENTER
-                    maxLines = 1
-                }
-
-                dashboardPriceViews[symbol] = userPriceView
-                userRow.addView(
-                    userPriceView,
-                    LinearLayout.LayoutParams(0, -2, 1f)
-                )
-
-                val userStatus = dashboardDecisionStatus(symbol)
-                val userStatusView = label(
-                    userStatus.first,
-                    10f,
-                    userStatus.second,
-                    true
-                ).apply {
-                    gravity = Gravity.END or Gravity.CENTER_VERTICAL
-                    maxLines = 2
-                }
-
-                dashboardStatusViews[symbol] = userStatusView
-                userRow.addView(
-                    userStatusView,
-                    LinearLayout.LayoutParams(0, -2, 1f)
-                )
-
-                monitorCard.addView(
-                    userRow,
-                    matchWrap().apply {
-                        bottomMargin = dp(6)
-                    }
-                )
-
-                return@forEach
-                        }
             val headingRow = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
@@ -1358,46 +1297,39 @@ private fun addHeader() {
             headingRow.addView(statusView, LinearLayout.LayoutParams(-2, -2))
             row.addView(headingRow, matchWrap())
 
-                        if (
-                platform == "ADMIN" &&
-                currentProfile?.optString("role", "user")
-                    .equals("admin", ignoreCase = true)
-            ) {
-                val price = marketDataPrices[symbol]
-                val priceView = label(
-                    price?.let { formatMarketPrice(it) } ?: "PRICE WAITING",
-                    14f,
-                    muted,
-                    false
-                ).apply {
-                    gravity = Gravity.CENTER
-                    maxLines = 1
-                    includeFontPadding = false
+            val price = marketDataPrices[symbol]
+            val priceView = label(
+                price?.let { formatMarketPrice(it) } ?: "PRICE WAITING",
+                14f,
+                muted,
+                false
+            ).apply {
+                gravity = Gravity.CENTER
+                maxLines = 1
+                includeFontPadding = false
+            }
+            dashboardPriceViews[symbol] = priceView
+            row.addView(
+                priceView,
+                LinearLayout.LayoutParams(-1, -2).apply {
+                    topMargin = dp(7)
                 }
-                dashboardPriceViews[symbol] = priceView
-                row.addView(
-                    priceView,
-                    LinearLayout.LayoutParams(-1, -2).apply {
-                        topMargin = dp(7)
-                    }
-                )
+            )
+            val analysisView = label(
+    "SUPPORT / RESISTANCE: WAITING\n" +
+    "LIQUIDITY: WAITING\n" +
+    "MARKET STRUCTURE: WAITING\n" +
+    "CHOCH: WAITING\n" +
+    "ORDER BLOCK: WAITING",
+    11f,
+    yellow,
+    false
+).apply {
+    setPadding(dp(4), dp(8), dp(4), dp(4))
+}
 
-                val analysisView = label(
-                    "SUPPORT / RESISTANCE: WAITING\n" +
-                    "LIQUIDITY: WAITING\n" +
-                    "MARKET STRUCTURE: WAITING\n" +
-                    "CHOCH: WAITING\n" +
-                    "ORDER BLOCK: WAITING",
-                    11f,
-                    yellow,
-                    false
-                ).apply {
-                    setPadding(dp(4), dp(8), dp(4), dp(4))
-                }
-
-                dashboardAnalysisViews[symbol] = analysisView
-                row.addView(analysisView, matchWrap())
-                        }
+dashboardAnalysisViews[symbol] = analysisView
+row.addView(analysisView, matchWrap())
 // =========================================================
 // ADMIN ONLY — SUPPORT AND RESISTANCE
 // =========================================================
@@ -1561,29 +1493,38 @@ if (
         }
     }
 }
-                        // ADMIN INDEX MONITOR — COLLAPSED BY DEFAULT
-            val expandIndicator = label("⌄", 18f, accent, true)
-            headingRow.addView(expandIndicator)
+            // Index monitor rows are display-only.
+            row.isClickable = false
+            row.isFocusable = false
+            // COLLAPSIBLE INDEX INDICATOR — COLLAPSED BY DEFAULT
+val expandIndicator = label("⌄", 18f, accent, true)
+headingRow.addView(expandIndicator)
 
-            for (i in 1 until row.childCount) {
-                row.getChildAt(i).visibility = View.GONE
-            }
+for (i in 1 until row.childCount) {
+    if (i != 2) {
+        row.getChildAt(i).visibility = View.GONE
+    }
+}
 
-            headingRow.isClickable = true
-            headingRow.isFocusable = true
+headingRow.setOnClickListener {
+    val isExpanded = priceView.visibility == View.VISIBLE
+    for (i in 1 until row.childCount) {
+        if (i != 2) {
+            row.getChildAt(i).visibility =
+                if (isExpanded) View.GONE else View.VISIBLE
+        }
+    }
 
-            headingRow.setOnClickListener {
-                val isExpanded =
-                    row.childCount > 1 &&
-                    row.getChildAt(1).visibility == View.VISIBLE
-
-                for (i in 1 until row.childCount) {
-                    row.getChildAt(i).visibility =
-                        if (isExpanded) View.GONE else View.VISIBLE
-                }
-
-                expandIndicator.text = if (isExpanded) "⌄" else "⌃"
-            }
+    expandIndicator.text = if (isExpanded) "⌄" else "⌃"
+}
+            monitorCard.addView(row, matchWrap().apply { bottomMargin = dp(6) })
+        }
+        page.addView(monitorCard, matchWrap().apply { bottomMargin = dp(12) })
+        if (connected && !marketDataRequested) {
+    marketDataRequested = true
+    derivApiClient.requestHistoricalCandles()
+        }
+    }
 
      // =========================================================
     // DERIV ACCOUNT CARD — VISUAL PLACEHOLDER ONLY
@@ -1832,7 +1773,7 @@ row.addView(
         val entryBarrierView = label(
             "Actual Deriv entry barrier: ${if (running.entryBarrier > 0.0) formatMarketPrice(running.entryBarrier) else "Waiting for Deriv"}",
             12f, white, true
-                ).apply { setPadding(0, dp(4), 0, 0) }
+        ).apply { setPadding(0, dp(4), 0, 0) }
 
         val potentialProfit = (running.potentialPayout - running.stake).coerceAtLeast(0.0)
         val potentialProfitView = label(
@@ -2729,6 +2670,7 @@ analysisLines.forEachIndexed { index, item ->
     val start = analysisText.length
     val line = "${item.first}: ${item.second}"
     analysisText.append(line)
+
     analysisText.setSpan(
         android.text.style.ForegroundColorSpan(item.third),
         start,
@@ -2778,7 +2720,6 @@ dashboardAnalysisViews[symbol]?.text = analysisText
         page.addView(label("ACCESS DENIED. ADMINISTRATORS ONLY.", 14f, red, false))
         return
     }
-
     page.addView(label("HISTORICAL WINDOW: ROLLING 30 DAYS", 13f, muted, false))
 
     marketDataIndexes.forEach { symbol ->
@@ -3897,7 +3838,7 @@ if (stake > 0.0) {
 
         if (partner != null) {
             val restoredPairId =
-            "restored_${accountId}_${executionMode}_$symbol"
+                "restored_${accountId}_${executionMode}_$symbol"
 
             restored.pairId = restoredPairId
             restored.pairSide = "RESTORED"
@@ -3909,7 +3850,7 @@ if (stake > 0.0) {
                 .putString(
                     "contract_pair_${accountId}_${executionMode}_$id",
                     restoredPairId
-                )
+                    )
                 .putString(
                     "contract_pair_${accountId}_${executionMode}_${partner.contractId}",
                     restoredPairId
