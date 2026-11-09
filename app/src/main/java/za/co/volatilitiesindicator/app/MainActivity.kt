@@ -1407,35 +1407,51 @@ if (
     currentProfile?.optString("role", "user")
         .equals("admin", ignoreCase = true)
 ) {
-    val candles = marketDataCandles[symbol].orEmpty()
 
-    val currentPrice = marketDataPrices[symbol]
+    val orderBlockCandles = marketDataCandles[symbol].orEmpty()
+    val orderBlocks = calculateOrderBlocks(orderBlockCandles)
 
-val supports = calculateSupportResistance(candles, true, currentPrice)
-val resistances = calculateSupportResistance(candles, false, currentPrice)
+    row.addView(
+        label("BULLISH ORDER BLOCKS", 12f, green, true)
+    )
 
-    row.addView(label("SUPPORT LEVELS", 12f, green, true))
-
-    supports.take(2).forEachIndexed { index, level ->
+    if (orderBlocks.bullish.isEmpty()) {
         row.addView(
-            label(
-                "S${index + 1}: ${formatMarketPrice(level.price)} | ${formatMarketTime(level.createdAt)}",
-                11f, green, false
-            )
+            label("No bullish order blocks found.", 11f, muted, false)
         )
+    } else {
+        orderBlocks.bullish.forEach { block ->
+            row.addView(
+                label(
+                    "BULLISH OB ${block.number} | ZONE: ${formatMarketPrice(block.low)} - ${formatMarketPrice(block.high)} | CREATED: ${formatMarketTime(block.createdAt)} | STATUS: ${if (block.valid) "VALID" else "INVALID"} | INVALIDATED: ${if (block.invalidatedAt > 0L) formatMarketTime(block.invalidatedAt) else "—"}",
+                    11f, green, false
+                )
+            )
+        }
     }
 
-    row.addView(label("RESISTANCE LEVELS", 12f, red, true))
+    row.addView(
+        label("BEARISH ORDER BLOCKS", 12f, red, true)
+    )
 
-    resistances.take(2).forEachIndexed { index, level ->
+    if (orderBlocks.bearish.isEmpty()) {
         row.addView(
-            label(
-                "R${index + 1}: ${formatMarketPrice(level.price)} | ${formatMarketTime(level.createdAt)}",
-                11f, red, false
-            )
+            label("No bearish order blocks found.", 11f, muted, false)
         )
+    } else {
+        orderBlocks.bearish.forEach { block ->
+            row.addView(
+                label(
+                    "BEARISH OB ${block.number} | ZONE: ${formatMarketPrice(block.low)} - ${formatMarketPrice(block.high)} | CREATED: ${formatMarketTime(block.createdAt)} | STATUS: ${if (block.valid) "VALID" else "INVALID"} | INVALIDATED: ${if (block.invalidatedAt > 0L) formatMarketTime(block.invalidatedAt) else "—"}",
+                    11f, red, false
+                )
+            )
+        }
     }
 }
+                                    // Index monitor rows are display-only.
+            row.isClickable = false
+            row.isFocusable = false
 // =========================================================
 // ADMIN ONLY — LIQUIDITY AND LIQUIDITY SWEEP
 // =========================================================
