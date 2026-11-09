@@ -293,8 +293,8 @@ private val consumedTouchQualifications = mutableMapOf<String, Long>()
     
     private val dailyCapitalTimeZone = java.util.TimeZone.getTimeZone("Africa/Johannesburg")
     private fun saDayKey(): String = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).apply { timeZone = dailyCapitalTimeZone }.format(java.util.Date())
-    private fun threeDayCycleCapital(): Double {
-    val key = "three_day_capital_${accountId}_$executionMode"
+    private fun dailyCycleCapital(): Double {
+    val key = "daily_capital_${accountId}_$executionMode"
     val timeKey = "${key}_start_time"
     val now = System.currentTimeMillis()
     val savedCapital = appPrefs.getFloat(key, 0f).toDouble()
@@ -303,7 +303,7 @@ private val consumedTouchQualifications = mutableMapOf<String, Long>()
     if (
         savedCapital <= 0.0 ||
         cycleStart <= 0L ||
-        now - cycleStart >= 259200000L
+        now - cycleStart >= 86400000L
     ) {
         if (accountBalance <= 0.0) return 0.0
 
@@ -314,10 +314,12 @@ private val consumedTouchQualifications = mutableMapOf<String, Long>()
 
         return accountBalance
     }
+
     return savedCapital
-    }
-    private fun threeDayTradeStake(): Double {
-    return threeDayCycleCapital() * 0.33
+}
+
+private fun dailyTradeStake(): Double {
+    return dailyCycleCapital() * 0.25
 }
 
     private var autoTradeEnabled: Boolean
@@ -368,7 +370,7 @@ private fun submitTouchProposal(
             .put("basis", "stake")
             .put("contract_type", "ONETOUCH")
             .put("currency", accountCurrency)
-            .put("duration", 3)
+            .put("duration", 1)
             .put("duration_unit", "d")
             .put("symbol", symbol)
             .put("barrier", signedBarrier)
