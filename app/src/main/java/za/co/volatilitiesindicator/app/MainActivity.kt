@@ -1692,6 +1692,46 @@ val accountCard = card().apply { orientation = LinearLayout.VERTICAL }
     accountCard.addView(label("Connection: ${if (connected) "CONNECTED" else "DISCONNECTED"}", 12f, if (connected) green else red, true))
     accountCard.addView(label("Account ID: ${accountId.ifBlank { "—" }}", 12f, muted, false))
     page.addView(accountCard, matchWrap().apply { bottomMargin = dp(10) })
+    val manualTradeCard = card().apply {
+    orientation = LinearLayout.VERTICAL
+}
+manualTradeCard.addView(label("TEMPORARY MANUAL TRADE", 15f, yellow, true))
+manualTradeCard.addView(label("Select index", 13f, white, false))
+
+val manualIndexSpinner = Spinner(this)
+val manualIndexAdapter = ArrayAdapter(
+    this,
+    android.R.layout.simple_spinner_item,
+    marketDataIndexes
+)
+manualIndexAdapter.setDropDownViewResource(
+    android.R.layout.simple_spinner_dropdown_item
+)
+manualIndexSpinner.adapter = manualIndexAdapter
+manualIndexSpinner.setSelection(
+    marketDataIndexes.indexOf(manualTradeSymbol).coerceAtLeast(0)
+)
+manualIndexSpinner.onItemSelectedListener =
+    object : android.widget.AdapterView.OnItemSelectedListener {
+        override fun onItemSelected(
+            parent: android.widget.AdapterView<*>?,
+            view: View?,
+            position: Int,
+            id: Long
+        ) {
+            manualTradeSymbol = marketDataIndexes[position]
+        }
+
+        override fun onNothingSelected(
+            parent: android.widget.AdapterView<*>?
+        ) {}
+    }
+
+manualTradeCard.addView(manualIndexSpinner, matchWrap())
+page.addView(
+    manualTradeCard,
+    matchWrap().apply { bottomMargin = dp(10) }
+)
     page.addView(sectionTitle("RUNNING TRADES"))
     val runningCard = card().apply { orientation = LinearLayout.VERTICAL }
     val portfolioArray = openTradesResponse?.optJSONObject("portfolio")?.optJSONArray("contracts")
