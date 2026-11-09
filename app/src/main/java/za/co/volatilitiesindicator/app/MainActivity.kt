@@ -3643,6 +3643,10 @@ derivApiClient.connectWithAccessToken(token, executionMode)
             if (isTouchExecutionReady(symbol)) {
     val decision = masterEngineDecisions[symbol] ?: return@runOnUiThread
     val latest = marketDataCandles[symbol]?.lastOrNull() ?: return@runOnUiThread
+
+    val barrier = quote * 0.05
+    submitTouchProposal(symbol, decision.direction, barrier)
+    consumedTouchQualifications[symbol] = latest.epoch
             }
 val engineQualified =
     masterEngineDecisions[symbol]?.qualified == true
