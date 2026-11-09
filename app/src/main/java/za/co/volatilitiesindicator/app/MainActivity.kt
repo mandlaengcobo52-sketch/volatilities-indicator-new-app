@@ -3761,6 +3761,58 @@ if (!sent) {
 }
 
 return@runOnUiThread
+                }
+"buy" -> {
+    val requestId = json.optInt("req_id", 0)
+
+    val entry = pendingTouchOrders.entries.firstOrNull {
+        it.value.buyRequestId == requestId
+    } ?: return@runOnUiThread
+
+    val order = entry.value
+    val buy = json.optJSONObject("buy")
+
+    if (buy == null) {
+        pendingTouchOrders.remove(entry.key)
+        pendingTouchBySymbol.remove(order.symbol)
+        touchExecutionLocks.remove(order.symbol)
+        return@runOnUiThread
+    }
+
+    val contractId = buy.optLong("contract_id", 0L)
+
+    if (contractId <= 0L) {
+        pendingTouchOrders.remove(entry.key)
+        pendingTouchBySymbol.remove(order.symbol)
+        touchExecutionLocks.remove(order.symbol)
+        return@runOnUiThread
+    }
+
+    runningContracts[contractId] = RunningContract(
+        contractId = contractId,
+        symbol = order.symbol,
+        direction = order.direction,
+        stake = order.stake,
+        target = order.target,
+        targetProbability = 0.0,
+        mode = order.mode,
+        potentialPayout = order.stake * 1.30
+    )
+
+    notifyEvent(
+        "TOUCH executed",
+        "${order.symbol} · Contract $contractId opened.",
+        "touch_executed_$contractId"
+    )
+
+    pendingTouchOrders.remove(entry.key)
+    pendingTouchBySymbol.remove(order.symbol)
+
+    android.util.Log.i(
+        "TradeExecution",
+        "${order.symbol} contract opened: $contractId"
+    )
+}
             "contracts_for" -> {
     val symbol = json.optJSONObject("echo_req")
         ?.optString("contracts_for", "")
