@@ -3742,48 +3742,25 @@ if (payout < order.stake * 1.30) {
     return@runOnUiThread
 }
 
-val entry = pendingTouchOrders.entries.firstOrNull {
-    it.value.buyRequestId == requestId
-} ?: return@runOnUiThread
-val buy = json.optJSONObject("buy")
+order.proposalId = proposalId
 
-if (buy == null) {
-    pendingTouchOrders.remove(entry.key)
+val buyRequestId = nextTradeRequestId()
+order.buyRequestId = buyRequestId
+
+val sent = derivApiClient.send(
+    JSONObject()
+        .put("buy", proposalId)
+        .put("price", askPrice)
+        .put("req_id", buyRequestId)
+)
+
+if (!sent) {
+    pendingTouchOrders.remove(requestId)
     pendingTouchBySymbol.remove(order.symbol)
     touchExecutionLocks.remove(order.symbol)
-    return@runOnUiThread
 }
-    val contractId = buy.optLong("contract_id", 0L)
 
-    if (contractId <= 0L) {
-        pendingTouchOrders.remove(entry.key)
-        pendingTouchBySymbol.remove(order.symbol)
-        touchExecutionLocks.remove(order.symbol)
-        return@runOnUiThread
-    }
-    runningContracts[contractId] = RunningContract(
-    contractId = contractId,
-    symbol = order.symbol,
-    direction = order.direction,
-    stake = order.stake,
-    target = order.target,
-    targetProbability = 0.0,
-    mode = order.mode,
-    potentialPayout = order.stake * 1.30
-)
-notifyEvent(
-    "TOUCH executed",
-    "${order.symbol} · Contract $contractId opened.",
-    "touch_executed_$contractId"
-)
-    pendingTouchOrders.remove(entry.key)
-    pendingTouchBySymbol.remove(order.symbol)
-
-    android.util.Log.i(
-        "TradeExecution",
-        "${order.symbol} contract opened: $contractId"
-    )
-            }
+return@runOnUiThread
             "contracts_for" -> {
     val symbol = json.optJSONObject("echo_req")
         ?.optString("contracts_for", "")
