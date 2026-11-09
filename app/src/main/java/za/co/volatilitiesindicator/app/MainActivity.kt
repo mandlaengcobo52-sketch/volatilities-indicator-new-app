@@ -3788,8 +3788,15 @@ dashboardQualifiedCountView?.text = "QUALIFIED $qualifiedCount/5"
     val latest = marketDataCandles[symbol]?.lastOrNull() ?: return@runOnUiThread
 
     val barrier = quote * 0.05
-    submitTouchProposal(symbol, decision.direction, barrier)
+    val submitted = submitTouchProposal(
+    symbol,
+    decision.direction,
+    barrier
+)
+
+if (submitted) {
     consumedTouchQualifications[symbol] = latest.epoch
+}
             }
 val engineQualified =
     masterEngineDecisions[symbol]?.qualified == true
