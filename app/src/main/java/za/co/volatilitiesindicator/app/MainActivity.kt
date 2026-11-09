@@ -1562,18 +1562,29 @@ if (
         }
     }
 }
-            // Index monitor rows are display-only.
-            row.isClickable = false
-            row.isFocusable = false
-            
-            monitorCard.addView(row, matchWrap().apply { bottomMargin = dp(6) })
-        }
-        page.addView(monitorCard, matchWrap().apply { bottomMargin = dp(12) })
-        if (connected && !marketDataRequested) {
-    marketDataRequested = true
-    derivApiClient.requestHistoricalCandles()
-        }
-    }
+                        // ADMIN INDEX MONITOR — COLLAPSED BY DEFAULT
+            val expandIndicator = label("⌄", 18f, accent, true)
+            headingRow.addView(expandIndicator)
+
+            for (i in 1 until row.childCount) {
+                row.getChildAt(i).visibility = View.GONE
+            }
+
+            headingRow.isClickable = true
+            headingRow.isFocusable = true
+
+            headingRow.setOnClickListener {
+                val isExpanded =
+                    row.childCount > 1 &&
+                    row.getChildAt(1).visibility == View.VISIBLE
+
+                for (i in 1 until row.childCount) {
+                    row.getChildAt(i).visibility =
+                        if (isExpanded) View.GONE else View.VISIBLE
+                }
+
+                expandIndicator.text = if (isExpanded) "⌄" else "⌃"
+            }
 
      // =========================================================
     // DERIV ACCOUNT CARD — VISUAL PLACEHOLDER ONLY
