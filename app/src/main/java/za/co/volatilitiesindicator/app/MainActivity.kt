@@ -1504,28 +1504,7 @@ if (
             // Index monitor rows are display-only.
             row.isClickable = false
             row.isFocusable = false
-            // COLLAPSIBLE INDEX INDICATOR — COLLAPSED BY DEFAULT
-val expandIndicator = label("⌄", 18f, accent, true)
-headingRow.addView(expandIndicator)
-
-for (i in 1 until row.childCount) {
-    if (i != 2) {
-        row.getChildAt(i).visibility = View.GONE
-    }
-}
-
-headingRow.setOnClickListener {
-    val isExpanded = priceView.visibility == View.VISIBLE
-
-    for (i in 1 until row.childCount) {
-        if (i != 2) {
-            row.getChildAt(i).visibility =
-                if (isExpanded) View.GONE else View.VISIBLE
-        }
-    }
-
-    expandIndicator.text = if (isExpanded) "⌄" else "⌃"
-}
+            
             monitorCard.addView(row, matchWrap().apply { bottomMargin = dp(6) })
         }
         page.addView(monitorCard, matchWrap().apply { bottomMargin = dp(12) })
