@@ -333,15 +333,15 @@ private fun submitTouchProposal(
     direction: String,
     barrier: Double,
     manual: Boolean = false
-) {
-    if (!connected || (!manual && !autoTradeEnabled)) return
-    if (direction != "BUY" && direction != "SELL") return
-    if (!touchExecutionLocks.add(symbol)) return
+): Boolean {
+    if (!connected || (!manual && !autoTradeEnabled)) return false
+if (direction != "BUY" && direction != "SELL") return false
+if (!touchExecutionLocks.add(symbol)) return false
 
     val stake = kotlin.math.round(dailyTradeStake() * 100.0) / 100.0
     if (stake <= 0.0 || accountCurrency.isBlank()) {
         touchExecutionLocks.remove(symbol)
-        return
+        return false
     }
 
     val requestId = nextTradeRequestId()
@@ -389,6 +389,7 @@ val signedBarrier = if (direction == "BUY") {
         pendingTouchBySymbol.remove(symbol)
         touchExecutionLocks.remove(symbol)
     }
+    return sent
 }
     private fun requestTouchAvailability(symbol: String) {
     if (!connected) return
@@ -447,6 +448,14 @@ private fun durationToSeconds(value: String): Long {
 }
 private fun isTouchExecutionReady(symbol: String): Boolean {
     if (!connected) return false
+    if (!autoTradeEnabled) return false
+    if (accountId.isBlank()) return false
+if (accountBalance <= 0.0) return false
+
+if (!portfolioLoadedForAccount) {
+    requestOpenTradesIfNeeded()
+    return false
+}
     if (!autoTradeEnabled) return false
     if (symbol !in marketDataIndexes) return false
     if (touchAvailabilityPending.contains(symbol)) return false
