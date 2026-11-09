@@ -1477,36 +1477,36 @@ if (bearishLiquidity.isEmpty()) {
 // =========================================================
 // ADMIN ONLY — MARKET STRUCTURE AND CHOCH DISPLAY
 // =========================================================
+if (
+    platform == "ADMIN" &&
+    currentProfile?.optString("role", "user")
+        .equals("admin", ignoreCase = true)
+) {
+    val candles = marketDataCandles[symbol].orEmpty()
 
-row.addView(label("ANALYSIS - MARKET STRUCTURE AND CHOCH", 13f, green, true))
-val structureCandles = marketDataCandles[symbol].orEmpty()
-val structureAnalysis = calculateMarketStructure(structureCandles)
+    val currentPrice = marketDataPrices[symbol]
 
-row.addView(label("MARKET STRUCTURE", 12f, green, true))
+val supports = calculateSupportResistance(candles, true, currentPrice)
+val resistances = calculateSupportResistance(candles, false, currentPrice)
 
-if (structureAnalysis.structures.isEmpty()) {
-    row.addView(label("No confirmed market structure available.", 11f, muted, false))
-} else {
-    structureAnalysis.structures.forEach { event ->
+    row.addView(label("SUPPORT LEVELS", 12f, green, true))
+
+    supports.take(2).forEachIndexed { index, level ->
         row.addView(
             label(
-                "${event.number}. ${event.direction} | PRICE: ${formatMarketPrice(event.price)} | CREATED: ${formatMarketTime(event.startedAt)}",
-                11f, white, false
+                "S${index + 1}: ${formatMarketPrice(level.price)} | ${formatMarketTime(level.createdAt)}",
+                11f, green, false
             )
         )
     }
-}
 
-row.addView(label("CHANGE OF CHARACTER (CHOCH)", 12f, yellow, true))
+    row.addView(label("RESISTANCE LEVELS", 12f, red, true))
 
-if (structureAnalysis.chochs.isEmpty()) {
-    row.addView(label("No confirmed CHOCH available.", 11f, muted, false))
-} else {
-    structureAnalysis.chochs.forEach { event ->
+    resistances.take(2).forEachIndexed { index, level ->
         row.addView(
             label(
-                "${event.number}. ${event.direction} | PRICE: ${formatMarketPrice(event.price)} | CONFIRMED: ${formatMarketTime(event.changedAt)}",
-                11f, yellow, false
+                "R${index + 1}: ${formatMarketPrice(level.price)} | ${formatMarketTime(level.createdAt)}",
+                11f, red, false
             )
         )
     }
