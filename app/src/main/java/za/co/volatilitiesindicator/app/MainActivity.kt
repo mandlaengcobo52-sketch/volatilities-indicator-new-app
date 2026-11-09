@@ -629,7 +629,6 @@ if (savedToken.isNotBlank()) {
         )
         setContentView(outer)
         addHeader()
-
         if (drawerOpen) {
             addDrawer()
         }
@@ -1233,7 +1232,7 @@ private fun addHeader() {
         beginDerivConnection()
     },
     weighted()
-)
+    )
         row.addView(space(dp(8)))
 
         row.addView(
@@ -1407,51 +1406,35 @@ if (
     currentProfile?.optString("role", "user")
         .equals("admin", ignoreCase = true)
 ) {
+    val candles = marketDataCandles[symbol].orEmpty()
 
-    val orderBlockCandles = marketDataCandles[symbol].orEmpty()
-    val orderBlocks = calculateOrderBlocks(orderBlockCandles)
+    val currentPrice = marketDataPrices[symbol]
 
-    row.addView(
-        label("BULLISH ORDER BLOCKS", 12f, green, true)
-    )
+val supports = calculateSupportResistance(candles, true, currentPrice)
+val resistances = calculateSupportResistance(candles, false, currentPrice)
 
-    if (orderBlocks.bullish.isEmpty()) {
+    row.addView(label("SUPPORT LEVELS", 12f, green, true))
+
+    supports.take(2).forEachIndexed { index, level ->
         row.addView(
-            label("No bullish order blocks found.", 11f, muted, false)
-        )
-    } else {
-        orderBlocks.bullish.forEach { block ->
-            row.addView(
-                label(
-                    "BULLISH OB ${block.number} | ZONE: ${formatMarketPrice(block.low)} - ${formatMarketPrice(block.high)} | CREATED: ${formatMarketTime(block.createdAt)} | STATUS: ${if (block.valid) "VALID" else "INVALID"} | INVALIDATED: ${if (block.invalidatedAt > 0L) formatMarketTime(block.invalidatedAt) else "—"}",
-                    11f, green, false
-                )
+            label(
+                "S${index + 1}: ${formatMarketPrice(level.price)} | ${formatMarketTime(level.createdAt)}",
+                11f, green, false
             )
-        }
+        )
     }
 
-    row.addView(
-        label("BEARISH ORDER BLOCKS", 12f, red, true)
-    )
+    row.addView(label("RESISTANCE LEVELS", 12f, red, true))
 
-    if (orderBlocks.bearish.isEmpty()) {
+    resistances.take(2).forEachIndexed { index, level ->
         row.addView(
-            label("No bearish order blocks found.", 11f, muted, false)
-        )
-    } else {
-        orderBlocks.bearish.forEach { block ->
-            row.addView(
-                label(
-                    "BEARISH OB ${block.number} | ZONE: ${formatMarketPrice(block.low)} - ${formatMarketPrice(block.high)} | CREATED: ${formatMarketTime(block.createdAt)} | STATUS: ${if (block.valid) "VALID" else "INVALID"} | INVALIDATED: ${if (block.invalidatedAt > 0L) formatMarketTime(block.invalidatedAt) else "—"}",
-                    11f, red, false
-                )
+            label(
+                "R${index + 1}: ${formatMarketPrice(level.price)} | ${formatMarketTime(level.createdAt)}",
+                11f, red, false
             )
-        }
+        )
     }
 }
-                                    // Index monitor rows are display-only.
-            row.isClickable = false
-            row.isFocusable = false
 // =========================================================
 // ADMIN ONLY — LIQUIDITY AND LIQUIDITY SWEEP
 // =========================================================
@@ -1493,36 +1476,36 @@ if (bearishLiquidity.isEmpty()) {
 // =========================================================
 // ADMIN ONLY — MARKET STRUCTURE AND CHOCH DISPLAY
 // =========================================================
-if (
-    platform == "ADMIN" &&
-    currentProfile?.optString("role", "user")
-        .equals("admin", ignoreCase = true)
-) {
-    val candles = marketDataCandles[symbol].orEmpty()
 
-    val currentPrice = marketDataPrices[symbol]
+row.addView(label("ANALYSIS - MARKET STRUCTURE AND CHOCH", 13f, green, true))
+val structureCandles = marketDataCandles[symbol].orEmpty()
+val structureAnalysis = calculateMarketStructure(structureCandles)
 
-val supports = calculateSupportResistance(candles, true, currentPrice)
-val resistances = calculateSupportResistance(candles, false, currentPrice)
+row.addView(label("MARKET STRUCTURE", 12f, green, true))
 
-    row.addView(label("SUPPORT LEVELS", 12f, green, true))
-
-    supports.take(2).forEachIndexed { index, level ->
+if (structureAnalysis.structures.isEmpty()) {
+    row.addView(label("No confirmed market structure available.", 11f, muted, false))
+} else {
+    structureAnalysis.structures.forEach { event ->
         row.addView(
             label(
-                "S${index + 1}: ${formatMarketPrice(level.price)} | ${formatMarketTime(level.createdAt)}",
-                11f, green, false
+                "${event.number}. ${event.direction} | PRICE: ${formatMarketPrice(event.price)} | CREATED: ${formatMarketTime(event.startedAt)}",
+                11f, white, false
             )
         )
     }
+}
 
-    row.addView(label("RESISTANCE LEVELS", 12f, red, true))
+row.addView(label("CHANGE OF CHARACTER (CHOCH)", 12f, yellow, true))
 
-    resistances.take(2).forEachIndexed { index, level ->
+if (structureAnalysis.chochs.isEmpty()) {
+    row.addView(label("No confirmed CHOCH available.", 11f, muted, false))
+} else {
+    structureAnalysis.chochs.forEach { event ->
         row.addView(
             label(
-                "R${index + 1}: ${formatMarketPrice(level.price)} | ${formatMarketTime(level.createdAt)}",
-                11f, red, false
+                "${event.number}. ${event.direction} | PRICE: ${formatMarketPrice(event.price)} | CONFIRMED: ${formatMarketTime(event.changedAt)}",
+                11f, yellow, false
             )
         )
     }
@@ -1578,9 +1561,29 @@ if (
         }
     }
 }
-                                    // Index monitor rows are display-only.
-            row.isClickable = false
-            row.isFocusable = false
+                        // ADMIN INDEX MONITOR — COLLAPSED BY DEFAULT
+            val expandIndicator = label("⌄", 18f, accent, true)
+            headingRow.addView(expandIndicator)
+
+            for (i in 1 until row.childCount) {
+                row.getChildAt(i).visibility = View.GONE
+            }
+
+            headingRow.isClickable = true
+            headingRow.isFocusable = true
+
+            headingRow.setOnClickListener {
+                val isExpanded =
+                    row.childCount > 1 &&
+                    row.getChildAt(1).visibility == View.VISIBLE
+
+                for (i in 1 until row.childCount) {
+                    row.getChildAt(i).visibility =
+                        if (isExpanded) View.GONE else View.VISIBLE
+                }
+
+                expandIndicator.text = if (isExpanded) "⌄" else "⌃"
+            }
 
      // =========================================================
     // DERIV ACCOUNT CARD — VISUAL PLACEHOLDER ONLY
@@ -1829,7 +1832,7 @@ row.addView(
         val entryBarrierView = label(
             "Actual Deriv entry barrier: ${if (running.entryBarrier > 0.0) formatMarketPrice(running.entryBarrier) else "Waiting for Deriv"}",
             12f, white, true
-        ).apply { setPadding(0, dp(4), 0, 0) }
+                ).apply { setPadding(0, dp(4), 0, 0) }
 
         val potentialProfit = (running.potentialPayout - running.stake).coerceAtLeast(0.0)
         val potentialProfitView = label(
@@ -2726,7 +2729,6 @@ analysisLines.forEachIndexed { index, item ->
     val start = analysisText.length
     val line = "${item.first}: ${item.second}"
     analysisText.append(line)
-
     analysisText.setSpan(
         android.text.style.ForegroundColorSpan(item.third),
         start,
@@ -3895,7 +3897,7 @@ if (stake > 0.0) {
 
         if (partner != null) {
             val restoredPairId =
-                "restored_${accountId}_${executionMode}_$symbol"
+            "restored_${accountId}_${executionMode}_$symbol"
 
             restored.pairId = restoredPairId
             restored.pairSide = "RESTORED"
@@ -4088,4 +4090,3 @@ override fun onDestroy() {
     super.onDestroy()
 }
                             }
-                            
