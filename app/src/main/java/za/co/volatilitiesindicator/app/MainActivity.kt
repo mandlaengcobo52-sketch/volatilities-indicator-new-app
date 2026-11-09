@@ -267,17 +267,17 @@ private fun startAndBindDerivService() {
         val ptpe: TextView
     )
 
-    private val contractLiveViews = mutableMapOf<Long, ContractLiveViews>()
-    private val runningContracts = mutableMapOf<Long, RunningContract>()
     private data class PendingTouchOrder(
     val symbol: String,
     val direction: String,
     val stake: Double,
     val target: Double,
     val mode: String,
-    val proposalRequestId: Int,
+    var proposalRequestId: Int,
     var proposalId: String = "",
-    var buyRequestId: Int = 0
+    var buyRequestId: Int = 0,
+    var barrierOffset: Double = 0.0001,
+    var proposalAttempts: Int = 0
 )
 
 private val pendingTouchOrders = mutableMapOf<Int, PendingTouchOrder>()
@@ -341,13 +341,14 @@ private fun submitTouchProposal(
     val requestId = nextTradeRequestId()
 
     val order = PendingTouchOrder(
-        symbol = symbol,
-        direction = direction,
-        stake = stake,
-        target = stake * 0.30,
-        mode = executionMode,
-        proposalRequestId = requestId
-    )
+    symbol = symbol,
+    direction = direction,
+    stake = stake,
+    target = stake * 0.30,
+    mode = executionMode,
+    proposalRequestId = requestId,
+    barrierOffset = kotlin.math.abs(barrier)
+)
 
     pendingTouchOrders[requestId] = order
     pendingTouchBySymbol[symbol] = requestId
