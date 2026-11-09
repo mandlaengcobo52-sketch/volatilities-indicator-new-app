@@ -373,7 +373,7 @@ private fun submitTouchProposal(
             .put("currency", accountCurrency)
             .put("duration", 1)
             .put("duration_unit", "d")
-            .put("symbol", symbol)
+            .put("underlying_symbol", symbol)
             .put("barrier", signedBarrier)
             .put("req_id", requestId)
     )
