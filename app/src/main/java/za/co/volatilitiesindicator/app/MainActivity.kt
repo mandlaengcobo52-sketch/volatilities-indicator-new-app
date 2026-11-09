@@ -331,9 +331,10 @@ private val touchContractsBySymbol =
 private fun submitTouchProposal(
     symbol: String,
     direction: String,
-    barrier: Double
+    barrier: Double,
+    manual: Boolean = false
 ) {
-    if (!connected || !autoTradeEnabled) return
+    if (!connected || (!manual && !autoTradeEnabled)) return
     if (direction != "BUY" && direction != "SELL") return
     if (!touchExecutionLocks.add(symbol)) return
 
@@ -493,6 +494,7 @@ private val dashboardPriceViews = mutableMapOf<String, TextView>()
 private val currentPriceViews = mutableMapOf<String, MutableList<TextView>>()
 private val dashboardStatusViews = mutableMapOf<String, TextView>()
 private var dashboardQualifiedCountView: TextView? = null
+private var manualTradeSymbol = "R_10"
 private val dashboardAnalysisViews =
     mutableMapOf<String, TextView>()
 private val marketDataErrors =
