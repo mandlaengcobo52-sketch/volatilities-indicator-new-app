@@ -3054,6 +3054,7 @@ dashboardAnalysisViews[symbol]?.text = analysisText
         }
     }
     private fun addNotificationsScreen() {
+        appPrefs.edit().putBoolean("has_unread_notifications", false).apply()
                 clearTradeNotificationBadges()
         page.addView(sectionTitle("NOTIFICATIONS"))
         val card = card().apply { orientation = LinearLayout.VERTICAL }
@@ -3112,6 +3113,7 @@ dashboardAnalysisViews[symbol]?.text = analysisText
       val current = appPrefs.getString("notification_feed", "").orEmpty().lines().filter { it.isNotBlank() }.toMutableList()
         current.add(0, entry)
         appPrefs.edit().putString("notification_feed", current.take(50).joinToString("\n")).apply()
+        appPrefs.edit().putBoolean("has_unread_notifications", true).apply()
     }
     private fun ensureNotificationPermission() {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
@@ -3288,7 +3290,12 @@ val channelId = "vi_trade_events_${vibrationCount}_pulse_v3"
                 }
             }
             item.addView(
-                label(icon, 23f, if (selected) green else yellow, true).apply {
+                label(
+    if (name == "Notifications" && appPrefs.getBoolean("has_unread_notifications", false)) "🔔 🔴" else icon,
+    23f,
+    if (selected) green else yellow,
+    true
+).apply {
                     gravity = Gravity.CENTER
                 }
             )
