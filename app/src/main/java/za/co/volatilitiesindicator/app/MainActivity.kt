@@ -1584,7 +1584,6 @@ if (
                 }
 
                 expandIndicator.text = if (isExpanded) "⌄" else "⌃"
-            }
 
      // =========================================================
     // DERIV ACCOUNT CARD — VISUAL PLACEHOLDER ONLY
