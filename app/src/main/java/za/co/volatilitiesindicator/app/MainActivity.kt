@@ -275,7 +275,7 @@ private fun startAndBindDerivService() {
     val stake: Double,
     val target: Double,
     val mode: String,
-    val proposalRequestId: Int,
+    var proposalRequestId: Int,
     var proposalId: String = "",
     var buyRequestId: Int = 0
 )
@@ -342,14 +342,13 @@ private fun submitTouchProposal(
     val requestId = nextTradeRequestId()
 
     val order = PendingTouchOrder(
-    symbol = symbol,
-    direction = direction,
-    stake = stake,
-    target = stake * 0.30,
-    mode = executionMode,
-    proposalRequestId = requestId,
-    barrierOffset = kotlin.math.abs(barrier)
-)
+        symbol = symbol,
+        direction = direction,
+        stake = stake,
+        target = stake * 0.30,
+        mode = executionMode,
+        proposalRequestId = requestId
+    )
     pendingTouchOrders[requestId] = order
     pendingTouchBySymbol[symbol] = requestId
 
