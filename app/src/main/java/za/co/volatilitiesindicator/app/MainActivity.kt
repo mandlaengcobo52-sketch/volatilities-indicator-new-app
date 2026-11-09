@@ -1277,13 +1277,6 @@ monitorHeader.addView(
     LinearLayout.LayoutParams(0, -2, 1f)
 )
 
-val qualifiedCountView = label(
-    "QUALIFIED 0/5",
-    13f,
-    yellow,
-    true
-)
-
 monitorHeader.addView(qualifiedCountView, matchWrap())
 page.addView(monitorHeader, matchWrap())
         val monitorCard = card().apply {
