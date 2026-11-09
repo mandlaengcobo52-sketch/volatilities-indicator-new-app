@@ -2488,8 +2488,6 @@ private fun calculateSupportResistance(
             )
         )
     }
-    val sevenDaysAgo =
-    System.currentTimeMillis() / 1000L - (7L * 24L * 60L * 60L)
 
 val recentLevels = results.filter {
     it.createdAt >= sevenDaysAgo
