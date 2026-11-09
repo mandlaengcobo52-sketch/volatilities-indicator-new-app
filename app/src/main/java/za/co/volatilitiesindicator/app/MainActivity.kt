@@ -3737,7 +3737,21 @@ if (payout < order.stake * 1.30) {
 
     return@runOnUiThread
 }
+val requestId = json.optInt("req_id", 0)
 
+val entry = pendingTouchOrders.entries.firstOrNull {
+    it.value.buyRequestId == requestId
+} ?: return@runOnUiThread
+
+val order = entry.value
+val buy = json.optJSONObject("buy")
+
+if (buy == null) {
+    pendingTouchOrders.remove(entry.key)
+    pendingTouchBySymbol.remove(order.symbol)
+    touchExecutionLocks.remove(order.symbol)
+    return@runOnUiThread
+}
     val contractId = buy.optLong("contract_id", 0L)
 
     if (contractId <= 0L) {
