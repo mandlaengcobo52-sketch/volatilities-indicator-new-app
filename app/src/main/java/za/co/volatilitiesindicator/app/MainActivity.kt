@@ -3728,7 +3728,7 @@ if (payout < order.stake * 1.30) {
             .put("basis", "stake")
             .put("contract_type", "ONETOUCH")
             .put("currency", accountCurrency)
-            .put("duration", 3)
+            .put("duration", 1)
             .put("duration_unit", "d")
             .put("symbol", order.symbol)
             .put("barrier", signedBarrier)
