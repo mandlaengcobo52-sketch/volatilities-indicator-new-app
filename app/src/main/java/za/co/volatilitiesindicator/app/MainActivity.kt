@@ -3737,13 +3737,10 @@ if (payout < order.stake * 1.30) {
 
     return@runOnUiThread
 }
-val requestId = json.optInt("req_id", 0)
 
 val entry = pendingTouchOrders.entries.firstOrNull {
     it.value.buyRequestId == requestId
 } ?: return@runOnUiThread
-
-val order = entry.value
 val buy = json.optJSONObject("buy")
 
 if (buy == null) {
