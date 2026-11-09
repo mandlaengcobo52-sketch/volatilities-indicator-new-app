@@ -1276,8 +1276,6 @@ monitorHeader.addView(
     label("● MONITORING", 13f, green, true),
     LinearLayout.LayoutParams(0, -2, 1f)
 )
-
-monitorHeader.addView(qualifiedCountView, matchWrap())
 page.addView(monitorHeader, matchWrap())
         val monitorCard = card().apply {
             orientation = LinearLayout.VERTICAL
