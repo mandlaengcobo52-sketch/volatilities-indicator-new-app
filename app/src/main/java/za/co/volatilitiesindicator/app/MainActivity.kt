@@ -277,7 +277,9 @@ private fun startAndBindDerivService() {
     val mode: String,
     var proposalRequestId: Int,
     var proposalId: String = "",
-    var buyRequestId: Int = 0
+    var buyRequestId: Int = 0,
+    var barrierOffset: Double = 0.0,
+    var proposalAttempts: Int = 0
 )
     
 
