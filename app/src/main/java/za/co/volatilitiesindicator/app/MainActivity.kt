@@ -338,7 +338,7 @@ private fun submitTouchProposal(
     if (direction != "BUY" && direction != "SELL") return
     if (!touchExecutionLocks.add(symbol)) return
 
-    val stake = dailyTradeStake()
+    val stake = kotlin.math.round(dailyTradeStake() * 100.0) / 100.0
     if (stake <= 0.0 || accountCurrency.isBlank()) {
         touchExecutionLocks.remove(symbol)
         return
