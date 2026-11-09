@@ -45,17 +45,18 @@ import android.os.IBinder
 /** Volatilities Indicator Android app. */
 class MainActivity : Activity(), DerivApiClient.Callback {
 
-    private val bg = Color.rgb(3, 8, 6)
-    private val panel = Color.rgb(8, 20, 18)
-    private val panel2 = Color.rgb(16, 34, 39)
-    private val green = Color.rgb(0, 255, 92)
-    private val greenDark = Color.rgb(0, 120, 48)
-    private val white = Color.rgb(255, 220, 45)
-    private val muted = Color.rgb(242, 248, 245)
-    private val yellow = Color.rgb(255, 220, 45)
-    private val red = Color.rgb(255, 65, 75)
-    private val cyan = Color.rgb(0, 225, 235)
-    private val blue = Color.rgb(70, 155, 255)
+    // Premium visual system: midnight navy, deep teal, champagne gold and clear status colours.
+    private val bg = Color.rgb(8, 15, 29)
+    private val panel = Color.rgb(17, 29, 49)
+    private val panel2 = Color.rgb(25, 42, 66)
+    private val green = Color.rgb(48, 214, 164)
+    private val greenDark = Color.rgb(21, 126, 112)
+    private val white = Color.rgb(245, 248, 255)
+    private val muted = Color.rgb(164, 180, 202)
+    private val yellow = Color.rgb(244, 195, 92)
+    private val red = Color.rgb(255, 105, 119)
+    private val cyan = Color.rgb(91, 213, 226)
+    private val blue = Color.rgb(104, 164, 255)
 
     private val appPrefs by lazy {
     getSharedPreferences("volatilities_app_settings", MODE_PRIVATE)
@@ -303,7 +304,7 @@ private val consumedTouchQualifications = mutableMapOf<String, Long>()
     if (
         savedCapital <= 0.0 ||
         cycleStart <= 0L ||
-        now - cycleStart >= 259200000L
+        now - cycleStart >= 86400000L
     ) {
         if (accountBalance <= 0.0) return 0.0
 
@@ -318,7 +319,7 @@ private val consumedTouchQualifications = mutableMapOf<String, Long>()
 }
 
 private fun dailyTradeStake(): Double {
-    return dailyCycleCapital() * 0.33
+    return dailyCycleCapital() * 0.25
 }
 
     private var autoTradeEnabled: Boolean
@@ -376,7 +377,7 @@ val signedBarrier = if (direction == "BUY") {
             .put("basis", "stake")
             .put("contract_type", "ONETOUCH")
             .put("currency", accountCurrency)
-            .put("duration", 3)
+            .put("duration", 1)
             .put("duration_unit", "d")
             .put("underlying_symbol", symbol)
             .put("barrier", signedBarrier)
@@ -423,8 +424,8 @@ val signedBarrier = if (direction == "BUY") {
         val minSeconds = durationToSeconds(minDuration)
         val maxSeconds = durationToSeconds(maxDuration)
 
-        if (minSeconds > 0L && minSeconds <= 259200L &&
-    maxSeconds >= 259200L
+        if (minSeconds > 0L && minSeconds <= 86400L &&
+    maxSeconds >= 86400L
 ) {
             return true
         }
@@ -599,7 +600,6 @@ if (savedToken.isNotBlank()) {
         profileRefreshHandler.removeCallbacks(profileRefreshRunnable)
         super.onPause()
     }
-
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         if (intent != null) {
@@ -1125,7 +1125,19 @@ private fun addHeader() {
             LinearLayout.LayoutParams(dp(42), dp(52))
         )
 
+        row.setPadding(dp(12), dp(8), dp(8), dp(8))
+        row.background = GradientDrawable(
+            GradientDrawable.Orientation.LEFT_RIGHT,
+            intArrayOf(Color.rgb(22, 48, 72), Color.rgb(18, 70, 77), Color.rgb(33, 47, 76))
+        ).apply { cornerRadius = dp(18).toFloat() }
+        row.elevation = dp(5).toFloat()
         page.addView(row)
+        page.addView(View(this).apply {
+            setBackgroundColor(Color.rgb(48, 214, 164))
+        }, LinearLayout.LayoutParams(dp(42), dp(3)).apply {
+            topMargin = dp(8)
+            bottomMargin = dp(5)
+        })
     }
 
     // =========================================================
@@ -1498,7 +1510,6 @@ if (
     row.addView(
         label("BULLISH ORDER BLOCKS", 12f, green, true)
     )
-
     if (orderBlocks.bullish.isEmpty()) {
         row.addView(
             label("No bullish order blocks found.", 11f, muted, false)
@@ -1704,98 +1715,6 @@ val accountCard = card().apply { orientation = LinearLayout.VERTICAL }
     accountCard.addView(label("Connection: ${if (connected) "CONNECTED" else "DISCONNECTED"}", 12f, if (connected) green else red, true))
     accountCard.addView(label("Account ID: ${accountId.ifBlank { "—" }}", 12f, muted, false))
     page.addView(accountCard, matchWrap().apply { bottomMargin = dp(10) })
-    val manualTradeCard = card().apply {
-    orientation = LinearLayout.VERTICAL
-}
-manualTradeCard.addView(label("TEMPORARY MANUAL TRADE", 15f, yellow, true))
-manualTradeCard.addView(label("Select index", 13f, white, false))
-
-val manualIndexSpinner = Spinner(this)
-val manualIndexAdapter = ArrayAdapter(
-    this,
-    android.R.layout.simple_spinner_item,
-    marketDataIndexes
-)
-manualIndexAdapter.setDropDownViewResource(
-    android.R.layout.simple_spinner_dropdown_item
-)
-manualIndexSpinner.adapter = manualIndexAdapter
-manualIndexSpinner.setSelection(
-    marketDataIndexes.indexOf(manualTradeSymbol).coerceAtLeast(0)
-)
-manualIndexSpinner.onItemSelectedListener =
-    object : android.widget.AdapterView.OnItemSelectedListener {
-        override fun onItemSelected(
-            parent: android.widget.AdapterView<*>?,
-            view: View?,
-            position: Int,
-            id: Long
-        ) {
-            manualTradeSymbol = marketDataIndexes[position]
-        }
-
-        override fun onNothingSelected(
-            parent: android.widget.AdapterView<*>?
-        ) {}
-    }
-
-manualTradeCard.addView(manualIndexSpinner, matchWrap())
-manualTradeCard.addView(
-    label(
-        "Stake: ${formatMoney(dailyTradeStake())} | Duration: 3 days",
-        13f,
-        white,
-        true
-    )
-)
-
-val manualButtons = LinearLayout(this).apply {
-    orientation = LinearLayout.HORIZONTAL
-}
-
-manualButtons.addView(
-    button("BUY", true) {
-        val quote = marketDataPrices[manualTradeSymbol]
-        if (!connected) {
-            toast("Deriv is not connected.")
-        } else if (quote == null || quote <= 0.0) {
-            toast("Waiting for index price.")
-        } else {
-            submitTouchProposal(
-                manualTradeSymbol,
-                "BUY",
-                quote * 0.05,
-                manual = true
-            )
-        }
-    },
-    LinearLayout.LayoutParams(0, dp(48), 1f)
-)
-
-manualButtons.addView(
-    button("SELL", false) {
-        val quote = marketDataPrices[manualTradeSymbol]
-        if (!connected) {
-            toast("Deriv is not connected.")
-        } else if (quote == null || quote <= 0.0) {
-            toast("Waiting for index price.")
-        } else {
-            submitTouchProposal(
-                manualTradeSymbol,
-                "SELL",
-                quote * 0.05,
-                manual = true
-            )
-        }
-    },
-    LinearLayout.LayoutParams(0, dp(48), 1f)
-)
-
-manualTradeCard.addView(manualButtons)
-page.addView(
-    manualTradeCard,
-    matchWrap().apply { bottomMargin = dp(10) }
-)
     page.addView(sectionTitle("RUNNING TRADES"))
     val runningCard = card().apply { orientation = LinearLayout.VERTICAL }
     val portfolioArray = openTradesResponse?.optJSONObject("portfolio")?.optJSONArray("contracts")
@@ -2195,8 +2114,7 @@ private fun calculateOrderBlocks(
                             .firstOrNull {
                                 sorted[it].close < ob.low
                             }
-
-                        bullishNumber++
+                            bullishNumber++
 
                         bullishBlocks.add(
                             OrderBlockEvent(
@@ -2465,6 +2383,9 @@ private data class MasterEngineDecision(
     val marketStructureQualified: Boolean,
     val chochQualified: Boolean,
     val orderBlockQualified: Boolean,
+    val orderBlockRetestQualified: Boolean,
+    val momentumQualified: Boolean,
+    val ptpeProbability: Double,
     val qualified: Boolean,
     val updatedAt: Long
 )
@@ -2499,7 +2420,6 @@ private fun calculateSupportResistance(
 
     for (i in 2 until candles.size - 2) {
         val candle = candles[i]
-
         val confirmed = if (support) {
             candle.low < candles[i - 1].low &&
             candle.low < candles[i - 2].low &&
@@ -2632,194 +2552,150 @@ return if (currentPrice != null && currentPrice > 0.0) {
     recentLevels.sortedByDescending { it.score }.take(2)
 }
 }
+private fun calculateMomentumQualified(
+    candles: List<DerivApiClient.Candle>,
+    direction: String
+): Boolean {
+    if (candles.size < 12) return false
+    val latest = candles.last()
+    val recentBodies = candles.takeLast(11).dropLast(1).map { kotlin.math.abs(it.close - it.open) }
+    val averageBody = recentBodies.average().coerceAtLeast(0.0000001)
+    val latestBody = kotlin.math.abs(latest.close - latest.open)
+    val range = (latest.high - latest.low).coerceAtLeast(0.0000001)
+    val closePosition = (latest.close - latest.low) / range
+    val strongBody = latestBody >= averageBody * 1.15
+    return when (direction) {
+        "BULLISH" -> latest.close > latest.open && strongBody && closePosition >= 0.65
+        "BEARISH" -> latest.close < latest.open && strongBody && closePosition <= 0.35
+        else -> false
+    }
+}
+
 private fun evaluateMasterEngine(symbol: String) {
     val candles = marketDataCandles[symbol].orEmpty()
     val price = marketDataPrices[symbol] ?: return
     if (candles.size < 20) return
 
     val latest = candles.last()
-
-    val supports = calculateSupportResistance(candles, true, price)
-val resistances = calculateSupportResistance(candles, false, price)
-
-    val bullishSR = supports.any {
-        latest.low <= it.price * 1.0015 &&
-        latest.close > it.price
-    }
-
-    val bearishSR = resistances.any {
-        latest.high >= it.price * 0.9985 &&
-        latest.close < it.price
-    }
-
     val bullishLiquidity = calculateLiquidityLevels(candles, true)
     val bearishLiquidity = calculateLiquidityLevels(candles, false)
 
     val bullishSweep = bullishLiquidity.any {
-        it.sweepAt > 0L && latest.epoch > it.sweepAt &&
-        latest.close > latest.open
+        it.sweepAt > 0L && latest.epoch >= it.sweepAt &&
+            latest.low < it.price && latest.close > it.price
     }
-
     val bearishSweep = bearishLiquidity.any {
-        it.sweepAt > 0L && latest.epoch > it.sweepAt &&
-        latest.close < latest.open
+        it.sweepAt > 0L && latest.epoch >= it.sweepAt &&
+            latest.high > it.price && latest.close < it.price
     }
 
     val structure = calculateMarketStructure(candles)
-    val marketDirection =
-        structure.structures.lastOrNull()?.direction ?: ""
-
-    val chochDirection =
-        structure.chochs.lastOrNull()?.direction ?: ""
+    val marketDirection = structure.structures.lastOrNull()?.direction ?: ""
+    val chochDirection = structure.chochs.lastOrNull()?.direction ?: ""
+    // CHOCH is the detected market-structure shift (MSS) confirmation.
+    val bullishMss = chochDirection == "BULLISH"
+    val bearishMss = chochDirection == "BEARISH"
 
     val orderBlocks = calculateOrderBlocks(candles)
-
-    val bullishOB = orderBlocks.bullish.any {
-        it.valid && marketDirection == "BULLISH" &&
-        chochDirection == "BULLISH"
+    val bullishBlock = orderBlocks.bullish.lastOrNull {
+        it.valid && it.createdAt < latest.epoch
     }
-
-    val bearishOB = orderBlocks.bearish.any {
-        it.valid && marketDirection == "BEARISH" &&
-        chochDirection == "BEARISH"
+    val bearishBlock = orderBlocks.bearish.lastOrNull {
+        it.valid && it.createdAt < latest.epoch
     }
-    val bullishQualified =
-        bullishSR && bullishSweep &&
-        marketDirection == "BULLISH" &&
-        chochDirection == "BULLISH" &&
-        bullishOB
+    val bullishOB = bullishBlock != null && marketDirection == "BULLISH" && bullishMss
+    val bearishOB = bearishBlock != null && marketDirection == "BEARISH" && bearishMss
 
-    val bearishQualified =
-        bearishSR && bearishSweep &&
-        marketDirection == "BEARISH" &&
-        chochDirection == "BEARISH" &&
-        bearishOB
+    // A retest requires price to revisit the active order-block range and close
+    // directionally back through its midpoint.
+    val bullishRetest = bullishBlock?.let { block ->
+        latest.low <= block.high && latest.high >= block.low &&
+            latest.close > latest.open &&
+            latest.close >= (block.low + block.high) / 2.0
+    } ?: false
+    val bearishRetest = bearishBlock?.let { block ->
+        latest.high >= block.low && latest.low <= block.high &&
+            latest.close < latest.open &&
+            latest.close <= (block.low + block.high) / 2.0
+    } ?: false
 
+    val bullishMomentum = calculateMomentumQualified(candles, "BULLISH")
+    val bearishMomentum = calculateMomentumQualified(candles, "BEARISH")
+
+    val bullishDirection = bullishSweep && marketDirection == "BULLISH" &&
+        bullishMss && bullishOB && bullishRetest && bullishMomentum
+    val bearishDirection = bearishSweep && marketDirection == "BEARISH" &&
+        bearishMss && bearishOB && bearishRetest && bearishMomentum
+
+    // PTPE is a transparent confluence score, not a statistically calibrated
+    // forecast. Each independently observed condition contributes to 100%.
+    val bullishScore = listOf(
+        bullishSweep, marketDirection == "BULLISH", bullishMss,
+        bullishOB, bullishRetest, bullishMomentum
+    ).count { it } * (100.0 / 6.0)
+    val bearishScore = listOf(
+        bearishSweep, marketDirection == "BEARISH", bearishMss,
+        bearishOB, bearishRetest, bearishMomentum
+    ).count { it } * (100.0 / 6.0)
+    val ptpe = maxOf(bullishScore, bearishScore)
     val direction = when {
-        bullishQualified -> "BUY"
-        bearishQualified -> "SELL"
+        bullishDirection && bullishScore > 55.0 -> "BUY"
+        bearishDirection && bearishScore > 55.0 -> "SELL"
         else -> "WAIT"
     }
+
     val decision = MasterEngineDecision(
         symbol = symbol,
         direction = direction,
-        supportResistanceQualified =
-    bullishSR || bearishSR,
-
-liquidityQualified =
-    bullishSweep || bearishSweep,
-
-marketStructureQualified =
-    marketDirection == "BULLISH" ||
-    marketDirection == "BEARISH",
-
-chochQualified =
-    chochDirection == "BULLISH" ||
-    chochDirection == "BEARISH",
-
-orderBlockQualified =
-    bullishOB || bearishOB,
+        supportResistanceQualified = true,
+        liquidityQualified = bullishSweep || bearishSweep,
+        marketStructureQualified = marketDirection == "BULLISH" || marketDirection == "BEARISH",
+        chochQualified = bullishMss || bearishMss,
+        orderBlockQualified = bullishOB || bearishOB,
+        orderBlockRetestQualified = bullishRetest || bearishRetest,
+        momentumQualified = bullishMomentum || bearishMomentum,
+        ptpeProbability = ptpe,
         qualified = direction != "WAIT",
         updatedAt = System.currentTimeMillis()
     )
-
     masterEngineDecisions[symbol] = decision
-val analysisLines = listOf(
-    Triple(
-        "SUPPORT / RESISTANCE",
-        when {
-            bullishSR -> "QUALIFIED BUY"
-            bearishSR -> "QUALIFIED SELL"
-            else -> "WAITING"
-        },
-        when {
-            bullishSR -> green
-            bearishSR -> red
-            else -> yellow
-        }
-    ),
-    Triple(
-        "LIQUIDITY",
-        when {
-            bullishSweep -> "QUALIFIED BUY"
-            bearishSweep -> "QUALIFIED SELL"
-            else -> "WAITING"
-        },
-        when {
-            bullishSweep -> green
-            bearishSweep -> red
-            else -> yellow
-        }
-    ),
-    Triple(
-        "MARKET STRUCTURE",
-        when (marketDirection) {
-            "BULLISH" -> "QUALIFIED BUY"
-            "BEARISH" -> "QUALIFIED SELL"
-            else -> "WAITING"
-        },
-        when (marketDirection) {
-            "BULLISH" -> green
-            "BEARISH" -> red
-            else -> yellow
-        }
-    ),
-    Triple(
-        "CHOCH",
-        when (chochDirection) {
-            "BULLISH" -> "QUALIFIED BUY"
-            "BEARISH" -> "QUALIFIED SELL"
-            else -> "WAITING"
-        },
-        when (chochDirection) {
-            "BULLISH" -> green
-            "BEARISH" -> red
-            else -> yellow
-        }
-    ),
-    Triple(
-        "ORDER BLOCK",
-        when {
-            bullishOB -> "QUALIFIED BUY"
-            bearishOB -> "QUALIFIED SELL"
-            else -> "WAITING"
-        },
-        when {
-            bullishOB -> green
-            bearishOB -> red
-            else -> yellow
-        }
-    )
-)
 
-val analysisText = android.text.SpannableStringBuilder()
-
-analysisLines.forEachIndexed { index, item ->
-    val start = analysisText.length
-    val line = "${item.first}: ${item.second}"
-    analysisText.append(line)
-
-    analysisText.setSpan(
-        android.text.style.ForegroundColorSpan(item.third),
-        start,
-        analysisText.length,
-        android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+    val analysisLines = listOf(
+        Triple("LIQUIDITY SWEEP", if (bullishSweep) "QUALIFIED BUY" else if (bearishSweep) "QUALIFIED SELL" else "WAITING",
+            if (bullishSweep) green else if (bearishSweep) red else yellow),
+        Triple("MARKET STRUCTURE", if (marketDirection == "BULLISH") "BULLISH" else if (marketDirection == "BEARISH") "BEARISH" else "WAITING",
+            if (marketDirection == "BULLISH") green else if (marketDirection == "BEARISH") red else yellow),
+        Triple("MSS / CHOCH", if (bullishMss) "QUALIFIED BUY" else if (bearishMss) "QUALIFIED SELL" else "WAITING",
+            if (bullishMss) green else if (bearishMss) red else yellow),
+        Triple("ORDER BLOCK", if (bullishOB) "QUALIFIED BUY" else if (bearishOB) "QUALIFIED SELL" else "WAITING",
+            if (bullishOB) green else if (bearishOB) red else yellow),
+        Triple("ORDER BLOCK RETEST", if (bullishRetest) "QUALIFIED BUY" else if (bearishRetest) "QUALIFIED SELL" else "WAITING",
+            if (bullishRetest) green else if (bearishRetest) red else yellow),
+        Triple("MOMENTUM", if (bullishMomentum) "QUALIFIED BUY" else if (bearishMomentum) "QUALIFIED SELL" else "WAITING",
+            if (bullishMomentum) green else if (bearishMomentum) red else yellow),
+        Triple("PTPE", "${String.format(java.util.Locale.US, "%.1f", ptpe)}% ${if (ptpe > 55.0) "ABOVE THRESHOLD" else "BELOW THRESHOLD"}",
+            if (ptpe > 55.0) green else yellow)
     )
 
-    if (index < analysisLines.lastIndex) {
-        analysisText.append("\n")
+    val analysisText = android.text.SpannableStringBuilder()
+    analysisLines.forEachIndexed { index, item ->
+        val start = analysisText.length
+        analysisText.append("${item.first}: ${item.second}")
+        analysisText.setSpan(
+            android.text.style.ForegroundColorSpan(item.third),
+            start, analysisText.length,
+            android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+        if (index < analysisLines.lastIndex) analysisText.append("\\n")
     }
-}
+    dashboardAnalysisViews[symbol]?.text = analysisText
 
-dashboardAnalysisViews[symbol]?.text = analysisText
     if (decision.qualified) {
-        val eventKey =
-            "${saDayKey()}_${accountId}_${executionMode}_${symbol}_${direction}_${latest.epoch}"
-
+        val eventKey = "${saDayKey()}_${accountId}_${executionMode}_${symbol}_${direction}_${latest.epoch}"
         if (masterEngineNotificationKeys.add(eventKey)) {
             notifyEvent(
                 "Master Engine Qualified",
-                "$symbol · $direction · All five conditions qualified.",
+                "$symbol · $direction · SMC sequence and PTPE threshold qualified.",
                 "master_engine_$eventKey"
             )
         }
@@ -2843,7 +2719,6 @@ dashboardAnalysisViews[symbol]?.text = analysisText
         if (!profileLoading) refreshProfile(showMessage = false)
         return
     }
-
     if (!profile.optString("role", "user").equals("admin", ignoreCase = true)) {
         page.addView(label("ACCESS DENIED. ADMINISTRATORS ONLY.", 14f, red, false))
         return
@@ -3372,12 +3247,14 @@ val channelId = "vi_trade_events_${vibrationCount}_pulse_v3"
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             setPadding(dp(3), dp(7), dp(3), dp(5))
-            background = shape(
-                Color.rgb(4, 12, 10),
-                greenDark,
-                12,
-                1
-            )
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.rgb(20, 34, 55), Color.rgb(11, 21, 37))
+            ).apply {
+                cornerRadius = dp(18).toFloat()
+                setStroke(dp(1), Color.rgb(43, 65, 91))
+            }
+            elevation = dp(8).toFloat()
         }
 
         val tabs = if (authToken.isBlank()) {
@@ -3394,8 +3271,8 @@ val channelId = "vi_trade_events_${vibrationCount}_pulse_v3"
                 gravity = Gravity.CENTER
                 setPadding(dp(2), dp(3), dp(2), dp(2))
                 background = shape(
-                    Color.rgb(4, 12, 10),
-                    if (selected) greenDark else Color.rgb(40, 68, 72),
+                    if (selected) Color.rgb(27, 77, 77) else Color.TRANSPARENT,
+                    if (selected) greenDark else Color.TRANSPARENT,
                     12,
                     1
                 )
@@ -3440,11 +3317,12 @@ val channelId = "vi_trade_events_${vibrationCount}_pulse_v3"
             true
         ).apply {
             setPadding(
-                dp(2),
-                dp(10),
+                dp(3),
+                dp(17),
                 0,
-                dp(6)
-            )
+                dp(8)
+                )
+            letterSpacing = 0.055f
         }
     }
     private fun label(
@@ -3460,7 +3338,7 @@ val channelId = "vi_trade_events_${vibrationCount}_pulse_v3"
 
             if (bold) {
                 typeface = Typeface.create(
-                    "sans-serif",
+                    "sans-serif-medium",
                     Typeface.BOLD
                 )
             }
@@ -3489,14 +3367,20 @@ val channelId = "vi_trade_events_${vibrationCount}_pulse_v3"
                     white
                 }
             )
-            background = shape(
-                if (active) green else panel2,
-                if (active) green else Color.rgb(40, 68, 72),
-                12,
-                1
-            )
+            background = if (active) {
+                GradientDrawable(
+                    GradientDrawable.Orientation.LEFT_RIGHT,
+                    intArrayOf(Color.rgb(48, 214, 164), Color.rgb(35, 174, 166))
+                ).apply {
+                    cornerRadius = dp(14).toFloat()
+                    setStroke(dp(1), Color.rgb(93, 235, 194))
+                }
+            } else {
+                shape(panel2, Color.rgb(48, 69, 96), 14, 1)
+            }
+            elevation = if (active) dp(3).toFloat() else 0f
 
-            minHeight = dp(48)
+            minHeight = dp(50)
             minimumHeight = dp(48)
             stateListAnimator = null
             setPadding(
@@ -3519,17 +3403,19 @@ val channelId = "vi_trade_events_${vibrationCount}_pulse_v3"
             orientation = LinearLayout.VERTICAL
 
             setPadding(
-                dp(10),
-                dp(10),
-                dp(10),
-                dp(10)
+                dp(16),
+                dp(15),
+                dp(16),
+                dp(15)
             )
-            background = shape(
-                panel,
-                Color.rgb(0, 100, 48),
-                14,
-                1
-                )
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.rgb(21, 36, 59), Color.rgb(15, 27, 46))
+            ).apply {
+                cornerRadius = dp(18).toFloat()
+                setStroke(dp(1), Color.rgb(42, 65, 91))
+            }
+            elevation = dp(3).toFloat()
         }
     }
     private fun horizontalRow(): LinearLayout {
@@ -3769,11 +3655,13 @@ derivApiClient.connectWithAccessToken(token, executionMode)
     decision != null &&
         decision.qualified &&
         decision.direction in listOf("BUY", "SELL") &&
-        decision.supportResistanceQualified &&
         decision.liquidityQualified &&
         decision.marketStructureQualified &&
         decision.chochQualified &&
-        decision.orderBlockQualified
+        decision.orderBlockQualified &&
+        decision.orderBlockRetestQualified &&
+        decision.momentumQualified &&
+        decision.ptpeProbability > 55.0
 }
 dashboardQualifiedCountView?.text = "QUALIFIED $qualifiedCount/5"
             if (isTouchExecutionReady(symbol)) {
@@ -3869,7 +3757,7 @@ if (payout < order.stake * 1.30) {
             .put("basis", "stake")
             .put("contract_type", "ONETOUCH")
             .put("currency", accountCurrency)
-            .put("duration", 3)
+            .put("duration", 1)
             .put("duration_unit", "d")
             .put("symbol", order.symbol)
             .put("barrier", signedBarrier)
@@ -3937,7 +3825,7 @@ return@runOnUiThread
         direction = order.direction,
         stake = order.stake,
         target = order.target,
-        targetProbability = 0.0,
+        targetProbability = masterEngineDecisions[order.symbol]?.ptpeProbability ?: 0.0,
         mode = order.mode,
         potentialPayout = order.stake * 1.30
     )
@@ -4015,7 +3903,7 @@ val savedPairSide = appPrefs.getString(
 val savedIsRecovery = appPrefs.getBoolean(
     "contract_is_recovery_${accountId}_${executionMode}_$id",
     false
-)
+    )
 if (stake > 0.0) {
     val restored = RunningContract(
         id, symbol, direction, stake, barrier, 0.0, executionMode,
@@ -4282,4 +4170,3 @@ override fun onDestroy() {
     super.onDestroy()
 }
                             }
-                            
