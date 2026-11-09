@@ -1728,6 +1728,58 @@ manualIndexSpinner.onItemSelectedListener =
     }
 
 manualTradeCard.addView(manualIndexSpinner, matchWrap())
+manualTradeCard.addView(
+    label(
+        "Stake: ${formatMoney(dailyTradeStake())} | Duration: 1 day",
+        13f,
+        white,
+        true
+    )
+)
+
+val manualButtons = LinearLayout(this).apply {
+    orientation = LinearLayout.HORIZONTAL
+}
+
+manualButtons.addView(
+    button("BUY", true) {
+        val quote = marketDataPrices[manualTradeSymbol]
+        if (!connected) {
+            toast("Deriv is not connected.")
+        } else if (quote == null || quote <= 0.0) {
+            toast("Waiting for index price.")
+        } else {
+            submitTouchProposal(
+                manualTradeSymbol,
+                "BUY",
+                quote * 0.05,
+                manual = true
+            )
+        }
+    },
+    LinearLayout.LayoutParams(0, dp(48), 1f)
+)
+
+manualButtons.addView(
+    button("SELL", false) {
+        val quote = marketDataPrices[manualTradeSymbol]
+        if (!connected) {
+            toast("Deriv is not connected.")
+        } else if (quote == null || quote <= 0.0) {
+            toast("Waiting for index price.")
+        } else {
+            submitTouchProposal(
+                manualTradeSymbol,
+                "SELL",
+                quote * 0.05,
+                manual = true
+            )
+        }
+    },
+    LinearLayout.LayoutParams(0, dp(48), 1f)
+)
+
+manualTradeCard.addView(manualButtons)
 page.addView(
     manualTradeCard,
     matchWrap().apply { bottomMargin = dp(10) }
