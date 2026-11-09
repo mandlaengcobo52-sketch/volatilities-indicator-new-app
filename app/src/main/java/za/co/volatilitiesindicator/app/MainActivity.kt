@@ -492,6 +492,7 @@ private val marketDataCandles =
 private val dashboardPriceViews = mutableMapOf<String, TextView>()
 private val currentPriceViews = mutableMapOf<String, MutableList<TextView>>()
 private val dashboardStatusViews = mutableMapOf<String, TextView>()
+private var dashboardQualifiedCountView: TextView? = null
 private val dashboardAnalysisViews =
     mutableMapOf<String, TextView>()
 private val marketDataErrors =
@@ -1257,6 +1258,14 @@ private fun addHeader() {
     // Five-index live monitor shown on the dashboard.
     private fun addDashboardIndexMonitor() {
         page.addView(sectionTitle("INDEX MONITOR"))
+        dashboardQualifiedCountView = TextView(this).apply {
+    text = "QUALIFIED 0/5"
+    textSize = 13f
+    setTypeface(null, android.graphics.Typeface.BOLD)
+    setTextColor(Color.YELLOW)
+    setPadding(dp(4), dp(4), dp(4), dp(8))
+}
+page.addView(dashboardQualifiedCountView)
         val monitorHeader = LinearLayout(this).apply {
     orientation = LinearLayout.HORIZONTAL
     gravity = Gravity.CENTER_VERTICAL
@@ -3662,6 +3671,18 @@ derivApiClient.connectWithAccessToken(token, executionMode)
             marketDataPrices[symbol] = quote
             marketDataErrors.remove(symbol)
             evaluateMasterEngine(symbol)
+            val qualifiedCount = marketDataIndexes.count { index ->
+    val decision = masterEngineDecisions[index]
+    decision != null &&
+        decision.qualified &&
+        decision.direction in listOf("BUY", "SELL") &&
+        decision.supportResistanceQualified &&
+        decision.liquidityQualified &&
+        decision.marketStructureQualified &&
+        decision.chochQualified &&
+        decision.orderBlockQualified
+}
+dashboardQualifiedCountView?.text = "QUALIFIED $qualifiedCount/5"
             if (isTouchExecutionReady(symbol)) {
     val decision = masterEngineDecisions[symbol] ?: return@runOnUiThread
     val latest = marketDataCandles[symbol]?.lastOrNull() ?: return@runOnUiThread
