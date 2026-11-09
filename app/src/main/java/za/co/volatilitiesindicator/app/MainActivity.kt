@@ -344,13 +344,14 @@ private fun submitTouchProposal(
     val requestId = nextTradeRequestId()
 
     val order = PendingTouchOrder(
-        symbol = symbol,
-        direction = direction,
-        stake = stake,
-        target = stake * 0.30,
-        mode = executionMode,
-        proposalRequestId = requestId
-    )
+    symbol = symbol,
+    direction = direction,
+    stake = stake,
+    target = stake * 0.30,
+    mode = executionMode,
+    proposalRequestId = requestId,
+    barrierOffset = kotlin.math.abs(barrier)
+)
     pendingTouchOrders[requestId] = order
     pendingTouchBySymbol[symbol] = requestId
 
