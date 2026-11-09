@@ -2365,6 +2365,8 @@ private fun calculateSupportResistance(
 ): List<SupportResistanceLevel> {
 
     if (candles.size < 5) return emptyList()
+    val sevenDaysAgo =
+    System.currentTimeMillis() / 1000L - (7L * 24L * 60L * 60L)
 
     val pivots = mutableListOf<Pair<Double, Long>>()
 
@@ -2383,7 +2385,7 @@ private fun calculateSupportResistance(
             candle.high > candles[i + 2].high
         }
 
-        if (confirmed) {
+        if (confirmed && candle.epoch >= sevenDaysAgo) {
             pivots.add(
                 (if (support) candle.low else candle.high) to candle.epoch
             )
