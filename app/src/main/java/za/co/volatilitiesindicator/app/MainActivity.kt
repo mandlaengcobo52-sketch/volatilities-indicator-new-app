@@ -3684,49 +3684,59 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
     val askPrice = proposal.optDouble("ask_price", 0.0)
     val proposalId = proposal.optString("id", "")
 
-    if (payout < order.stake * 1.30 ||
-        askPrice <= 0.0 ||
-        proposalId.isBlank()
-    ) {
+    if (askPrice <= 0.0 || proposalId.isBlank()) {
+    pendingTouchOrders.remove(requestId)
+    pendingTouchBySymbol.remove(order.symbol)
+    touchExecutionLocks.remove(order.symbol)
+    return@runOnUiThread
+}
+
+if (payout < order.stake * 1.30) {
+    if (order.proposalAttempts >= 20) {
         pendingTouchOrders.remove(requestId)
         pendingTouchBySymbol.remove(order.symbol)
         touchExecutionLocks.remove(order.symbol)
         return@runOnUiThread
     }
 
-    val buyRequestId = nextTradeRequestId()
-    order.proposalId = proposalId
-    order.buyRequestId = buyRequestId
+    order.proposalAttempts++
+    order.barrierOffset *= 1.10
+
+    val nextRequestId = nextTradeRequestId()
+    order.proposalRequestId = nextRequestId
+
+    val signedBarrier = if (order.direction == "BUY") {
+        "+${order.barrierOffset}"
+    } else {
+        "-${order.barrierOffset}"
+    }
+
+    pendingTouchOrders.remove(requestId)
+    pendingTouchOrders[nextRequestId] = order
+    pendingTouchBySymbol[order.symbol] = nextRequestId
 
     val sent = derivApiClient.send(
         JSONObject()
-            .put("buy", proposalId)
-            .put("price", askPrice)
-            .put("req_id", buyRequestId)
+            .put("proposal", 1)
+            .put("amount", order.stake)
+            .put("basis", "stake")
+            .put("contract_type", "ONETOUCH")
+            .put("currency", accountCurrency)
+            .put("duration", 3)
+            .put("duration_unit", "d")
+            .put("symbol", order.symbol)
+            .put("barrier", signedBarrier)
+            .put("req_id", nextRequestId)
     )
 
     if (!sent) {
-        pendingTouchOrders.remove(requestId)
+        pendingTouchOrders.remove(nextRequestId)
         pendingTouchBySymbol.remove(order.symbol)
         touchExecutionLocks.remove(order.symbol)
     }
-            }
-            "buy" -> {
-    val requestId = json.optInt("req_id", 0)
 
-    val entry = pendingTouchOrders.entries.firstOrNull {
-        it.value.buyRequestId == requestId
-    } ?: return@runOnUiThread
-
-    val order = entry.value
-    val buy = json.optJSONObject("buy")
-
-    if (buy == null) {
-        pendingTouchOrders.remove(entry.key)
-        pendingTouchBySymbol.remove(order.symbol)
-        touchExecutionLocks.remove(order.symbol)
-        return@runOnUiThread
-    }
+    return@runOnUiThread
+}
 
     val contractId = buy.optLong("contract_id", 0L)
 
