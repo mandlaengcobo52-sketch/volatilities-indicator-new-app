@@ -1257,6 +1257,26 @@ private fun addHeader() {
     // Five-index live monitor shown on the dashboard.
     private fun addDashboardIndexMonitor() {
         page.addView(sectionTitle("INDEX MONITOR"))
+        val monitorHeader = LinearLayout(this).apply {
+    orientation = LinearLayout.HORIZONTAL
+    gravity = Gravity.CENTER_VERTICAL
+    setPadding(dp(10), dp(8), dp(10), dp(8))
+}
+
+monitorHeader.addView(
+    label("● MONITORING", 13f, green, true),
+    LinearLayout.LayoutParams(0, -2, 1f)
+)
+
+val qualifiedCountView = label(
+    "QUALIFIED 0/5",
+    13f,
+    yellow,
+    true
+)
+
+monitorHeader.addView(qualifiedCountView, matchWrap())
+page.addView(monitorHeader, matchWrap())
         val monitorCard = card().apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(10), dp(8), dp(10), dp(8))
