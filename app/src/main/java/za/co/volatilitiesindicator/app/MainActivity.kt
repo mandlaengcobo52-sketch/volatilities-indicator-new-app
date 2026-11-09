@@ -3040,18 +3040,10 @@ dashboardAnalysisViews[symbol]?.text = analysisText
         page.addView(card, matchWrap())
     }
     private fun clearTradeNotificationBadges() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val manager =
-                getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+    val manager =
+        getSystemService(NOTIFICATION_SERVICE) as NotificationManager
 
-            manager.activeNotifications
-                .filter {
-                    it.notification.channelId == "vi_trade_events_v2"
-                }
-                .forEach {
-                    manager.cancel(it.tag, it.id)
-                }
-        }
+    manager.cancelAll()
     }
     private fun addNotificationsScreen() {
         appPrefs.edit().putBoolean("has_unread_notifications", false).apply()
