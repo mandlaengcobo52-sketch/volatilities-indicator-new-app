@@ -1383,7 +1383,7 @@ page.addView(monitorHeader, matchWrap())
                 }
             )
             val analysisView = label(
-                "1. LIQUIDITY SWEEP: WAITING\n" +
+                "1. LIQUIDITY SWEEP: WAITING\n"  .
                 "2. MARKET STRUCTURE: WAITING\n" +
                 "3. MSS: 0%\n" +
                 "4. BULLISH / BEARISH CHOCH: NO\n" +
@@ -1424,7 +1424,7 @@ if (bullishLiquidity.isEmpty()) {
     bullishLiquidity.take(2).forEachIndexed { index, level ->
         detailsContainer.addView(
             label(
-                "SSL ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepAt > 0L) formatMarketTime(level.sweepAt) else "NOT SWEPT"} | OCCURRENCES: ${level.occurrences}",
+                "SSL ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepAt > 0L && level.sweepAt >= System.currentTimeMillis() / 1000L - (5L * 60L * 60L)) formatMarketTime(level.sweepAt) else "NOT CURRENT"} | OCCURRENCES: ${level.occurrences}",
                 11f, green, false
             )
         )
@@ -1439,7 +1439,7 @@ if (bearishLiquidity.isEmpty()) {
     bearishLiquidity.take(2).forEachIndexed { index, level ->
         detailsContainer.addView(
             label(
-                "BSL ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepAt > 0L) formatMarketTime(level.sweepAt) else "NOT SWEPT"} | OCCURRENCES: ${level.occurrences}",
+                "BSL ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepAt > 0L && level.sweepAt >= System.currentTimeMillis() / 1000L - (5L * 60L * 60L)) formatMarketTime(level.sweepAt) else "NOT CURRENT"} | OCCURRENCES: ${level.occurrences}",
                 11f, red, false
             )
         )
@@ -2623,22 +2623,21 @@ private fun evaluateMasterEngine(symbol: String) {
     val bullishLiquidity = calculateLiquidityLevels(candles, true)
     val bearishLiquidity = calculateLiquidityLevels(candles, false)
 
-    val recentSweepStart = candles
-    .takeLast(5)
-    .first()
-    .epoch
-
     val liveSweepCutoff =
     System.currentTimeMillis() / 1000L - (5L * 60L * 60L)
 
 val bullishSweep =
-    bullishLiquidity.any { it.sweepAt >= recentSweepStart } ||
+    bullishLiquidity.any {
+        it.sweepAt > 0L && it.sweepAt >= liveSweepCutoff
+    } ||
     liveBullishSweepAt[symbol].orEmpty().values.any {
         it >= liveSweepCutoff
     }
 
 val bearishSweep =
-    bearishLiquidity.any { it.sweepAt >= recentSweepStart } ||
+    bearishLiquidity.any {
+        it.sweepAt > 0L && it.sweepAt >= liveSweepCutoff
+    } ||
     liveBearishSweepAt[symbol].orEmpty().values.any {
         it >= liveSweepCutoff
     }
