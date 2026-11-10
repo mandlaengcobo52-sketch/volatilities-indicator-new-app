@@ -2390,8 +2390,6 @@ private data class MasterEngineDecision(
     val liquidityQualified: Boolean,
     val marketStructureQualified: Boolean,
     val chochQualified: Boolean,
-    val orderBlockQualified: Boolean,
-    val orderBlockRetestQualified: Boolean,
     val momentumQualified: Boolean,
     val ptpeProbability: Double,
     val qualified: Boolean,
@@ -2617,17 +2615,29 @@ val bearishMomentum = calculateMomentumQualified(candles, "BEARISH")
     val bullishMomentum = calculateMomentumQualified(candles, "BULLISH")
     val bearishMomentum = calculateMomentumQualified(candles, "BEARISH")
 
-    val bullishDirection = bullishSweep && marketDirection == "BULLISH" &&
-        bullishMss && bullishOB && bullishRetest && bullishMomentum
-    val bearishDirection = bearishSweep && marketDirection == "BEARISH" &&
-        bearishMss && bearishOB && bearishRetest && bearishMomentum
+    val bullishDirection = bullishSweep &&
+    marketDirection == "BULLISH" &&
+    bullishMss && bullishMomentum
+
+val bearishDirection = bearishSweep &&
+    marketDirection == "BEARISH" &&
+    bearishMss && bearishMomentum
 
     // PTPE is a transparent confluence score, not a statistically calibrated
     // forecast. Each independently observed condition contributes to 100%.
     val bullishScore = listOf(
-        bullishSweep, marketDirection == "BULLISH", bullishMss,
-        bullishOB, bullishRetest, bullishMomentum
-    ).count { it } * (100.0 / 6.0)
+    bullishSweep,
+    marketDirection == "BULLISH",
+    bullishMss,
+    bullishMomentum
+).count { it } * (100.0 / 4.0)
+
+val bearishScore = listOf(
+    bearishSweep,
+    marketDirection == "BEARISH",
+    bearishMss,
+    bearishMomentum
+).count { it } * (100.0 / 4.0)
     val bearishScore = listOf(
         bearishSweep, marketDirection == "BEARISH", bearishMss,
         bearishOB, bearishRetest, bearishMomentum
@@ -2646,8 +2656,6 @@ val bearishMomentum = calculateMomentumQualified(candles, "BEARISH")
         liquidityQualified = bullishSweep || bearishSweep,
         marketStructureQualified = marketDirection == "BULLISH" || marketDirection == "BEARISH",
         chochQualified = bullishMss || bearishMss,
-        orderBlockQualified = bullishOB || bearishOB,
-        orderBlockRetestQualified = bullishRetest || bearishRetest,
         momentumQualified = bullishMomentum || bearishMomentum,
         ptpeProbability = ptpe,
         qualified = direction != "WAIT",
@@ -2655,8 +2663,6 @@ val bearishMomentum = calculateMomentumQualified(candles, "BEARISH")
     )
     masterEngineDecisions[symbol] = decision
 
-    val bullishObValid = bullishOB
-    val bearishObValid = bearishOB
     val mssText = when {
     bullishMss -> "BULLISH CONFIRMED"
     bearishMss -> "BEARISH CONFIRMED"
@@ -2674,25 +2680,17 @@ val bearishMomentum = calculateMomentumQualified(candles, "BEARISH")
     bearishSweep -> "BEARISH SWEPT"
     else -> "WAITING"
     }
-    val obText = when {
-        bullishObValid -> "VALID (BULLISH)"
-        bearishObValid -> "VALID (BEARISH)"
-        else -> "INVALID"
-    }
-    val retestText = if (bullishRetest || bearishRetest) "YES" else "NO"
     val engineExecuted = runningContracts.values.any { it.symbol == symbol && it.mode == executionMode }
     val engineText = if (engineExecuted) "EXECUTED" else "WAITING"
     val summary = listOf(
-        "1. LIQUIDITY SWEEP: $liquidityText",
-        "2. MARKET STRUCTURE: ${marketDirection.ifBlank { "WAITING" }}",
-        "3. MSS: $mssText",
-        "4. $chochText",
-        "5. ORDER BLOCK: $obText",
-        "6. ORDER BLOCK RETEST: $retestText",
-        "7. MOMENTUM: ${String.format(java.util.Locale.US, "%.0f", momentumPercent)}%",
-        "8. PTPE: ${String.format(java.util.Locale.US, "%.1f", ptpe)}%",
-        "9. MASTER ENGINE: $engineText"
-    ).joinToString("\n")
+    "1. LIQUIDITY SWEEP: $liquidityText",
+    "2. MARKET STRUCTURE: ${marketDirection.ifBlank { "WAITING" }}",
+    "3. MSS: $mssText",
+    "4. $chochText",
+    "5. MOMENTUM: ${String.format(java.util.Locale.US, "%.0f", momentumPercent)}%",
+    "6. PTPE: ${String.format(java.util.Locale.US, "%.1f", ptpe)}%",
+    "7. MASTER ENGINE: $engineText"
+).joinToString("\n")
     
 val analysisView = dashboardAnalysisViews[symbol]
 if (analysisView != null) {
@@ -2700,16 +2698,14 @@ if (analysisView != null) {
     val colouredSummary = SpannableStringBuilder()
 
     val qualifiedConditions = listOf(
-        bullishSweep || bearishSweep,
-        marketDirection == "BULLISH" || marketDirection == "BEARISH",
-        bullishMss || bearishMss,
-        bullishMss || bearishMss,
-        bullishObValid || bearishObValid,
-        bullishRetest || bearishRetest,
-        bullishMomentum || bearishMomentum,
-        ptpe > 55.0,
-        engineExecuted
-    )
+    bullishSweep || bearishSweep,
+    marketDirection == "BULLISH" || marketDirection == "BEARISH",
+    bullishMss || bearishMss,
+    bullishMss || bearishMss,
+    bullishMomentum || bearishMomentum,
+    ptpe > 55.0,
+    engineExecuted
+)
 
     lines.forEachIndexed { index, line ->
         val start = colouredSummary.length
@@ -3742,8 +3738,6 @@ derivApiClient.connectWithAccessToken(token, executionMode)
         decision.liquidityQualified &&
         decision.marketStructureQualified &&
         decision.chochQualified &&
-        decision.orderBlockQualified &&
-        decision.orderBlockRetestQualified &&
         decision.momentumQualified &&
         decision.ptpeProbability > 55.0
 }
