@@ -2745,10 +2745,14 @@ private fun evaluateMasterEngine(symbol: String) {
 
     val structure = calculateMarketStructure(candles)
     val marketDirection = structure.structures.lastOrNull()?.direction ?: ""
-    val chochDirection = structure.chochs.lastOrNull()?.direction ?: ""
-    // CHOCH is the detected market-structure shift (MSS) confirmation.
-    val bullishMss = chochDirection == "BULLISH"
-    val bearishMss = chochDirection == "BEARISH"
+    val latestChoch = structure.chochs.lastOrNull()
+    ?.takeIf { it.changedAt == latest.epoch }
+
+val chochDirection = latestChoch?.direction ?: ""
+
+// MSS must be confirmed on the latest candle.
+val bullishMss = chochDirection == "BULLISH"
+val bearishMss = chochDirection == "BEARISH"
 
     val orderBlocks = calculateOrderBlocks(candles)
     val bullishBlock = orderBlocks.bullish.lastOrNull {
@@ -2815,14 +2819,23 @@ private fun evaluateMasterEngine(symbol: String) {
 
     val bullishObValid = bullishOB
     val bearishObValid = bearishOB
-    val mssPercent = if (bullishMss || bearishMss) 100.0 else 0.0
+    val mssText = when {
+    bullishMss -> "BULLISH CONFIRMED"
+    bearishMss -> "BEARISH CONFIRMED"
+    else -> "WAITING"
+    }
     val momentumPercent = if (bullishMomentum || bearishMomentum) 100.0 else 0.0
     val chochText = when {
         bullishMss -> "BULLISH CHOCH: YES"
         bearishMss -> "BEARISH CHOCH: YES"
         else -> "BULLISH / BEARISH CHOCH: NO"
     }
-    val liquidityText = if (bullishSweep) "SWEPT" else "WAITING"
+    val liquidityText = when {
+    bullishSweep && bearishSweep -> "BULLISH AND BEARISH SWEPT"
+    bullishSweep -> "BULLISH SWEPT"
+    bearishSweep -> "BEARISH SWEPT"
+    else -> "WAITING"
+    }
     val obText = when {
         bullishObValid -> "VALID (BULLISH)"
         bearishObValid -> "VALID (BEARISH)"
@@ -2832,9 +2845,9 @@ private fun evaluateMasterEngine(symbol: String) {
     val engineExecuted = runningContracts.values.any { it.symbol == symbol && it.mode == executionMode }
     val engineText = if (engineExecuted) "EXECUTED" else "WAITING"
     val summary = listOf(
-        "A. BULLISH LIQUIDITY SWEEP: $liquidityText",
+        "A. LIQUIDITY SWEEP: $liquidityText",
         "B. MARKET STRUCTURE: ${marketDirection.ifBlank { "WAITING" }}",
-        "C. MSS: ${String.format(java.util.Locale.US, "%.0f", mssPercent)}%",
+        "C. MSS: $mssText",
         "D. $chochText",
         "E. ORDER BLOCK: $obText",
         "F. ORDER BLOCK RETEST: $retestText",
