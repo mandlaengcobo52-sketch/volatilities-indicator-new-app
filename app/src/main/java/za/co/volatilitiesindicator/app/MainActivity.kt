@@ -2289,8 +2289,11 @@ private fun calculateMarketStructure(
         }
 
         val candle = sorted[i]
+        // CHOCH uses the confirmed structure as its reference.
+        // A CHOCH must not change the confirmed market structure.
+        val structureDirectionForChoch = trend
 
-        if (trend == "BEARISH") {
+        if (structureDirectionForChoch == "BEARISH") {
             val breakLevel = previousHigh
 
             if (
@@ -2310,7 +2313,7 @@ private fun calculateMarketStructure(
                 )
                 lastChochDirection = "BULLISH"
             }
-        } else if (trend == "BULLISH") {
+        } else if (structureDirectionForChoch == "BULLISH") {
             val breakLevel = previousLow
 
             if (
