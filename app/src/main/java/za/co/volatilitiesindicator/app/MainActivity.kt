@@ -320,8 +320,9 @@ private val consumedTouchQualifications = mutableMapOf<String, Long>()
             return accountBalance
     }
     return savedCapital
-    }
-    private fun dailyTradeStake(): Double {
+}
+
+private fun dailyTradeStake(): Double {
     return dailyCycleCapital() * 0.25
 }
 
@@ -515,7 +516,6 @@ private val dashboardPriceViews = mutableMapOf<String, TextView>()
 private val currentPriceViews = mutableMapOf<String, MutableList<TextView>>()
 private val dashboardStatusViews = mutableMapOf<String, TextView>()
 private var dashboardQualifiedCountView: TextView? = null
-private var dashboardOverviewSummaryView: TextView? = null
     private var headerNotificationBadge: TextView? = null
     private var bottomNotificationBadge: TextView? = null
 private var manualTradeSymbol = "R_10"
@@ -523,38 +523,6 @@ private val dashboardAnalysisViews =
     mutableMapOf<String, TextView>()
 private val marketDataErrors =
     mutableMapOf<String, String>()
-private fun refreshDashboardIndexSummary() {
-    val qualifiedCount = marketDataIndexes.count { index ->
-        val decision = masterEngineDecisions[index]
-        decision != null &&
-            decision.qualified &&
-            decision.direction in listOf("BUY", "SELL") &&
-            decision.liquidityQualified &&
-            decision.marketStructureQualified &&
-            decision.chochQualified &&
-            decision.orderBlockQualified &&
-            decision.orderBlockRetestQualified &&
-            decision.momentumQualified &&
-            decision.ptpeProbability > 55.0
-    }
-    dashboardQualifiedCountView?.text = "QUALIFIED $qualifiedCount/5"
-
-    val overviewLines = marketDataIndexes.map { index ->
-        val (status, _) = dashboardDecisionStatus(index)
-        val shortStatus = when {
-            status.contains("QUALIFIED BUY") -> "BUY NOW"
-            status.contains("QUALIFIED SELL") -> "SELL NOW"
-            status == "FEED ERROR" -> "FEED ERROR"
-            status == "DISCONNECTED" -> "OFFLINE"
-            status == "WAITING FOR PRICE" -> "LOADING"
-            else -> "WAIT"
-        }
-        val price = marketDataPrices[index]?.let { formatMarketPrice(it) } ?: "—"
-        "$index  $shortStatus  ·  $price"
-    }
-    dashboardOverviewSummaryView?.text = overviewLines.joinToString("\n")
-}
-
 private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
     if (marketDataErrors.containsKey(symbol) && marketDataPrices[symbol] == null) {
         return "FEED ERROR" to red
@@ -619,9 +587,22 @@ if (authToken.isNotBlank() && savedToken.isNotBlank() &&
             hasResumedOnce = true
             return
         }
+
         if (authToken.isBlank() || appPrefs.getBoolean("deriv_manually_disconnected", false)) {
             return
         }
+
+        val tokenKey = if (executionMode == "REAL") "real_token" else "demo_token"
+val savedToken = prefs.getString(tokenKey, "").orEmpty()
+
+if (savedToken.isNotBlank()) {
+    if (derivServiceBound && ::derivApiClient.isInitialized) {
+        derivApiClient.ensureConnectedOnResume(savedToken, executionMode)
+    } else {
+        pendingResumeCheck = true
+        startAndBindDerivService()
+    }
+}
     }
 
     override fun onPause() {
@@ -656,72 +637,28 @@ if (authToken.isNotBlank() && savedToken.isNotBlank() &&
     }
 
         val outer = LinearLayout(this).apply {
-    orientation = LinearLayout.VERTICAL
-    setBackgroundColor(bg)
-    layoutParams = android.view.ViewGroup.LayoutParams(
-        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-        android.view.ViewGroup.LayoutParams.MATCH_PARENT
-    )
-}
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(bg)
+        }
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            overScrollMode = View.OVER_SCROLL_NEVER
+            isSmoothScrollingEnabled = true
+        }
+        mainScrollView = scroll
 
-val scroll = ScrollView(this).apply {
-    isFillViewport = true
-    overScrollMode = View.OVER_SCROLL_NEVER
-    isSmoothScrollingEnabled = true
-}
+        page = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(8), dp(14), dp(18))
+            setBackgroundColor(bg)
+        }
+        scroll.addView(page)
 
-mainScrollView = scroll
-
-page = LinearLayout(this).apply {
-    orientation = LinearLayout.VERTICAL
-    setPadding(dp(14), dp(8), dp(14), dp(18))
-    setBackgroundColor(bg)
-}
-
-val watermark = try {
-    getDrawable(R.drawable.volatilities_indicator_logo)
-        ?.mutate()?.apply { alpha = 22 }
-} catch (_: Exception) {
-    null
-}
-
-page.background = if (watermark != null) {
-    android.graphics.drawable.LayerDrawable(
-        arrayOf(
-            android.graphics.drawable.ColorDrawable(bg),
-            android.graphics.drawable.InsetDrawable(watermark, dp(72))
+        outer.addView(
+            scroll,
+            LinearLayout.LayoutParams(-1, 0, 1f)
         )
-    )
-} else {
-    android.graphics.drawable.ColorDrawable(bg)
-}
-
-scroll.setBackgroundColor(Color.TRANSPARENT)
-
-scroll.addView(
-    page,
-    android.widget.FrameLayout.LayoutParams(
-        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-        android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-    )
-)
-
-outer.addView(
-    scroll,
-    LinearLayout.LayoutParams(
-        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-        0,
-        1f
-    )
-)
-
-setContentView(
-    outer,
-    android.view.ViewGroup.LayoutParams(
-        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-        android.view.ViewGroup.LayoutParams.MATCH_PARENT
-    )
-)
+        setContentView(outer)
         addHeader()
 
         if (drawerOpen) {
@@ -917,7 +854,7 @@ private fun addRegistrationScreen() {
                     } else {
                         toast(result.optString("message", "Registration failed. Please try again."))
                     }
-                    }
+                }
             }
         }
     }
@@ -926,19 +863,6 @@ private fun addRegistrationScreen() {
 }
 // SIGN IN — uses the same user records and approval status as WebTrader.
 private fun addLoginScreen() {
-    
-        val tokenKey = if (executionMode == "REAL") "real_token" else "demo_token"
-val savedToken = prefs.getString(tokenKey, "").orEmpty()
-
-if (savedToken.isNotBlank()) {
-    if (derivServiceBound && ::derivApiClient.isInitialized) {
-        derivApiClient.ensureConnectedOnResume(savedToken, executionMode)
-    } else {
-        pendingResumeCheck = true
-        startAndBindDerivService()
-    }
-}
-    }
     page.addView(sectionTitle("SIGN IN"))
     val loginCard = card().apply { orientation = LinearLayout.VERTICAL }
     loginCard.addView(label("Welcome back", 20f, green, true))
@@ -1138,26 +1062,18 @@ private fun performPlatformLogout() {
     toast("You have been signed out.")
 }
 private fun addHeader() {
-    val header = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(dp(10), dp(8), dp(10), dp(8))
+    val row = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(12), dp(8), dp(8), dp(8))
         background = GradientDrawable(
             GradientDrawable.Orientation.LEFT_RIGHT,
-            intArrayOf(
-                Color.rgb(3, 18, 10),
-                Color.rgb(8, 35, 22),
-                Color.rgb(3, 18, 10)
-            )
+            intArrayOf(Color.rgb(3, 18, 10), Color.rgb(8, 35, 22), Color.rgb(3, 18, 10))
         ).apply {
             cornerRadius = dp(18).toFloat()
             setStroke(dp(1), greenDark)
         }
         elevation = dp(5).toFloat()
-    }
-
-    val topRow = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
     }
 
     val menu = label("☰", 28f, white, true).apply {
@@ -1167,144 +1083,64 @@ private fun addHeader() {
             render()
         }
     }
-
-    topRow.addView(
-        menu,
-        LinearLayout.LayoutParams(dp(42), dp(48))
-    )
+    row.addView(menu, LinearLayout.LayoutParams(dp(40), dp(52)))
 
     val logo = ImageView(this).apply {
         setImageResource(R.drawable.volatilities_indicator_logo)
         scaleType = ImageView.ScaleType.CENTER_CROP
         contentDescription = "Volatilities Indicator logo"
-        background = shape(
-            Color.rgb(0, 22, 12),
-            green,
-            100,
-            2
-        )
+        background = shape(Color.rgb(0, 22, 12), green, 100, 2)
         clipToOutline = true
     }
+    row.addView(logo, LinearLayout.LayoutParams(dp(48), dp(48)).apply {
+        rightMargin = dp(8)
+    })
 
-    topRow.addView(
-        logo,
-        LinearLayout.LayoutParams(dp(48), dp(48)).apply {
-            leftMargin = dp(6)
-        }
-    )
+    val titles = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_VERTICAL
+    }
+    titles.addView(label("VOLATILITIES INDICATOR", 15f, white, true))
+    titles.addView(label("TRADE SMARTER TODAY", 9f, green, true))
+    row.addView(titles, LinearLayout.LayoutParams(0, -2, 1f))
 
-    val spacer = View(this)
-    topRow.addView(
-        spacer,
-        LinearLayout.LayoutParams(0, 1, 1f)
-    )
-
-    val unreadBellCount =
-        appPrefs.getInt("unread_notification_count", 0)
-
+    val unreadCount = appPrefs.getInt("unread_notification_count", 0)
     val bellContainer = FrameLayout(this)
-
     val bell = TextView(this).apply {
         text = if (notificationsEnabled) "🔔" else "♧"
         textSize = 25f
-        gravity = Gravity.CENTER
         setTextColor(if (notificationsEnabled) green else white)
-        contentDescription =
-            if (unreadBellCount > 0)
-                "Notifications, $unreadBellCount unread"
-            else "Notifications"
+        gravity = Gravity.CENTER
+        contentDescription = if (unreadCount > 0) "Notifications, $unreadCount unread" else "Notifications"
     }
-    bellContainer.addView(
-        bell,
-        FrameLayout.LayoutParams(-1, -1)
-    )
-
-    val headerBadge = TextView(this).apply {
-        text = if (unreadBellCount > 99) "99+"
-               else unreadBellCount.toString()
+    bellContainer.addView(bell, FrameLayout.LayoutParams(-1, -1))
+    val badge = TextView(this).apply {
+        text = if (unreadCount > 99) "99+" else unreadCount.toString()
         textSize = 9f
         setTextColor(Color.BLACK)
         gravity = Gravity.CENTER
         setPadding(dp(4), 0, dp(4), 0)
-        visibility =
-            if (unreadBellCount > 0) View.VISIBLE else View.GONE
+        visibility = if (unreadCount > 0) View.VISIBLE else View.GONE
         background = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
             setColor(red)
             setStroke(dp(1), bg)
         }
     }
-    headerNotificationBadge = headerBadge
-    bellContainer.addView(
-        headerBadge,
-        FrameLayout.LayoutParams(
-            dp(20),
-            dp(20),
-            Gravity.TOP or Gravity.END
-        )
-    )
+    headerNotificationBadge = badge
+    bellContainer.addView(badge, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.TOP or Gravity.END))
     bellContainer.setOnClickListener {
         selectedTab = "Notifications"
         drawerOpen = false
         render()
     }
+    row.addView(bellContainer, LinearLayout.LayoutParams(dp(42), dp(48)))
 
-    topRow.addView(
-        bellContainer,
-        LinearLayout.LayoutParams(dp(46), dp(48))
-    )
-
-    header.addView(
-        topRow,
-        LinearLayout.LayoutParams(-1, dp(48))
-    )
-
-    val brandTitle = label(
-        "VOLATILITIES INDICATOR",
-        14f,
-        white,
-        true
-    ).apply {
-        maxLines = 1
-        isSingleLine = true
-        gravity = Gravity.CENTER
-    }
-
-    header.addView(
-        brandTitle,
-        LinearLayout.LayoutParams(-1, -2)
-    )
-
-    val slogan = label(
-        "TRADE SMARTER TODAY",
-        9f,
-        green,
-        true
-    ).apply {
-        gravity = Gravity.CENTER
-        maxLines = 1
-        isSingleLine = true
-    }
-
-    header.addView(
-        slogan,
-        LinearLayout.LayoutParams(-1, -2)
-    )
-
-    page.addView(
-        header,
-        LinearLayout.LayoutParams(-1, -2)
-    )
-
-    page.addView(
-        View(this).apply {
-            setBackgroundColor(green)
-        },
-        LinearLayout.LayoutParams(dp(42), dp(3)).apply {
-            topMargin = dp(8)
-            bottomMargin = dp(5)
-        }
-    )
+    page.addView(row, LinearLayout.LayoutParams(-1, -2))
+    page.addView(View(this).apply { setBackgroundColor(green) }, LinearLayout.LayoutParams(dp(42), dp(3)).apply {
+        topMargin = dp(8)
+        bottomMargin = dp(5)
+    })
 }
 // =========================================================
 // NAVIGATION DRAWER
@@ -1443,7 +1279,7 @@ private fun addHeader() {
         beginDerivConnection()
     }
     },
-    weighted()
+            weighted()
 )
        page.addView(row)
     }
@@ -1452,26 +1288,13 @@ private fun addHeader() {
     private fun addDashboardIndexMonitor() {
         page.addView(sectionTitle("INDEX MONITOR"))
         dashboardQualifiedCountView = TextView(this).apply {
-    text = "QUALIFIED 0/5"
+    text = "FIVE-INDEX SUMMARY  |  QUALIFIED 0/5  |  WAITING 5/5"
     textSize = 13f
     setTypeface(null, android.graphics.Typeface.BOLD)
     setTextColor(Color.YELLOW)
     setPadding(dp(4), dp(4), dp(4), dp(8))
 }
 page.addView(dashboardQualifiedCountView)
-        dashboardOverviewSummaryView = TextView(this).apply {
-            text = marketDataIndexes.joinToString("\n") { "$it  LOADING  ·  —" }
-            textSize = 12f
-            setTextColor(white)
-            setLineSpacing(dp(3).toFloat(), 1.0f)
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-            background = shape(panel2, greenDark, 10, 1)
-        }
-        page.addView(
-            dashboardOverviewSummaryView,
-            matchWrap().apply { bottomMargin = dp(8) }
-        )
-        refreshDashboardIndexSummary()
         val monitorHeader = LinearLayout(this).apply {
     orientation = LinearLayout.HORIZONTAL
     gravity = Gravity.CENTER_VERTICAL
@@ -1547,8 +1370,16 @@ page.addView(monitorHeader, matchWrap())
                 }
             )
             val analysisView = label(
-                "MASTER DECISION: WAITING",
-                11f, yellow, true
+                "1. LIQUIDITY SWEEP: WAITING\n" +
+                "2. MARKET STRUCTURE: WAITING\n" +
+                "3. MSS: 0%\n" +
+                "4. BULLISH / BEARISH CHOCH: NO\n" +
+                "5. ORDER BLOCK: INVALID\n" +
+                "6. ORDER BLOCK RETEST: NO\n" +
+                "7. MOMENTUM: 0%\n" +
+                "8. PTPE: 0%\n" +
+                "9. MASTER ENGINE: WAITING",
+                10f, yellow, false
             ).apply {
                 setPadding(dp(9), dp(9), dp(9), dp(9))
                 background = shape(panel2, accent, 8, 1)
@@ -1556,7 +1387,8 @@ page.addView(monitorHeader, matchWrap())
             }
             dashboardAnalysisViews[symbol] = analysisView
             row.addView(analysisView, matchWrap().apply { topMargin = dp(7) })
-                // Expanded analysis details follow the same execution sequence.
+
+            // Expanded analysis details follow the same execution sequence.
             val detailsContainer = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(8), dp(8), dp(8), dp(4))
@@ -1682,7 +1514,7 @@ detailsContainer.addView(label("MSS CONFIRMATION: $detailedChochDirection", 11f,
     }
 
 val detailedDecision = masterEngineDecisions[symbol]
-detailsContainer.addView(label("06. ORDER BLOCK RETEST: ${if (detailedDecision?.orderBlockRetestQualified == true) "YES — QUALIFIED" else "NO — WAITING"}", 11f, if (detailedDecision?.orderBlockRetestQualified == true) green else yellow, false))
+detailsContainer.addView(label("ORDER BLOCK RETEST: ${if (detailedDecision?.orderBlockRetestQualified == true) "YES — QUALIFIED" else "NO — WAITING"}", 11f, if (detailedDecision?.orderBlockRetestQualified == true) green else yellow, false))
 val detailedBullMomentum = calculateMomentumQualified(structureCandles, "BULLISH")
 val detailedBearMomentum = calculateMomentumQualified(structureCandles, "BEARISH")
 val detailedMomentum = when {
@@ -1690,9 +1522,9 @@ val detailedMomentum = when {
     detailedBearMomentum -> "BEARISH — 100% QUALIFIED"
     else -> "NOT QUALIFIED — 0%"
 }
-detailsContainer.addView(label("07. MOMENTUM: $detailedMomentum", 11f, if (detailedBullMomentum || detailedBearMomentum) green else yellow, false))
-detailsContainer.addView(label("08. PTPE: ${String.format(java.util.Locale.US, "%.1f", detailedDecision?.ptpeProbability ?: 0.0)}%", 11f, if ((detailedDecision?.ptpeProbability ?: 0.0) > 55.0) green else yellow, false))
-detailsContainer.addView(label("09. MASTER DECISION: ${if (detailedDecision?.qualified == true) "QUALIFIED" else "WAITING"}", 11f, if (detailedDecision?.qualified == true) green else yellow, true))
+detailsContainer.addView(label("MOMENTUM: $detailedMomentum", 11f, if (detailedBullMomentum || detailedBearMomentum) green else yellow, false))
+detailsContainer.addView(label("PTPE: ${String.format(java.util.Locale.US, "%.1f", detailedDecision?.ptpeProbability ?: 0.0)}%", 11f, if ((detailedDecision?.ptpeProbability ?: 0.0) > 55.0) green else yellow, false))
+detailsContainer.addView(label("MASTER ENGINE: ${if (detailedDecision?.qualified == true) "QUALIFIED" else "WAITING"}", 11f, if (detailedDecision?.qualified == true) green else yellow, true))
 
 
 // =========================================================
@@ -1751,11 +1583,11 @@ headingRow.setOnClickListener {
     derivApiClient.requestHistoricalCandles()
         }
     }
-
-     // =========================================================
+    // =========================================================
     // DERIV ACCOUNT CARD — VISUAL PLACEHOLDER ONLY
   // =========================================================
-  private fun addAccountCard() {
+
+    private fun addAccountCard() {
         val card = card()
         card.orientation = LinearLayout.VERTICAL
 
@@ -1849,7 +1681,7 @@ headingRow.setOnClickListener {
             }
         )
                             }
-                                // =========================================================
+                             // =========================================================
 // TRADE SCREEN
 // =========================================================
 private fun addTradeScreen() {
@@ -2043,7 +1875,7 @@ row.addView(
                     }
                     .show()
             }
-            }, matchWrap().apply { topMargin = dp(8) })
+}, matchWrap().apply { topMargin = dp(8) })
         runningCard.addView(row, matchWrap().apply { topMargin = dp(7) })
         visibleRunning++
     }
@@ -2056,6 +1888,7 @@ row.addView(
         if (connected) { derivApiClient.requestOpenTrades(); derivApiClient.requestTradeHistory() } else toast("Connect to Deriv first.")
     }, matchWrap().apply { topMargin = dp(8) })
     page.addView(runningCard, matchWrap().apply { bottomMargin = dp(10) })
+
     page.addView(sectionTitle("TRADING HISTORY"))
     val historyCard = card().apply { orientation = LinearLayout.VERTICAL }
     historyCard.addView(label("Account mode: $executionMode", 12f, green, true))
@@ -2151,6 +1984,7 @@ private fun calculateLiquidityLevels(
 
     val sorted = candles.sortedBy { it.epoch }
     val pivots = mutableListOf<Pair<Int, Double>>()
+
     for (i in 2 until sorted.size - 2) {
         val price = if (bullish) sorted[i].low else sorted[i].high
 
@@ -2419,6 +2253,7 @@ private fun calculateMarketStructure(
             lows.add(i to sorted[i].low)
         }
     }
+
     val structures = mutableListOf<MarketStructureEvent>()
     val chochs = mutableListOf<ChochEvent>()
 
@@ -2633,12 +2468,12 @@ private fun calculateSupportResistance(
         }
 
         used.addAll(group)
+
         val levelPrice = if (support) {
             group.map { pivots[it].first }.average()
         } else {
             group.map { pivots[it].first }.average()
         }
-
         val createdAt = group.minOf { pivots[it].second }
 
         var touches = 0
@@ -2714,7 +2549,8 @@ private fun calculateSupportResistance(
             )
         )
     }
-    val recentLevels = results.filter {
+
+val recentLevels = results.filter {
     it.createdAt >= sevenDaysAgo
 }
 
@@ -2873,11 +2709,17 @@ val bearishMss = chochDirection == "BEARISH"
     val retestText = if (bullishRetest || bearishRetest) "YES" else "NO"
     val engineExecuted = runningContracts.values.any { it.symbol == symbol && it.mode == executionMode }
     val engineText = if (engineExecuted) "EXECUTED" else "WAITING"
-    val summary = when {
-        decision.qualified && direction == "BUY" -> "MASTER DECISION: BUY NOW"
-        decision.qualified && direction == "SELL" -> "MASTER DECISION: SELL NOW"
-        else -> "MASTER DECISION: WAIT"
-    }
+    val summary = listOf(
+        "1. LIQUIDITY SWEEP: $liquidityText",
+        "2. MARKET STRUCTURE: ${marketDirection.ifBlank { "WAITING" }}",
+        "3. MSS: $mssText",
+        "4. $chochText",
+        "5. ORDER BLOCK: $obText",
+        "6. ORDER BLOCK RETEST: $retestText",
+        "7. MOMENTUM: ${String.format(java.util.Locale.US, "%.0f", momentumPercent)}%",
+        "8. PTPE: ${String.format(java.util.Locale.US, "%.1f", ptpe)}%",
+        "9. MASTER ENGINE: $engineText"
+    ).joinToString("\n")
     dashboardAnalysisViews[symbol]?.text = summary
     dashboardAnalysisViews[symbol]?.setTextColor(
         if (decision.qualified) green else yellow
@@ -2927,11 +2769,11 @@ val bearishMss = chochDirection == "BEARISH"
             page.addView(label("Waiting for historical candles...", 13f, yellow, false))
             return@forEach
         }
+
         val supports = calculateSupportResistance(candles, true)
         val resistances = calculateSupportResistance(candles, false)
 
         page.addView(label("STRONGEST SUPPORT LEVELS", 13f, green, true))
-
         if (supports.isEmpty()) {
             page.addView(label("No confirmed support levels found.", 13f, muted, false))
         } else {
@@ -3271,6 +3113,7 @@ val bearishMss = chochDirection == "BEARISH"
             page.addView(row, matchWrap().apply { bottomMargin = dp(5) })
         }
     }
+
     private fun addSettingsScreen() {
         page.addView(sectionTitle("SETTINGS"))
         // Trading controls are deliberately housed in Settings; their state remains persisted in appPrefs.
@@ -3531,14 +3374,13 @@ val bearishMss = chochDirection == "BEARISH"
                     maxLines = 1
                     includeFontPadding = true
                 }
-                )
+            )
             nav.addView(item, LinearLayout.LayoutParams(0, dp(68), 1f))
         }
 
         outer.addView(nav, LinearLayout.LayoutParams(-1, dp(76)))
     }
-
-    // =========================================================
+       // =========================================================
     // UI HELPERS
     // =========================================================
 
@@ -3834,8 +3676,7 @@ derivApiClient.connectWithAccessToken(token, executionMode)
         if (::accountIdView.isInitialized) accountIdView.text = "Account:  —"
         if (::balanceView.isInitialized) balanceView.text = "Balance:  —"
         toast("Deriv disconnected.")
-        }
-
+    }
     override fun onConnecting(message: String) {
         runOnUiThread {
             if (::accountStatus.isInitialized) {
@@ -3876,6 +3717,7 @@ derivApiClient.connectWithAccessToken(token, executionMode)
             }
         }
     }
+
     override fun onTick(symbol: String, quote: Double, epoch: Long) {
     runOnUiThread {
         if (symbol in marketDataIndexes && quote.isFinite()) {
@@ -3895,8 +3737,7 @@ derivApiClient.connectWithAccessToken(token, executionMode)
         decision.momentumQualified &&
         decision.ptpeProbability > 55.0
 }
-dashboardQualifiedCountView?.text = "QUALIFIED $qualifiedCount/5"
-            refreshDashboardIndexSummary()
+dashboardQualifiedCountView?.text = "FIVE-INDEX SUMMARY  |  QUALIFIED $qualifiedCount/5  |  WAITING ${5 - qualifiedCount}/5"
             if (isTouchExecutionReady(symbol)) {
     val decision = masterEngineDecisions[symbol] ?: return@runOnUiThread
     val latest = marketDataCandles[symbol]?.lastOrNull() ?: return@runOnUiThread
@@ -4124,6 +3965,7 @@ val savedPairId = appPrefs.getString(
     "contract_pair_${accountId}_${executionMode}_$id",
     ""
     ).orEmpty()
+
 val savedPairSide = appPrefs.getString(
     "contract_pair_side_${accountId}_${executionMode}_$id",
     ""
@@ -4139,8 +3981,9 @@ if (stake > 0.0) {
         pairId = savedPairId,
         pairSide = savedPairSide,
         isRecovery = savedIsRecovery
-    )
+        )
     runningContracts[id] = restored
+
     // Reconstruct an older original pair if its pairing data was not saved.
     if (restored.pairId.isBlank() && !restored.isRecovery) {
         val partner = runningContracts.values.firstOrNull {
