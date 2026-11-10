@@ -637,36 +637,86 @@ if (savedToken.isNotBlank()) {
     }
 
         val outer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(bg)
-        }
+    orientation = LinearLayout.VERTICAL
+    setBackgroundColor(bg)
+    layoutParams = android.view.ViewGroup.LayoutParams(
+        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+        android.view.ViewGroup.LayoutParams.MATCH_PARENT
+    )
+}
 
-        val scroll = ScrollView(this).apply {
-            isFillViewport = true
-            overScrollMode = View.OVER_SCROLL_NEVER
-            isSmoothScrollingEnabled = true
-        }
+val scroll = ScrollView(this).apply {
+    isFillViewport = true
+    overScrollMode = View.OVER_SCROLL_NEVER
+    isSmoothScrollingEnabled = true
+}
 
-        mainScrollView = scroll
+mainScrollView = scroll
 
-        page = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(8), dp(14), dp(18))
-            setBackgroundColor(bg)
-        }
+page = LinearLayout(this).apply {
+    orientation = LinearLayout.VERTICAL
+    setPadding(dp(14), dp(8), dp(14), dp(18))
+    setBackgroundColor(bg)
+    minimumWidth = resources.displayMetrics.widthPixels - dp(28)
+}
 
-        scroll.addView(
-            page,
-            android.widget.FrameLayout.LayoutParams(-1, -2)
+val watermark = try {
+    getDrawable(R.drawable.volatilities_indicator_logo)
+        ?.mutate()?.apply { alpha = 22 }
+} catch (_: Exception) {
+    null
+}
+
+page.background = if (watermark != null) {
+    android.graphics.drawable.LayerDrawable(
+        arrayOf(
+            android.graphics.drawable.ColorDrawable(bg),
+            android.graphics.drawable.InsetDrawable(watermark, dp(72))
         )
+    )
+} else {
+    android.graphics.drawable.ColorDrawable(bg)
+}
 
-        outer.addView(
-            scroll,
-            LinearLayout.LayoutParams(-1, 0, 1f)
-        )
+scroll.setBackgroundColor(Color.TRANSPARENT)
 
-        setContentView(outer)
-        
+scroll.addView(
+    page,
+    android.widget.FrameLayout.LayoutParams(
+        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+        android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+    )
+)
+
+outer.addView(
+    scroll,
+    LinearLayout.LayoutParams(
+        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+        0,
+        1f
+    )
+)
+
+setContentView(
+    outer,
+    android.view.ViewGroup.LayoutParams(
+        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+        android.view.ViewGroup.LayoutParams.MATCH_PARENT
+    )
+)
+        addHeader()
+
+        if (drawerOpen) {
+            addDrawer()
+        }
+        when (selectedTab) {
+            "Trade" -> {
+                if (authToken.isBlank()) {
+                    page.addView(sectionTitle("SIGN IN REQUIRED"))
+                    page.addView(label("Sign in to your Volatilities Indicator account before accessing trading.", 14f, yellow, false))
+                    page.addView(button("SIGN IN", true) { selectedTab = "Login"; render() }, matchWrap())
+                } else addTradeScreen()
+            }
 "Register" -> {
     addRegistrationScreen()
     page.addView(
