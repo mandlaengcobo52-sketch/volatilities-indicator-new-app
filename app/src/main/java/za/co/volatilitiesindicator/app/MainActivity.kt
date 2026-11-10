@@ -703,17 +703,6 @@ setContentView(
         android.view.ViewGroup.LayoutParams.MATCH_PARENT
     )
 )
-        } else {
-            ColorDrawable(bg)
-        }
-        scroll.setBackgroundColor(Color.TRANSPARENT)
-        scroll.addView(page, android.widget.FrameLayout.LayoutParams(-1, -2))
-
-        outer.addView(
-            scroll,
-            LinearLayout.LayoutParams(-1, 0, 1f)
-        )
-        setContentView(outer, ViewGroup.LayoutParams(-1, -1))
         addHeader()
 
         if (drawerOpen) {
@@ -1214,7 +1203,6 @@ private fun addHeader() {
         }
     }
     headerNotificationBadge = headerBadge
-
     bellContainer.addView(
         headerBadge,
         FrameLayout.LayoutParams(
@@ -1827,8 +1815,7 @@ headingRow.setOnClickListener {
             }
         )
                             }
-
- // =========================================================
+                             // =========================================================
 // TRADE SCREEN
 // =========================================================
 private fun addTradeScreen() {
@@ -2122,7 +2109,6 @@ private data class LiquidityLevel(
     val sweepAt: Long,
     val occurrences: Int
 )
-
 private fun calculateLiquidityLevels(
     candles: List<DerivApiClient.Candle>,
     bullish: Boolean
@@ -2421,7 +2407,6 @@ private fun calculateMarketStructure(
     val pivotLows = lows.associate { it.first to it.second }
 
     for (i in sorted.indices) {
-
         val currentHigh = pivotHighs[i]
         val currentLow = pivotLows[i]
 
@@ -3027,7 +3012,7 @@ private fun evaluateMasterEngine(symbol: String) {
                                         toast(result.optString("message", if (ok) "User suspended." else "Unable to suspend user."))
                                         if (ok) loadAdminUsers()
                                     }
-                                }.show()
+                                      }.show()
                         },
                         matchWrap().apply { topMargin = dp(6) }
                     )
@@ -3329,8 +3314,7 @@ private fun evaluateMasterEngine(symbol: String) {
             .putString(lastMessageKey, statusSignature)
             .putLong(lastTimeKey, now)
             .apply()
-
-        val stableKey = if (noReturnError) {
+            val stableKey = if (noReturnError) {
             "deriv_no_return_${saDayKey()}_${accountId}_${executionMode}"
         } else {
             eventKey.ifBlank {
@@ -3918,8 +3902,7 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
             "proposal" -> {
     val requestId = json.optInt("req_id", 0)
     val order = pendingTouchOrders[requestId] ?: return@runOnUiThread
-
-    val proposal = json.optJSONObject("proposal")
+                val proposal = json.optJSONObject("proposal")
     if (proposal == null) {
         pendingTouchOrders.remove(requestId)
         pendingTouchBySymbol.remove(order.symbol)
@@ -4379,4 +4362,4 @@ override fun onDestroy() {
 
     super.onDestroy()
 }
-                            }
+                            } 
