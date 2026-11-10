@@ -1469,54 +1469,10 @@ if (structureAnalysis.chochs.isEmpty()) {
         )
     }
 }
-// =========================================================
 val detailedChochDirection = structureAnalysis.chochs.lastOrNull()?.direction ?: "NOT CONFIRMED"
 detailsContainer.addView(label("MSS CONFIRMATION: $detailedChochDirection", 11f, if (detailedChochDirection == "NOT CONFIRMED") yellow else green, true))
 
-// BULLISH AND BEARISH ORDER BLOCKS
-// =========================================================
-
-    val orderBlockCandles = marketDataCandles[symbol].orEmpty()
-    val orderBlocks = calculateOrderBlocks(orderBlockCandles)
-
-    detailsContainer.addView(
-        label("BULLISH ORDER BLOCKS", 12f, green, true)
-    )
-    if (orderBlocks.bullish.isEmpty()) {
-        detailsContainer.addView(
-            label("No bullish order blocks found.", 11f, muted, false)
-        )
-    } else {
-        orderBlocks.bullish.forEach { block ->
-            detailsContainer.addView(
-                label(
-                    "BULLISH OB ${block.number} | ZONE: ${formatMarketPrice(block.low)} - ${formatMarketPrice(block.high)} | CREATED: ${formatMarketTime(block.createdAt)} | STATUS: ${if (block.valid) "VALID" else "INVALID"} | INVALIDATED: ${if (block.invalidatedAt > 0L) formatMarketTime(block.invalidatedAt) else "—"}",
-                    11f, green, false
-                )
-            )
-        }
-    }
-    detailsContainer.addView(
-        label("BEARISH ORDER BLOCKS", 12f, red, true)
-    )
-
-    if (orderBlocks.bearish.isEmpty()) {
-        detailsContainer.addView(
-            label("No bearish order blocks found.", 11f, muted, false)
-        )
-    } else {
-        orderBlocks.bearish.forEach { block ->
-            detailsContainer.addView(
-                label(
-                    "BEARISH OB ${block.number} | ZONE: ${formatMarketPrice(block.low)} - ${formatMarketPrice(block.high)} | CREATED: ${formatMarketTime(block.createdAt)} | STATUS: ${if (block.valid) "VALID" else "INVALID"} | INVALIDATED: ${if (block.invalidatedAt > 0L) formatMarketTime(block.invalidatedAt) else "—"}",
-                    11f, red, false
-                )
-            )
-        }
-    }
-
 val detailedDecision = masterEngineDecisions[symbol]
-detailsContainer.addView(label("ORDER BLOCK RETEST: ${if (detailedDecision?.orderBlockRetestQualified == true) "YES — QUALIFIED" else "NO — WAITING"}", 11f, if (detailedDecision?.orderBlockRetestQualified == true) green else yellow, false))
 val detailedBullMomentum = calculateMomentumQualified(structureCandles, "BULLISH")
 val detailedBearMomentum = calculateMomentumQualified(structureCandles, "BEARISH")
 val detailedMomentum = when {
