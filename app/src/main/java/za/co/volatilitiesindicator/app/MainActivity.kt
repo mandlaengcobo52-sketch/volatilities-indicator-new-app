@@ -636,43 +636,37 @@ if (savedToken.isNotBlank()) {
         0
     }
         val outer = LinearLayout(this).apply {
-    orientation = LinearLayout.VERTICAL
-    setBackgroundColor(bg)
-    layoutParams = android.view.ViewGroup.LayoutParams(
-        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-        android.view.ViewGroup.LayoutParams.MATCH_PARENT
-    )
-}
-
-val scroll = ScrollView(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(bg)
+        }
+        val scroll = ScrollView(this).apply {
     isFillViewport = true
     overScrollMode = View.OVER_SCROLL_NEVER
     isSmoothScrollingEnabled = true
-}
+        }
+        mainScrollView = scroll
 
-mainScrollView = scroll
-
-page = LinearLayout(this).apply {
-    orientation = LinearLayout.VERTICAL
-    setPadding(dp(14), dp(8), dp(14), dp(18))
-    setBackgroundColor(bg)
-    minimumWidth = resources.displayMetrics.widthPixels - dp(28)
-}
-
-val watermark = try {
-    getDrawable(R.drawable.volatilities_indicator_logo)
-        ?.mutate()?.apply { alpha = 22 }
-} catch (_: Exception) {
-    null
-}
-
-page.background = if (watermark != null) {
-    android.graphics.drawable.LayerDrawable(
-        arrayOf(
-            android.graphics.drawable.ColorDrawable(bg),
-            android.graphics.drawable.InsetDrawable(watermark, dp(72))
-        )
-    )
+        page = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(8), dp(14), dp(18))
+            setBackgroundColor(bg)
+        }
+        // Centered, low-opacity brand watermark behind all page content.
+        // Keep the original black background and avoid changing card/layout colours.
+        val watermark = try {
+            getDrawable(R.drawable.volatilities_indicator_logo)?.mutate()?.apply {
+                alpha = 48
+            }
+        } catch (_: Exception) {
+            null
+        }
+        page.background = if (watermark != null) {
+            LayerDrawable(
+                arrayOf(
+                    ColorDrawable(bg),
+                    InsetDrawable(watermark, dp(72))
+                )
+            )
 } else {
     android.graphics.drawable.ColorDrawable(bg)
 }
