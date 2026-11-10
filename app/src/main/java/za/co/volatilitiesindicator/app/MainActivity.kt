@@ -30,8 +30,10 @@ import android.os.Bundle
 import android.os.Handler
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -49,17 +51,17 @@ import android.os.IBinder
 class MainActivity : Activity(), DerivApiClient.Callback {
 
     // Original Volatilities Indicator colour palette — preserved.
-    private val bg = Color.rgb(8, 15, 29)
-    private val panel = Color.rgb(17, 29, 49)
-    private val panel2 = Color.rgb(25, 42, 66)
-    private val green = Color.rgb(48, 214, 164)
-    private val greenDark = Color.rgb(21, 126, 112)
-    private val white = Color.rgb(245, 248, 255)
-    private val muted = Color.rgb(164, 180, 202)
-    private val yellow = Color.rgb(244, 195, 92)
-    private val red = Color.rgb(255, 105, 119)
-    private val cyan = Color.rgb(91, 213, 226)
-    private val blue = Color.rgb(104, 164, 255)
+    private val bg = Color.rgb(3, 8, 6)
+    private val panel = Color.rgb(8, 20, 18)
+    private val panel2 = Color.rgb(16, 34, 39)
+    private val green = Color.rgb(0, 255, 92)
+    private val greenDark = Color.rgb(0, 120, 48)
+    private val white = Color.rgb(255, 220, 45)
+    private val muted = Color.rgb(242, 248, 245)
+    private val yellow = Color.rgb(255, 220, 45)
+    private val red = Color.rgb(255, 65, 75)
+    private val cyan = Color.rgb(0, 225, 235)
+    private val blue = Color.rgb(70, 155, 255)
 
     private val appPrefs by lazy {
     getSharedPreferences("volatilities_app_settings", MODE_PRIVATE)
@@ -305,7 +307,7 @@ private val consumedTouchQualifications = mutableMapOf<String, Long>()
     val cycleStart = appPrefs.getLong(timeKey, 0L)
 
     if (
-      savedCapital <= 0.0 ||
+        savedCapital <= 0.0 ||
         cycleStart <= 0L ||
         now - cycleStart >= 86400000L
     ) {
@@ -315,8 +317,7 @@ private val consumedTouchQualifications = mutableMapOf<String, Long>()
             .putFloat(key, accountBalance.toFloat())
             .putLong(timeKey, now)
             .apply()
-
-        return accountBalance
+            return accountBalance
     }
     return savedCapital
 }
@@ -515,6 +516,8 @@ private val dashboardPriceViews = mutableMapOf<String, TextView>()
 private val currentPriceViews = mutableMapOf<String, MutableList<TextView>>()
 private val dashboardStatusViews = mutableMapOf<String, TextView>()
 private var dashboardQualifiedCountView: TextView? = null
+    private var headerNotificationBadge: TextView? = null
+    private var bottomNotificationBadge: TextView? = null
 private var manualTradeSymbol = "R_10"
 private val dashboardAnalysisViews =
     mutableMapOf<String, TextView>()
@@ -612,7 +615,7 @@ if (savedToken.isNotBlank()) {
             setIntent(intent)
             handleOAuthCallback(intent)
         }
-        }
+    }
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 7802) {
@@ -648,18 +651,33 @@ if (savedToken.isNotBlank()) {
             setPadding(dp(14), dp(8), dp(14), dp(18))
             setBackgroundColor(bg)
         }
-        val watermark = try { getDrawable(R.drawable.volatilities_indicator_logo)?.mutate()?.apply { alpha = 22 } } catch (_: Exception) { null }
+        // Centered, low-opacity brand watermark behind all page content.
+        // Keep the original black background and avoid changing card/layout colours.
+        val watermark = try {
+            getDrawable(R.drawable.volatilities_indicator_logo)?.mutate()?.apply {
+                alpha = 48
+            }
+        } catch (_: Exception) {
+            null
+        }
         page.background = if (watermark != null) {
-            LayerDrawable(arrayOf(ColorDrawable(bg), InsetDrawable(watermark, dp(72))))
-        } else ColorDrawable(bg)
+            LayerDrawable(
+                arrayOf(
+                    ColorDrawable(bg),
+                    InsetDrawable(watermark, dp(72))
+                )
+            )
+        } else {
+            ColorDrawable(bg)
+        }
         scroll.setBackgroundColor(Color.TRANSPARENT)
-        scroll.addView(page)
+        scroll.addView(page, ScrollView.LayoutParams(-1, -2))
 
         outer.addView(
             scroll,
             LinearLayout.LayoutParams(-1, 0, 1f)
         )
-        setContentView(outer)
+        setContentView(outer, ViewGroup.LayoutParams(-1, -1))
         addHeader()
 
         if (drawerOpen) {
@@ -900,7 +918,7 @@ private fun addLoginScreen() {
                     if (loginGeneration != authSessionGeneration) return@authRequest
                     signIn.text = "SIGN IN"
                     if (ok) {
-                          // Invalidate any profile/admin response from the previous user.
+                           // Invalidate any profile/admin response from the previous user.
                         authSessionGeneration++
                         profileLoading = false
                         currentProfile = null
@@ -1105,18 +1123,30 @@ private fun addHeader() {
         val titles = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_VERTICAL
+            minimumWidth = dp(100)
         }
 
         titles.addView(
-            label("VOLATILITIES", 18f, white, true)
+            label("VOLATILITIES", 15f, white, true).apply {
+                maxLines = 1
+                isSingleLine = true
+                ellipsize = android.text.TextUtils.TruncateAt.END
+            }
         )
 
         titles.addView(
-            label("— INDICATOR —", 15f, green, true)
+            label("— INDICATOR —", 12f, green, true).apply {
+                maxLines = 1
+                isSingleLine = true
+                ellipsize = android.text.TextUtils.TruncateAt.END
+            }
         )
 
         titles.addView(
-            label("TRADE SMARTER TODAY", 8f, muted, false)
+            label("TRADE SMARTER TODAY", 8f, muted, false).apply {
+                maxLines = 1
+                isSingleLine = true
+            }
         )
 
         row.addView(
@@ -1124,35 +1154,65 @@ private fun addHeader() {
             LinearLayout.LayoutParams(0, -2, 1f)
         )
         val unreadBellCount = appPrefs.getInt("unread_notification_count", 0)
+        val bellContainer = FrameLayout(this)
         val bell = TextView(this).apply {
-            text = if (unreadBellCount > 0) "🔔 $unreadBellCount" else if (notificationsEnabled) "🔔" else "♧"
+            text = if (notificationsEnabled) "🔔" else "♧"
             textSize = 25f
             setTextColor(if (notificationsEnabled) green else white)
             gravity = Gravity.CENTER
-            contentDescription = "Notifications"
+            contentDescription = if (unreadBellCount > 0) "Notifications, $unreadBellCount unread" else "Notifications"
             setOnClickListener { selectedTab = "Notifications"; drawerOpen = false; render() }
         }
-        row.addView(
+        bellContainer.addView(
             bell,
-            LinearLayout.LayoutParams(dp(42), dp(52))
+            FrameLayout.LayoutParams(-1, -1)
+        )
+        val headerBadge = TextView(this).apply {
+            text = if (unreadBellCount > 99) "99+" else unreadBellCount.toString()
+            textSize = 9f
+            setTextColor(Color.BLACK)
+            gravity = Gravity.CENTER
+            setPadding(dp(4), 0, dp(4), 0)
+            visibility = if (unreadBellCount > 0) View.VISIBLE else View.GONE
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(red)
+                setStroke(dp(1), bg)
+            }
+        }
+        headerNotificationBadge = headerBadge
+        bellContainer.addView(
+            headerBadge,
+            FrameLayout.LayoutParams(dp(20), dp(20), Gravity.TOP or Gravity.END)
+        )
+        bellContainer.setOnClickListener {
+            selectedTab = "Notifications"
+            drawerOpen = false
+            render()
+        }
+        row.addView(
+            bellContainer,
+            LinearLayout.LayoutParams(dp(46), dp(52))
         )
 
         row.setPadding(dp(12), dp(8), dp(8), dp(8))
         row.background = GradientDrawable(
             GradientDrawable.Orientation.LEFT_RIGHT,
-            intArrayOf(Color.rgb(22, 48, 72), Color.rgb(18, 70, 77), Color.rgb(33, 47, 76))
-        ).apply { cornerRadius = dp(18).toFloat() }
+            intArrayOf(Color.rgb(3, 18, 10), Color.rgb(8, 35, 22), Color.rgb(3, 18, 10))
+        ).apply {
+            cornerRadius = dp(18).toFloat()
+            setStroke(dp(1), greenDark)
+        }
         row.elevation = dp(5).toFloat()
-        page.addView(row)
+        page.addView(row, LinearLayout.LayoutParams(-1, -2))
         page.addView(View(this).apply {
-            setBackgroundColor(Color.rgb(48, 214, 164))
+            setBackgroundColor(green)
         }, LinearLayout.LayoutParams(dp(42), dp(3)).apply {
             topMargin = dp(8)
             bottomMargin = dp(5)
         })
-    }
-
-    // =========================================================
+}
+// =========================================================
     // NAVIGATION DRAWER
     // =========================================================
 
@@ -1449,7 +1509,6 @@ if (bearishLiquidity.isEmpty()) {
 detailsContainer.addView(label("ANALYSIS - MARKET STRUCTURE AND CHOCH", 13f, green, true))
 val structureCandles = marketDataCandles[symbol].orEmpty()
 val structureAnalysis = calculateMarketStructure(structureCandles)
-
 detailsContainer.addView(label("MARKET STRUCTURE", 12f, green, true))
 
 if (structureAnalysis.structures.isEmpty()) {
@@ -1479,15 +1538,8 @@ if (structureAnalysis.chochs.isEmpty()) {
     }
 }
 // =========================================================
-val chochDirection = structureAnalysis.chochs.lastOrNull()?.direction ?: "NOT CONFIRMED"
-detailsContainer.addView(
-    label(
-        "MSS CONFIRMATION: $chochDirection",
-        11f,
-        if (chochDirection == "NOT CONFIRMED") yellow else green,
-        true
-    )
-)
+val detailedChochDirection = structureAnalysis.chochs.lastOrNull()?.direction ?: "NOT CONFIRMED"
+detailsContainer.addView(label("MSS CONFIRMATION: $detailedChochDirection", 11f, if (detailedChochDirection == "NOT CONFIRMED") yellow else green, true))
 
 // BULLISH AND BEARISH ORDER BLOCKS
 // =========================================================
@@ -1530,8 +1582,8 @@ detailsContainer.addView(
             )
         }
     }
-    val detailedDecision = masterEngineDecisions[symbol]
-val detailedChochDirection = structureAnalysis.chochs.lastOrNull()?.direction ?: "NOT CONFIRMED"
+
+val detailedDecision = masterEngineDecisions[symbol]
 detailsContainer.addView(label("ORDER BLOCK RETEST: ${if (detailedDecision?.orderBlockRetestQualified == true) "YES — QUALIFIED" else "NO — WAITING"}", 11f, if (detailedDecision?.orderBlockRetestQualified == true) green else yellow, false))
 val detailedBullMomentum = calculateMomentumQualified(structureCandles, "BULLISH")
 val detailedBearMomentum = calculateMomentumQualified(structureCandles, "BEARISH")
@@ -1761,7 +1813,7 @@ val accountCard = card().apply { orientation = LinearLayout.VERTICAL }
             val remain = (expiryEpoch - System.currentTimeMillis() / 1000L).coerceAtLeast(0L)
             String.format(java.util.Locale.US, "%02d:%02d:%02d", remain / 3600, (remain % 3600) / 60, remain % 60)
         } else "—"
-      val row = LinearLayout(this).apply {
+        val row = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(10), dp(10), dp(10), dp(10))
             background = shape(panel, greenDark, 8, 1)
@@ -1912,6 +1964,21 @@ row.addView(
     page.addView(sectionTitle("TRADING HISTORY"))
     val historyCard = card().apply { orientation = LinearLayout.VERTICAL }
     historyCard.addView(label("Account mode: $executionMode", 12f, green, true))
+    historyCard.addView(
+        button("CLEAR DISPLAYED HISTORY", false) {
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Clear displayed trading history?")
+                .setMessage("This clears the history currently displayed in this app only. It does not delete records from your Deriv account.")
+                .setNegativeButton("CANCEL", null)
+                .setPositiveButton("CLEAR") { _, _ ->
+                    tradeHistoryResponse = null
+                    render()
+                    toast("Displayed trading history cleared.")
+                }
+                .show()
+        },
+        matchWrap().apply { topMargin = dp(8); bottomMargin = dp(6) }
+    )
     val historyArray = tradeHistoryResponse?.optJSONObject("profit_table")?.optJSONArray("transactions")
         ?: tradeHistoryResponse?.optJSONArray("transactions")
     var historyCount = 0
@@ -2130,7 +2197,8 @@ private fun calculateOrderBlocks(
                     .firstOrNull {
                         sorted[it].close < sorted[it].open
                     }
-                    if (obIndex != null) {
+
+                if (obIndex != null) {
 
                     val ob = sorted[obIndex]
 
@@ -2350,7 +2418,7 @@ private fun calculateMarketStructure(
                         )
                     )
                 }
-            }
+                }
 
             previousLow = i to currentLow
         }
@@ -2643,7 +2711,6 @@ private fun evaluateMasterEngine(symbol: String) {
             latest.close < latest.open &&
             latest.close <= (block.low + block.high) / 2.0
     } ?: false
-
     val bullishMomentum = calculateMomentumQualified(candles, "BULLISH")
     val bearishMomentum = calculateMomentumQualified(candles, "BEARISH")
 
@@ -2718,6 +2785,7 @@ private fun evaluateMasterEngine(symbol: String) {
     dashboardAnalysisViews[symbol]?.setTextColor(
         if (decision.qualified) green else yellow
     )
+
     if (decision.qualified) {
         val eventKey = "${saDayKey()}_${accountId}_${executionMode}_${symbol}_${direction}_${latest.epoch}"
         if (masterEngineNotificationKeys.add(eventKey)) {
@@ -3019,7 +3087,7 @@ private fun evaluateMasterEngine(symbol: String) {
                         }
                         authRequest("admin_edit_user", values) { ok, result ->
                             if (!ok) {
-                              toast(result.optString("message", "Unable to update user details."))
+                                toast(result.optString("message", "Unable to update user details."))
                                 return@authRequest
                             }
                         }
@@ -3074,6 +3142,7 @@ private fun evaluateMasterEngine(symbol: String) {
     }
     private fun addNotificationsScreen() {
         appPrefs.edit().putBoolean("has_unread_notifications", false).putInt("unread_notification_count", 0).apply()
+        updateNotificationBadges()
         clearTradeNotificationBadges()
         page.addView(sectionTitle("NOTIFICATIONS"))
         val card = card().apply { orientation = LinearLayout.VERTICAL }
@@ -3094,6 +3163,7 @@ private fun evaluateMasterEngine(symbol: String) {
                 card.addView(button("CLEAR NOTIFICATION FEED", false) {
             clearTradeNotificationBadges()
             appPrefs.edit().remove("notification_feed").putInt("unread_notification_count", 0).putBoolean("has_unread_notifications", false).apply()
+            updateNotificationBadges()
             render()
             }, matchWrap().apply { topMargin = dp(6) })
         page.addView(card, matchWrap().apply { bottomMargin = dp(10) })
@@ -3136,6 +3206,14 @@ private fun evaluateMasterEngine(symbol: String) {
         page.addView(card, matchWrap())
     }
 
+    private fun updateNotificationBadges() {
+        val unreadCount = appPrefs.getInt("unread_notification_count", 0)
+        listOf(headerNotificationBadge, bottomNotificationBadge).forEach { badge ->
+            badge?.text = if (unreadCount > 99) "99+" else unreadCount.toString()
+            badge?.visibility = if (unreadCount > 0) View.VISIBLE else View.GONE
+        }
+    }
+
     private fun addNotificationFeedItem(message: String) {
         val stamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).apply { timeZone = dailyCapitalTimeZone }.format(java.util.Date())
         val entry = "$stamp · $message"
@@ -3146,6 +3224,7 @@ private fun evaluateMasterEngine(symbol: String) {
             .putBoolean("has_unread_notifications", true)
             .putInt("unread_notification_count", appPrefs.getInt("unread_notification_count", 0) + 1)
             .apply()
+        runOnUiThread { updateNotificationBadges() }
     }
     private fun ensureNotificationPermission() {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
@@ -3220,22 +3299,21 @@ private fun evaluateMasterEngine(symbol: String) {
                     .setNumber(unreadCount.coerceAtLeast(1))
                     .setContentTitle(title).setContentText(message)
                     .setStyle(Notification.BigTextStyle().bigText(message)).setContentIntent(pendingIntent)
-                    .setAutoCancel(true).setVibrate(vibrationPattern).build()
+                    .setAutoCancel(false).setVibrate(vibrationPattern).build()
             } else {
                 @Suppress("DEPRECATION")
                 Notification.Builder(this).setSmallIcon(R.drawable.volatilities_indicator_logo)
                     .setNumber(unreadCount.coerceAtLeast(1))
                     .setContentTitle(title).setContentText(message).setContentIntent(pendingIntent)
-                    .setAutoCancel(true).setVibrate(vibrationPattern).build()
+                    .setAutoCancel(false).setVibrate(vibrationPattern).build()
             }
-            val notificationId = 4200 + (stableKey.hashCode() and 0x7fffffff) % 100000
+            val notificationId = 4200
             manager.notify(notificationId, notification)
         } catch (_: Exception) {
             // Ignore notification delivery failures.
         }
     }
-
-    // =========================================================
+        // =========================================================
     // ADMIN PREVIEW
     // =========================================================
     private fun addAdminPreview() {
@@ -3289,10 +3367,10 @@ private fun evaluateMasterEngine(symbol: String) {
             setPadding(dp(3), dp(7), dp(3), dp(5))
             background = GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(Color.rgb(20, 34, 55), Color.rgb(11, 21, 37))
+                intArrayOf(Color.rgb(3, 18, 10), Color.rgb(3, 8, 6))
             ).apply {
                 cornerRadius = dp(18).toFloat()
-                setStroke(dp(1), Color.rgb(43, 65, 91))
+                setStroke(dp(1), greenDark)
             }
             elevation = dp(8).toFloat()
         }
@@ -3311,7 +3389,7 @@ private fun evaluateMasterEngine(symbol: String) {
                 gravity = Gravity.CENTER
                 setPadding(dp(2), dp(3), dp(2), dp(2))
                 background = shape(
-                    if (selected) Color.rgb(27, 77, 77) else Color.TRANSPARENT,
+                    if (selected) Color.rgb(0, 65, 30) else Color.TRANSPARENT,
                     if (selected) greenDark else Color.TRANSPARENT,
                     12,
                     1
@@ -3321,17 +3399,38 @@ private fun evaluateMasterEngine(symbol: String) {
                     drawerOpen = false
                     render()
                 }
-                }
-            item.addView(
-                label(
-    if (name == "Notifications" && appPrefs.getInt("unread_notification_count", 0) > 0) "🔔 ${appPrefs.getInt("unread_notification_count", 0)}" else icon,
-    23f,
-    if (selected) green else yellow,
-    true
-).apply {
+            }
+            if (name == "Notifications") {
+                val iconFrame = FrameLayout(this)
+                iconFrame.addView(
+                    label(icon, 23f, if (selected) green else yellow, true).apply {
+                        gravity = Gravity.CENTER
+                    },
+                    FrameLayout.LayoutParams(dp(42), dp(34))
+                )
+                val unreadCount = appPrefs.getInt("unread_notification_count", 0)
+                val navBadge = label(if (unreadCount > 99) "99+" else unreadCount.toString(), 9f, Color.BLACK, true).apply {
                     gravity = Gravity.CENTER
+                    visibility = if (unreadCount > 0) View.VISIBLE else View.GONE
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL
+                        setColor(red)
+                        setStroke(dp(1), bg)
+                    }
                 }
-            )
+                bottomNotificationBadge = navBadge
+                iconFrame.addView(
+                    navBadge,
+                    FrameLayout.LayoutParams(dp(19), dp(19), Gravity.TOP or Gravity.END)
+                )
+                item.addView(iconFrame, LinearLayout.LayoutParams(dp(42), dp(34)))
+            } else {
+                item.addView(
+                    label(icon, 23f, if (selected) green else yellow, true).apply {
+                        gravity = Gravity.CENTER
+                    }
+                )
+            }
             item.addView(
                 label(name, 10f, if (selected) green else yellow, selected).apply {
                     gravity = Gravity.CENTER
@@ -3410,13 +3509,13 @@ private fun evaluateMasterEngine(symbol: String) {
             background = if (active) {
                 GradientDrawable(
                     GradientDrawable.Orientation.LEFT_RIGHT,
-                    intArrayOf(Color.rgb(48, 214, 164), Color.rgb(35, 174, 166))
+                    intArrayOf(Color.rgb(0, 255, 92), Color.rgb(0, 190, 65))
                 ).apply {
                     cornerRadius = dp(14).toFloat()
-                    setStroke(dp(1), Color.rgb(93, 235, 194))
+                    setStroke(dp(1), Color.rgb(0, 255, 92))
                 }
             } else {
-                shape(panel2, Color.rgb(48, 69, 96), 14, 1)
+                shape(panel2, greenDark, 14, 1)
             }
             elevation = if (active) dp(3).toFloat() else 0f
 
@@ -3450,10 +3549,10 @@ private fun evaluateMasterEngine(symbol: String) {
             )
             background = GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(Color.rgb(21, 36, 59), Color.rgb(15, 27, 46))
+                intArrayOf(Color.rgb(8, 20, 18), Color.rgb(3, 8, 6))
             ).apply {
                 cornerRadius = dp(18).toFloat()
-                setStroke(dp(1), Color.rgb(42, 65, 91))
+                setStroke(dp(1), greenDark)
             }
             elevation = dp(3).toFloat()
         }
@@ -3617,6 +3716,7 @@ if (!derivServiceBound || !::derivApiClient.isInitialized) {
 
 derivApiClient.connectWithAccessToken(token, executionMode)
     }
+
     private fun disconnectDeriv(clearSavedTokens: Boolean = false) {
         cancelDerivReconnect()
         try { derivApiClient.disconnect() } catch (_: Exception) {}
@@ -3813,8 +3913,7 @@ if (payout < order.stake * 1.30) {
 }
 
 order.proposalId = proposalId
-
-val buyRequestId = nextTradeRequestId()
+                val buyRequestId = nextTradeRequestId()
 order.buyRequestId = buyRequestId
 
 val sent = derivApiClient.send(
@@ -3919,6 +4018,7 @@ return@runOnUiThread
                             // Keep the structure target unknown unless Master Decision supplied it.
                             val barrier = 0.0
 val contractType = c.optString("contract_type", "").uppercase()
+
 val savedDirection = appPrefs.getString(
     "contract_direction_${accountId}_${executionMode}_$id",
     null
@@ -4177,6 +4277,7 @@ android.util.Log.i(
 override fun onDestroy() {
 // Remove Activity-level callbacks.
     profileRefreshHandler.removeCallbacks(profileRefreshRunnable)
+
     reconnectRunnable?.let {
         reconnectHandler.removeCallbacks(it)
     }
@@ -4186,7 +4287,6 @@ override fun onDestroy() {
 
     // Detach this Activity from the service.
     derivService?.detachActivity(this)
-
     // Release only the Activity binding.
     // Do NOT stop the foreground Deriv service.
     if (derivServiceBound) {
