@@ -2624,16 +2624,19 @@ val bearishMss = chochDirection == "BEARISH"
 
     // A retest requires price to revisit the active order-block range and close
     // directionally back through its midpoint.
-    val bullishRetest = bullishBlock?.let { block ->
-        latest.low <= block.high && latest.high >= block.low &&
-            latest.close > latest.open &&
-            latest.close >= (block.low + block.high) / 2.0
-    } ?: false
-    val bearishRetest = bearishBlock?.let { block ->
-        latest.high >= block.low && latest.low <= block.high &&
-            latest.close < latest.open &&
-            latest.close <= (block.low + block.high) / 2.0
-    } ?: false
+    
+val bullishRetest = bullishOB && (bullishBlock?.let { block ->
+    latest.low <= block.high && latest.high >= block.low &&
+        latest.close > latest.open &&
+        latest.close >= (block.low + block.high) / 2.0
+} ?: false)
+
+val bearishRetest = bearishOB && (bearishBlock?.let { block ->
+    latest.high >= block.low && latest.low <= block.high &&
+        latest.close < latest.open &&
+        latest.close <= (block.low + block.high) / 2.0
+} ?: false)
+
     val bullishMomentum = calculateMomentumQualified(candles, "BULLISH")
     val bearishMomentum = calculateMomentumQualified(candles, "BEARISH")
 
