@@ -1505,7 +1505,7 @@ page.addView(monitorHeader, matchWrap())
                 }
             )
             val analysisView = label(
-                "A. BULLISH LIQUIDITY SWEEP: WAITING\n" +
+                "A. LIQUIDITY SWEEP: WAITING\n" +
                 "B. MARKET STRUCTURE: WAITING\n" +
                 "C. MSS: 0%\n" +
                 "D. BULLISH / BEARISH CHOCH: NO\n" +
