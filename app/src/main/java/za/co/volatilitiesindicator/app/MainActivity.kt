@@ -671,7 +671,7 @@ if (savedToken.isNotBlank()) {
             ColorDrawable(bg)
         }
         scroll.setBackgroundColor(Color.TRANSPARENT)
-        scroll.addView(page, ScrollView.LayoutParams(-1, -2))
+        scroll.addView(page, android.widget.FrameLayout.LayoutParams(-1, -2))
 
         outer.addView(
             scroll,
