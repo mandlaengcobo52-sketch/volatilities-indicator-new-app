@@ -515,6 +515,7 @@ private val dashboardPriceViews = mutableMapOf<String, TextView>()
 private val currentPriceViews = mutableMapOf<String, MutableList<TextView>>()
 private val dashboardStatusViews = mutableMapOf<String, TextView>()
 private var dashboardQualifiedCountView: TextView? = null
+private var dashboardOverviewSummaryView: TextView? = null
     private var headerNotificationBadge: TextView? = null
     private var bottomNotificationBadge: TextView? = null
 private var manualTradeSymbol = "R_10"
@@ -522,6 +523,38 @@ private val dashboardAnalysisViews =
     mutableMapOf<String, TextView>()
 private val marketDataErrors =
     mutableMapOf<String, String>()
+private fun refreshDashboardIndexSummary() {
+    val qualifiedCount = marketDataIndexes.count { index ->
+        val decision = masterEngineDecisions[index]
+        decision != null &&
+            decision.qualified &&
+            decision.direction in listOf("BUY", "SELL") &&
+            decision.liquidityQualified &&
+            decision.marketStructureQualified &&
+            decision.chochQualified &&
+            decision.orderBlockQualified &&
+            decision.orderBlockRetestQualified &&
+            decision.momentumQualified &&
+            decision.ptpeProbability > 55.0
+    }
+    dashboardQualifiedCountView?.text = "QUALIFIED $qualifiedCount/5"
+
+    val overviewLines = marketDataIndexes.map { index ->
+        val (status, _) = dashboardDecisionStatus(index)
+        val shortStatus = when {
+            status.contains("QUALIFIED BUY") -> "BUY NOW"
+            status.contains("QUALIFIED SELL") -> "SELL NOW"
+            status == "FEED ERROR" -> "FEED ERROR"
+            status == "DISCONNECTED" -> "OFFLINE"
+            status == "WAITING FOR PRICE" -> "LOADING"
+            else -> "WAIT"
+        }
+        val price = marketDataPrices[index]?.let { formatMarketPrice(it) } ?: "—"
+        "$index  $shortStatus  ·  $price"
+    }
+    dashboardOverviewSummaryView?.text = overviewLines.joinToString("\n")
+}
+
 private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
     if (marketDataErrors.containsKey(symbol) && marketDataPrices[symbol] == null) {
         return "FEED ERROR" to red
@@ -586,21 +619,8 @@ if (authToken.isNotBlank() && savedToken.isNotBlank() &&
             hasResumedOnce = true
             return
         }
-
         if (authToken.isBlank() || appPrefs.getBoolean("deriv_manually_disconnected", false)) {
             return
-        }
-
-        val tokenKey = if (executionMode == "REAL") "real_token" else "demo_token"
-        val savedToken = prefs.getString(tokenKey, "").orEmpty()
-
-        if (savedToken.isNotBlank()) {
-            if (derivServiceBound && ::derivApiClient.isInitialized) {
-                derivApiClient.ensureConnectedOnResume(savedToken, executionMode)
-            } else {
-                pendingResumeCheck = true
-                startAndBindDerivService()
-            }
         }
     }
 
@@ -897,7 +917,7 @@ private fun addRegistrationScreen() {
                     } else {
                         toast(result.optString("message", "Registration failed. Please try again."))
                     }
-                }
+                    }
             }
         }
     }
@@ -906,6 +926,19 @@ private fun addRegistrationScreen() {
 }
 // SIGN IN — uses the same user records and approval status as WebTrader.
 private fun addLoginScreen() {
+    
+        val tokenKey = if (executionMode == "REAL") "real_token" else "demo_token"
+val savedToken = prefs.getString(tokenKey, "").orEmpty()
+
+if (savedToken.isNotBlank()) {
+    if (derivServiceBound && ::derivApiClient.isInitialized) {
+        derivApiClient.ensureConnectedOnResume(savedToken, executionMode)
+    } else {
+        pendingResumeCheck = true
+        startAndBindDerivService()
+    }
+}
+    }
     page.addView(sectionTitle("SIGN IN"))
     val loginCard = card().apply { orientation = LinearLayout.VERTICAL }
     loginCard.addView(label("Welcome back", 20f, green, true))
@@ -1181,7 +1214,6 @@ private fun addHeader() {
                 "Notifications, $unreadBellCount unread"
             else "Notifications"
     }
-
     bellContainer.addView(
         bell,
         FrameLayout.LayoutParams(-1, -1)
@@ -1427,6 +1459,19 @@ private fun addHeader() {
     setPadding(dp(4), dp(4), dp(4), dp(8))
 }
 page.addView(dashboardQualifiedCountView)
+        dashboardOverviewSummaryView = TextView(this).apply {
+            text = marketDataIndexes.joinToString("\n") { "$it  LOADING  ·  —" }
+            textSize = 12f
+            setTextColor(white)
+            setLineSpacing(dp(3).toFloat(), 1.0f)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            background = shape(panel2, greenDark, 10, 1)
+        }
+        page.addView(
+            dashboardOverviewSummaryView,
+            matchWrap().apply { bottomMargin = dp(8) }
+        )
+        refreshDashboardIndexSummary()
         val monitorHeader = LinearLayout(this).apply {
     orientation = LinearLayout.HORIZONTAL
     gravity = Gravity.CENTER_VERTICAL
@@ -1525,6 +1570,7 @@ val liquidityCandles = marketDataCandles[symbol].orEmpty()
 
 val bullishLiquidity = calculateLiquidityLevels(liquidityCandles, true)
 val bearishLiquidity = calculateLiquidityLevels(liquidityCandles, false)
+
 detailsContainer.addView(label("BULLISH LIQUIDITY (SSL)", 12f, green, true))
 
 if (bullishLiquidity.isEmpty()) {
@@ -1709,8 +1755,7 @@ headingRow.setOnClickListener {
      // =========================================================
     // DERIV ACCOUNT CARD — VISUAL PLACEHOLDER ONLY
   // =========================================================
-
-    private fun addAccountCard() {
+  private fun addAccountCard() {
         val card = card()
         card.orientation = LinearLayout.VERTICAL
 
@@ -1824,7 +1869,7 @@ private fun addTradeScreen() {
 )
 masterDecisionCard.addView(
     button(
-          if (autoTradeEnabled) "TURN MASTER DECISION OFF"
+        if (autoTradeEnabled) "TURN MASTER DECISION OFF"
         else "TURN MASTER DECISION ON",
         autoTradeEnabled
     ) {
@@ -2011,7 +2056,6 @@ row.addView(
         if (connected) { derivApiClient.requestOpenTrades(); derivApiClient.requestTradeHistory() } else toast("Connect to Deriv first.")
     }, matchWrap().apply { topMargin = dp(8) })
     page.addView(runningCard, matchWrap().apply { bottomMargin = dp(10) })
-
     page.addView(sectionTitle("TRADING HISTORY"))
     val historyCard = card().apply { orientation = LinearLayout.VERTICAL }
     historyCard.addView(label("Account mode: $executionMode", 12f, green, true))
@@ -2121,6 +2165,7 @@ private fun calculateLiquidityLevels(
             price > sorted[i + 1].high &&
             price > sorted[i + 2].high
         }
+
         if (confirmed) pivots.add(i to price)
     }
 
@@ -2294,8 +2339,7 @@ private fun calculateOrderBlocks(
                             .firstOrNull {
                                 sorted[it].close > ob.high
                             }
-
-                        bearishNumber++
+                            bearishNumber++
 
                         bearishBlocks.add(
                             OrderBlockEvent(
@@ -2589,7 +2633,6 @@ private fun calculateSupportResistance(
         }
 
         used.addAll(group)
-
         val levelPrice = if (support) {
             group.map { pivots[it].first }.average()
         } else {
@@ -2710,6 +2753,7 @@ private fun evaluateMasterEngine(symbol: String) {
     val candles = marketDataCandles[symbol].orEmpty()
     val price = marketDataPrices[symbol] ?: return
     if (candles.size < 20) return
+
     val latest = candles.last()
     val bullishLiquidity = calculateLiquidityLevels(candles, true)
     val bearishLiquidity = calculateLiquidityLevels(candles, false)
@@ -2883,7 +2927,6 @@ val bearishMss = chochDirection == "BEARISH"
             page.addView(label("Waiting for historical candles...", 13f, yellow, false))
             return@forEach
         }
-
         val supports = calculateSupportResistance(candles, true)
         val resistances = calculateSupportResistance(candles, false)
 
@@ -3313,7 +3356,7 @@ val bearishMss = chochDirection == "BEARISH"
             eventKey.ifBlank {
                 "${saDayKey()}_${accountId}_${executionMode}_${title}_${message}".hashCode().toString()
             }
-            }
+        }
         val seen = appPrefs.getStringSet("notification_seen_keys", emptySet())
             .orEmpty().toMutableSet()
             
@@ -3488,7 +3531,7 @@ val bearishMss = chochDirection == "BEARISH"
                     maxLines = 1
                     includeFontPadding = true
                 }
-            )
+                )
             nav.addView(item, LinearLayout.LayoutParams(0, dp(68), 1f))
         }
 
@@ -3853,6 +3896,7 @@ derivApiClient.connectWithAccessToken(token, executionMode)
         decision.ptpeProbability > 55.0
 }
 dashboardQualifiedCountView?.text = "QUALIFIED $qualifiedCount/5"
+            refreshDashboardIndexSummary()
             if (isTouchExecutionReady(symbol)) {
     val decision = masterEngineDecisions[symbol] ?: return@runOnUiThread
     val latest = marketDataCandles[symbol]?.lastOrNull() ?: return@runOnUiThread
@@ -3911,8 +3955,9 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
     pendingTouchBySymbol.remove(order.symbol)
     touchExecutionLocks.remove(order.symbol)
     return@runOnUiThread
-    }
-    if (payout < order.stake * 1.30) {
+}
+
+if (payout < order.stake * 1.30) {
     if (order.proposalAttempts >= 20) {
         pendingTouchOrders.remove(requestId)
         pendingTouchBySymbol.remove(order.symbol)
@@ -4079,7 +4124,6 @@ val savedPairId = appPrefs.getString(
     "contract_pair_${accountId}_${executionMode}_$id",
     ""
     ).orEmpty()
-
 val savedPairSide = appPrefs.getString(
     "contract_pair_side_${accountId}_${executionMode}_$id",
     ""
@@ -4197,7 +4241,7 @@ if (stake > 0.0) {
                                         )
                                         }
                                 }
-                                }
+                            }
                         } else if (isClosed) {
                             liveContractProfits.remove(id)
                             liveContractProfitModes.remove(id)
