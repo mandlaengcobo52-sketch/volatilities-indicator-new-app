@@ -656,7 +656,7 @@ page = LinearLayout(this).apply {
     orientation = LinearLayout.VERTICAL
     setPadding(dp(14), dp(8), dp(14), dp(18))
     setBackgroundColor(bg)
-    minimumWidth = resources.displayMetrics.widthPixels - dp(28)
+    minimumWidth = resources.displayMetrics.widthPixels
 }
 
 val watermark = try {
