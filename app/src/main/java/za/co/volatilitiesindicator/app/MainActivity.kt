@@ -2627,6 +2627,15 @@ val bearishScore = listOf(
         bearishMss -> "BEARISH CHOCH: YES"
         else -> "BULLISH / BEARISH CHOCH: NO"
     }
+    val reversalText = when {
+    marketDirection == "BEARISH" && bullishMss ->
+        "POTENTIAL BULLISH REVERSAL"
+
+    marketDirection == "BULLISH" && bearishMss ->
+        "POTENTIAL BEARISH REVERSAL"
+
+    else -> "NO REVERSAL SIGNAL"
+    }
     val liquidityText = when {
     bullishSweep && bearishSweep -> "BULLISH AND BEARISH SWEPT"
     bullishSweep -> "BULLISH SWEPT"
@@ -2636,13 +2645,14 @@ val bearishScore = listOf(
     val engineExecuted = runningContracts.values.any { it.symbol == symbol && it.mode == executionMode }
     val engineText = if (engineExecuted) "EXECUTED" else "WAITING"
     val summary = listOf(
-    "1. LIQUIDITY SWEEP: $liquidityText",
+        "1. LIQUIDITY SWEEP: $liquidityText",
     "2. MARKET STRUCTURE: ${marketDirection.ifBlank { "WAITING" }}",
     "3. MSS: $mssText",
     "4. $chochText",
-    "5. MOMENTUM: ${String.format(java.util.Locale.US, "%.0f", momentumPercent)}%",
-    "6. PTPE: ${String.format(java.util.Locale.US, "%.1f", ptpe)}%",
-    "7. MASTER ENGINE: $engineText"
+    "5. REVERSAL STATUS: $reversalText",
+    "6. MOMENTUM: ${String.format(java.util.Locale.US, "%.0f", momentumPercent)}%",
+    "7. PTPE: ${String.format(java.util.Locale.US, "%.1f", ptpe)}%",
+    "8. MASTER ENGINE: $engineText"
 ).joinToString("\n")
     
 val analysisView = dashboardAnalysisViews[symbol]
@@ -2655,6 +2665,7 @@ if (analysisView != null) {
     marketDirection == "BULLISH" || marketDirection == "BEARISH",
     bullishMss || bearishMss,
     bullishMss || bearishMss,
+        false,
     bullishMomentum || bearishMomentum,
     ptpe > 55.0,
     engineExecuted
