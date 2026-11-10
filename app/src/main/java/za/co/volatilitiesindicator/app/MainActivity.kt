@@ -2611,8 +2611,6 @@ val bullishMss = chochDirection == "BULLISH"
 val bearishMss = chochDirection == "BEARISH"
 
     val bullishMomentum = calculateMomentumQualified(candles, "BULLISH")
-val bearishMomentum = calculateMomentumQualified(candles, "BEARISH")
-    val bullishMomentum = calculateMomentumQualified(candles, "BULLISH")
     val bearishMomentum = calculateMomentumQualified(candles, "BEARISH")
 
     val bullishDirection = bullishSweep &&
@@ -2638,10 +2636,6 @@ val bearishScore = listOf(
     bearishMss,
     bearishMomentum
 ).count { it } * (100.0 / 4.0)
-    val bearishScore = listOf(
-        bearishSweep, marketDirection == "BEARISH", bearishMss,
-        bearishOB, bearishRetest, bearishMomentum
-    ).count { it } * (100.0 / 6.0)
     val ptpe = maxOf(bullishScore, bearishScore)
     val direction = when {
         bullishDirection && bullishScore > 55.0 -> "BUY"
