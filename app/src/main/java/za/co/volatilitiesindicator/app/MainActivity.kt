@@ -2190,11 +2190,10 @@ private fun calculateLiquidityLevels(
     }
 
     return results
-        .sortedWith(
-            compareByDescending<LiquidityLevel> { it.occurrences }
-                .thenByDescending { it.createdAt }
-        )
-        .take(2)
+    .sortedWith(
+        compareByDescending<LiquidityLevel> { it.occurrences }
+            .thenByDescending { it.createdAt }
+    )
 }
 // =============================================================
 // ANALYSIS - BULLISH AND BEARISH ORDER BLOCKS
@@ -2733,10 +2732,18 @@ private fun evaluateMasterEngine(symbol: String) {
     val bullishLiquidity = calculateLiquidityLevels(candles, true)
     val bearishLiquidity = calculateLiquidityLevels(candles, false)
 
-    val bullishSweep = bullishLiquidity.any {
-        it.sweepAt > 0L && latest.epoch >= it.sweepAt &&
-            latest.low < it.price && latest.close > it.price
-    }
+    val recentSweepStart = candles
+    .takeLast(5)
+    .first()
+    .epoch
+
+val bullishSweep = bullishLiquidity.any {
+    it.sweepAt >= recentSweepStart
+}
+
+val bearishSweep = bearishLiquidity.any {
+    it.sweepAt >= recentSweepStart
+}
     val bearishSweep = bearishLiquidity.any {
         it.sweepAt > 0L && latest.epoch >= it.sweepAt &&
             latest.high > it.price && latest.close < it.price
