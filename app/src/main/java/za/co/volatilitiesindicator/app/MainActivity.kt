@@ -47,6 +47,8 @@ import java.security.SecureRandom
 import android.content.ComponentName
 import android.content.ServiceConnection
 import android.os.IBinder
+import android.text.SpannableStringBuilder
+import android.text.style.ForegroundColorSpan
 /** Volatilities Indicator Android app. */
 class MainActivity : Activity(), DerivApiClient.Callback {
 
@@ -2720,10 +2722,47 @@ val bearishMss = chochDirection == "BEARISH"
         "8. PTPE: ${String.format(java.util.Locale.US, "%.1f", ptpe)}%",
         "9. MASTER ENGINE: $engineText"
     ).joinToString("\n")
-    dashboardAnalysisViews[symbol]?.text = summary
-    dashboardAnalysisViews[symbol]?.setTextColor(
-        if (decision.qualified) green else yellow
+    
+val analysisView = dashboardAnalysisViews[symbol]
+if (analysisView != null) {
+    val lines = summary.split("\n")
+    val colouredSummary = SpannableStringBuilder()
+
+    val qualifiedConditions = listOf(
+        bullishSweep || bearishSweep,
+        marketDirection == "BULLISH" || marketDirection == "BEARISH",
+        bullishMss || bearishMss,
+        bullishMss || bearishMss,
+        bullishObValid || bearishObValid,
+        bullishRetest || bearishRetest,
+        bullishMomentum || bearishMomentum,
+        ptpe > 55.0,
+        engineExecuted
     )
+
+    lines.forEachIndexed { index, line ->
+        val start = colouredSummary.length
+        colouredSummary.append(line)
+
+        val resultColor = if (
+            qualifiedConditions.getOrElse(index) { false }
+        ) green else yellow
+
+        colouredSummary.setSpan(
+            ForegroundColorSpan(resultColor),
+            start,
+            colouredSummary.length,
+            android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+
+        if (index < lines.lastIndex) {
+            colouredSummary.append("\n")
+        }
+    }
+
+    analysisView.text = colouredSummary
+}
+
 
     if (decision.qualified) {
         val eventKey = "${saDayKey()}_${accountId}_${executionMode}_${symbol}_${direction}_${latest.epoch}"
