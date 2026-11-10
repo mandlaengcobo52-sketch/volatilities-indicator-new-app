@@ -1383,15 +1383,15 @@ page.addView(monitorHeader, matchWrap())
                 }
             )
             val analysisView = label(
-                "1. LIQUIDITY SWEEP: WAITING\n"  .
-                "2. MARKET STRUCTURE: WAITING\n" +
-                "3. MSS: 0%\n" +
-                "4. BULLISH / BEARISH CHOCH: NO\n" +
-                "5. ORDER BLOCK: INVALID\n" +
-                "6. ORDER BLOCK RETEST: NO\n" +
-                "7. MOMENTUM: 0%\n" +
-                "8. PTPE: 0%\n" +
-                "9. MASTER ENGINE: WAITING",
+                                """
+                1. LIQUIDITY SWEEP: WAITING
+                2. MARKET STRUCTURE: WAITING
+                3. MSS: 0%
+                4. BULLISH / BEARISH CHOCH: NO
+                5. MOMENTUM: 0%
+                6. PTPE: 0%
+                7. MASTER ENGINE: WAITING
+                """.trimIndent(),
                 10f, yellow, false
             ).apply {
                 setPadding(dp(9), dp(9), dp(9), dp(9))
