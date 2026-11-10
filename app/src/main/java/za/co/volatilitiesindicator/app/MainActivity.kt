@@ -2176,8 +2176,7 @@ private fun calculateLiquidityLevels(
             }
 
             if (swept) {
-                sweepAt = candle.epoch
-                break
+    sweepAt = candle.epoch
             }
         }
         results.add(
