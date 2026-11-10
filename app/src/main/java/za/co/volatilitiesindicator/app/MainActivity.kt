@@ -314,7 +314,7 @@ private val consumedTouchQualifications = mutableMapOf<String, Long>()
         if (accountBalance <= 0.0) return 0.0
 
         appPrefs.edit()
-            .putFloat(key, accountBalance.toFloat())
+           .putFloat(key, accountBalance.toFloat())
             .putLong(timeKey, now)
             .apply()
             return accountBalance
@@ -636,37 +636,43 @@ if (savedToken.isNotBlank()) {
         0
     }
         val outer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(bg)
-        }
-        val scroll = ScrollView(this).apply {
+    orientation = LinearLayout.VERTICAL
+    setBackgroundColor(bg)
+    layoutParams = android.view.ViewGroup.LayoutParams(
+        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+        android.view.ViewGroup.LayoutParams.MATCH_PARENT
+    )
+}
+
+val scroll = ScrollView(this).apply {
     isFillViewport = true
     overScrollMode = View.OVER_SCROLL_NEVER
     isSmoothScrollingEnabled = true
-        }
-        mainScrollView = scroll
+}
 
-        page = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(8), dp(14), dp(18))
-            setBackgroundColor(bg)
-        }
-        // Centered, low-opacity brand watermark behind all page content.
-        // Keep the original black background and avoid changing card/layout colours.
-        val watermark = try {
-            getDrawable(R.drawable.volatilities_indicator_logo)?.mutate()?.apply {
-                alpha = 48
-            }
-        } catch (_: Exception) {
-            null
-        }
-        page.background = if (watermark != null) {
-            LayerDrawable(
-                arrayOf(
-                    ColorDrawable(bg),
-                    InsetDrawable(watermark, dp(72))
-                )
-            )
+mainScrollView = scroll
+
+page = LinearLayout(this).apply {
+    orientation = LinearLayout.VERTICAL
+    setPadding(dp(14), dp(8), dp(14), dp(18))
+    setBackgroundColor(bg)
+    minimumWidth = resources.displayMetrics.widthPixels - dp(28)
+}
+
+val watermark = try {
+    getDrawable(R.drawable.volatilities_indicator_logo)
+        ?.mutate()?.apply { alpha = 22 }
+} catch (_: Exception) {
+    null
+}
+
+page.background = if (watermark != null) {
+    android.graphics.drawable.LayerDrawable(
+        arrayOf(
+            android.graphics.drawable.ColorDrawable(bg),
+            android.graphics.drawable.InsetDrawable(watermark, dp(72))
+        )
+    )
 } else {
     android.graphics.drawable.ColorDrawable(bg)
 }
@@ -697,57 +703,6 @@ setContentView(
         android.view.ViewGroup.LayoutParams.MATCH_PARENT
     )
 )
-        } else {
-            ColorDrawable(bg)
-        }
-        scroll.setBackgroundColor(Color.TRANSPARENT)
-        scroll.addView(page, android.widget.FrameLayout.LayoutParams(-1, -2))
-
-        outer.addView(
-            scroll,
-            LinearLayout.LayoutParams(-1, 0, 1f)
-        )
-        setContentView(outer, ViewGroup.LayoutParams(-1, -1))
-        addHeader()
-
-        if (drawerOpen) {
-            addDrawer()
-        }
-        when (selectedTab) {
-            "Trade" -> {
-                if (authToken.isBlank()) {
-val outer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(bg)
-        }
-        val scroll = ScrollView(this).apply {
-    isFillViewport = true
-    overScrollMode = View.OVER_SCROLL_NEVER
-    isSmoothScrollingEnabled = true
-        }
-        mainScrollView = scroll
-
-        page = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(8), dp(14), dp(18))
-            setBackgroundColor(bg)
-        }
-        // Centered, low-opacity brand watermark behind all page content.
-        // Keep the original black background and avoid changing card/layout colours.
-        val watermark = try {
-            getDrawable(R.drawable.volatilities_indicator_logo)?.mutate()?.apply {
-                alpha = 48
-            }
-        } catch (_: Exception) {
-            null
-        }
-        page.background = if (watermark != null) {
-            LayerDrawable(
-                arrayOf(
-                    ColorDrawable(bg),
-                    InsetDrawable(watermark, dp(72))
-                )
-            )
         } else {
             ColorDrawable(bg)
         }
@@ -846,7 +801,6 @@ val outer = LinearLayout(this).apply {
                 lastRenderedTab = selectedTab
             }, 120L)
         }
-    }
  // =========================================================
 // HEADER: EXISTING LOGO AND NOTIFICATION BELL
 // =========================================================
@@ -1259,7 +1213,6 @@ private fun addHeader() {
             setStroke(dp(1), bg)
         }
     }
-
     headerNotificationBadge = headerBadge
 
     bellContainer.addView(
@@ -2461,7 +2414,6 @@ private fun calculateMarketStructure(
 
     var previousHigh: Pair<Int, Double>? = null
     var previousLow: Pair<Int, Double>? = null
-
     var bullishStart = 0L
     var bearishStart = 0L
 
@@ -2761,7 +2713,7 @@ return if (currentPrice != null && currentPrice > 0.0) {
             if (support) it.price < currentPrice
             else it.price > currentPrice
         }
-        .sortedBy { kotlin.math.abs(it.price - currentPrice) }
+           .sortedBy { kotlin.math.abs(it.price - currentPrice) }
         .take(2)
 } else {
     recentLevels.sortedByDescending { it.score }.take(2)
@@ -3362,7 +3314,7 @@ private fun evaluateMasterEngine(symbol: String) {
 
 
         val notificationScope =
-            "${accountId}_${executionMode}_${title}_${message.substringBefore(" · ")}".hashCode().toString()
+        "${accountId}_${executionMode}_${title}_${message.substringBefore(" · ")}".hashCode().toString()
                 val statusSignature =
             "$title|${message.substringBefore(" · ")}|${message.substringAfter(" · ", message).substringBefore(".")}"
         val lastMessageKey = "notification_last_message_$notificationScope"
@@ -3968,7 +3920,6 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
     val order = pendingTouchOrders[requestId] ?: return@runOnUiThread
 
     val proposal = json.optJSONObject("proposal")
-
     if (proposal == null) {
         pendingTouchOrders.remove(requestId)
         pendingTouchBySymbol.remove(order.symbol)
@@ -4271,7 +4222,7 @@ if (stake > 0.0) {
                                             "${running.symbol} · Contract $id · Peak ${formatMoney(running.peakProfit)} · Protected level ${formatMoney(protectedProfit)}.",
                                             "profit_trailing_close_$id"
                                         )
-                                    }
+                                        }
                                 }
                             }
                         } else if (isClosed) {
@@ -4429,4 +4380,3 @@ override fun onDestroy() {
     super.onDestroy()
 }
                             }
-                            
