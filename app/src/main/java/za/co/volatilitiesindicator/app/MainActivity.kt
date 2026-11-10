@@ -1081,140 +1081,181 @@ private fun performPlatformLogout() {
     toast("You have been signed out.")
 }
 private fun addHeader() {
-    val row = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        setPadding(dp(2), dp(4), dp(2), dp(4))
-    }
-        val menu = label("☰", 28f, white, true).apply {
-            gravity = Gravity.CENTER
-            setOnClickListener {
-                drawerOpen = !drawerOpen
-                render()
-            }
-            }
-
-        row.addView(
-            menu,
-            LinearLayout.LayoutParams(dp(40), dp(54))
-        )
-        // Use the logo PNG already in res/drawable.
-        val logo = ImageView(this).apply {
-            setImageResource(
-                R.drawable.volatilities_indicator_logo
-            )
-            scaleType = ImageView.ScaleType.CENTER_CROP
-
-            contentDescription = "Volatilities Indicator logo"
-            background = shape(
-                Color.rgb(0, 22, 12),
-                green,
-                100,
-                2
-                )
-
-            clipToOutline = true
-        }
-        row.addView(
-            logo,
-            LinearLayout.LayoutParams(dp(52), dp(52)).apply {
-                rightMargin = dp(8)
-            }
-        )
-        val titles = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_VERTICAL
-            minimumWidth = dp(100)
-        }
-
-        titles.addView(
-            label("VOLATILITIES", 15f, white, true).apply {
-                maxLines = 1
-                isSingleLine = true
-                ellipsize = android.text.TextUtils.TruncateAt.END
-            }
-        )
-
-        titles.addView(
-            label("— INDICATOR —", 12f, green, true).apply {
-                maxLines = 1
-                isSingleLine = true
-                ellipsize = android.text.TextUtils.TruncateAt.END
-            }
-        )
-
-        titles.addView(
-            label("TRADE SMARTER TODAY", 8f, muted, false).apply {
-                maxLines = 1
-                isSingleLine = true
-            }
-        )
-
-        row.addView(
-            titles,
-            LinearLayout.LayoutParams(0, -2, 1f)
-        )
-        val unreadBellCount = appPrefs.getInt("unread_notification_count", 0)
-        val bellContainer = FrameLayout(this)
-        val bell = TextView(this).apply {
-            text = if (notificationsEnabled) "🔔" else "♧"
-            textSize = 25f
-            setTextColor(if (notificationsEnabled) green else white)
-            gravity = Gravity.CENTER
-            contentDescription = if (unreadBellCount > 0) "Notifications, $unreadBellCount unread" else "Notifications"
-            setOnClickListener { selectedTab = "Notifications"; drawerOpen = false; render() }
-        }
-        bellContainer.addView(
-            bell,
-            FrameLayout.LayoutParams(-1, -1)
-        )
-        val headerBadge = TextView(this).apply {
-            text = if (unreadBellCount > 99) "99+" else unreadBellCount.toString()
-            textSize = 9f
-            setTextColor(Color.BLACK)
-            gravity = Gravity.CENTER
-            setPadding(dp(4), 0, dp(4), 0)
-            visibility = if (unreadBellCount > 0) View.VISIBLE else View.GONE
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(red)
-                setStroke(dp(1), bg)
-            }
-        }
-        headerNotificationBadge = headerBadge
-        bellContainer.addView(
-            headerBadge,
-            FrameLayout.LayoutParams(dp(20), dp(20), Gravity.TOP or Gravity.END)
-        )
-        bellContainer.setOnClickListener {
-            selectedTab = "Notifications"
-            drawerOpen = false
-            render()
-        }
-        row.addView(
-            bellContainer,
-            LinearLayout.LayoutParams(dp(46), dp(52))
-        )
-
-        row.setPadding(dp(12), dp(8), dp(8), dp(8))
-        row.background = GradientDrawable(
+    val header = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(10), dp(8), dp(10), dp(8))
+        background = GradientDrawable(
             GradientDrawable.Orientation.LEFT_RIGHT,
-            intArrayOf(Color.rgb(3, 18, 10), Color.rgb(8, 35, 22), Color.rgb(3, 18, 10))
+            intArrayOf(
+                Color.rgb(3, 18, 10),
+                Color.rgb(8, 35, 22),
+                Color.rgb(3, 18, 10)
+            )
         ).apply {
             cornerRadius = dp(18).toFloat()
             setStroke(dp(1), greenDark)
         }
-        row.elevation = dp(5).toFloat()
-        page.addView(row, LinearLayout.LayoutParams(-1, -2))
-        page.addView(View(this).apply {
+        elevation = dp(5).toFloat()
+    }
+
+    val topRow = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+    }
+
+    val menu = label("☰", 28f, white, true).apply {
+        gravity = Gravity.CENTER
+        setOnClickListener {
+            drawerOpen = !drawerOpen
+            render()
+        }
+    }
+
+    topRow.addView(
+        menu,
+        LinearLayout.LayoutParams(dp(42), dp(48))
+    )
+
+    val logo = ImageView(this).apply {
+        setImageResource(R.drawable.volatilities_indicator_logo)
+        scaleType = ImageView.ScaleType.CENTER_CROP
+        contentDescription = "Volatilities Indicator logo"
+        background = shape(
+            Color.rgb(0, 22, 12),
+            green,
+            100,
+            2
+        )
+        clipToOutline = true
+    }
+
+    topRow.addView(
+        logo,
+        LinearLayout.LayoutParams(dp(48), dp(48)).apply {
+            leftMargin = dp(6)
+        }
+    )
+
+    val spacer = View(this)
+    topRow.addView(
+        spacer,
+        LinearLayout.LayoutParams(0, 1, 1f)
+    )
+
+    val unreadBellCount =
+        appPrefs.getInt("unread_notification_count", 0)
+
+    val bellContainer = FrameLayout(this)
+
+    val bell = TextView(this).apply {
+        text = if (notificationsEnabled) "🔔" else "♧"
+        textSize = 25f
+        gravity = Gravity.CENTER
+        setTextColor(if (notificationsEnabled) green else white)
+        contentDescription =
+            if (unreadBellCount > 0)
+                "Notifications, $unreadBellCount unread"
+            else "Notifications"
+    }
+
+    bellContainer.addView(
+        bell,
+        FrameLayout.LayoutParams(-1, -1)
+    )
+
+    val headerBadge = TextView(this).apply {
+        text = if (unreadBellCount > 99) "99+"
+               else unreadBellCount.toString()
+        textSize = 9f
+        setTextColor(Color.BLACK)
+        gravity = Gravity.CENTER
+        setPadding(dp(4), 0, dp(4), 0)
+        visibility =
+            if (unreadBellCount > 0) View.VISIBLE else View.GONE
+        background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(red)
+            setStroke(dp(1), bg)
+        }
+    }
+
+    headerNotificationBadge = headerBadge
+
+    bellContainer.addView(
+        headerBadge,
+        FrameLayout.LayoutParams(
+            dp(20),
+            dp(20),
+            Gravity.TOP or Gravity.END
+        )
+    )
+
+    bellContainer.setOnClickListener {
+        selectedTab = "Notifications"
+        drawerOpen = false
+        render()
+    }
+
+    topRow.addView(
+        bellContainer,
+        LinearLayout.LayoutParams(dp(46), dp(48))
+    )
+
+    header.addView(
+        topRow,
+        LinearLayout.LayoutParams(-1, dp(48))
+    )
+
+    val brandTitle = label(
+        "VOLATILITIES INDICATOR",
+        14f,
+        white,
+        true
+    ).apply {
+        maxLines = 1
+        isSingleLine = true
+        gravity = Gravity.CENTER
+    }
+
+    header.addView(
+        brandTitle,
+        LinearLayout.LayoutParams(-1, -2)
+    )
+
+    val slogan = label(
+        "TRADE SMARTER TODAY",
+        9f,
+        green,
+        true
+    ).apply {
+        gravity = Gravity.CENTER
+        maxLines = 1
+        isSingleLine = true
+    }
+
+    header.addView(
+        slogan,
+        LinearLayout.LayoutParams(-1, -2)
+    )
+
+    page.addView(
+        header,
+        LinearLayout.LayoutParams(-1, -2)
+    )
+
+    page.addView(
+        View(this).apply {
             setBackgroundColor(green)
-        }, LinearLayout.LayoutParams(dp(42), dp(3)).apply {
+        },
+        LinearLayout.LayoutParams(dp(42), dp(3)).apply {
             topMargin = dp(8)
             bottomMargin = dp(5)
-        })
+        }
+    )
 }
 // =========================================================
-    // NAVIGATION DRAWER
-    // =========================================================
+// NAVIGATION DRAWER
+// =========================================================
 
     private fun addDrawer() {
         val card = card()
