@@ -2055,35 +2055,37 @@ private fun updateLiveLiquiditySweeps(
         liveBearishSweepAt.getOrPut(symbol) { mutableMapOf() }
 
     for (level in bullishLevels) {
-        when {
-            previousPrice >= level.price &&
-                currentPrice < level.price -> {
-                bullishArmed.add(level.price)
-            }
-
-            level.price in bullishArmed &&
-                previousPrice <= level.price &&
-                currentPrice > level.price -> {
-                bullishArmed.remove(level.price)
-                bullishRecorded[level.price] = epoch
-            }
+    when {
+        previousPrice >= level.price &&
+            currentPrice < level.price -> {
+            bullishRecorded.remove(level.price)
+            bullishArmed.add(level.price)
         }
+
+        level.price in bullishArmed &&
+            previousPrice <= level.price &&
+            currentPrice > level.price -> {
+            bullishArmed.remove(level.price)
+            bullishRecorded[level.price] = epoch
+        }
+    }
     }
 
     for (level in bearishLevels) {
-        when {
-            previousPrice <= level.price &&
-                currentPrice > level.price -> {
-                bearishArmed.add(level.price)
-            }
-
-            level.price in bearishArmed &&
-                previousPrice >= level.price &&
-                currentPrice < level.price -> {
-                bearishArmed.remove(level.price)
-                bearishRecorded[level.price] = epoch
-            }
+    when {
+        previousPrice <= level.price &&
+            currentPrice > level.price -> {
+            bearishRecorded.remove(level.price)
+            bearishArmed.add(level.price)
         }
+
+        level.price in bearishArmed &&
+            previousPrice >= level.price &&
+            currentPrice < level.price -> {
+            bearishArmed.remove(level.price)
+            bearishRecorded[level.price] = epoch
+        }
+    }
     }
 
     val cutoff = epoch - (5L * 60L * 60L)
