@@ -2628,13 +2628,20 @@ private fun evaluateMasterEngine(symbol: String) {
     .first()
     .epoch
 
-val bullishSweep = bullishLiquidity.any {
-    it.sweepAt >= recentSweepStart
-}
+    val liveSweepCutoff =
+    System.currentTimeMillis() / 1000L - (5L * 60L * 60L)
 
-val bearishSweep = bearishLiquidity.any {
-    it.sweepAt >= recentSweepStart
-}
+val bullishSweep =
+    bullishLiquidity.any { it.sweepAt >= recentSweepStart } ||
+    liveBullishSweepAt[symbol].orEmpty().values.any {
+        it >= liveSweepCutoff
+    }
+
+val bearishSweep =
+    bearishLiquidity.any { it.sweepAt >= recentSweepStart } ||
+    liveBearishSweepAt[symbol].orEmpty().values.any {
+        it >= liveSweepCutoff
+    }
     
 
     val structure = calculateMarketStructure(candles)
@@ -3770,9 +3777,18 @@ derivApiClient.connectWithAccessToken(token, executionMode)
     override fun onTick(symbol: String, quote: Double, epoch: Long) {
     runOnUiThread {
         if (symbol in marketDataIndexes && quote.isFinite()) {
-            marketDataPrices[symbol] = quote
-            marketDataErrors.remove(symbol)
-            evaluateMasterEngine(symbol)
+    val previousQuote = marketDataPrices[symbol]
+
+    updateLiveLiquiditySweeps(
+        symbol,
+        previousQuote,
+        quote,
+        epoch
+    )
+
+    marketDataPrices[symbol] = quote
+    marketDataErrors.remove(symbol)
+    evaluateMasterEngine(symbol)
             val qualifiedCount = marketDataIndexes.count { index ->
     val decision = masterEngineDecisions[index]
     decision != null &&
