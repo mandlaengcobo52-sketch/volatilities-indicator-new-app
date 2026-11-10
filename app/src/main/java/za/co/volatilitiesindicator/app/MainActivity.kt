@@ -2236,7 +2236,6 @@ private fun calculateMarketStructure(
     val lows = mutableListOf<Pair<Int, Double>>()
 
     for (i in 2 until sorted.size - 2) {
-
         if (
             sorted[i].high > sorted[i - 1].high &&
             sorted[i].high > sorted[i - 2].high &&
@@ -2265,11 +2264,17 @@ private fun calculateMarketStructure(
 
     var previousHigh: Pair<Int, Double>? = null
     var previousLow: Pair<Int, Double>? = null
+
+    var higherHigh = false
+    var higherLow = false
+
     var bullishStart = 0L
     var bearishStart = 0L
 
     val pivotHighs = highs.associate { it.first to it.second }
     val pivotLows = lows.associate { it.first to it.second }
+
+    var lastChochDirection = ""
 
     for (i in sorted.indices) {
         val currentHigh = pivotHighs[i]
@@ -2279,33 +2284,7 @@ private fun calculateMarketStructure(
             val previous = previousHigh
 
             if (previous != null) {
-                if (currentHigh > previous.second) {
-                    if (trend != "BULLISH") bullishStart = sorted[previous.first].epoch
-                    trend = "BULLISH"
-                    structureNumber++
-
-                    structures.add(
-                        MarketStructureEvent(
-                            structureNumber,
-                            "BULLISH",
-                            currentHigh,
-                            bullishStart
-                        )
-                    )
-                } else if (currentHigh < previous.second) {
-                    if (trend != "BEARISH") bearishStart = sorted[previous.first].epoch
-                    trend = "BEARISH"
-                    structureNumber++
-
-                    structures.add(
-                        MarketStructureEvent(
-                            structureNumber,
-                            "BEARISH",
-                            currentHigh,
-                            bearishStart
-                        )
-                    )
-                }
+                higherHigh = currentHigh > previous.second
             }
 
             previousHigh = i to currentHigh
@@ -2315,45 +2294,54 @@ private fun calculateMarketStructure(
             val previous = previousLow
 
             if (previous != null) {
-                if (currentLow > previous.second) {
-                    if (trend != "BULLISH") bullishStart = sorted[previous.first].epoch
-                    trend = "BULLISH"
-                    structureNumber++
-
-                    structures.add(
-                        MarketStructureEvent(
-                            structureNumber,
-                            "BULLISH",
-                            currentLow,
-                            bullishStart
-                            )
-                    )
-                } else if (currentLow < previous.second) {
-                    if (trend != "BEARISH") bearishStart = sorted[previous.first].epoch
-                    trend = "BEARISH"
-                    structureNumber++
-
-                    structures.add(
-                        MarketStructureEvent(
-                            structureNumber,
-                            "BEARISH",
-                            currentLow,
-                            bearishStart
-                        )
-                    )
-                }
-                }
+                higherLow = currentLow > previous.second
+            }
 
             previousLow = i to currentLow
         }
+
+        val newTrend = when {
+            previousHigh != null &&
+                previousLow != null &&
+                higherHigh && higherLow -> "BULLISH"
+
+            previousHigh != null &&
+                previousLow != null &&
+                !higherHigh && !higherLow -> "BEARISH"
+
+            else -> ""
+        }
+
+        if (newTrend.isNotEmpty() && newTrend != trend) {
+            trend = newTrend
+            structureNumber++
+
+            if (trend == "BULLISH") {
+                bullishStart = sorted[i].epoch
+            } else {
+                bearishStart = sorted[i].epoch
+            }
+
+            structures.add(
+                MarketStructureEvent(
+                    structureNumber,
+                    trend,
+                    sorted[i].close,
+                    if (trend == "BULLISH") bullishStart else bearishStart
+                )
+            )
+        }
+
         val candle = sorted[i]
 
         if (trend == "BEARISH") {
             val breakLevel = previousHigh
+
             if (
                 breakLevel != null &&
                 i > breakLevel.first &&
-                candle.close > breakLevel.second
+                candle.close > breakLevel.second &&
+                lastChochDirection != "BULLISH"
             ) {
                 chochNumber++
                 chochs.add(
@@ -2364,14 +2352,16 @@ private fun calculateMarketStructure(
                         candle.epoch
                     )
                 )
-                trend = "BULLISH"
+                lastChochDirection = "BULLISH"
             }
         } else if (trend == "BULLISH") {
             val breakLevel = previousLow
+
             if (
                 breakLevel != null &&
                 i > breakLevel.first &&
-                candle.close < breakLevel.second
+                candle.close < breakLevel.second &&
+                lastChochDirection != "BEARISH"
             ) {
                 chochNumber++
                 chochs.add(
@@ -2382,7 +2372,7 @@ private fun calculateMarketStructure(
                         candle.epoch
                     )
                 )
-                trend = "BEARISH"
+                lastChochDirection = "BEARISH"
             }
         }
     }
@@ -2392,6 +2382,7 @@ private fun calculateMarketStructure(
         chochs = chochs.takeLast(10)
     )
 }
+
 private data class MasterEngineDecision(
     val symbol: String,
     val direction: String,
