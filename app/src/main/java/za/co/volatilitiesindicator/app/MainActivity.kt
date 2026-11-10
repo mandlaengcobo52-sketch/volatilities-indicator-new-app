@@ -1479,7 +1479,15 @@ if (structureAnalysis.chochs.isEmpty()) {
     }
 }
 // =========================================================
-detailsContainer.addView(label("MSS CONFIRMATION: $detailedChochDirection", 11f, if (detailedChochDirection == "NOT CONFIRMED") yellow else green, true))
+val chochDirection = structureAnalysis.chochs.lastOrNull()?.direction ?: "NOT CONFIRMED"
+detailsContainer.addView(
+    label(
+        "MSS CONFIRMATION: $chochDirection",
+        11f,
+        if (chochDirection == "NOT CONFIRMED") yellow else green,
+        true
+    )
+)
 
 // BULLISH AND BEARISH ORDER BLOCKS
 // =========================================================
