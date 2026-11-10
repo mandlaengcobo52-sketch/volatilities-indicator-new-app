@@ -590,7 +590,21 @@ if (authToken.isNotBlank() && savedToken.isNotBlank() &&
         if (authToken.isBlank() || appPrefs.getBoolean("deriv_manually_disconnected", false)) {
             return
         }
-override fun onPause() {
+
+        val tokenKey = if (executionMode == "REAL") "real_token" else "demo_token"
+        val savedToken = prefs.getString(tokenKey, "").orEmpty()
+
+        if (savedToken.isNotBlank()) {
+            if (derivServiceBound && ::derivApiClient.isInitialized) {
+                derivApiClient.ensureConnectedOnResume(savedToken, executionMode)
+            } else {
+                pendingResumeCheck = true
+                startAndBindDerivService()
+            }
+        }
+    }
+
+    override fun onPause() {
         profileRefreshHandler.removeCallbacks(profileRefreshRunnable)
         super.onPause()
     }
@@ -892,19 +906,6 @@ private fun addRegistrationScreen() {
 }
 // SIGN IN — uses the same user records and approval status as WebTrader.
 private fun addLoginScreen() {
-    
-        val tokenKey = if (executionMode == "REAL") "real_token" else "demo_token"
-val savedToken = prefs.getString(tokenKey, "").orEmpty()
-
-if (savedToken.isNotBlank()) {
-    if (derivServiceBound && ::derivApiClient.isInitialized) {
-        derivApiClient.ensureConnectedOnResume(savedToken, executionMode)
-    } else {
-        pendingResumeCheck = true
-        startAndBindDerivService()
-    }
-}
-    }
     page.addView(sectionTitle("SIGN IN"))
     val loginCard = card().apply { orientation = LinearLayout.VERTICAL }
     loginCard.addView(label("Welcome back", 20f, green, true))
@@ -1524,7 +1525,6 @@ val liquidityCandles = marketDataCandles[symbol].orEmpty()
 
 val bullishLiquidity = calculateLiquidityLevels(liquidityCandles, true)
 val bearishLiquidity = calculateLiquidityLevels(liquidityCandles, false)
-
 detailsContainer.addView(label("BULLISH LIQUIDITY (SSL)", 12f, green, true))
 
 if (bullishLiquidity.isEmpty()) {
@@ -1824,7 +1824,7 @@ private fun addTradeScreen() {
 )
 masterDecisionCard.addView(
     button(
-        if (autoTradeEnabled) "TURN MASTER DECISION OFF"
+          if (autoTradeEnabled) "TURN MASTER DECISION OFF"
         else "TURN MASTER DECISION ON",
         autoTradeEnabled
     ) {
@@ -2121,7 +2121,6 @@ private fun calculateLiquidityLevels(
             price > sorted[i + 1].high &&
             price > sorted[i + 2].high
         }
-
         if (confirmed) pivots.add(i to price)
     }
 
@@ -2711,7 +2710,6 @@ private fun evaluateMasterEngine(symbol: String) {
     val candles = marketDataCandles[symbol].orEmpty()
     val price = marketDataPrices[symbol] ?: return
     if (candles.size < 20) return
-
     val latest = candles.last()
     val bullishLiquidity = calculateLiquidityLevels(candles, true)
     val bearishLiquidity = calculateLiquidityLevels(candles, false)
@@ -3315,7 +3313,7 @@ val bearishMss = chochDirection == "BEARISH"
             eventKey.ifBlank {
                 "${saDayKey()}_${accountId}_${executionMode}_${title}_${message}".hashCode().toString()
             }
-        }
+            }
         val seen = appPrefs.getStringSet("notification_seen_keys", emptySet())
             .orEmpty().toMutableSet()
             
@@ -3913,9 +3911,8 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
     pendingTouchBySymbol.remove(order.symbol)
     touchExecutionLocks.remove(order.symbol)
     return@runOnUiThread
-}
-
-if (payout < order.stake * 1.30) {
+    }
+    if (payout < order.stake * 1.30) {
     if (order.proposalAttempts >= 20) {
         pendingTouchOrders.remove(requestId)
         pendingTouchBySymbol.remove(order.symbol)
@@ -4200,7 +4197,7 @@ if (stake > 0.0) {
                                         )
                                         }
                                 }
-                            }
+                                }
                         } else if (isClosed) {
                             liveContractProfits.remove(id)
                             liveContractProfitModes.remove(id)
