@@ -511,6 +511,17 @@ private val marketDataIndexes = listOf(
 )
 private val marketDataCandles =
     mutableMapOf<String, List<DerivApiClient.Candle>>()
+    private val liveBullishSweepArmed =
+    mutableMapOf<String, MutableSet<Double>>()
+
+private val liveBearishSweepArmed =
+    mutableMapOf<String, MutableSet<Double>>()
+
+private val liveBullishSweepAt =
+    mutableMapOf<String, MutableMap<Double, Long>>()
+
+private val liveBearishSweepAt =
+    mutableMapOf<String, MutableMap<Double, Long>>()
     private val marketDataPrices =
     mutableMapOf<String, Double>()
     private val marketDataPriceViews = mutableMapOf<String, TextView>()
@@ -2016,6 +2027,74 @@ private fun calculateLiquidityLevels(
         compareByDescending<LiquidityLevel> { it.occurrences }
             .thenByDescending { it.createdAt }
     )
+}
+private fun updateLiveLiquiditySweeps(
+    symbol: String,
+    previousPrice: Double?,
+    currentPrice: Double,
+    epoch: Long
+) {
+    if (previousPrice == null) return
+
+    val candles = marketDataCandles[symbol].orEmpty()
+    if (candles.size < 20) return
+
+    val bullishLevels = calculateLiquidityLevels(candles, true)
+    val bearishLevels = calculateLiquidityLevels(candles, false)
+
+    val bullishArmed =
+        liveBullishSweepArmed.getOrPut(symbol) { mutableSetOf() }
+
+    val bearishArmed =
+        liveBearishSweepArmed.getOrPut(symbol) { mutableSetOf() }
+
+    val bullishRecorded =
+        liveBullishSweepAt.getOrPut(symbol) { mutableMapOf() }
+
+    val bearishRecorded =
+        liveBearishSweepAt.getOrPut(symbol) { mutableMapOf() }
+
+    for (level in bullishLevels) {
+        when {
+            previousPrice >= level.price &&
+                currentPrice < level.price -> {
+                bullishArmed.add(level.price)
+            }
+
+            level.price in bullishArmed &&
+                previousPrice <= level.price &&
+                currentPrice > level.price -> {
+                bullishArmed.remove(level.price)
+                bullishRecorded[level.price] = epoch
+            }
+        }
+    }
+
+    for (level in bearishLevels) {
+        when {
+            previousPrice <= level.price &&
+                currentPrice > level.price -> {
+                bearishArmed.add(level.price)
+            }
+
+            level.price in bearishArmed &&
+                previousPrice >= level.price &&
+                currentPrice < level.price -> {
+                bearishArmed.remove(level.price)
+                bearishRecorded[level.price] = epoch
+            }
+        }
+    }
+
+    val cutoff = epoch - (5L * 60L * 60L)
+
+    bullishRecorded.entries.removeAll {
+        it.value < cutoff
+    }
+
+    bearishRecorded.entries.removeAll {
+        it.value < cutoff
+    }
 }
 // =============================================================
 // ANALYSIS - BULLISH AND BEARISH ORDER BLOCKS
