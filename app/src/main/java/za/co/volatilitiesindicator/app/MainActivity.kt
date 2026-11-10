@@ -2744,10 +2744,7 @@ val bullishSweep = bullishLiquidity.any {
 val bearishSweep = bearishLiquidity.any {
     it.sweepAt >= recentSweepStart
 }
-    val bearishSweep = bearishLiquidity.any {
-        it.sweepAt > 0L && latest.epoch >= it.sweepAt &&
-            latest.high > it.price && latest.close < it.price
-    }
+    
 
     val structure = calculateMarketStructure(candles)
     val marketDirection = structure.structures.lastOrNull()?.direction ?: ""
