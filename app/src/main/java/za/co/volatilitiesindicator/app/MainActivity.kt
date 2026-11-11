@@ -2616,8 +2616,16 @@ private fun evaluateMasterEngine(symbol: String) {
     val latest = candles.last()
     val bullishLiquidity = calculateLiquidityLevels(candles, true)
     val bearishLiquidity = calculateLiquidityLevels(candles, false)
-    val bullishSweep = bullishLiquidity.any { it.sweepStatus == "SWEPT" && it.sweepAt > 0L }
-    val bearishSweep = bearishLiquidity.any { it.sweepStatus == "SWEPT" && it.sweepAt > 0L }
+    val qualifyingSsl = bullishLiquidity.firstOrNull {
+    it.sweepStatus == "SWEPT" && it.sweepAt > 0L
+}
+
+val qualifyingBsl = bearishLiquidity.firstOrNull {
+    it.sweepStatus == "SWEPT" && it.sweepAt > 0L
+}
+
+val bullishSweep = qualifyingSsl != null
+val bearishSweep = qualifyingBsl != null
 
     val structure = calculateMarketStructure(candles)
     val marketDirection = structure.structures.lastOrNull()?.direction ?: ""
