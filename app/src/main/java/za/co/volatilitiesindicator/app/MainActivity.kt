@@ -2341,6 +2341,8 @@ val newTrend = when {
         if (newTrend.isNotEmpty() && newTrend != trend) {
             trend = newTrend
             structureNumber++
+            lastTrendHighIndex = previousHigh!!.first
+            lastTrendLowIndex = previousLow!!.first
 
             if (trend == "BULLISH") {
                 bullishStart = sorted[i].epoch
