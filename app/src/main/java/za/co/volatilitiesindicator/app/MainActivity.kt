@@ -1443,7 +1443,13 @@ if (sharedBearishLiquidity.isEmpty()) {
         ))
     }
 }
+val qualifyingSsl = sharedBullishLiquidity.firstOrNull {
+    it.sweepStatus == "SWEPT"
+}
 
+val qualifyingBsl = sharedBearishLiquidity.firstOrNull {
+    it.sweepStatus == "SWEPT"
+}
 detailsContainer.addView(label("ANALYSIS - MARKET STRUCTURE AND CHOCH", 13f, green, true))
 detailsContainer.addView(label("MARKET STRUCTURE", 12f, green, true))
 val sharedStructures = sharedAnalysis?.structures.orEmpty()
