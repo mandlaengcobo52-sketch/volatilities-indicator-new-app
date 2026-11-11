@@ -1934,7 +1934,7 @@ private fun registerCurrentPriceView(symbol: String, section: String, view: Text
         return java.text.SimpleDateFormat("yyyy/MM/dd, HH:mm:ss", java.util.Locale("en", "ZA"))
             .format(java.util.Date(epoch * 1000L))
     }
-    // =============================================================
+ // =============================================================
 // ANALYSIS - LIQUIDITY AND LIQUIDITY SWEEP
 // =============================================================
 
@@ -1946,91 +1946,116 @@ private data class LiquidityLevel(
     val sweepStatus: String = "WAITING"
 )
 
-// H1 candles are evaluated only after their one-hour period has closed.
-// A sweep is confirmed only when price penetrates the level and a closed
-// candle closes back across it within the five-candle confirmation window.
+// Evaluate only fully closed H1 candles.
+// Every penetration is an independent sweep attempt.
+// Confirmation must happen on the penetration candle itself.
 private fun calculateLiquidityLevels(
     candles: List<DerivApiClient.Candle>,
     bullish: Boolean
 ): List<LiquidityLevel> {
+
     val nowEpoch = System.currentTimeMillis() / 1000L
+
     val sorted = candles
         .filter { it.epoch + 3600L <= nowEpoch }
         .sortedBy { it.epoch }
+
     if (sorted.size < 10) return emptyList()
 
     val pivots = mutableListOf<Pair<Int, Double>>()
+
     for (i in 2 until sorted.size - 2) {
         val price = if (bullish) sorted[i].low else sorted[i].high
+
         val confirmed = if (bullish) {
-            price < sorted[i - 1].low && price < sorted[i - 2].low &&
-                price < sorted[i + 1].low && price < sorted[i + 2].low
+            price < sorted[i - 1].low &&
+                price < sorted[i - 2].low &&
+                price < sorted[i + 1].low &&
+                price < sorted[i + 2].low
         } else {
-            price > sorted[i - 1].high && price > sorted[i - 2].high &&
-                price > sorted[i + 1].high && price > sorted[i + 2].high
+            price > sorted[i - 1].high &&
+                price > sorted[i - 2].high &&
+                price > sorted[i + 1].high &&
+                price > sorted[i + 2].high
         }
+
         if (confirmed) pivots.add(i to price)
     }
 
     val tolerance = 0.0015
     val used = mutableSetOf<Int>()
     val results = mutableListOf<LiquidityLevel>()
+
     pivots.forEachIndexed { index, pivot ->
+
         if (index in used) return@forEachIndexed
+
         val group = pivots.filterIndexed { otherIndex, other ->
             otherIndex !in used &&
                 kotlin.math.abs(other.second - pivot.second) /
                 pivot.second.coerceAtLeast(0.000001) <= tolerance
         }
-        group.forEach { member -> pivots.indexOf(member).takeIf { it >= 0 }?.let(used::add) }
+
+        group.forEach { member ->
+            pivots.indexOf(member)
+                .takeIf { it >= 0 }
+                ?.let(used::add)
+        }
+
         if (group.size < 2) return@forEachIndexed
 
         val levelPrice = group.map { it.second }.average()
         val firstPivotIndex = group.minOf { it.first }
         val lastPivotIndex = group.maxOf { it.first }
+
         var sweepAt = 0L
         var sweepStatus = "WAITING"
-        var touchIndex = -1
 
         for (i in lastPivotIndex + 1 until sorted.size) {
+
             val candle = sorted[i]
-            val penetrated = if (bullish) candle.low < levelPrice else candle.high > levelPrice
+
+            // A previously confirmed sweep is invalidated
+            // by a later closed candle closing back through the level.
+            if (sweepStatus == "SWEPT") {
+
+                val invalidated = if (bullish) {
+                    candle.close < levelPrice
+                } else {
+                    candle.close > levelPrice
+                }
+
+                if (invalidated) {
+                    sweepStatus = "INVALIDATED"
+                }
+
+                continue
+            }
+
+            val penetrated = if (bullish) {
+                candle.low < levelPrice
+            } else {
+                candle.high > levelPrice
+            }
+
             if (!penetrated) continue
-            touchIndex = i
-            val reversedOnTouch = if (bullish) candle.close > levelPrice else candle.close < levelPrice
-            if (reversedOnTouch) {
+
+            // The penetration candle itself must close back across the level.
+            val confirmedOnSameCandle = if (bullish) {
+                candle.close > levelPrice
+            } else {
+                candle.close < levelPrice
+            }
+
+            if (confirmedOnSameCandle) {
                 sweepAt = candle.epoch
                 sweepStatus = "SWEPT"
             } else {
-                // Touch candle is candle 1. Four further closed candles are
-                // allowed, making five H1 candles in the confirmation window.
-                val windowEnd = minOf(sorted.lastIndex, touchIndex + 4)
-                for (confirmIndex in touchIndex + 1..windowEnd) {
-                    val confirmation = sorted[confirmIndex]
-                    val reversed = if (bullish) confirmation.close > levelPrice
-                        else confirmation.close < levelPrice
-                    if (reversed) {
-                        sweepAt = confirmation.epoch
-                        sweepStatus = "SWEPT"
-                        break
-                    }
-                }
+                // Failed attempt: reject immediately.
+                // A later penetration must be evaluated independently.
+                sweepAt = 0L
+                sweepStatus = "WAITING"
             }
-            // A later close back through the swept level invalidates the
-            // previously confirmed sweep. The level returns to WAITING.
-            if (sweepStatus == "SWEPT") {
-                val invalidated = sorted.any { later ->
-                    later.epoch > sweepAt &&
-                        if (bullish) later.close < levelPrice else later.close > levelPrice
-                }
-                if (invalidated) {
-                    sweepAt = 0L
-                    sweepStatus = "WAITING"
-                }
-            }
-            // Evaluate the first touch event for this level; do not silently
-            // reuse a later unrelated tick crossing as a sweep.
-            break
         }
 
         results.add(
@@ -2043,6 +2068,7 @@ private fun calculateLiquidityLevels(
             )
         )
     }
+
     return results.sortedWith(
         compareByDescending<LiquidityLevel> { it.occurrences }
             .thenByDescending { it.createdAt }
