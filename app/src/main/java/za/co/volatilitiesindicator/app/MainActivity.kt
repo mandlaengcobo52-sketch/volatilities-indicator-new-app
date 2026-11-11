@@ -1908,7 +1908,14 @@ row.addView(
         val sellPrice = item.optDouble("sell_price", 0.0)
         val profit = sellPrice - buyPrice
         val epoch = item.optLong("purchase_time", item.optLong("date_start", 0L))
-        val timeText = if (epoch > 0) java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(epoch * 1000L)) else "Time unavailable"
+        val timeText = if (epoch > 0L) {
+    java.text.SimpleDateFormat(
+        "yyyy-MM-dd HH:mm",
+        java.util.Locale("en", "ZA")
+    ).apply {
+        timeZone = dailyCapitalTimeZone
+    }.format(java.util.Date(epoch * 1000L))
+} else "Time unavailable"
         val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(10), dp(9), dp(10), dp(9)); background = shape(panel, greenDark, 7, 1) }
         row.addView(label("Index: $symbol • Contract $contractId", 12f, white, true))
         row.addView(label("$timeText • Stake ${formatMoney(buyPrice)} • P/L ${formatMoney(profit)}", 11f, profitColor(profit), false).apply { setPadding(0, dp(4), 0, 0) })
@@ -1931,11 +1938,13 @@ private fun registerCurrentPriceView(symbol: String, section: String, view: Text
         price?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
 
     private fun formatMarketTime(epoch: Long): String {
-        if (epoch <= 0L) return "—"
-    private fun formatMarketTime(epoch: Long): String {
     if (epoch <= 0L) return "—"
-    return java.text.SimpleDateFormat("yyyy/MM/dd, HH:mm:ss", java.util.Locale("en", "ZA"))
-        .format(java.util.Date(epoch * 1000L))
+    return java.text.SimpleDateFormat(
+        "yyyy/MM/dd, HH:mm:ss",
+        java.util.Locale("en", "ZA")
+    ).apply {
+        timeZone = dailyCapitalTimeZone
+    }.format(java.util.Date(epoch * 1000L))
     }
     // =============================================================
 // ANALYSIS - LIQUIDITY AND LIQUIDITY SWEEP
