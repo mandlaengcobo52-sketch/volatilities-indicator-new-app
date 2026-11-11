@@ -2241,6 +2241,7 @@ private data class MarketStructureAnalysis(
     val structures: List<MarketStructureEvent>,
     val chochs: List<ChochEvent>
 )
+
 private fun calculateMarketStructure(
     candles: List<DerivApiClient.Candle>
 ): MarketStructureAnalysis {
@@ -2251,29 +2252,6 @@ private fun calculateMarketStructure(
         return MarketStructureAnalysis(emptyList(), emptyList())
     }
 
-    val highs = mutableListOf<Pair<Int, Double>>()
-    val lows = mutableListOf<Pair<Int, Double>>()
-
-    for (i in 2 until sorted.size - 2) {
-        if (
-            sorted[i].high > sorted[i - 1].high &&
-            sorted[i].high > sorted[i - 2].high &&
-            sorted[i].high > sorted[i + 1].high &&
-            sorted[i].high > sorted[i + 2].high
-        ) {
-            highs.add(i to sorted[i].high)
-        }
-
-        if (
-            sorted[i].low < sorted[i - 1].low &&
-            sorted[i].low < sorted[i - 2].low &&
-            sorted[i].low < sorted[i + 1].low &&
-            sorted[i].low < sorted[i + 2].low
-        ) {
-            lows.add(i to sorted[i].low)
-        }
-    }
-
     val structures = mutableListOf<MarketStructureEvent>()
     val chochs = mutableListOf<ChochEvent>()
 
@@ -2281,92 +2259,164 @@ private fun calculateMarketStructure(
     var chochNumber = 0
     var trend = ""
 
-    var previousHigh: Pair<Int, Double>? = null
-    var previousLow: Pair<Int, Double>? = null
+    var previousConfirmedHigh: Pair<Int, Double>? = null
+    var previousConfirmedLow: Pair<Int, Double>? = null
 
-    var higherHigh = false
-    var higherLow = false
+    var lastConfirmedLH: Pair<Int, Double>? = null
+    var lastConfirmedHL: Pair<Int, Double>? = null
 
-    var bullishStart = 0L
-    var bearishStart = 0L
+    var candidateHigh = sorted[0].high
+    var candidateHighIndex = 0
+    var candidateLow = sorted[0].low
+    var candidateLowIndex = 0
 
-    val pivotHighs = highs.associate { it.first to it.second }
-    val pivotLows = lows.associate { it.first to it.second }
+    var minorLow = Double.POSITIVE_INFINITY
+    var minorLowIndex = -1
+    var minorHigh = Double.NEGATIVE_INFINITY
+    var minorHighIndex = -1
+
+    var direction = ""
 
     var lastChochDirection = ""
-    var lastTrendHighIndex = -1
-    var lastTrendLowIndex = -1
 
-    for (i in sorted.indices) {
-        val currentHigh = pivotHighs[i]
-        val currentLow = pivotLows[i]
+    for (i in 1 until sorted.size) {
 
-        if (currentHigh != null) {
-            val previous = previousHigh
+        val candle = sorted[i]
 
-            if (previous != null) {
-                higherHigh = currentHigh > previous.second
+        if (direction.isEmpty()) {
+            if (candle.close > sorted[i - 1].high) {
+                direction = "UP"
+                candidateHigh = candle.high
+                candidateHighIndex = i
+            } else if (candle.close < sorted[i - 1].low) {
+                direction = "DOWN"
+                candidateLow = candle.low
+                candidateLowIndex = i
             }
-
-            previousHigh = i to currentHigh
+            continue
         }
 
-        if (currentLow != null) {
-            val previous = previousLow
+        if (direction == "UP") {
 
-            if (previous != null) {
-                higherLow = currentLow > previous.second
+            if (candle.high > candidateHigh) {
+                candidateHigh = candle.high
+                candidateHighIndex = i
+                minorLow = Double.POSITIVE_INFINITY
+                minorLowIndex = -1
+            } else {
+                if (candle.low < minorLow) {
+                    minorLow = candle.low
+                    minorLowIndex = i
+                }
             }
 
-            previousLow = i to currentLow
+            if (
+                minorLowIndex >= 0 &&
+                i > minorLowIndex &&
+                candle.close < minorLow
+            ) {
+                val confirmedHigh = candidateHighIndex to candidateHigh
+
+                val previous = previousConfirmedHigh
+                if (previous != null) {
+                    val isLowerHigh = confirmedHigh.second < previous.second
+
+                    if (isLowerHigh) {
+                        lastConfirmedLH = confirmedHigh
+                    }
+                }
+
+                previousConfirmedHigh = confirmedHigh
+
+                direction = "DOWN"
+                candidateLow = candle.low
+                candidateLowIndex = i
+                minorHigh = candle.high
+                minorHighIndex = i
+                minorLow = Double.POSITIVE_INFINITY
+                minorLowIndex = -1
+            }
+
+        } else if (direction == "DOWN") {
+
+            if (candle.low < candidateLow) {
+                candidateLow = candle.low
+                candidateLowIndex = i
+                minorHigh = Double.NEGATIVE_INFINITY
+                minorHighIndex = -1
+            } else {
+                if (candle.high > minorHigh) {
+                    minorHigh = candle.high
+                    minorHighIndex = i
+                }
+            }
+
+            if (
+                minorHighIndex >= 0 &&
+                i > minorHighIndex &&
+                candle.close > minorHigh
+            ) {
+                val confirmedLow = candidateLowIndex to candidateLow
+
+                val previous = previousConfirmedLow
+                if (previous != null) {
+                    val isHigherLow = confirmedLow.second > previous.second
+
+                    if (isHigherLow) {
+                        lastConfirmedHL = confirmedLow
+                    }
+                }
+
+                previousConfirmedLow = confirmedLow
+
+                direction = "UP"
+                candidateHigh = candle.high
+                candidateHighIndex = i
+                minorLow = candle.low
+                minorLowIndex = i
+                minorHigh = Double.NEGATIVE_INFINITY
+                minorHighIndex = -1
+            }
         }
 
-        val bothSwingsAreNew =
-    previousHigh != null &&
-    previousLow != null &&
-    previousHigh.first > lastTrendHighIndex &&
-    previousLow.first > lastTrendLowIndex
+        val confirmedHigh = previousConfirmedHigh
+        val confirmedLow = previousConfirmedLow
 
-val newTrend = when {
+        val newTrend = when {
+            confirmedHigh != null &&
+            confirmedLow != null &&
+            lastConfirmedHL != null &&
+            confirmedHigh.second > 0.0 &&
+            confirmedLow.second > 0.0 &&
+            previousConfirmedHigh!!.second > 0.0 &&
+            lastConfirmedHL!!.second < confirmedLow.second -> "BULLISH"
 
-    bothSwingsAreNew &&
-    higherHigh && higherLow -> "BULLISH"
+            confirmedHigh != null &&
+            confirmedLow != null &&
+            lastConfirmedLH != null &&
+            confirmedHigh.second > 0.0 &&
+            confirmedLow.second > 0.0 &&
+            lastConfirmedLH!!.second == confirmedHigh.second -> "BEARISH"
 
-    bothSwingsAreNew &&
-    !higherHigh && !higherLow -> "BEARISH"
-
-    else -> ""
-}
+            else -> ""
+        }
 
         if (newTrend.isNotEmpty() && newTrend != trend) {
             trend = newTrend
             structureNumber++
-            lastTrendHighIndex = previousHigh!!.first
-            lastTrendLowIndex = previousLow!!.first
-
-            if (trend == "BULLISH") {
-                bullishStart = sorted[i].epoch
-            } else {
-                bearishStart = sorted[i].epoch
-            }
 
             structures.add(
                 MarketStructureEvent(
                     structureNumber,
                     trend,
-                    sorted[i].close,
-                    if (trend == "BULLISH") bullishStart else bearishStart
+                    candle.close,
+                    candle.epoch
                 )
             )
         }
 
-        val candle = sorted[i]
-        // CHOCH uses the confirmed structure as its reference.
-        // A CHOCH must not change the confirmed market structure.
-        val structureDirectionForChoch = trend
-
-        if (structureDirectionForChoch == "BEARISH") {
-            val breakLevel = previousHigh
+        if (trend == "BEARISH") {
+            val breakLevel = lastConfirmedLH
 
             if (
                 breakLevel != null &&
@@ -2375,6 +2425,7 @@ val newTrend = when {
                 lastChochDirection != "BULLISH"
             ) {
                 chochNumber++
+
                 chochs.add(
                     ChochEvent(
                         chochNumber,
@@ -2383,10 +2434,13 @@ val newTrend = when {
                         candle.epoch
                     )
                 )
+
                 lastChochDirection = "BULLISH"
             }
-        } else if (structureDirectionForChoch == "BULLISH") {
-            val breakLevel = previousLow
+        }
+
+        if (trend == "BULLISH") {
+            val breakLevel = lastConfirmedHL
 
             if (
                 breakLevel != null &&
@@ -2395,6 +2449,7 @@ val newTrend = when {
                 lastChochDirection != "BEARISH"
             ) {
                 chochNumber++
+
                 chochs.add(
                     ChochEvent(
                         chochNumber,
@@ -2403,6 +2458,7 @@ val newTrend = when {
                         candle.epoch
                     )
                 )
+
                 lastChochDirection = "BEARISH"
             }
         }
@@ -2414,8 +2470,7 @@ val newTrend = when {
     )
 }
 
-
-private data class MasterEngineDecision(
+    private data class MasterEngineDecision(
     val symbol: String,
     val direction: String,
     val supportResistanceQualified: Boolean,
