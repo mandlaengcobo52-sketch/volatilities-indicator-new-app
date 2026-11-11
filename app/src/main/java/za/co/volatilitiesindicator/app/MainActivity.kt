@@ -616,7 +616,7 @@ if (savedToken.isNotBlank()) {
         startAndBindDerivService()
     }
 }
-    }
+}
 
     override fun onPause() {
         profileRefreshHandler.removeCallbacks(profileRefreshRunnable)
@@ -1424,7 +1424,7 @@ if (bullishLiquidity.isEmpty()) {
     bullishLiquidity.take(2).forEachIndexed { index, level ->
         detailsContainer.addView(
             label(
-                "SSL ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepAt > 0L && level.sweepAt >= System.currentTimeMillis() / 1000L - (5L * 60L * 60L)) formatMarketTime(level.sweepAt) else "NOT CURRENT"} | OCCURRENCES: ${level.occurrences}",
+                "SSL ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepStatus == "SWEPT") "SWEPT ${formatMarketTime(level.sweepAt)}" else "WAITING"} | OCCURRENCES: ${level.occurrences}",
                 11f, green, false
             )
         )
@@ -1439,7 +1439,7 @@ if (bearishLiquidity.isEmpty()) {
     bearishLiquidity.take(2).forEachIndexed { index, level ->
         detailsContainer.addView(
             label(
-                "BSL ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepAt > 0L && level.sweepAt >= System.currentTimeMillis() / 1000L - (5L * 60L * 60L)) formatMarketTime(level.sweepAt) else "NOT CURRENT"} | OCCURRENCES: ${level.occurrences}",
+                "BSL ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepStatus == "SWEPT") "SWEPT ${formatMarketTime(level.sweepAt)}" else "WAITING"} | OCCURRENCES: ${level.occurrences}",
                 11f, red, false
             )
         )
@@ -1516,7 +1516,6 @@ val resistances = calculateSupportResistance(candles, false, currentPrice)
             )
         )
     }
-
     detailsContainer.addView(label("RESISTANCE LEVELS", 12f, red, true))
 
     resistances.take(2).forEachIndexed { index, level ->
@@ -1819,7 +1818,6 @@ row.addView(
         row.addView(potentialProfitView)
         row.addView(spotView)
         row.addView(expiryView)
-
         contractLiveViews[running.contractId] = ContractLiveViews(
             running.stake,
             running.symbol,
@@ -1942,162 +1940,113 @@ private data class LiquidityLevel(
     val price: Double,
     val createdAt: Long,
     val sweepAt: Long,
-    val occurrences: Int
+    val occurrences: Int,
+    val sweepStatus: String = "WAITING"
 )
+
+// H1 candles are evaluated only after their one-hour period has closed.
+// A sweep is confirmed only when price penetrates the level and a closed
+// candle closes back across it within the five-candle confirmation window.
 private fun calculateLiquidityLevels(
     candles: List<DerivApiClient.Candle>,
     bullish: Boolean
 ): List<LiquidityLevel> {
+    val nowEpoch = System.currentTimeMillis() / 1000L
+    val sorted = candles
+        .filter { it.epoch + 3600L <= nowEpoch }
+        .sortedBy { it.epoch }
+    if (sorted.size < 10) return emptyList()
 
-    if (candles.size < 10) return emptyList()
-
-    val sorted = candles.sortedBy { it.epoch }
     val pivots = mutableListOf<Pair<Int, Double>>()
-
     for (i in 2 until sorted.size - 2) {
         val price = if (bullish) sorted[i].low else sorted[i].high
-
         val confirmed = if (bullish) {
-            price < sorted[i - 1].low &&
-            price < sorted[i - 2].low &&
-            price < sorted[i + 1].low &&
-            price < sorted[i + 2].low
+            price < sorted[i - 1].low && price < sorted[i - 2].low &&
+                price < sorted[i + 1].low && price < sorted[i + 2].low
         } else {
-            price > sorted[i - 1].high &&
-            price > sorted[i - 2].high &&
-            price > sorted[i + 1].high &&
-            price > sorted[i + 2].high
+            price > sorted[i - 1].high && price > sorted[i - 2].high &&
+                price > sorted[i + 1].high && price > sorted[i + 2].high
         }
-
         if (confirmed) pivots.add(i to price)
     }
 
     val tolerance = 0.0015
     val used = mutableSetOf<Int>()
     val results = mutableListOf<LiquidityLevel>()
-
     pivots.forEachIndexed { index, pivot ->
         if (index in used) return@forEachIndexed
-
-        val basePrice = pivot.second
-
         val group = pivots.filterIndexed { otherIndex, other ->
             otherIndex !in used &&
-            kotlin.math.abs(other.second - basePrice) /
-                basePrice.coerceAtLeast(0.000001) <= tolerance
+                kotlin.math.abs(other.second - pivot.second) /
+                pivot.second.coerceAtLeast(0.000001) <= tolerance
         }
-
-        group.forEachIndexed { _, member ->
-            val memberIndex = pivots.indexOf(member)
-            if (memberIndex >= 0) used.add(memberIndex)
-        }
-
+        group.forEach { member -> pivots.indexOf(member).takeIf { it >= 0 }?.let(used::add) }
         if (group.size < 2) return@forEachIndexed
 
         val levelPrice = group.map { it.second }.average()
         val firstPivotIndex = group.minOf { it.first }
         val lastPivotIndex = group.maxOf { it.first }
-
         var sweepAt = 0L
+        var sweepStatus = "WAITING"
+        var touchIndex = -1
+
         for (i in lastPivotIndex + 1 until sorted.size) {
             val candle = sorted[i]
-
-            val swept = if (bullish) {
-                candle.low < levelPrice && candle.close > levelPrice
+            val penetrated = if (bullish) candle.low < levelPrice else candle.high > levelPrice
+            if (!penetrated) continue
+            touchIndex = i
+            val reversedOnTouch = if (bullish) candle.close > levelPrice else candle.close < levelPrice
+            if (reversedOnTouch) {
+                sweepAt = candle.epoch
+                sweepStatus = "SWEPT"
             } else {
-                candle.high > levelPrice && candle.close < levelPrice
+                // Touch candle is candle 1. Four further closed candles are
+                // allowed, making five H1 candles in the confirmation window.
+                val windowEnd = minOf(sorted.lastIndex, touchIndex + 4)
+                for (confirmIndex in touchIndex + 1..windowEnd) {
+                    val confirmation = sorted[confirmIndex]
+                    val reversed = if (bullish) confirmation.close > levelPrice
+                        else confirmation.close < levelPrice
+                    if (reversed) {
+                        sweepAt = confirmation.epoch
+                        sweepStatus = "SWEPT"
+                        break
+                    }
+                }
             }
-
-            if (swept) {
-    sweepAt = candle.epoch
+            // A later close back through the swept level invalidates the
+            // previously confirmed sweep. The level returns to WAITING.
+            if (sweepStatus == "SWEPT") {
+                val invalidated = sorted.any { later ->
+                    later.epoch > sweepAt &&
+                        if (bullish) later.close < levelPrice else later.close > levelPrice
+                }
+                if (invalidated) {
+                    sweepAt = 0L
+                    sweepStatus = "WAITING"
+                }
             }
+            // Evaluate the first touch event for this level; do not silently
+            // reuse a later unrelated tick crossing as a sweep.
+            break
         }
+
         results.add(
             LiquidityLevel(
                 price = levelPrice,
                 createdAt = sorted[firstPivotIndex].epoch,
                 sweepAt = sweepAt,
-                occurrences = group.size
+                occurrences = group.size,
+                sweepStatus = sweepStatus
             )
         )
     }
-
-    return results
-    .sortedWith(
+    return results.sortedWith(
         compareByDescending<LiquidityLevel> { it.occurrences }
             .thenByDescending { it.createdAt }
     )
 }
-private fun updateLiveLiquiditySweeps(
-    symbol: String,
-    previousPrice: Double?,
-    currentPrice: Double,
-    epoch: Long
-) {
-    if (previousPrice == null) return
 
-    val candles = marketDataCandles[symbol].orEmpty()
-    if (candles.size < 20) return
-
-    val bullishLevels = calculateLiquidityLevels(candles, true)
-    val bearishLevels = calculateLiquidityLevels(candles, false)
-
-    val bullishArmed =
-        liveBullishSweepArmed.getOrPut(symbol) { mutableSetOf() }
-
-    val bearishArmed =
-        liveBearishSweepArmed.getOrPut(symbol) { mutableSetOf() }
-
-    val bullishRecorded =
-        liveBullishSweepAt.getOrPut(symbol) { mutableMapOf() }
-
-    val bearishRecorded =
-        liveBearishSweepAt.getOrPut(symbol) { mutableMapOf() }
-
-    for (level in bullishLevels) {
-    when {
-        previousPrice >= level.price &&
-            currentPrice < level.price -> {
-            bullishRecorded.remove(level.price)
-            bullishArmed.add(level.price)
-        }
-
-        level.price in bullishArmed &&
-            previousPrice <= level.price &&
-            currentPrice > level.price -> {
-            bullishArmed.remove(level.price)
-            bullishRecorded[level.price] = epoch
-        }
-    }
-    }
-
-    for (level in bearishLevels) {
-    when {
-        previousPrice <= level.price &&
-            currentPrice > level.price -> {
-            bearishRecorded.remove(level.price)
-            bearishArmed.add(level.price)
-        }
-
-        level.price in bearishArmed &&
-            previousPrice >= level.price &&
-            currentPrice < level.price -> {
-            bearishArmed.remove(level.price)
-            bearishRecorded[level.price] = epoch
-        }
-    }
-    }
-
-    val cutoff = epoch - (5L * 60L * 60L)
-
-    bullishRecorded.entries.removeAll {
-        it.value < cutoff
-    }
-
-    bearishRecorded.entries.removeAll {
-        it.value < cutoff
-    }
-}
 // =============================================================
 // ANALYSIS - BULLISH AND BEARISH ORDER BLOCKS
 // =============================================================
@@ -2151,7 +2100,6 @@ private fun calculateOrderBlocks(
 
         // BULLISH ORDER BLOCK
         if (swingHigh) {
-
             val breakIndex = (i + 3 until sorted.size)
                 .firstOrNull { sorted[it].close > sorted[i].high }
 
@@ -2617,71 +2565,36 @@ private fun calculateMomentumQualified(
 }
 
 private fun evaluateMasterEngine(symbol: String) {
-    val candles = marketDataCandles[symbol].orEmpty()
-    val price = marketDataPrices[symbol] ?: return
+    val allCandles = marketDataCandles[symbol].orEmpty()
+    val nowEpoch = System.currentTimeMillis() / 1000L
+    val candles = allCandles.filter { it.epoch + 3600L <= nowEpoch }.sortedBy { it.epoch }
     if (candles.size < 20) return
 
     val latest = candles.last()
     val bullishLiquidity = calculateLiquidityLevels(candles, true)
     val bearishLiquidity = calculateLiquidityLevels(candles, false)
-
-    val liveSweepCutoff =
-    System.currentTimeMillis() / 1000L - (5L * 60L * 60L)
-
-val bullishSweep =
-    bullishLiquidity.any {
-        it.sweepAt > 0L && it.sweepAt >= liveSweepCutoff
-    } ||
-    liveBullishSweepAt[symbol].orEmpty().values.any {
-        it >= liveSweepCutoff
-    }
-
-val bearishSweep =
-    bearishLiquidity.any {
-        it.sweepAt > 0L && it.sweepAt >= liveSweepCutoff
-    } ||
-    liveBearishSweepAt[symbol].orEmpty().values.any {
-        it >= liveSweepCutoff
-    }
-    
+    val bullishSweep = bullishLiquidity.any { it.sweepStatus == "SWEPT" && it.sweepAt > 0L }
+    val bearishSweep = bearishLiquidity.any { it.sweepStatus == "SWEPT" && it.sweepAt > 0L }
 
     val structure = calculateMarketStructure(candles)
     val marketDirection = structure.structures.lastOrNull()?.direction ?: ""
-    val latestChoch = structure.chochs.lastOrNull()
-    ?.takeIf { it.changedAt == latest.epoch }
-
-val chochDirection = latestChoch?.direction ?: ""
-
-// MSS must be confirmed on the latest candle.
-val bullishMss = chochDirection == "BULLISH"
-val bearishMss = chochDirection == "BEARISH"
-
+    val latestChoch = structure.chochs.lastOrNull()?.takeIf { it.changedAt == latest.epoch }
+    val chochDirection = latestChoch?.direction ?: ""
+    val bullishMss = chochDirection == "BULLISH"
+    val bearishMss = chochDirection == "BEARISH"
     val bullishMomentum = calculateMomentumQualified(candles, "BULLISH")
     val bearishMomentum = calculateMomentumQualified(candles, "BEARISH")
 
-    val bullishDirection = bullishSweep &&
-    marketDirection == "BULLISH" &&
-    bullishMss && bullishMomentum
+    // Reversal qualification uses the prior confirmed structure as context:
+    // bearish structure + confirmed SSL sweep + bullish MSS + bullish momentum,
+    // or the exact inverse for a bearish reversal.
+    val bullishDirection = bullishSweep && marketDirection == "BEARISH" && bullishMss && bullishMomentum
+    val bearishDirection = bearishSweep && marketDirection == "BULLISH" && bearishMss && bearishMomentum
 
-val bearishDirection = bearishSweep &&
-    marketDirection == "BEARISH" &&
-    bearishMss && bearishMomentum
-
-    // PTPE is a transparent confluence score, not a statistically calibrated
-    // forecast. Each independently observed condition contributes to 100%.
-    val bullishScore = listOf(
-    bullishSweep,
-    marketDirection == "BULLISH",
-    bullishMss,
-    bullishMomentum
-).count { it } * (100.0 / 4.0)
-
-val bearishScore = listOf(
-    bearishSweep,
-    marketDirection == "BEARISH",
-    bearishMss,
-    bearishMomentum
-).count { it } * (100.0 / 4.0)
+    val bullishScore = listOf(bullishSweep, marketDirection == "BEARISH", bullishMss, bullishMomentum)
+        .count { it } * 25.0
+    val bearishScore = listOf(bearishSweep, marketDirection == "BULLISH", bearishMss, bearishMomentum)
+        .count { it } * 25.0
     val ptpe = maxOf(bullishScore, bearishScore)
     val direction = when {
         bullishDirection && bullishScore > 55.0 -> "BUY"
@@ -2693,10 +2606,10 @@ val bearishScore = listOf(
         symbol = symbol,
         direction = direction,
         supportResistanceQualified = true,
-        liquidityQualified = bullishSweep || bearishSweep,
+        liquidityQualified = if (direction == "BUY") bullishSweep else if (direction == "SELL") bearishSweep else (bullishSweep || bearishSweep),
         marketStructureQualified = marketDirection == "BULLISH" || marketDirection == "BEARISH",
-        chochQualified = bullishMss || bearishMss,
-        momentumQualified = bullishMomentum || bearishMomentum,
+        chochQualified = if (direction == "BUY") bullishMss else if (direction == "SELL") bearishMss else (bullishMss || bearishMss),
+        momentumQualified = if (direction == "BUY") bullishMomentum else if (direction == "SELL") bearishMomentum else (bullishMomentum || bearishMomentum),
         ptpeProbability = ptpe,
         qualified = direction != "WAIT",
         updatedAt = System.currentTimeMillis()
@@ -2704,92 +2617,70 @@ val bearishScore = listOf(
     masterEngineDecisions[symbol] = decision
 
     val mssText = when {
-    bullishMss -> "BULLISH CONFIRMED"
-    bearishMss -> "BEARISH CONFIRMED"
-    else -> "WAITING"
+        bullishMss -> "BULLISH CONFIRMED"
+        bearishMss -> "BEARISH CONFIRMED"
+        else -> "WAITING"
     }
     val momentumPercent = if (bullishMomentum || bearishMomentum) 100.0 else 0.0
     val chochText = when {
         bullishMss -> "BULLISH CHOCH: YES"
         bearishMss -> "BEARISH CHOCH: YES"
-        else -> "BULLISH / BEARISH CHOCH: NO"
+        else -> "BULLISH / BEARISH CHOCH: WAITING"
     }
     val reversalText = when {
-    marketDirection == "BEARISH" && bullishMss ->
-        "POTENTIAL BULLISH REVERSAL"
-
-    marketDirection == "BULLISH" && bearishMss ->
-        "POTENTIAL BEARISH REVERSAL"
-
-    else -> "NO REVERSAL SIGNAL"
+        marketDirection == "BEARISH" && bullishMss -> "POTENTIAL BULLISH REVERSAL"
+        marketDirection == "BULLISH" && bearishMss -> "POTENTIAL BEARISH REVERSAL"
+        else -> "NO CONFIRMED REVERSAL"
     }
     val liquidityText = when {
-    bullishSweep && bearishSweep -> "BULLISH AND BEARISH SWEPT"
-    bullishSweep -> "BULLISH SWEPT"
-    bearishSweep -> "BEARISH SWEPT"
-    else -> "WAITING"
+        bullishSweep && bearishSweep -> "BULLISH AND BEARISH SWEPT"
+        bullishSweep -> "BULLISH SWEPT"
+        bearishSweep -> "BEARISH SWEPT"
+        else -> "WAITING"
     }
     val engineExecuted = runningContracts.values.any { it.symbol == symbol && it.mode == executionMode }
-    val engineText = if (engineExecuted) "EXECUTED" else "WAITING"
+    val engineText = if (engineExecuted) "EXECUTED" else if (decision.qualified) "QUALIFIED" else "WAITING"
     val summary = listOf(
         "1. LIQUIDITY SWEEP: $liquidityText",
-    "2. MARKET STRUCTURE: ${marketDirection.ifBlank { "WAITING" }}",
-    "3. MSS: $mssText",
-    "4. $chochText",
-    "5. REVERSAL STATUS: $reversalText",
-    "6. MOMENTUM: ${String.format(java.util.Locale.US, "%.0f", momentumPercent)}%",
-    "7. PTPE: ${String.format(java.util.Locale.US, "%.1f", ptpe)}%",
-    "8. MASTER ENGINE: $engineText"
-).joinToString("\n")
-    
-val analysisView = dashboardAnalysisViews[symbol]
-if (analysisView != null) {
-    val lines = summary.split("\n")
-    val colouredSummary = SpannableStringBuilder()
+        "2. MARKET STRUCTURE: ${marketDirection.ifBlank { "WAITING" }}",
+        "3. MSS: $mssText",
+        "4. $chochText",
+        "5. REVERSAL STATUS: $reversalText",
+        "6. MOMENTUM: ${String.format(java.util.Locale.US, "%.0f", momentumPercent)}%",
+        "7. PTPE: ${String.format(java.util.Locale.US, "%.1f", ptpe)}%",
+        "8. MASTER ENGINE: $engineText"
+    ).joinToString("\n")
 
-    val qualifiedConditions = listOf(
-    bullishSweep || bearishSweep,
-    marketDirection == "BULLISH" || marketDirection == "BEARISH",
-    bullishMss || bearishMss,
-    bullishMss || bearishMss,
-        false,
-    bullishMomentum || bearishMomentum,
-    ptpe > 55.0,
-    engineExecuted
-)
-
-    lines.forEachIndexed { index, line ->
-        val start = colouredSummary.length
-        colouredSummary.append(line)
-
-        val resultColor = if (
-            qualifiedConditions.getOrElse(index) { false }
-        ) green else yellow
-
-        colouredSummary.setSpan(
-            ForegroundColorSpan(resultColor),
-            start,
-            colouredSummary.length,
-            android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+    dashboardAnalysisViews[symbol]?.let { analysisView ->
+        val lines = summary.split("\n")
+        val colouredSummary = SpannableStringBuilder()
+        val qualifiedConditions = listOf(
+            bullishSweep || bearishSweep,
+            marketDirection == "BULLISH" || marketDirection == "BEARISH",
+            bullishMss || bearishMss,
+            bullishMss || bearishMss,
+            false,
+            bullishMomentum || bearishMomentum,
+            ptpe > 55.0,
+            engineExecuted || decision.qualified
         )
-
-        if (index < lines.lastIndex) {
-            colouredSummary.append("\n")
+        lines.forEachIndexed { index, line ->
+            val lineStart = colouredSummary.length
+            colouredSummary.append(line)
+            colouredSummary.setSpan(
+                ForegroundColorSpan(if (qualifiedConditions.getOrElse(index) { false }) green else yellow),
+                lineStart, colouredSummary.length,
+                android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+            if (index < lines.lastIndex) colouredSummary.append("\n")
         }
+        analysisView.text = colouredSummary
     }
-
-    analysisView.text = colouredSummary
-}
-
 
     if (decision.qualified) {
         val eventKey = "${saDayKey()}_${accountId}_${executionMode}_${symbol}_${direction}_${latest.epoch}"
         if (masterEngineNotificationKeys.add(eventKey)) {
-            notifyEvent(
-                "Master Engine Qualified",
-                "$symbol · $direction · SMC sequence and PTPE threshold qualified.",
-                "master_engine_$eventKey"
-            )
+            notifyEvent("Master Engine Qualified", "$symbol · $direction · SMC sequence and PTPE threshold qualified.", "master_engine_$eventKey")
         }
     }
 }
@@ -2805,7 +2696,6 @@ if (analysisView != null) {
         page.addView(label("Sign in with the administrator account.", 14f, yellow, false))
         return
     }
-
     if (profile == null) {
         page.addView(label("Loading administrator account...", 14f, yellow, false))
         if (!profileLoading) refreshProfile(showMessage = false)
@@ -3709,7 +3599,6 @@ if (!derivServiceBound || !::derivApiClient.isInitialized) {
 
 derivApiClient.connectWithAccessToken(token, executionMode)
     }
-
     private fun disconnectDeriv(clearSavedTokens: Boolean = false) {
         cancelDerivReconnect()
         try { derivApiClient.disconnect() } catch (_: Exception) {}
@@ -3778,15 +3667,6 @@ derivApiClient.connectWithAccessToken(token, executionMode)
     override fun onTick(symbol: String, quote: Double, epoch: Long) {
     runOnUiThread {
         if (symbol in marketDataIndexes && quote.isFinite()) {
-    val previousQuote = marketDataPrices[symbol]
-
-    updateLiveLiquiditySweeps(
-        symbol,
-        previousQuote,
-        quote,
-        epoch
-    )
-
     marketDataPrices[symbol] = quote
     marketDataErrors.remove(symbol)
     evaluateMasterEngine(symbol)
@@ -4020,7 +3900,6 @@ val savedDirection = appPrefs.getString(
     "contract_direction_${accountId}_${executionMode}_$id",
     null
 )
-
 val direction = savedDirection
     ?.takeIf { it == "BUY" || it == "SELL" }
     ?: if (contractType.contains("PUT") || contractType.contains("FALL")) "SELL" else "BUY"
