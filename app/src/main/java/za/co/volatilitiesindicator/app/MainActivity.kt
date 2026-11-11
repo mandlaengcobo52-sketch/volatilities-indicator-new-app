@@ -2321,17 +2321,24 @@ private fun calculateMarketStructure(
             previousLow = i to currentLow
         }
 
-        val newTrend = when {
-            previousHigh != null &&
-                previousLow != null &&
-                higherHigh && higherLow -> "BULLISH"
+        val bothSwingsAreNew =
+    previousHigh != null &&
+    previousLow != null &&
+    previousHigh.first > lastTrendHighIndex &&
+    previousLow.first > lastTrendLowIndex
 
-            previousHigh != null &&
-                previousLow != null &&
-                !higherHigh && !higherLow -> "BEARISH"
+val newTrend = when {
 
-            else -> ""
-        }
+    bothSwingsAreNew &&
+    latestHighType == "HH" &&
+    latestLowType == "HL" -> "BULLISH"
+
+    bothSwingsAreNew &&
+    latestHighType == "LH" &&
+    latestLowType == "LL" -> "BEARISH"
+
+    else -> ""
+}
 
         if (newTrend.isNotEmpty() && newTrend != trend) {
             trend = newTrend
