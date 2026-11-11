@@ -534,6 +534,8 @@ private var dashboardQualifiedCountView: TextView? = null
 private var manualTradeSymbol = "R_10"
 private val dashboardAnalysisViews =
     mutableMapOf<String, TextView>()
+    private val detailedAnalysisViews =
+    mutableMapOf<String, MutableMap<String, TextView>>()
 private val marketDataErrors =
     mutableMapOf<String, String>()
 private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
@@ -1468,10 +1470,31 @@ if (sharedChochs.isEmpty()) {
         ))
     }
 }
-detailsContainer.addView(label("MSS CONFIRMATION: ${sharedAnalysis?.mssText ?: "WAITING"}", 11f, if (sharedAnalysis?.mssText?.contains("CONFIRMED") == true) green else yellow, true))
-detailsContainer.addView(label("MOMENTUM: ${sharedAnalysis?.momentumText ?: "WAITING"}", 11f, if (sharedAnalysis?.momentumQualified == true) green else yellow, false))
-detailsContainer.addView(label("PTPE: ${String.format(java.util.Locale.US, "%.1f", sharedAnalysis?.ptpeProbability ?: 0.0)}%", 11f, if ((sharedAnalysis?.ptpeProbability ?: 0.0) > 55.0) green else yellow, false))
-detailsContainer.addView(label("MASTER ENGINE: ${if (sharedAnalysis?.qualified == true) "QUALIFIED" else "WAITING"}", 11f, if (sharedAnalysis?.qualified == true) green else yellow, true))
+val detailedViews = mutableMapOf<String, TextView>()
+
+fun addDetailedStatus(key: String, text: String, color: Int, bold: Boolean) {
+    val view = label(text, 11f, color, bold)
+    detailedViews[key] = view
+    detailsContainer.addView(view)
+}
+
+addDetailedStatus("mss",
+    "MSS CONFIRMATION: ${sharedAnalysis?.mssText ?: "WAITING"}",
+    if (sharedAnalysis?.mssText?.contains("CONFIRMED") == true) green else yellow, true)
+
+addDetailedStatus("momentum",
+    "MOMENTUM: ${sharedAnalysis?.momentumText ?: "WAITING"}",
+    if (sharedAnalysis?.momentumQualified == true) green else yellow, false)
+
+addDetailedStatus("ptpe",
+    "PTPE: ${String.format(java.util.Locale.US, "%.1f", sharedAnalysis?.ptpeProbability ?: 0.0)}%",
+    if ((sharedAnalysis?.ptpeProbability ?: 0.0) > 55.0) green else yellow, false)
+
+addDetailedStatus("engine",
+    "MASTER ENGINE: ${if (sharedAnalysis?.qualified == true) "QUALIFIED" else "WAITING"}",
+    if (sharedAnalysis?.qualified == true) green else yellow, true)
+
+detailedAnalysisViews[symbol] = detailedViews
 
 
 // =========================================================
@@ -2623,6 +2646,29 @@ private fun evaluateMasterEngine(symbol: String) {
         }
     )
     masterEngineDecisions[symbol] = decision
+    runOnUiThread {
+    detailedAnalysisViews[symbol]?.let { views ->
+        views["mss"]?.apply {
+            text = "MSS CONFIRMATION: ${decision.mssText}"
+            setTextColor(if (decision.mssText.contains("CONFIRMED")) green else yellow)
+        }
+
+        views["momentum"]?.apply {
+            text = "MOMENTUM: ${decision.momentumText}"
+            setTextColor(if (decision.momentumQualified) green else yellow)
+        }
+
+        views["ptpe"]?.apply {
+            text = "PTPE: ${String.format(java.util.Locale.US, "%.1f", decision.ptpeProbability)}%"
+            setTextColor(if (decision.ptpeProbability > 55.0) green else yellow)
+        }
+
+        views["engine"]?.apply {
+            text = "MASTER ENGINE: ${if (decision.qualified) "QUALIFIED" else "WAITING"}"
+            setTextColor(if (decision.qualified) green else yellow)
+        }
+    }
+    }
 
     val mssText = when {
         bullishMss -> "BULLISH CONFIRMED"
