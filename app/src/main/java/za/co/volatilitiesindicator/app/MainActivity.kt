@@ -2635,10 +2635,6 @@ val bullishSweep = latestSweepTime > 0L &&
 
 val bearishSweep = latestSweepTime > 0L &&
     latestBearishSweep?.sweepAt == latestSweepTime
-    
-
-val bullishSweep = qualifyingSsl != null
-val bearishSweep = qualifyingBsl != null
 
     val structure = calculateMarketStructure(candles)
     val marketDirection = structure.structures.lastOrNull()?.direction ?: ""
