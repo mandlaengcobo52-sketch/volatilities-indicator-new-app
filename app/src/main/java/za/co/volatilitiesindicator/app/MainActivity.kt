@@ -2294,6 +2294,8 @@ private fun calculateMarketStructure(
     val pivotLows = lows.associate { it.first to it.second }
 
     var lastChochDirection = ""
+    var lastTrendHighIndex = -1
+    var lastTrendLowIndex = -1
 
     for (i in sorted.indices) {
         val currentHigh = pivotHighs[i]
