@@ -616,8 +616,7 @@ if (savedToken.isNotBlank()) {
         startAndBindDerivService()
     }
 }
-}
-
+    }
     override fun onPause() {
         profileRefreshHandler.removeCallbacks(profileRefreshRunnable)
         super.onPause()
@@ -933,7 +932,7 @@ private fun addLoginScreen() {
                     }
                     }
             }
-        }
+            }
     }
     loginCard.addView(signIn, matchWrap().apply { topMargin = dp(12) })
     loginCard.addView(button("CREATE ACCOUNT", false) {
@@ -1401,6 +1400,10 @@ page.addView(monitorHeader, matchWrap())
             dashboardAnalysisViews[symbol] = analysisView
             row.addView(analysisView, matchWrap().apply { topMargin = dp(7) })
 
+            // Refresh the single authoritative analysis result before rendering details.
+            evaluateMasterEngine(symbol)
+            val sharedAnalysis = masterEngineDecisions[symbol]
+
             // Expanded analysis details follow the same execution sequence.
             val detailsContainer = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
@@ -1408,92 +1411,67 @@ page.addView(monitorHeader, matchWrap())
                 background = shape(panel, accent, 8, 1)
             }
             detailsContainer.addView(label("DETAILED ANALYSIS — EXECUTION SEQUENCE", 12f, accent, true))
-// LIQUIDITY AND LIQUIDITY SWEEP
-// =========================================================
+// LIQUIDITY, MARKET STRUCTURE, MSS, MOMENTUM AND PTPE
+// All displayed statuses are read from the same MasterEngineDecision.
+// Detailed historical event lists are also retained in that shared result.
 
-val liquidityCandles = marketDataCandles[symbol].orEmpty()
-
-val bullishLiquidity = calculateLiquidityLevels(liquidityCandles, true)
-val bearishLiquidity = calculateLiquidityLevels(liquidityCandles, false)
-
+detailsContainer.addView(label("LIQUIDITY SWEEP STATUS: ${sharedAnalysis?.liquidityText ?: "WAITING"}", 12f, if (sharedAnalysis?.liquidityText?.contains("SWEPT") == true) green else yellow, true))
 detailsContainer.addView(label("BULLISH LIQUIDITY (SSL)", 12f, green, true))
-
-if (bullishLiquidity.isEmpty()) {
+val sharedBullishLiquidity = sharedAnalysis?.bullishLiquidity.orEmpty()
+if (sharedBullishLiquidity.isEmpty()) {
     detailsContainer.addView(label("No confirmed bullish liquidity.", 11f, muted, false))
 } else {
-    bullishLiquidity.take(2).forEachIndexed { index, level ->
-        detailsContainer.addView(
-            label(
-                "SSL ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepStatus == "SWEPT") "SWEPT ${formatMarketTime(level.sweepAt)}" else "WAITING"} | OCCURRENCES: ${level.occurrences}",
-                11f, green, false
-            )
-        )
+    sharedBullishLiquidity.forEachIndexed { index, level ->
+        detailsContainer.addView(label(
+            "SSL ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepStatus == "SWEPT") "SWEPT ${formatMarketTime(level.sweepAt)}" else "WAITING"} | OCCURRENCES: ${level.occurrences}",
+            11f, green, false
+        ))
     }
 }
 
 detailsContainer.addView(label("BEARISH LIQUIDITY (BSL)", 12f, red, true))
-
-if (bearishLiquidity.isEmpty()) {
+val sharedBearishLiquidity = sharedAnalysis?.bearishLiquidity.orEmpty()
+if (sharedBearishLiquidity.isEmpty()) {
     detailsContainer.addView(label("No confirmed bearish liquidity.", 11f, muted, false))
 } else {
-    bearishLiquidity.take(2).forEachIndexed { index, level ->
-        detailsContainer.addView(
-            label(
-                "BSL ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepStatus == "SWEPT") "SWEPT ${formatMarketTime(level.sweepAt)}" else "WAITING"} | OCCURRENCES: ${level.occurrences}",
-                11f, red, false
-            )
-        )
+    sharedBearishLiquidity.forEachIndexed { index, level ->
+        detailsContainer.addView(label(
+            "BSL ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepStatus == "SWEPT") "SWEPT ${formatMarketTime(level.sweepAt)}" else "WAITING"} | OCCURRENCES: ${level.occurrences}",
+            11f, red, false
+        ))
     }
 }
-// =========================================================
-// ADMIN ONLY — MARKET STRUCTURE AND CHOCH DISPLAY
-// =========================================================
 
 detailsContainer.addView(label("ANALYSIS - MARKET STRUCTURE AND CHOCH", 13f, green, true))
-val structureCandles = marketDataCandles[symbol].orEmpty()
-val structureAnalysis = calculateMarketStructure(structureCandles)
 detailsContainer.addView(label("MARKET STRUCTURE", 12f, green, true))
-
-if (structureAnalysis.structures.isEmpty()) {
+val sharedStructures = sharedAnalysis?.structures.orEmpty()
+if (sharedStructures.isEmpty()) {
     detailsContainer.addView(label("No confirmed market structure available.", 11f, muted, false))
 } else {
-    structureAnalysis.structures.forEach { event ->
-        detailsContainer.addView(
-            label(
-                "${event.number}. ${event.direction} | PRICE: ${formatMarketPrice(event.price)} | CREATED: ${formatMarketTime(event.startedAt)}",
-                11f, white, false
-            )
-        )
+    sharedStructures.forEach { event ->
+        detailsContainer.addView(label(
+            "${event.number}. ${event.direction} | PRICE: ${formatMarketPrice(event.price)} | CREATED: ${formatMarketTime(event.startedAt)}",
+            11f, white, false
+        ))
     }
 }
 
 detailsContainer.addView(label("CHANGE OF CHARACTER (CHOCH)", 12f, yellow, true))
-if (structureAnalysis.chochs.isEmpty()) {
+val sharedChochs = sharedAnalysis?.chochs.orEmpty()
+if (sharedChochs.isEmpty()) {
     detailsContainer.addView(label("No confirmed CHOCH available.", 11f, muted, false))
 } else {
-    structureAnalysis.chochs.forEach { event ->
-        detailsContainer.addView(
-            label(
-                "${event.number}. ${event.direction} | PRICE: ${formatMarketPrice(event.price)} | CONFIRMED: ${formatMarketTime(event.changedAt)}",
-                11f, yellow, false
-            )
-        )
+    sharedChochs.forEach { event ->
+        detailsContainer.addView(label(
+            "${event.number}. ${event.direction} | PRICE: ${formatMarketPrice(event.price)} | CONFIRMED: ${formatMarketTime(event.changedAt)}",
+            11f, yellow, false
+        ))
     }
 }
-val detailedChochDirection = structureAnalysis.chochs.lastOrNull()?.direction ?: "NOT CONFIRMED"
-detailsContainer.addView(label("MSS CONFIRMATION: $detailedChochDirection", 11f, if (detailedChochDirection == "NOT CONFIRMED") yellow else green, true))
-
-val detailedDecision = masterEngineDecisions[symbol]
-val detailedBullMomentum = calculateMomentumQualified(structureCandles, "BULLISH")
-val detailedBearMomentum = calculateMomentumQualified(structureCandles, "BEARISH")
-val detailedMomentum = when {
-    detailedBullMomentum -> "BULLISH — 100% QUALIFIED"
-    detailedBearMomentum -> "BEARISH — 100% QUALIFIED"
-    else -> "NOT QUALIFIED — 0%"
-}
-detailsContainer.addView(label("MOMENTUM: $detailedMomentum", 11f, if (detailedBullMomentum || detailedBearMomentum) green else yellow, false))
-detailsContainer.addView(label("PTPE: ${String.format(java.util.Locale.US, "%.1f", detailedDecision?.ptpeProbability ?: 0.0)}%", 11f, if ((detailedDecision?.ptpeProbability ?: 0.0) > 55.0) green else yellow, false))
-detailsContainer.addView(label("MASTER ENGINE: ${if (detailedDecision?.qualified == true) "QUALIFIED" else "WAITING"}", 11f, if (detailedDecision?.qualified == true) green else yellow, true))
+detailsContainer.addView(label("MSS CONFIRMATION: ${sharedAnalysis?.mssText ?: "WAITING"}", 11f, if (sharedAnalysis?.mssText?.contains("CONFIRMED") == true) green else yellow, true))
+detailsContainer.addView(label("MOMENTUM: ${sharedAnalysis?.momentumText ?: "WAITING"}", 11f, if (sharedAnalysis?.momentumQualified == true) green else yellow, false))
+detailsContainer.addView(label("PTPE: ${String.format(java.util.Locale.US, "%.1f", sharedAnalysis?.ptpeProbability ?: 0.0)}%", 11f, if ((sharedAnalysis?.ptpeProbability ?: 0.0) > 55.0) green else yellow, false))
+detailsContainer.addView(label("MASTER ENGINE: ${if (sharedAnalysis?.qualified == true) "QUALIFIED" else "WAITING"}", 11f, if (sharedAnalysis?.qualified == true) green else yellow, true))
 
 
 // =========================================================
@@ -1516,6 +1494,7 @@ val resistances = calculateSupportResistance(candles, false, currentPrice)
             )
         )
     }
+
     detailsContainer.addView(label("RESISTANCE LEVELS", 12f, red, true))
 
     resistances.take(2).forEachIndexed { index, level ->
@@ -1818,6 +1797,7 @@ row.addView(
         row.addView(potentialProfitView)
         row.addView(spotView)
         row.addView(expiryView)
+
         contractLiveViews[running.contractId] = ContractLiveViews(
             running.stake,
             running.symbol,
@@ -1842,7 +1822,7 @@ row.addView(
                     }
                     .show()
             }
-}, matchWrap().apply { topMargin = dp(8) })
+            }, matchWrap().apply { topMargin = dp(8) })
         runningCard.addView(row, matchWrap().apply { topMargin = dp(7) })
         visibleRunning++
     }
@@ -2100,6 +2080,7 @@ private fun calculateOrderBlocks(
 
         // BULLISH ORDER BLOCK
         if (swingHigh) {
+
             val breakIndex = (i + 3 until sorted.size)
                 .firstOrNull { sorted[it].close > sorted[i].high }
 
@@ -2139,7 +2120,6 @@ private fun calculateOrderBlocks(
 
         // BEARISH ORDER BLOCK
         if (swingLow) {
-
             val breakIndex = (i + 3 until sorted.size)
                 .firstOrNull { sorted[it].close < sorted[i].low }
 
@@ -2381,7 +2361,15 @@ private data class MasterEngineDecision(
     val momentumQualified: Boolean,
     val ptpeProbability: Double,
     val qualified: Boolean,
-    val updatedAt: Long
+    val updatedAt: Long,
+    val bullishLiquidity: List<LiquidityLevel>,
+    val bearishLiquidity: List<LiquidityLevel>,
+    val structures: List<MarketStructureEvent>,
+    val chochs: List<ChochEvent>,
+    val marketDirection: String,
+    val mssText: String,
+    val liquidityText: String,
+    val momentumText: String
 )
 
 private val masterEngineDecisions =
@@ -2432,7 +2420,6 @@ private fun calculateSupportResistance(
             )
         }
     }
-
     val results = mutableListOf<SupportResistanceLevel>()
     val used = mutableSetOf<Int>()
 
@@ -2612,7 +2599,28 @@ private fun evaluateMasterEngine(symbol: String) {
         momentumQualified = if (direction == "BUY") bullishMomentum else if (direction == "SELL") bearishMomentum else (bullishMomentum || bearishMomentum),
         ptpeProbability = ptpe,
         qualified = direction != "WAIT",
-        updatedAt = System.currentTimeMillis()
+        updatedAt = System.currentTimeMillis(),
+        bullishLiquidity = bullishLiquidity,
+        bearishLiquidity = bearishLiquidity,
+        structures = structure.structures,
+        chochs = structure.chochs,
+        marketDirection = marketDirection,
+        mssText = when {
+            bullishMss -> "BULLISH CONFIRMED"
+            bearishMss -> "BEARISH CONFIRMED"
+            else -> "WAITING"
+        },
+        liquidityText = when {
+            bullishSweep && bearishSweep -> "BULLISH AND BEARISH SWEPT"
+            bullishSweep -> "BULLISH SWEPT"
+            bearishSweep -> "BEARISH SWEPT"
+            else -> "WAITING"
+        },
+        momentumText = when {
+            bullishMomentum -> "BULLISH — 100% QUALIFIED"
+            bearishMomentum -> "BEARISH — 100% QUALIFIED"
+            else -> "NOT QUALIFIED — 0%"
+        }
     )
     masterEngineDecisions[symbol] = decision
 
@@ -2696,6 +2704,7 @@ private fun evaluateMasterEngine(symbol: String) {
         page.addView(label("Sign in with the administrator account.", 14f, yellow, false))
         return
     }
+
     if (profile == null) {
         page.addView(label("Loading administrator account...", 14f, yellow, false))
         if (!profileLoading) refreshProfile(showMessage = false)
@@ -2709,7 +2718,6 @@ private fun evaluateMasterEngine(symbol: String) {
 
     marketDataIndexes.forEach { symbol ->
         val candles = marketDataCandles[symbol].orEmpty()
-
         page.addView(sectionTitle(symbol))
 
         if (candles.isEmpty()) {
@@ -3599,6 +3607,7 @@ if (!derivServiceBound || !::derivApiClient.isInitialized) {
 
 derivApiClient.connectWithAccessToken(token, executionMode)
     }
+
     private fun disconnectDeriv(clearSavedTokens: Boolean = false) {
         cancelDerivReconnect()
         try { derivApiClient.disconnect() } catch (_: Exception) {}
@@ -3613,7 +3622,7 @@ derivApiClient.connectWithAccessToken(token, executionMode)
         accountType = ""
         accountBalance = 0.0
         accountCurrency = ""
-        // These views only exist on screens that render the account card.
+             // These views only exist on screens that render the account card.
         // Other tabs can be active while Deriv callbacks arrive.
         if (::accountStatus.isInitialized) {
             accountStatus.text = "●  NOT CONNECTED"
@@ -3900,11 +3909,11 @@ val savedDirection = appPrefs.getString(
     "contract_direction_${accountId}_${executionMode}_$id",
     null
 )
+
 val direction = savedDirection
     ?.takeIf { it == "BUY" || it == "SELL" }
     ?: if (contractType.contains("PUT") || contractType.contains("FALL")) "SELL" else "BUY"
-
-val savedPairId = appPrefs.getString(
+                            val savedPairId = appPrefs.getString(
     "contract_pair_${accountId}_${executionMode}_$id",
     ""
     ).orEmpty()
