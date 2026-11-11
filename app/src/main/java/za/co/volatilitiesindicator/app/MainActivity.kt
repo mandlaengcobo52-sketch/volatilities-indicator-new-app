@@ -617,7 +617,6 @@ if (savedToken.isNotBlank()) {
     }
 }
     }
-
     override fun onPause() {
         profileRefreshHandler.removeCallbacks(profileRefreshRunnable)
         super.onPause()
@@ -1198,8 +1197,8 @@ private fun addHeader() {
                     drawerOpen = false
                     selectedTab = item
                     render()
-                }
-            }
+              }
+              }
             card.addView(
                 b,
                 matchWrap().apply {
@@ -1207,6 +1206,7 @@ private fun addHeader() {
                 }
             )
         }
+
         page.addView(
             card,
             matchWrap().apply {
@@ -1506,6 +1506,7 @@ val supports = calculateSupportResistance(candles, true, currentPrice)
 val resistances = calculateSupportResistance(candles, false, currentPrice)
 
     detailsContainer.addView(label("SUPPORT LEVELS", 12f, green, true))
+
     supports.take(2).forEachIndexed { index, level ->
         detailsContainer.addView(
             label(
@@ -1811,7 +1812,8 @@ row.addView(
         val expiryView = label("Expiry: —", 12f, white, false)
             .apply { setPadding(0, dp(4), 0, 0) }
 
-            row.addView(pnlHidden)
+
+        row.addView(pnlHidden)
         row.addView(entryBarrierView)
         row.addView(potentialProfitView)
         row.addView(spotView)
@@ -2111,6 +2113,7 @@ private fun calculateOrderBlocks(
                     }
 
                 if (obIndex != null) {
+
                     val ob = sorted[obIndex]
 
                     if (usedBullish.add(ob.epoch)) {
@@ -2408,7 +2411,8 @@ private fun calculateSupportResistance(
     if (candles.size < 5) return emptyList()
     val sevenDaysAgo =
     System.currentTimeMillis() / 1000L - (7L * 24L * 60L * 60L)
-     val pivots = mutableListOf<Pair<Double, Long>>()
+
+    val pivots = mutableListOf<Pair<Double, Long>>()
 
     for (i in 2 until candles.size - 2) {
         val candle = candles[i]
@@ -2996,7 +3000,16 @@ private fun evaluateMasterEngine(symbol: String) {
             if (requestedGeneration != authSessionGeneration || requestedToken != authToken) return@authRequest
             adminUsersLoading = false
             if (ok) {
-                private fun addTradingLogsScreen() {
+                adminUsers = result.optJSONArray("users") ?: JSONArray()
+                if (selectedTab == "User Accounts") render()
+            } else {
+                adminUsers = null
+                if (selectedTab == "User Accounts") render()
+                toast(result.optString("message", "Unable to load users."))
+            }
+        }
+    }
+    private fun addTradingLogsScreen() {
         page.addView(sectionTitle("TRADING LOGS"))
         val card = card().apply { orientation = LinearLayout.VERTICAL }
         card.addView(label("Recent local trading events", 16f, green, true))
@@ -3299,17 +3312,7 @@ private fun evaluateMasterEngine(symbol: String) {
                 )
                 item.addView(iconFrame, LinearLayout.LayoutParams(dp(42), dp(34)))
             } else {
-                
-                adminUsers = result.optJSONArray("users") ?: JSONArray()
-                if (selectedTab == "User Accounts") render()
-            } else {
-                adminUsers = null
-                if (selectedTab == "User Accounts") render()
-                toast(result.optString("message", "Unable to load users."))
-            }
-        }
-    }
-    item.addView(
+                item.addView(
                     label(icon, 23f, if (selected) green else yellow, true).apply {
                         gravity = Gravity.CENTER
                     }
@@ -3599,6 +3602,7 @@ if (!derivServiceBound || !::derivApiClient.isInitialized) {
 
 derivApiClient.connectWithAccessToken(token, executionMode)
     }
+
     private fun disconnectDeriv(clearSavedTokens: Boolean = false) {
         cancelDerivReconnect()
         try { derivApiClient.disconnect() } catch (_: Exception) {}
@@ -3810,7 +3814,6 @@ return@runOnUiThread
             }
             "buy" -> {
     val requestId = json.optInt("req_id", 0)
-
     val entry = pendingTouchOrders.entries.firstOrNull {
         it.value.buyRequestId == requestId
     } ?: return@runOnUiThread
@@ -3904,7 +3907,8 @@ val savedDirection = appPrefs.getString(
 val direction = savedDirection
     ?.takeIf { it == "BUY" || it == "SELL" }
     ?: if (contractType.contains("PUT") || contractType.contains("FALL")) "SELL" else "BUY"
-                            val savedPairId = appPrefs.getString(
+
+val savedPairId = appPrefs.getString(
     "contract_pair_${accountId}_${executionMode}_$id",
     ""
     ).orEmpty()
@@ -4183,5 +4187,3 @@ override fun onDestroy() {
     super.onDestroy()
 }
                             }
-                            
-                
