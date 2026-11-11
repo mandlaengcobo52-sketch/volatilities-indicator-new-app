@@ -2255,7 +2255,9 @@ private fun calculateMarketStructure(
     val highs = mutableListOf<Pair<Int, Double>>()
     val lows = mutableListOf<Pair<Int, Double>>()
 
+    // CONFIRMED SWING HIGHS AND LOWS
     for (i in 2 until sorted.size - 2) {
+
         if (
             sorted[i].high > sorted[i - 1].high &&
             sorted[i].high > sorted[i - 2].high &&
@@ -2275,89 +2277,109 @@ private fun calculateMarketStructure(
         }
     }
 
+    val pivotHighs = highs.associate { it.first to it.second }
+    val pivotLows = lows.associate { it.first to it.second }
+
     val structures = mutableListOf<MarketStructureEvent>()
     val chochs = mutableListOf<ChochEvent>()
 
     var structureNumber = 0
     var chochNumber = 0
+
     var trend = ""
 
     var previousHigh: Pair<Int, Double>? = null
     var previousLow: Pair<Int, Double>? = null
 
-    var higherHigh = false
-    var higherLow = false
-
-    var bullishStart = 0L
-    var bearishStart = 0L
-
-    val pivotHighs = highs.associate { it.first to it.second }
-    val pivotLows = lows.associate { it.first to it.second }
+    var latestHighType = ""
+    var latestLowType = ""
 
     var lastChochDirection = ""
 
     for (i in sorted.indices) {
+
         val currentHigh = pivotHighs[i]
         val currentLow = pivotLows[i]
 
+        // CLASSIFY HIGHER HIGH / LOWER HIGH / EQUAL HIGH
         if (currentHigh != null) {
+
             val previous = previousHigh
 
             if (previous != null) {
-                higherHigh = currentHigh > previous.second
+                latestHighType = when {
+                    currentHigh > previous.second -> "HH"
+                    currentHigh < previous.second -> "LH"
+                    else -> "EQH"
+                }
             }
 
             previousHigh = i to currentHigh
         }
 
+        // CLASSIFY HIGHER LOW / LOWER LOW / EQUAL LOW
         if (currentLow != null) {
+
             val previous = previousLow
 
             if (previous != null) {
-                higherLow = currentLow > previous.second
+                latestLowType = when {
+                    currentLow > previous.second -> "HL"
+                    currentLow < previous.second -> "LL"
+                    else -> "EQL"
+                }
             }
 
             previousLow = i to currentLow
         }
 
+        // BOTH STRUCTURAL CONDITIONS MUST BE CONFIRMED
         val newTrend = when {
-            previousHigh != null &&
-                previousLow != null &&
-                higherHigh && higherLow -> "BULLISH"
 
-            previousHigh != null &&
-                previousLow != null &&
-                !higherHigh && !higherLow -> "BEARISH"
+            latestHighType == "HH" &&
+            latestLowType == "HL" -> "BULLISH"
+
+            latestHighType == "LH" &&
+            latestLowType == "LL" -> "BEARISH"
 
             else -> ""
         }
 
+        // CHANGE DIRECTION ONLY AFTER COMPLETE CONFIRMATION
         if (newTrend.isNotEmpty() && newTrend != trend) {
+
             trend = newTrend
             structureNumber++
 
-            if (trend == "BULLISH") {
-                bullishStart = sorted[i].epoch
-            } else {
-                bearishStart = sorted[i].epoch
-            }
+            val latestHigh = previousHigh
+            val latestLow = previousLow
 
-            structures.add(
-                MarketStructureEvent(
-                    structureNumber,
-                    trend,
-                    sorted[i].close,
-                    if (trend == "BULLISH") bullishStart else bearishStart
+            if (latestHigh != null && latestLow != null) {
+
+                val structuralPivot =
+                    if (latestHigh.first >= latestLow.first) {
+                        latestHigh
+                    } else {
+                        latestLow
+                    }
+
+                structures.add(
+                    MarketStructureEvent(
+                        number = structureNumber,
+                        direction = trend,
+                        price = structuralPivot.second,
+                        startedAt = sorted[structuralPivot.first].epoch
+                    )
                 )
-            )
+            }
         }
 
+        // EXISTING CHOCH LOGIC PRESERVED
         val candle = sorted[i]
-        // CHOCH uses the confirmed structure as its reference.
-        // A CHOCH must not change the confirmed market structure.
         val structureDirectionForChoch = trend
 
         if (structureDirectionForChoch == "BEARISH") {
+
             val breakLevel = previousHigh
 
             if (
@@ -2366,7 +2388,9 @@ private fun calculateMarketStructure(
                 candle.close > breakLevel.second &&
                 lastChochDirection != "BULLISH"
             ) {
+
                 chochNumber++
+
                 chochs.add(
                     ChochEvent(
                         chochNumber,
@@ -2375,9 +2399,12 @@ private fun calculateMarketStructure(
                         candle.epoch
                     )
                 )
+
                 lastChochDirection = "BULLISH"
             }
+
         } else if (structureDirectionForChoch == "BULLISH") {
+
             val breakLevel = previousLow
 
             if (
@@ -2386,7 +2413,9 @@ private fun calculateMarketStructure(
                 candle.close < breakLevel.second &&
                 lastChochDirection != "BEARISH"
             ) {
+
                 chochNumber++
+
                 chochs.add(
                     ChochEvent(
                         chochNumber,
@@ -2395,6 +2424,7 @@ private fun calculateMarketStructure(
                         candle.epoch
                     )
                 )
+
                 lastChochDirection = "BEARISH"
             }
         }
@@ -2405,28 +2435,6 @@ private fun calculateMarketStructure(
         chochs = chochs.takeLast(10)
     )
 }
-
-private data class MasterEngineDecision(
-    val symbol: String,
-    val direction: String,
-    val supportResistanceQualified: Boolean,
-    val liquidityQualified: Boolean,
-    val marketStructureQualified: Boolean,
-    val chochQualified: Boolean,
-    val momentumQualified: Boolean,
-    val ptpeProbability: Double,
-    val qualified: Boolean,
-    val updatedAt: Long,
-    val bullishLiquidity: List<LiquidityLevel>,
-    val bearishLiquidity: List<LiquidityLevel>,
-    val structures: List<MarketStructureEvent>,
-    val chochs: List<ChochEvent>,
-    val marketDirection: String,
-    val mssText: String,
-    val liquidityText: String,
-    val momentumText: String
-)
-
 private val masterEngineDecisions =
     mutableMapOf<String, MasterEngineDecision>()
 
