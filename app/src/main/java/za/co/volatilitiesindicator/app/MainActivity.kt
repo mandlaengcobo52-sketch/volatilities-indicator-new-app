@@ -2647,6 +2647,29 @@ private fun evaluateMasterEngine(symbol: String) {
         }
     )
     masterEngineDecisions[symbol] = decision
+    runOnUiThread {
+    detailedAnalysisViews[symbol]?.let { views ->
+        views["mss"]?.apply {
+            text = "MSS CONFIRMATION: ${decision.mssText}"
+            setTextColor(if (decision.mssText.contains("CONFIRMED")) green else yellow)
+        }
+
+        views["momentum"]?.apply {
+            text = "MOMENTUM: ${decision.momentumText}"
+            setTextColor(if (decision.momentumQualified) green else yellow)
+        }
+
+        views["ptpe"]?.apply {
+            text = "PTPE: ${String.format(java.util.Locale.US, "%.1f", decision.ptpeProbability)}%"
+            setTextColor(if (decision.ptpeProbability > 55.0) green else yellow)
+        }
+
+        views["engine"]?.apply {
+            text = "MASTER ENGINE: ${if (decision.qualified) "QUALIFIED" else "WAITING"}"
+            setTextColor(if (decision.qualified) green else yellow)
+        }
+    }
+    }
 
     val mssText = when {
         bullishMss -> "BULLISH CONFIRMED"
