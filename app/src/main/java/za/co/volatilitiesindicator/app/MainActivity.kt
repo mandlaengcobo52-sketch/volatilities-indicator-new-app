@@ -1932,8 +1932,10 @@ private fun registerCurrentPriceView(symbol: String, section: String, view: Text
 
     private fun formatMarketTime(epoch: Long): String {
         if (epoch <= 0L) return "—"
-        return java.text.SimpleDateFormat("yyyy/MM/dd, HH:mm:ss", java.util.Locale("en", "ZA"))
-            .format(java.util.Date(epoch * 1000L))
+    private fun formatMarketTime(epoch: Long): String {
+    if (epoch <= 0L) return "—"
+    return java.text.SimpleDateFormat("yyyy/MM/dd, HH:mm:ss", java.util.Locale("en", "ZA"))
+        .format(java.util.Date(epoch * 1000L))
     }
     // =============================================================
 // ANALYSIS - LIQUIDITY AND LIQUIDITY SWEEP
