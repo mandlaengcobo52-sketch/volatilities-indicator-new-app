@@ -2330,12 +2330,10 @@ private fun calculateMarketStructure(
 val newTrend = when {
 
     bothSwingsAreNew &&
-    latestHighType == "HH" &&
-    latestLowType == "HL" -> "BULLISH"
+    higherHigh && higherLow -> "BULLISH"
 
     bothSwingsAreNew &&
-    latestHighType == "LH" &&
-    latestLowType == "LL" -> "BEARISH"
+    !higherHigh && !higherLow -> "BEARISH"
 
     else -> ""
 }
