@@ -1,4 +1,4 @@
-package za.co.volatilitiesindicator.app
+opackage za.co.volatilitiesindicator.app
 
 import android.app.Activity
 import android.app.Notification
@@ -1931,9 +1931,17 @@ private fun registerCurrentPriceView(symbol: String, section: String, view: Text
         price?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
 
     private fun formatMarketTime(epoch: Long): String {
-        if (epoch <= 0L) return "—"
-        return java.text.SimpleDateFormat("yyyy/MM/dd, HH:mm:ss", java.util.Locale("en", "ZA"))
-            .format(java.util.Date(epoch * 1000L))
+    if (epoch <= 0L) return "—"
+
+    val formatter = java.text.SimpleDateFormat(
+        "yyyy/MM/dd, HH:mm:ss",
+        java.util.Locale("en", "ZA")
+    )
+
+    formatter.timeZone =
+        java.util.TimeZone.getTimeZone("Africa/Johannesburg")
+
+    return formatter.format(java.util.Date(epoch * 1000L))
     }
     // =============================================================
 // ANALYSIS - LIQUIDITY AND LIQUIDITY SWEEP
