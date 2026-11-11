@@ -2434,7 +2434,28 @@ private fun calculateMarketStructure(
         structures = structures.takeLast(10),
         chochs = chochs.takeLast(10)
     )
-}
+
+private data class MasterEngineDecision(
+    val symbol: String,
+    val direction: String,
+    val supportResistanceQualified: Boolean,
+    val liquidityQualified: Boolean,
+    val marketStructureQualified: Boolean,
+    val chochQualified: Boolean,
+    val momentumQualified: Boolean,
+    val ptpeProbability: Double,
+    val qualified: Boolean,
+    val updatedAt: Long,
+    val bullishLiquidity: List<LiquidityLevel>,
+    val bearishLiquidity: List<LiquidityLevel>,
+    val structures: List<MarketStructureEvent>,
+    val chochs: List<ChochEvent>,
+    val marketDirection: String,
+    val mssText: String,
+    val liquidityText: String,
+    val momentumText: String
+)
+
 private val masterEngineDecisions =
     mutableMapOf<String, MasterEngineDecision>()
 
