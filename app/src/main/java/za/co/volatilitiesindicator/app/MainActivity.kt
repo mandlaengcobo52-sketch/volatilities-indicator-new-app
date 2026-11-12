@@ -1871,11 +1871,11 @@ row.addView(
         row.addView(spotView)
         row.addView(expiryView)
 
-        contractLiveViews[running.contractId] = ContractLiveViews(
-    running.stake,
-    running.symbol,
-    running.target,
-    running.targetProbability,
+        contractLiveViews[contractId] = ContractLiveViews(
+    stake,
+    symbol,
+    tracked?.target,
+    tracked?.targetProbability ?: 0.0,
     pnlHidden,
     spotView,
     exitBarrierView,
