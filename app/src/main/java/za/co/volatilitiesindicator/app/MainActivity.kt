@@ -2077,22 +2077,9 @@ private fun calculateLiquidityLevels(
 
             val candle = sorted[i]
 
-            // A previously confirmed sweep is invalidated
-            // by a later closed candle closing back through the level.
-            if (sweepStatus == "SWEPT") {
-
-                val invalidated = if (bullish) {
-                    candle.close < levelPrice
-                } else {
-                    candle.close > levelPrice
-                }
-
-                if (invalidated) {
-                    sweepStatus = "INVALIDATED"
-                }
-
-                continue
-            }
+            // Preserve a confirmed historical liquidity sweep.
+// Later candles must not erase the confirmed event.
+if (sweepStatus == "SWEPT") break
 
             val penetrated = if (bullish) {
                 candle.low < levelPrice
