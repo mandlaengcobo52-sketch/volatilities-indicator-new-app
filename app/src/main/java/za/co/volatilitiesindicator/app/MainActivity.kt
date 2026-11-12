@@ -271,7 +271,8 @@ private fun startAndBindDerivService() {
         val probability: Double,
         val pnl: TextView,
         val spot: TextView,
-        val barrierExpiry: TextView,
+        val exitBarrier: TextView,
+        val expiry: TextView,
         val ptpe: TextView
     )
 
@@ -1791,16 +1792,17 @@ val originalTarget = tracked?.target?.takeIf { it.isFinite() && it > 0.0 }
             "Potential profit: ${if (proposalPayout > 0.0) formatMoney(potentialProfit) else "Awaiting Deriv payout"}",
             12f, green, true
         ).apply { setPadding(0, dp(4), 0, 0) }
-val actualBarrier = tracked?.entryBarrier?.takeIf { it > 0.0 }
-    ?: item.optDouble("entry_tick", item.optDouble("entry_spot", 0.0))
-val entryBarrierView = label(
-    "Actual Deriv entry barrier: ${if (actualBarrier > 0.0) formatMarketPrice(actualBarrier) else "Waiting for Deriv"}",
+        val exitBarrierValue = item.optString("barrier", "")
+    .takeIf { it.isNotBlank() && it != "null" }
+
+        val exitBarrierView = label(
+    "Exit barrier: ${exitBarrierValue ?: "Waiting for Deriv"}",
     12f, white, true
 ).apply { setPadding(0, dp(4), 0, 0) }
         val spotView = label("Current value/spot: ${if (currentValue > 0) formatMarketPrice(currentValue) else "—"}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val expiryView = label("Expiry: $expiryText", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         row.addView(pnlHidden)
-        row.addView(entryBarrierView)
+        row.addView(exitBarrierView)
         row.addView(potentialProfitView)
         row.addView(spotView)
         row.addView(expiryView)
@@ -1844,10 +1846,10 @@ row.addView(
         val pnlHidden = label("P/L: ${formatMoney(initialPnl)}", 12f, profitColor(initialPnl), true)
             .apply { setPadding(0, dp(4), 0, 0) }
         row.addView(pnlHidden)
-        val entryBarrierView = label(
-            "Actual Deriv entry barrier: ${if (running.entryBarrier > 0.0) formatMarketPrice(running.entryBarrier) else "Waiting for Deriv"}",
-            12f, white, true
-        ).apply { setPadding(0, dp(4), 0, 0) }
+        val exitBarrierView = label(
+    "Exit barrier: Waiting for Deriv",
+    12f, white, true
+).apply { setPadding(0, dp(4), 0, 0) }
 
         val potentialProfit = (running.potentialPayout - running.stake).coerceAtLeast(0.0)
         val potentialProfitView = label(
@@ -1864,21 +1866,22 @@ row.addView(
 
 
         row.addView(pnlHidden)
-        row.addView(entryBarrierView)
+        row.addView(exitBarrierView)
         row.addView(potentialProfitView)
         row.addView(spotView)
         row.addView(expiryView)
 
         contractLiveViews[running.contractId] = ContractLiveViews(
-            running.stake,
-            running.symbol,
-            running.target,
-            running.targetProbability,
-            pnlHidden,
-            spotView,
-            expiryView,
-            TextView(this)
-        )
+    running.stake,
+    running.symbol,
+    running.target,
+    running.targetProbability,
+    pnlHidden,
+    spotView,
+    exitBarrierView,
+    expiryView,
+    TextView(this)
+)
         row.addView(button("CLOSE TRADE", true) {
             if (!connected) {
                 toast("Connect to the account holding this contract.")
@@ -4302,20 +4305,34 @@ if (liveProfit >= profitTarget && !running.closeRequested) {
                             views.spot.text = "Current value/spot: ${if (spot > 0.0) formatMoney(spot) else "—"}"
                             val barrierValue = contract.optString("barrier", "").takeIf { it.isNotBlank() && it != "null" }
                                 ?: views.target?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
-                            val expiryEpoch = contract.optLong("date_expiry", contract.optLong("expiry_time", 0L))
-                            val expiryRemaining = if (expiryEpoch > 0L) (expiryEpoch - System.currentTimeMillis() / 1000L).coerceAtLeast(0L) else 0L
-                            val expiryText = if (expiryEpoch > 0L) String.format(java.util.Locale.US, "%02d:%02d:%02d", expiryRemaining / 3600, (expiryRemaining % 3600) / 60, expiryRemaining % 60) else "—"
-                            val actualEntry = contract.optDouble(
-    "entry_tick",
-                                contract.optDouble(
-        "entry_spot",
-        runningContracts[id]?.entryBarrier ?: 0.0
-    )
+                            val barrierValue = contract.optString("barrier", "")
+    .takeIf { it.isNotBlank() && it != "null" }
+    ?: "Waiting for Deriv"
+
+val expiryEpoch = contract.optLong(
+    "date_expiry",
+    contract.optLong("expiry_time", 0L)
 )
-views.barrierExpiry.text =
-    "Actual Deriv entry barrier: ${if (actualEntry > 0.0) formatMarketPrice(actualEntry) else "Waiting for Deriv"}   |   Expiry: $expiryText"
-                        }
-                    }
+
+val expiryRemaining =
+    if (expiryEpoch > 0L) {
+        (expiryEpoch - System.currentTimeMillis() / 1000L)
+            .coerceAtLeast(0L)
+    } else 0L
+
+val expiryText =
+    if (expiryEpoch > 0L) {
+        String.format(
+            java.util.Locale.US,
+            "%02d:%02d:%02d",
+            expiryRemaining / 3600,
+            (expiryRemaining % 3600) / 60,
+            expiryRemaining % 60
+        )
+    } else "—"
+
+views.exitBarrier.text = "Exit barrier: $barrierValue"
+views.expiry.text = "Expiry: $expiryText"
                     val pl = liveContractProfits.filterKeys { liveContractProfitModes[it] == "${accountId}_$executionMode" }.values.sum()
                     if (::openPlView.isInitialized) {
                         openPlView.text = "Open P/L:  ${formatMoney(pl)}"
