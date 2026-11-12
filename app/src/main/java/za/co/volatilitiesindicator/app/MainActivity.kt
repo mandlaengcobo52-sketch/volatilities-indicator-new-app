@@ -4331,6 +4331,7 @@ val expiryText =
 
 views.exitBarrier.text = "Exit barrier: $barrierValue"
 views.expiry.text = "Expiry: $expiryText"
+                        }
                     val pl = liveContractProfits.filterKeys { liveContractProfitModes[it] == "${accountId}_$executionMode" }.values.sum()
                     if (::openPlView.isInitialized) {
                         openPlView.text = "Open P/L:  ${formatMoney(pl)}"
