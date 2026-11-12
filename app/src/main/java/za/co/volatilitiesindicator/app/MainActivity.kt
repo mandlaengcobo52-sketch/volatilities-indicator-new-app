@@ -4359,6 +4359,7 @@ views.expiry.text = "Expiry: $expiryText"
                     }
                 }
             }
+                }
             "profit_table" -> {
                 if (connected && accountId.isNotBlank()) tradeHistoryResponse = json
             }
