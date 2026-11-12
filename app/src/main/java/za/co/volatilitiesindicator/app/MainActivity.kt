@@ -3901,6 +3901,47 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
         val messageType = json.optString("msg_type", "")
 
         when (messageType) {
+            "error" -> {
+    val requestId = json.optInt("req_id", 0)
+    val errorMessage = json.optJSONObject("error")
+        ?.optString("message", "Unknown Deriv error")
+        ?: "Unknown Deriv error"
+
+    val availabilitySymbol =
+        touchAvailabilityRequests.remove(requestId)
+
+    if (!availabilitySymbol.isNullOrBlank()) {
+        touchAvailabilityPending.remove(availabilitySymbol)
+        android.util.Log.e(
+            "TouchAvailability",
+            "$availabilitySymbol rejected: $errorMessage"
+        )
+    }
+
+    val orderEntry = pendingTouchOrders.entries.firstOrNull {
+        it.key == requestId || it.value.buyRequestId == requestId
+    }
+
+    if (orderEntry != null) {
+        val order = orderEntry.value
+        pendingTouchOrders.remove(orderEntry.key)
+        pendingTouchBySymbol.remove(order.symbol)
+        touchExecutionLocks.remove(order.symbol)
+
+        android.util.Log.e(
+            "TradeExecution",
+            "${order.symbol} ${order.direction} rejected: $errorMessage"
+        )
+
+        toast("${order.symbol} trade rejected: $errorMessage")
+    } else {
+        android.util.Log.e(
+            "TradeExecution",
+            "Deriv request $requestId rejected: $errorMessage"
+        )
+        toast("Deriv execution error: $errorMessage")
+    }
+}
             "proposal" -> {
     val requestId = json.optInt("req_id", 0)
     val order = pendingTouchOrders[requestId] ?: return@runOnUiThread
@@ -4041,10 +4082,12 @@ return@runOnUiThread
     )
 }
             "contracts_for" -> {
-    val symbol = json.optJSONObject("echo_req")
-        ?.optString("contracts_for", "")
-        ?.uppercase()
-        .orEmpty()
+    val requestId = json.optInt("req_id", 0)
+    val symbol = touchAvailabilityRequests.remove(requestId)
+        ?: json.optJSONObject("echo_req")
+            ?.optString("contracts_for", "")
+            ?.uppercase()
+            .orEmpty()
 
     val available = json.optJSONObject("contracts_for")
         ?.optJSONArray("available")
@@ -4057,6 +4100,11 @@ return@runOnUiThread
             android.util.Log.i(
                 "TouchAvailability",
                 "$symbol: ${available.length()} contract types received."
+            )
+        } else {
+            android.util.Log.e(
+                "TouchAvailability",
+                "$symbol: Deriv returned no available contract list."
             )
         }
     }
