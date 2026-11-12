@@ -338,6 +338,7 @@ private fun dailyTradeStake(): Double {
 private val touchAvailabilityRequests = mutableMapOf<Int, String>()
 private val touchContractsBySymbol =
     mutableMapOf<String, org.json.JSONArray>()
+private val tradeGateLastLogAt = mutableMapOf<String, Long>()
 private fun submitTouchProposal(
     symbol: String,
     direction: String,
@@ -464,45 +465,77 @@ private fun durationToSeconds(value: String): Long {
         else -> -1L
     }
 }
+
 private fun isTouchExecutionReady(symbol: String): Boolean {
-    if (!connected) return false
-    if (!autoTradeEnabled) return false
-    if (accountId.isBlank()) return false
-if (accountBalance <= 0.0) return false
 
-if (!portfolioLoadedForAccount) {
-    requestOpenTradesIfNeeded()
-    return false
-}
-    if (!autoTradeEnabled) return false
-    if (symbol !in marketDataIndexes) return false
-    if (touchAvailabilityPending.contains(symbol)) return false
-    if (!isOneDayTouchAvailable(symbol)) return false
+    fun blocked(reason: String): Boolean {
+        val now = android.os.SystemClock.elapsedRealtime()
+        val last = tradeGateLastLogAt[symbol] ?: 0L
 
-    val decision = masterEngineDecisions[symbol] ?: return false
-    if (touchExecutionLocks.contains(symbol)) return false
-
-val qualificationEpoch =
-    marketDataCandles[symbol]?.lastOrNull()?.epoch ?: return false
-
-if (consumedTouchQualifications[symbol] == qualificationEpoch) {
-    return false
-}
-
-    if (!decision.qualified) return false
-    if (decision.direction != "BUY" && decision.direction != "SELL") {
+        if (now - last >= 5000L) {
+            tradeGateLastLogAt[symbol] = now
+            android.util.Log.w(
+                "TRADE_GATE",
+                "$symbol EXECUTION BLOCKED: $reason"
+            )
+        }
         return false
     }
+
+    if (!connected) return blocked("DERIV DISCONNECTED")
+    if (!autoTradeEnabled) return blocked("MASTER DECISION OFF")
+    if (accountId.isBlank()) return blocked("ACCOUNT ID MISSING")
+    if (accountBalance <= 0.0) return blocked("ACCOUNT BALANCE ZERO")
+
+    if (!portfolioLoadedForAccount) {
+        requestOpenTradesIfNeeded()
+        return blocked("PORTFOLIO NOT LOADED")
+    }
+
+    if (symbol !in marketDataIndexes)
+        return blocked("INVALID INDEX")
+
+    if (touchAvailabilityPending.contains(symbol))
+        return blocked("CONTRACT AVAILABILITY STILL PENDING")
+
+    if (!isOneDayTouchAvailable(symbol))
+        return blocked("ONETOUCH ONE-DAY CONTRACT NOT AVAILABLE")
+
+    val decision = masterEngineDecisions[symbol]
+        ?: return blocked("MASTER DECISION MISSING")
+
+    if (touchExecutionLocks.contains(symbol))
+        return blocked("EXECUTION LOCK ACTIVE")
+
+    val qualificationEpoch =
+        marketDataCandles[symbol]?.lastOrNull()?.epoch
+            ?: return blocked("NO LATEST CANDLE")
+
+    if (consumedTouchQualifications[symbol] == qualificationEpoch)
+        return blocked("QUALIFICATION ALREADY CONSUMED")
+
+    if (!decision.qualified)
+        return blocked("MASTER ENGINE NOT QUALIFIED")
+
+    if (decision.direction != "BUY" && decision.direction != "SELL")
+        return blocked("INVALID TRADE DIRECTION")
 
     val alreadyRunning = runningContracts.values.any {
         it.symbol.equals(symbol, ignoreCase = true) &&
         it.mode == executionMode
     }
 
-    if (alreadyRunning) return false
+    if (alreadyRunning)
+        return blocked("CONTRACT ALREADY RUNNING")
+
+    android.util.Log.i(
+        "TRADE_GATE",
+        "$symbol PASSED ALL EXECUTION GATES: ${decision.direction}"
+    )
 
     return true
 }
+
     private fun requestOpenTradesIfNeeded() {
         if (!connected || accountId.isBlank() || portfolioLoadedForAccount) return
         val now = android.os.SystemClock.elapsedRealtime()
