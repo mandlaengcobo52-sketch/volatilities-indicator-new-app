@@ -2119,7 +2119,6 @@ if (sweepStatus == "SWEPT") break
     }
 
     return results.sortedByDescending { it.createdAt }
-)
 }
 
 // =============================================================
