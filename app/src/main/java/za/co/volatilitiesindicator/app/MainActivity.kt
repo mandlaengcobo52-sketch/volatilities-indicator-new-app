@@ -405,16 +405,24 @@ val signedBarrier = if (direction == "BUY") {
     if (!connected) return
     if (!touchAvailabilityPending.add(symbol)) return
 
+    val requestId = nextTradeRequestId()
+    touchAvailabilityRequests[requestId] = symbol
+
     val sent = derivApiClient.send(
         JSONObject()
             .put("contracts_for", symbol)
-            .put("req_id", nextTradeRequestId())
+            .put("req_id", requestId)
     )
 
     if (!sent) {
         touchAvailabilityPending.remove(symbol)
+        touchAvailabilityRequests.remove(requestId)
+        android.util.Log.e(
+            "TouchAvailability",
+            "$symbol: contracts_for request could not be sent."
+        )
     }
-}
+    }
 
     private fun normalizedSymbol(item: JSONObject): String = item.optString(
         "underlying", item.optString("underlying_symbol", item.optString("symbol", ""))
