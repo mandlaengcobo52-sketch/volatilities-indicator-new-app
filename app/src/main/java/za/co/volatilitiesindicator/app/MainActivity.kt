@@ -388,7 +388,7 @@ val signedBarrier = if (direction == "BUY") {
             .put("currency", accountCurrency)
             .put("duration", 1)
             .put("duration_unit", "d")
-            .put("underlying_symbol", symbol)
+            .put("symbol", symbol)
             .put("barrier", signedBarrier)
             .put("req_id", requestId)
     )
