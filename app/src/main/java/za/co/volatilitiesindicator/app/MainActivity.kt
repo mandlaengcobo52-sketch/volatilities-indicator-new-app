@@ -2118,9 +2118,7 @@ if (sweepStatus == "SWEPT") break
         )
     }
 
-    return results.sortedWith(
-    compareByDescending<LiquidityLevel> { it.occurrences }
-        .thenByDescending { it.createdAt }
+    return results.sortedByDescending { it.createdAt }
 )
 }
 
