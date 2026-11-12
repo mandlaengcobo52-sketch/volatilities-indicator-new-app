@@ -4250,48 +4250,31 @@ if (stake > 0.0) {
                             liveContractProfits[id] = liveProfit
                             liveContractProfitModes[id] = "${accountId}_$executionMode"
 
-                            val activationTarget = running.stake * 0.30
-                            val trailingGap = running.stake * 0.10
+                           val profitTarget = running.stake * 0.30
 
-                            if (trailingStopEnabled && liveProfit >= activationTarget) {
-                                if (!running.trailingActivated) {
-                                    running.trailingActivated = true
-                                    running.targetNotified = true
-                                    running.peakProfit = liveProfit
-                                    notifyEvent(
-                                        "30% Profit Target Reached",
-                                        "${running.symbol} · Contract $id · Trailing protection activated at ${formatMoney(liveProfit)}.",
-                                        "profit_trailing_activated_$id"
-                                    )
-                                } else {
-                                    running.peakProfit = maxOf(running.peakProfit, liveProfit)
-                                }
-                            }
+if (liveProfit >= profitTarget && !running.closeRequested) {
+    running.closeRequested = true
+    running.closeReason = "30% Profit Target"
 
-                            if (trailingStopEnabled && running.trailingActivated && !running.closeRequested) {
-                                running.peakProfit = maxOf(running.peakProfit, liveProfit)
-                                val protectedProfit = maxOf(0.0, running.peakProfit - trailingGap)
-                                if (liveProfit <= protectedProfit && running.peakProfit >= activationTarget) {
-                                    running.closeRequested = true
-                                    running.closeReason = "10% Trailing Giveback"
-                                    val closeSent = derivApiClient.send(
-                                        JSONObject()
-                                            .put("sell", id)
-                                            .put("price", 0)
-                                            .put("req_id", nextTradeRequestId())
-                                    )
-                                    if (!closeSent) {
-                                        running.closeRequested = false
-                                        running.closeReason = ""
-                                    } else {
-                                        notifyEvent(
-                                            "Trailing Protection Triggered",
-                                            "${running.symbol} · Contract $id · Peak ${formatMoney(running.peakProfit)} · Protected level ${formatMoney(protectedProfit)}.",
-                                            "profit_trailing_close_$id"
-                                        )
-                                        }
-                                }
-                            }
+    val closeSent = derivApiClient.send(
+        JSONObject()
+            .put("sell", id)
+            .put("price", 0)
+            .put("req_id", nextTradeRequestId())
+    )
+
+    if (!closeSent) {
+        running.closeRequested = false
+        running.closeReason = ""
+    } else {
+        running.targetNotified = true
+        notifyEvent(
+            "30% Profit Target Reached",
+            "${running.symbol} · Contract $id · Profit ${formatMoney(liveProfit)} · Automatic close request sent.",
+            "profit_target_close_$id"
+        )
+    }
+} 
                         } else if (isClosed) {
                             liveContractProfits.remove(id)
                             liveContractProfitModes.remove(id)
