@@ -1397,6 +1397,7 @@ if (tick != null) {
                 tradeMessageType == "proposal_open_contract" ||
                 tradeMessageType == "proposal" ||
                 tradeMessageType == "buy" ||
+                    tradeMessageType == "contracts_for" ||
                 json.has("error")
             ) {
                 callback.onTradeData(json)
