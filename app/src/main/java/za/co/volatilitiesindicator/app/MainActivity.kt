@@ -4303,8 +4303,6 @@ if (liveProfit >= profitTarget && !running.closeRequested) {
                             views.pnl.setTextColor(profitColor(liveProfit))
                             val spot = contract.optDouble("current_spot", contract.optDouble("current_spot_display_value", 0.0))
                             views.spot.text = "Current value/spot: ${if (spot > 0.0) formatMoney(spot) else "—"}"
-                            val barrierValue = contract.optString("barrier", "").takeIf { it.isNotBlank() && it != "null" }
-                                ?: views.target?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
                             val barrierValue = contract.optString("barrier", "")
     .takeIf { it.isNotBlank() && it != "null" }
     ?: "Waiting for Deriv"
