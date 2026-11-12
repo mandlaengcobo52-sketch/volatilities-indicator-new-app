@@ -2723,6 +2723,24 @@ private fun evaluateMasterEngine(symbol: String) {
     val latest = candles.last()
     val bullishLiquidity = calculateLiquidityLevels(candles, true)
     val bearishLiquidity = calculateLiquidityLevels(candles, false)
+    (bullishLiquidity + bearishLiquidity)
+    .filter { it.sweepStatus == "SWEPT" && it.sweepAt > 0L }
+    .forEach { level ->
+        val sweepCandle = candles.firstOrNull {
+            it.epoch == level.sweepAt
+        }
+
+        android.util.Log.d(
+            "LiquidityAudit",
+            "$symbol | LEVEL=${level.price} | " +
+            "TIME=${level.sweepAt} | " +
+            "O=${sweepCandle?.open} | " +
+            "H=${sweepCandle?.high} | " +
+            "L=${sweepCandle?.low} | " +
+            "C=${sweepCandle?.close} | " +
+            "STATUS=${level.sweepStatus}"
+        )
+    }
     
 val latestBullishSweep = bullishLiquidity
     .filter { it.sweepStatus == "SWEPT" && it.sweepAt > 0L }
