@@ -2308,95 +2308,167 @@ private fun calculateMarketStructure(
                     minorLow = candle.low
                     minorLowIndex = i
                 }
+
+
+private fun calculateMarketStructure(
+    candles: List<DerivApiClient.Candle>
+): MarketStructureAnalysis {
+
+    val sorted = candles.sortedBy { it.epoch }
+    if (sorted.size < 5) {
+        return MarketStructureAnalysis(emptyList(), emptyList())
+    }
+
+    val structures = mutableListOf<MarketStructureEvent>()
+    val chochs = mutableListOf<ChochEvent>()
+
+    var structureNumber = 0
+    var chochNumber = 0
+
+    var leg = ""
+    var candidateHighIndex = 0
+    var candidateHigh = sorted.first().high
+    var candidateLowIndex = 0
+    var candidateLow = sorted.first().low
+
+    var minorLowIndex = 0
+    var minorLow = sorted.first().low
+    var minorHighIndex = 0
+    var minorHigh = sorted.first().high
+
+    var previousConfirmedHigh: Pair<Int, Double>? = null
+    var previousConfirmedLow: Pair<Int, Double>? = null
+    var latestHighClass = ""
+    var latestLowClass = ""
+
+    var lastConfirmedLH: Pair<Int, Double>? = null
+    var lastConfirmedHL: Pair<Int, Double>? = null
+    var trend = ""
+
+    var consumedBullishReference = -1
+    var consumedBearishReference = -1
+
+    for (i in 1 until sorted.size) {
+        val candle = sorted[i]
+        val previousCandle = sorted[i - 1]
+
+        if (leg.isEmpty()) {
+            when {
+                candle.close > previousCandle.high -> {
+                    leg = "UP"
+                    candidateHighIndex = i
+                    candidateHigh = candle.high
+                    minorLowIndex = i - 1
+                    minorLow = previousCandle.low
+                    candidateLowIndex = i - 1
+                    candidateLow = previousCandle.low
+                }
+
+                candle.close < previousCandle.low -> {
+                    leg = "DOWN"
+                    candidateLowIndex = i
+                    candidateLow = candle.low
+                    minorHighIndex = i - 1
+                    minorHigh = previousCandle.high
+                    candidateHighIndex = i - 1
+                    candidateHigh = previousCandle.high
+                }
+
+                else -> {
+                    if (candle.high > candidateHigh) {
+                        candidateHighIndex = i
+                        candidateHigh = candle.high
+                    }
+                    if (candle.low < candidateLow) {
+                        candidateLowIndex = i
+                        candidateLow = candle.low
+                    }
+                }
             }
+            continue
+        }
 
-            if (
-                minorLowIndex >= 0 &&
-                i > minorLowIndex &&
-                candle.close < minorLow
-            ) {
+        if (leg == "UP") {
+            val brokeMinorLow =
+                i > candidateHighIndex && candle.close < minorLow
+
+            if (brokeMinorLow) {
                 val confirmedHigh = candidateHighIndex to candidateHigh
+                val oldHigh = previousConfirmedHigh
 
-                val previous = previousConfirmedHigh
-                if (previous != null) {
-                    val isLowerHigh = confirmedHigh.second < previous.second
+                if (oldHigh != null) {
+                    latestHighClass =
+                        if (confirmedHigh.second > oldHigh.second) "HH" else "LH"
 
-                    if (isLowerHigh) {
+                    if (latestHighClass == "LH") {
                         lastConfirmedLH = confirmedHigh
                     }
                 }
 
                 previousConfirmedHigh = confirmedHigh
 
-                direction = "DOWN"
-                candidateLow = candle.low
-                candidateLowIndex = i
-                minorHigh = candle.high
-                minorHighIndex = i
-                minorLow = Double.POSITIVE_INFINITY
-                minorLowIndex = -1
-            }
+                leg = "DOWN"
+                candidateLowIndex = minorLowIndex
+                candidateLow = minorLow
+                minorHighIndex = minorLowIndex
+                minorHigh = sorted[minorLowIndex].high
 
-        } else if (direction == "DOWN") {
-
-            if (candle.low < candidateLow) {
-                candidateLow = candle.low
-                candidateLowIndex = i
-                minorHigh = Double.NEGATIVE_INFINITY
-                minorHighIndex = -1
             } else {
-                if (candle.high > minorHigh) {
-                    minorHigh = candle.high
-                    minorHighIndex = i
+                if (candle.high > candidateHigh) {
+                    candidateHighIndex = i
+                    candidateHigh = candle.high
+                    minorLowIndex = i
+                    minorLow = candle.low
+                } else if (candle.low < minorLow) {
+                    minorLowIndex = i
+                    minorLow = candle.low
                 }
             }
 
-            if (
-                minorHighIndex >= 0 &&
-                i > minorHighIndex &&
-                candle.close > minorHigh
-            ) {
+        } else {
+            val brokeMinorHigh =
+                i > candidateLowIndex && candle.close > minorHigh
+
+            if (brokeMinorHigh) {
                 val confirmedLow = candidateLowIndex to candidateLow
+                val oldLow = previousConfirmedLow
 
-                val previous = previousConfirmedLow
-                if (previous != null) {
-                    val isHigherLow = confirmedLow.second > previous.second
+                if (oldLow != null) {
+                    latestLowClass =
+                        if (confirmedLow.second > oldLow.second) "HL" else "LL"
 
-                    if (isHigherLow) {
+                    if (latestLowClass == "HL") {
                         lastConfirmedHL = confirmedLow
                     }
                 }
 
                 previousConfirmedLow = confirmedLow
 
-                direction = "UP"
-                candidateHigh = candle.high
-                candidateHighIndex = i
-                minorLow = candle.low
-                minorLowIndex = i
-                minorHigh = Double.NEGATIVE_INFINITY
-                minorHighIndex = -1
+                leg = "UP"
+                candidateHighIndex = minorHighIndex
+                candidateHigh = minorHigh
+                minorLowIndex = minorHighIndex
+                minorLow = sorted[minorHighIndex].low
+
+            } else {
+                if (candle.low < candidateLow) {
+                    candidateLowIndex = i
+                    candidateLow = candle.low
+                    minorHighIndex = i
+                    minorHigh = candle.high
+                } else if (candle.high > minorHigh) {
+                    minorHighIndex = i
+                    minorHigh = candle.high
+                }
             }
         }
 
-        val confirmedHigh = previousConfirmedHigh
-        val confirmedLow = previousConfirmedLow
-
         val newTrend = when {
-            confirmedHigh != null &&
-            confirmedLow != null &&
-            lastConfirmedHL != null &&
-            confirmedHigh.second > 0.0 &&
-            confirmedLow.second > 0.0 &&
-            previousConfirmedHigh!!.second > 0.0 &&
-            lastConfirmedHL!!.second < confirmedLow.second -> "BULLISH"
+            latestHighClass == "HH" &&
+                latestLowClass == "HL" -> "BULLISH"
 
-            confirmedHigh != null &&
-            confirmedLow != null &&
-            lastConfirmedLH != null &&
-            confirmedHigh.second > 0.0 &&
-            confirmedLow.second > 0.0 &&
-            lastConfirmedLH!!.second == confirmedHigh.second -> "BEARISH"
+            latestHighClass == "LH" &&
+                latestLowClass == "LL" -> "BEARISH"
 
             else -> ""
         }
@@ -2416,13 +2488,13 @@ private fun calculateMarketStructure(
         }
 
         if (trend == "BEARISH") {
-            val breakLevel = lastConfirmedLH
+            val reference = lastConfirmedLH
 
             if (
-                breakLevel != null &&
-                i > breakLevel.first &&
-                candle.close > breakLevel.second &&
-                lastChochDirection != "BULLISH"
+                reference != null &&
+                i > reference.first &&
+                candle.close > reference.second &&
+                consumedBullishReference != reference.first
             ) {
                 chochNumber++
 
@@ -2430,23 +2502,22 @@ private fun calculateMarketStructure(
                     ChochEvent(
                         chochNumber,
                         "BULLISH",
-                        breakLevel.second,
+                        reference.second,
                         candle.epoch
                     )
                 )
 
-                lastChochDirection = "BULLISH"
+                consumedBullishReference = reference.first
             }
-        }
 
-        if (trend == "BULLISH") {
-            val breakLevel = lastConfirmedHL
+        } else if (trend == "BULLISH") {
+            val reference = lastConfirmedHL
 
             if (
-                breakLevel != null &&
-                i > breakLevel.first &&
-                candle.close < breakLevel.second &&
-                lastChochDirection != "BEARISH"
+                reference != null &&
+                i > reference.first &&
+                candle.close < reference.second &&
+                consumedBearishReference != reference.first
             ) {
                 chochNumber++
 
@@ -2454,12 +2525,12 @@ private fun calculateMarketStructure(
                     ChochEvent(
                         chochNumber,
                         "BEARISH",
-                        breakLevel.second,
+                        reference.second,
                         candle.epoch
                     )
                 )
 
-                lastChochDirection = "BEARISH"
+                consumedBearishReference = reference.first
             }
         }
     }
