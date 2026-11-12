@@ -1465,6 +1465,15 @@ detailsContainer.addView(label("LIQUIDITY SWEEP STATUS: ${sharedAnalysis?.liquid
 detailsContainer.addView(label("BULLISH LIQUIDITY (SSL)", 12f, green, true))
 val sharedBullishLiquidity = sharedAnalysis?.bullishLiquidity.orEmpty()
 if (sharedBullishLiquidity.isEmpty()) {
+    val sweepCandle = marketDataCandles[symbol].orEmpty()
+    .firstOrNull { it.epoch == level.sweepAt }
+
+val candleAudit = if (sweepCandle != null) {
+    " | OHLC: O=${sweepCandle.open} H=${sweepCandle.high} " +
+    "L=${sweepCandle.low} C=${sweepCandle.close}"
+} else {
+    " | OHLC: CANDLE NOT FOUND"
+}
     detailsContainer.addView(label("No confirmed bullish liquidity.", 11f, muted, false))
 } else {
     sharedBullishLiquidity.forEachIndexed { index, level ->
