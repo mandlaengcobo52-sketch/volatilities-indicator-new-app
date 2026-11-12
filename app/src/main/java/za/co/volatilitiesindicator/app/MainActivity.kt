@@ -2122,6 +2122,7 @@ if (sweepStatus == "SWEPT") break
     compareByDescending<LiquidityLevel> { it.occurrences }
         .thenByDescending { it.createdAt }
 )
+}
 
 // =============================================================
 // ANALYSIS - BULLISH AND BEARISH ORDER BLOCKS
