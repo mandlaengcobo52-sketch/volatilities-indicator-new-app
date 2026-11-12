@@ -1806,7 +1806,17 @@ val originalTarget = tracked?.target?.takeIf { it.isFinite() && it > 0.0 }
         row.addView(potentialProfitView)
         row.addView(spotView)
         row.addView(expiryView)
-        contractLiveViews[contractId] = ContractLiveViews(stake, symbol, tracked?.target, tracked?.targetProbability ?: 0.0, pnlHidden, spotView, expiryView, TextView(this))
+        contractLiveViews[contractId] = ContractLiveViews(
+    stake,
+    symbol,
+    tracked?.target,
+    tracked?.targetProbability ?: 0.0,
+    pnlHidden,
+    spotView,
+    exitBarrierView,
+    expiryView,
+    TextView(this)
+)
         row.addView(button("CLOSE TRADE", true) {
             if (!connected) {
                 toast("Connect to the account holding this contract.")
@@ -1871,11 +1881,11 @@ row.addView(
         row.addView(spotView)
         row.addView(expiryView)
 
-        contractLiveViews[contractId] = ContractLiveViews(
-    stake,
-    symbol,
-    tracked?.target,
-    tracked?.targetProbability ?: 0.0,
+        contractLiveViews[running.contractId] = ContractLiveViews(
+    running.stake,
+    running.symbol,
+    running.target,
+    running.targetProbability,
     pnlHidden,
     spotView,
     exitBarrierView,
