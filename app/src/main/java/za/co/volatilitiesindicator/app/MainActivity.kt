@@ -1477,12 +1477,22 @@ val candleAudit = if (sweepCandle != null) {
     detailsContainer.addView(label("No confirmed bullish liquidity.", 11f, muted, false))
 } else {
     sharedBullishLiquidity.forEachIndexed { index, level ->
-        detailsContainer.addView(label(
-            "SSL ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepStatus == "SWEPT") "SWEPT ${formatMarketTime(level.sweepAt)}" else "WAITING"} | OCCURRENCES: ${level.occurrences}",
-            11f, green, false
-        ))
+
+    val sslSweepCandle = marketDataCandles[symbol].orEmpty()
+        .firstOrNull { it.epoch == level.sweepAt }
+
+    val sslCandleAudit = if (sslSweepCandle != null) {
+        " | OHLC: O=${sslSweepCandle.open} H=${sslSweepCandle.high} " +
+        "L=${sslSweepCandle.low} C=${sslSweepCandle.close}"
+    } else {
+        " | OHLC: CANDLE NOT FOUND"
     }
-}
+
+    detailsContainer.addView(label(
+        "SSL ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepStatus == "SWEPT") "SWEPT ${formatMarketTime(level.sweepAt)}" else "WAITING"} | OCCURRENCES: ${level.occurrences}$sslCandleAudit",
+        11f, green, false
+    ))
+    }
 
 detailsContainer.addView(label("BEARISH LIQUIDITY (BSL)", 12f, red, true))
 val sharedBearishLiquidity = sharedAnalysis?.bearishLiquidity.orEmpty()
@@ -1490,12 +1500,22 @@ if (sharedBearishLiquidity.isEmpty()) {
     detailsContainer.addView(label("No confirmed bearish liquidity.", 11f, muted, false))
 } else {
     sharedBearishLiquidity.forEachIndexed { index, level ->
-        detailsContainer.addView(label(
-            "BSL ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepStatus == "SWEPT") "SWEPT ${formatMarketTime(level.sweepAt)}" else "WAITING"} | OCCURRENCES: ${level.occurrences}",
-            11f, red, false
-        ))
+
+    val bslSweepCandle = marketDataCandles[symbol].orEmpty()
+        .firstOrNull { it.epoch == level.sweepAt }
+
+    val bslCandleAudit = if (bslSweepCandle != null) {
+        " | OHLC: O=${bslSweepCandle.open} H=${bslSweepCandle.high} " +
+        "L=${bslSweepCandle.low} C=${bslSweepCandle.close}"
+    } else {
+        " | OHLC: CANDLE NOT FOUND"
     }
-}
+
+    detailsContainer.addView(label(
+        "BSL ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepStatus == "SWEPT") "SWEPT ${formatMarketTime(level.sweepAt)}" else "WAITING"} | OCCURRENCES: ${level.occurrences}$bslCandleAudit",
+        11f, red, false
+    ))
+    }
 val qualifyingSsl = sharedBullishLiquidity.firstOrNull {
     it.sweepStatus == "SWEPT"
 }
