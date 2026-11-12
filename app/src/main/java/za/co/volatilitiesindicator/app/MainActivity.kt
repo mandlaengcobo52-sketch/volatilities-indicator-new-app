@@ -335,6 +335,7 @@ private fun dailyTradeStake(): Double {
         get() = appPrefs.getBoolean("trailingStopEnabled", true)
         set(value) { appPrefs.edit().putBoolean("trailingStopEnabled", value).apply() }
         private val touchAvailabilityPending = mutableSetOf<String>()
+private val touchAvailabilityRequests = mutableMapOf<Int, String>()
 private val touchContractsBySymbol =
     mutableMapOf<String, org.json.JSONArray>()
 private fun submitTouchProposal(
