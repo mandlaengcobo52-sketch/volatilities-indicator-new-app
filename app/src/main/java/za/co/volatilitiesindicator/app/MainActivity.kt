@@ -1449,8 +1449,7 @@ page.addView(monitorHeader, matchWrap())
             // Refresh the single authoritative analysis result before rendering details.
             evaluateMasterEngine(symbol)
             val sharedAnalysis = masterEngineDecisions[symbol]
-
-            // Expanded analysis details follow the same execution sequence.
+    // Expanded analysis details follow the same execution sequence.
             val detailsContainer = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(8), dp(8), dp(8), dp(4))
@@ -1465,34 +1464,15 @@ detailsContainer.addView(label("LIQUIDITY SWEEP STATUS: ${sharedAnalysis?.liquid
 detailsContainer.addView(label("BULLISH LIQUIDITY (SSL)", 12f, green, true))
 val sharedBullishLiquidity = sharedAnalysis?.bullishLiquidity.orEmpty()
 if (sharedBullishLiquidity.isEmpty()) {
-    val sweepCandle = marketDataCandles[symbol].orEmpty()
-    .firstOrNull { it.epoch == level.sweepAt }
-
-val candleAudit = if (sweepCandle != null) {
-    " | OHLC: O=${sweepCandle.open} H=${sweepCandle.high} " +
-    "L=${sweepCandle.low} C=${sweepCandle.close}"
-} else {
-    " | OHLC: CANDLE NOT FOUND"
-}
     detailsContainer.addView(label("No confirmed bullish liquidity.", 11f, muted, false))
 } else {
     sharedBullishLiquidity.forEachIndexed { index, level ->
-
-    val sslSweepCandle = marketDataCandles[symbol].orEmpty()
-        .firstOrNull { it.epoch == level.sweepAt }
-
-    val sslCandleAudit = if (sslSweepCandle != null) {
-        " | OHLC: O=${sslSweepCandle.open} H=${sslSweepCandle.high} " +
-        "L=${sslSweepCandle.low} C=${sslSweepCandle.close}"
-    } else {
-        " | OHLC: CANDLE NOT FOUND"
+        detailsContainer.addView(label(
+            "SSL ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepStatus == "SWEPT") "SWEPT ${formatMarketTime(level.sweepAt)}" else "WAITING"} | OCCURRENCES: ${level.occurrences}",
+            11f, green, false
+        ))
     }
-
-    detailsContainer.addView(label(
-        "SSL ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepStatus == "SWEPT") "SWEPT ${formatMarketTime(level.sweepAt)}" else "WAITING"} | OCCURRENCES: ${level.occurrences}$sslCandleAudit",
-        11f, green, false
-    ))
-    }
+}
 
 detailsContainer.addView(label("BEARISH LIQUIDITY (BSL)", 12f, red, true))
 val sharedBearishLiquidity = sharedAnalysis?.bearishLiquidity.orEmpty()
@@ -1500,22 +1480,12 @@ if (sharedBearishLiquidity.isEmpty()) {
     detailsContainer.addView(label("No confirmed bearish liquidity.", 11f, muted, false))
 } else {
     sharedBearishLiquidity.forEachIndexed { index, level ->
-
-    val bslSweepCandle = marketDataCandles[symbol].orEmpty()
-        .firstOrNull { it.epoch == level.sweepAt }
-
-    val bslCandleAudit = if (bslSweepCandle != null) {
-        " | OHLC: O=${bslSweepCandle.open} H=${bslSweepCandle.high} " +
-        "L=${bslSweepCandle.low} C=${bslSweepCandle.close}"
-    } else {
-        " | OHLC: CANDLE NOT FOUND"
+        detailsContainer.addView(label(
+            "BSL ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepStatus == "SWEPT") "SWEPT ${formatMarketTime(level.sweepAt + 3600L)}" else "WAITING"} | OCCURRENCES: ${level.occurrences}",
+            11f, red, false
+        ))
     }
-
-    detailsContainer.addView(label(
-        "BSL ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepStatus == "SWEPT") "SWEPT ${formatMarketTime(level.sweepAt)}" else "WAITING"} | OCCURRENCES: ${level.occurrences}$bslCandleAudit",
-        11f, red, false
-    ))
-    }
+}
 val qualifyingSsl = sharedBullishLiquidity.firstOrNull {
     it.sweepStatus == "SWEPT"
 }
@@ -1575,7 +1545,7 @@ addDetailedStatus("engine",
 
 detailedAnalysisViews[symbol] = detailedViews
 
-
+            
 // =========================================================
 // SUPPORT AND RESISTANCE
 // =========================================================
