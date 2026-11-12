@@ -2766,11 +2766,22 @@ val bearishSweep = latestSweepTime > 0L &&
     val bearishScore = listOf(bearishSweep, marketDirection == "BULLISH", bearishMss, bearishMomentum)
         .count { it } * 25.0
     val ptpe = maxOf(bullishScore, bearishScore)
-    val direction = when {
-        bullishDirection && bullishScore > 55.0 -> "BUY"
-        bearishDirection && bearishScore > 55.0 -> "SELL"
-        else -> "WAIT"
-    }
+    val activeTradeDirection =
+    runningContracts.values.firstOrNull {
+        it.symbol.equals(symbol, ignoreCase = true) &&
+        it.mode == executionMode
+    }?.direction
+        ?: pendingTouchOrders.values.firstOrNull {
+            it.symbol.equals(symbol, ignoreCase = true) &&
+            it.mode == executionMode
+        }?.direction
+    val calculatedDirection = when {
+    bullishDirection && bullishScore > 55.0 -> "BUY"
+    bearishDirection && bearishScore > 55.0 -> "SELL"
+    else -> "WAIT"
+}
+
+val direction = activeTradeDirection ?: calculatedDirection
 
     val decision = MasterEngineDecision(
         symbol = symbol,
@@ -2781,7 +2792,8 @@ val bearishSweep = latestSweepTime > 0L &&
         chochQualified = if (direction == "BUY") bullishMss else if (direction == "SELL") bearishMss else (bullishMss || bearishMss),
         momentumQualified = if (direction == "BUY") bullishMomentum else if (direction == "SELL") bearishMomentum else (bullishMomentum || bearishMomentum),
         ptpeProbability = ptpe,
-        qualified = direction != "WAIT",
+        qualified = activeTradeDirection == null &&
+    calculatedDirection != "WAIT",
         updatedAt = System.currentTimeMillis(),
         bullishLiquidity = bullishLiquidity,
         bearishLiquidity = bearishLiquidity,
