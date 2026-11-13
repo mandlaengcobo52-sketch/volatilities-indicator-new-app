@@ -2616,6 +2616,118 @@ private object NewLiquidityEngine {
             }
         }
     }
+   
+    // =============================================================
+    // STAGE 7 — LIQUIDITY POOL STRENGTH ASSESSMENT
+    // =============================================================
+
+    data class LiquidityStrength(
+        val pool: LiquidityPool,
+        val score: Int,
+        val touchScore: Int,
+        val ageScore: Int,
+        val separationScore: Int,
+        val untouchedScore: Int,
+        val rating: String
+    )
+
+    fun assessLiquidityStrength(
+        pools: List<LiquidityPool>,
+        events: List<LiquidityEvent>,
+        nowEpoch: Long = System.currentTimeMillis() / 1000L
+    ): List<LiquidityStrength> {
+
+        val results = mutableListOf<LiquidityStrength>()
+
+        for (pool in pools) {
+
+            if (!pool.active) continue
+
+            // 1. Touch count: maximum 30 points.
+            val touchScore = when {
+                pool.touchCount >= 5 -> 30
+                pool.touchCount == 4 -> 25
+                pool.touchCount == 3 -> 20
+                else -> 15
+            }
+
+            // 2. Age of pool: maximum 20 points.
+            val ageHours =
+                ((nowEpoch - pool.firstTouchAt).coerceAtLeast(0L)) / 3600.0
+
+            val ageScore = when {
+                ageHours >= 168.0 -> 20
+                ageHours >= 72.0 -> 15
+                ageHours >= 24.0 -> 10
+                else -> 5
+            }
+
+            // 3. Separation between touches: maximum 25 points.
+            val separationHours =
+                if (pool.touchCount >= 2) {
+                    (
+                        pool.lastTouchAt - pool.firstTouchAt
+                    ).coerceAtLeast(0L) / 3600.0 /
+                        (pool.touchCount - 1)
+                } else {
+                    0.0
+                }
+
+            val separationScore = when {
+                separationHours >= 24.0 -> 25
+                separationHours >= 12.0 -> 20
+                separationHours >= 4.0 -> 15
+                separationHours > 0.0 -> 10
+                else -> 0
+            }
+
+            // 4. Untouched status: maximum 25 points.
+            val latestEvent = events
+                .filter {
+                    it.pool.type == pool.type &&
+                    it.pool.anchorPrice == pool.anchorPrice &&
+                    it.pool.firstTouchAt == pool.firstTouchAt
+                }
+                .maxByOrNull { it.eventAt }
+
+            val untouchedScore = when (latestEvent?.status) {
+                null, "UNTOUCHED" -> 25
+                "PENDING" -> 15
+                "REJECTION" -> 10
+                "SWEPT" -> 0
+                "BREAKOUT" -> 0
+                else -> 0
+            }
+
+            val totalScore = (
+                touchScore +
+                ageScore +
+                separationScore +
+                untouchedScore
+            ).coerceIn(0, 100)
+
+            val rating = when {
+                totalScore >= 80 -> "VERY STRONG"
+                totalScore >= 60 -> "STRONG"
+                totalScore >= 40 -> "MODERATE"
+                else -> "WEAK"
+            }
+
+            results.add(
+                LiquidityStrength(
+                    pool = pool,
+                    score = totalScore,
+                    touchScore = touchScore,
+                    ageScore = ageScore,
+                    separationScore = separationScore,
+                    untouchedScore = untouchedScore,
+                    rating = rating
+                )
+            )
+        }
+
+        return results.sortedByDescending { it.score }
+    }
     
 }
 
