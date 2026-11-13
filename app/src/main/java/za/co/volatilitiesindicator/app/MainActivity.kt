@@ -1466,7 +1466,7 @@ if (sharedBullishLiquidity.isEmpty()) {
 } else {
     sharedBullishLiquidity.forEachIndexed { index, level ->
         detailsContainer.addView(label(
-            "SSL ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepStatus == "SWEPT") formatMarketTime(level.sweepAt) else "WAITING"}",
+            "${level.sweepStatus} ${if (level.sweepAt > 0L) formatMarketTime(level.sweepAt) else ""}"
             11f, green, false
         ))
     }
@@ -1479,17 +1479,19 @@ if (sharedBearishLiquidity.isEmpty()) {
 } else {
     sharedBearishLiquidity.forEachIndexed { index, level ->
         detailsContainer.addView(label(
-            "BSL ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepStatus == "SWEPT") formatMarketTime(level.sweepAt) else "WAITING"}",
+            "${level.sweepStatus} ${if (level.sweepAt > 0L) formatMarketTime(level.sweepAt) else ""}"
             11f, red, false
         ))
     }
 }
 val qualifyingSsl = sharedBullishLiquidity.firstOrNull {
-    it.sweepStatus == "SWEPT"
+    it.sweepStatus == "SWEPT AND CONTINUATION" ||
+it.sweepStatus == "SWEPT AND REVERSED"
 }
 
 val qualifyingBsl = sharedBearishLiquidity.firstOrNull {
-    it.sweepStatus == "SWEPT"
+    it.sweepStatus == "SWEPT AND CONTINUATION" ||
+it.sweepStatus == "SWEPT AND REVERSED"
 }
 detailsContainer.addView(label("ANALYSIS - MARKET STRUCTURE AND CHOCH", 13f, green, true))
 detailsContainer.addView(label("MARKET STRUCTURE", 12f, green, true))
@@ -2072,41 +2074,82 @@ private fun calculateLiquidityLevels(
         val firstPivotIndex = group.minOf { it.first }
         val lastPivotIndex = group.maxOf { it.first }
 
-        var sweepAt = 0L
-        var sweepStatus = "WAITING"
+        
+var sweepAt = 0L
+var sweepStatus = "WAITING"
 
-        for (i in lastPivotIndex + 1 until sorted.size) {
+for (i in lastPivotIndex + 1 until sorted.size - 1) {
 
-            val candle = sorted[i]
+    val first = sorted[i]
+    val second = sorted[i + 1]
 
-            // Preserve the first confirmed sweep for this level.
-            if (sweepStatus == "SWEPT") break
+    val penetrated = if (bullish) {
+        first.low < levelPrice
+    } else {
+        first.high > levelPrice
+    }
 
-            val penetrated = if (bullish) {
-                candle.low < levelPrice
-            } else {
-                candle.high > levelPrice
-            }
+    if (!penetrated) continue
 
-            if (!penetrated) continue
+    // Direction of penetration
+    val firstContinues = if (bullish) {
+        first.close < levelPrice
+    } else {
+        first.close > levelPrice
+    }
 
-            // The penetration candle itself must close back across the level.
-            val confirmedOnSameCandle = if (bullish) {
-                candle.close > levelPrice
-            } else {
-                candle.close < levelPrice
-            }
+    // First candle closes back across the level
+    val firstReverses = if (bullish) {
+        first.close > levelPrice
+    } else {
+        first.close < levelPrice
+    }
 
-            if (confirmedOnSameCandle) {
-                sweepAt = candle.epoch
-                sweepStatus = "SWEPT"
-            } else {
-                // Failed attempt: reject immediately.
-                // A later penetration must be evaluated independently.
-                sweepAt = 0L
-                sweepStatus = "WAITING"
-            }
-        }
+    // Second candle confirmation
+    val continuationConfirmed = if (bullish) {
+        second.close < levelPrice
+    } else {
+        second.close > levelPrice
+    }
+
+    val reversalConfirmed = if (bullish) {
+        second.close > levelPrice
+    } else {
+        second.close < levelPrice
+    }
+
+    if (firstContinues && continuationConfirmed) {
+        sweepAt = second.epoch
+        sweepStatus = "SWEPT AND CONTINUATION"
+        break
+    }
+
+    if (firstReverses && reversalConfirmed) {
+        sweepAt = second.epoch
+        sweepStatus = "SWEPT AND REVERSED"
+        break
+    }
+
+    // A failed second-candle confirmation invalidates the attempt.
+    sweepAt = second.epoch
+    sweepStatus = "EXPIRED / INVALIDATED"
+    break
+}
+
+// A confirmed reversal remains valid for three H1 candles.
+if (sweepStatus == "SWEPT AND REVERSED") {
+    val confirmationIndex = sorted.indexOfFirst {
+        it.epoch == sweepAt
+    }
+    val latestIndex = sorted.lastIndex
+
+    if (confirmationIndex >= 0 &&
+        latestIndex - confirmationIndex >= 3
+    ) {
+        sweepStatus = "EXPIRED / INVALIDATED"
+    }
+}
+
 
         results.add(
             LiquidityLevel(
