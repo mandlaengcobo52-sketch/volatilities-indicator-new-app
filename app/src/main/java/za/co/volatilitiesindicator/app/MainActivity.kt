@@ -3524,7 +3524,50 @@ private fun evaluateMasterEngine(symbol: String) {
                 sweepStatus = it.status
             )
         }
-        
+       
+    // =============================================================
+    // NEW LIQUIDITY ENGINE — LIVE DIAGNOSTIC AUDIT
+    // =============================================================
+
+    android.util.Log.d(
+        "NewLiquidityAudit",
+        "$symbol | CONFIRMED_SWING_HIGHS=${swingResult.highs.size} | " +
+        "CONFIRMED_SWING_LOWS=${swingResult.lows.size}"
+    )
+
+    liquidityPools.forEach { pool ->
+
+        val event = liquidityEvents.firstOrNull {
+            it.pool == pool
+        }
+
+        val retest = liquidityRetests.firstOrNull {
+            it.originalSweepAt == event?.eventAt &&
+            event.status == "SWEPT"
+        }
+
+        val strength = liquidityStrengths.firstOrNull {
+            it.pool == pool
+        }
+
+        android.util.Log.d(
+            "NewLiquidityAudit",
+            "$symbol | TYPE=${pool.type} | " +
+            "LOWER=${pool.lowerBoundary} | " +
+            "UPPER=${pool.upperBoundary} | " +
+            "ANCHOR=${pool.anchorPrice} | " +
+            "TOUCHES=${pool.touchCount} | " +
+            "FIRST=${pool.firstTouchAt} | " +
+            "LAST=${pool.lastTouchAt} | " +
+            "EVENT=${event?.status ?: "NONE"} | " +
+            "EVENT_TIME=${event?.eventAt ?: 0L} | " +
+            "RETEST=${retest?.retestStatus ?: "NONE"} | " +
+            "STRENGTH=${strength?.score ?: 0} | " +
+            "RATING=${strength?.rating ?: "NONE"} | " +
+            "ACTIVE=${pool.active}"
+        )
+    }
+    
     (bullishLiquidity + bearishLiquidity)
     .filter { it.sweepStatus == "SWEPT" && it.sweepAt > 0L }
     .forEach { level ->
