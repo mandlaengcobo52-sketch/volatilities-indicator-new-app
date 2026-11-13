@@ -2572,6 +2572,12 @@ fun monitorLiquidityRetests(
                     candle.close < pool.lowerBoundary -> {
                         status = "RETEST_SUCCESS"
                     }
+                    // A single candle can enter and reject the zone.
+                    approachedFromCorrectSide &&
+                    touchedZone &&
+                    candle.close < pool.lowerBoundary -> {
+                    status = "RETEST_SUCCESS"
+                    }
 
                     // Price reaches the zone from below.
                     approachedFromCorrectSide &&
@@ -2617,7 +2623,12 @@ fun monitorLiquidityRetests(
                     candle.close > pool.upperBoundary -> {
                         status = "RETEST_SUCCESS"
                     }
-
+                    // A single candle can enter and reject the zone.
+                    approachedFromCorrectSide &&
+                    touchedZone &&
+                    candle.close > pool.upperBoundary -> {
+                    status = "RETEST_SUCCESS"
+                    }
                     // Price reaches the zone from above.
                     approachedFromCorrectSide &&
                     touchedZone &&
