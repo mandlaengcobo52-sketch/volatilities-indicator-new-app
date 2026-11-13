@@ -629,7 +629,7 @@ if (authToken.isNotBlank() && savedToken.isNotBlank() &&
     intent?.data?.host != "oauth-callback") {
     connectWithToken(savedToken)
 }
-    }
+}
 
     override fun onResume() {
         super.onResume()
@@ -1232,7 +1232,6 @@ private fun addHeader() {
 
         items.forEach { item ->
             val b = button("  $item", false)
-
             b.gravity = Gravity.START or Gravity.CENTER_VERTICAL
 
             b.setOnClickListener {
@@ -1827,7 +1826,7 @@ val originalTarget = tracked?.target?.takeIf { it.isFinite() && it > 0.0 }
                         val sent = derivApiClient.send(JSONObject().put("sell", contractId).put("price", 0).put("req_id", nextTradeRequestId()))
                         if (!sent) toast("Unable to send close request.") else toast("Close request sent for contract $contractId.")
                     }
-                    .show()
+                        .show()
             }
             }, matchWrap().apply { topMargin = dp(8) })
         runningCard.addView(row, matchWrap().apply { topMargin = dp(7) })
@@ -2129,7 +2128,6 @@ for (i in lastPivotIndex + 1 until sorted.size - 1) {
         sweepStatus = "SWEPT AND REVERSED"
         break
     }
-
     // A failed second-candle confirmation invalidates the attempt.
     sweepAt = second.epoch
     sweepStatus = "EXPIRED / INVALIDATED"
@@ -2555,6 +2553,121 @@ private fun calculateMarketStructure(
     )
 }
 
+// =============================================================
+// MSS MODULE — INDEPENDENT FROM CHOCH
+// Completed H1 candles only. Swing points require two candles
+// on both sides. A broken reference is consumed once.
+// =============================================================
+private data class MssEvent(
+    val number: Int,
+    val direction: String,
+    val price: Double,
+    val changedAt: Long
+)
+
+private data class MssAnalysis(
+    val events: List<MssEvent>
+)
+
+private fun calculateMss(candles: List<DerivApiClient.Candle>): MssAnalysis {
+    val sorted = candles.sortedBy { it.epoch }
+    if (sorted.size < 5) return MssAnalysis(emptyList())
+
+    val swingHighs = mutableListOf<Pair<Int, Double>>()
+    val swingLows = mutableListOf<Pair<Int, Double>>()
+
+    for (i in 2 until sorted.size - 2) {
+        val candle = sorted[i]
+        val confirmedHigh =
+            candle.high > sorted[i - 1].high &&
+            candle.high > sorted[i - 2].high &&
+            candle.high > sorted[i + 1].high &&
+            candle.high > sorted[i + 2].high
+        val confirmedLow =
+            candle.low < sorted[i - 1].low &&
+            candle.low < sorted[i - 2].low &&
+            candle.low < sorted[i + 1].low &&
+            candle.low < sorted[i + 2].low
+
+        if (confirmedHigh) swingHighs.add(i to candle.high)
+        if (confirmedLow) swingLows.add(i to candle.low)
+    }
+
+    val lowerHighs = mutableListOf<Pair<Int, Double>>()
+    for (i in 1 until swingHighs.size) {
+        val previous = swingHighs[i - 1]
+        val current = swingHighs[i]
+        if (current.second < previous.second) lowerHighs.add(current)
+    }
+
+    val higherLows = mutableListOf<Pair<Int, Double>>()
+    for (i in 1 until swingLows.size) {
+        val previous = swingLows[i - 1]
+        val current = swingLows[i]
+        if (current.second > previous.second) higherLows.add(current)
+    }
+
+    val events = mutableListOf<MssEvent>()
+    var consumedLowerHigh = -1
+    var consumedHigherLow = -1
+    var number = 0
+
+    for (i in sorted.indices) {
+        val candle = sorted[i]
+        val latestLowerHigh = lowerHighs.lastOrNull { it.first + 2 < i }
+        val latestHigherLow = higherLows.lastOrNull { it.first + 2 < i }
+
+        if (latestLowerHigh != null &&
+            i > latestLowerHigh.first &&
+            candle.close > latestLowerHigh.second &&
+            consumedLowerHigh != latestLowerHigh.first
+        ) {
+            number++
+            events.add(MssEvent(number, "BULLISH", latestLowerHigh.second, candle.epoch))
+            consumedLowerHigh = latestLowerHigh.first
+        }
+
+        if (latestHigherLow != null &&
+            i > latestHigherLow.first &&
+            candle.close < latestHigherLow.second &&
+            consumedHigherLow != latestHigherLow.first
+        ) {
+            number++
+            events.add(MssEvent(number, "BEARISH", latestHigherLow.second, candle.epoch))
+            consumedHigherLow = latestHigherLow.first
+        }
+    }
+
+    return MssAnalysis(events.takeLast(10))
+}
+
+// =============================================================
+// INDEPENDENT MODULE OUTPUTS
+// =============================================================
+private data class LiquiditySweepModuleResult(
+    val bullish: List<LiquidityLevel>,
+    val bearish: List<LiquidityLevel>
+)
+
+private fun evaluateLiquiditySweepModule(
+    candles: List<DerivApiClient.Candle>
+): LiquiditySweepModuleResult = LiquiditySweepModuleResult(
+    bullish = calculateLiquidityLevels(candles, bullish = true),
+    bearish = calculateLiquidityLevels(candles, bullish = false)
+)
+
+private fun evaluateChochModule(
+    candles: List<DerivApiClient.Candle>
+): List<ChochEvent> = calculateMarketStructure(candles).chochs
+
+private fun evaluateMarketStructureModule(
+    candles: List<DerivApiClient.Candle>
+): List<MarketStructureEvent> = calculateMarketStructure(candles).structures
+
+private fun evaluateMssModule(
+    candles: List<DerivApiClient.Candle>
+): MssAnalysis = calculateMss(candles)
+
     private data class MasterEngineDecision(
     val symbol: String,
     val direction: String,
@@ -2596,7 +2709,7 @@ private fun calculateSupportResistance(
     candles: List<DerivApiClient.Candle>,
     support: Boolean,
     currentPrice: Double? = null
-): List<SupportResistanceLevel> {
+    ): List<SupportResistanceLevel> {
 
     if (candles.size < 5) return emptyList()
     val sevenDaysAgo =
@@ -2764,16 +2877,17 @@ private fun evaluateMasterEngine(symbol: String) {
 
     val latest = candles.last()
     
-    // SIMPLE LIQUIDITY LEVELS — NUMERIC LEVELS AND SAME-CANDLE SWEEP CONFIRMATION
-    val bullishLiquidity = calculateLiquidityLevels(candles, bullish = true)
-    val bearishLiquidity = calculateLiquidityLevels(candles, bullish = false)
+    // MASTER ENGINE CONSUMES THE INDEPENDENT MODULE OUTPUTS.
+    val liquidityResult = evaluateLiquiditySweepModule(candles)
+    val bullishLiquidity = liquidityResult.bullish
+    val bearishLiquidity = liquidityResult.bearish
 
-val latestBullishSweep = bullishLiquidity
-    .filter { it.sweepStatus == "SWEPT" && it.sweepAt > 0L }
-    .maxByOrNull { it.sweepAt }
+    val latestBullishSweep = bullishLiquidity
+        .filter { it.sweepStatus.startsWith("SWEPT") && it.sweepAt > 0L }
+        .maxByOrNull { it.sweepAt }
     val latestBearishSweep = bearishLiquidity
-    .filter { it.sweepStatus == "SWEPT" && it.sweepAt > 0L }
-    .maxByOrNull { it.sweepAt }
+        .filter { it.sweepStatus.startsWith("SWEPT") && it.sweepAt > 0L }
+        .maxByOrNull { it.sweepAt }
 
 val latestSweepTime = maxOf(
     latestBullishSweep?.sweepAt ?: 0L,
@@ -2786,12 +2900,19 @@ val bullishSweep = latestSweepTime > 0L &&
 val bearishSweep = latestSweepTime > 0L &&
     latestBearishSweep?.sweepAt == latestSweepTime
 
-    val structure = calculateMarketStructure(candles)
-    val marketDirection = structure.structures.lastOrNull()?.direction ?: ""
-    val latestChoch = structure.chochs.lastOrNull()?.takeIf { it.changedAt == latest.epoch }
+    val marketStructures = evaluateMarketStructureModule(candles)
+    val chochEvents = evaluateChochModule(candles)
+    val mssResult = evaluateMssModule(candles)
+
+    val marketDirection = marketStructures.lastOrNull()?.direction ?: ""
+    val latestChoch = chochEvents.lastOrNull()?.takeIf { it.changedAt == latest.epoch }
     val chochDirection = latestChoch?.direction ?: ""
-    val bullishMss = chochDirection == "BULLISH"
-    val bearishMss = chochDirection == "BEARISH"
+    val latestMss = mssResult.events.lastOrNull()?.takeIf { it.changedAt == latest.epoch }
+    val mssDirection = latestMss?.direction ?: ""
+    val bullishMss = mssDirection == "BULLISH"
+    val bearishMss = mssDirection == "BEARISH"
+    val bullishChoch = chochDirection == "BULLISH"
+    val bearishChoch = chochDirection == "BEARISH"
     val bullishMomentum = calculateMomentumQualified(candles, "BULLISH")
     val bearishMomentum = calculateMomentumQualified(candles, "BEARISH")
 
@@ -2829,7 +2950,7 @@ val direction = activeTradeDirection ?: calculatedDirection
         supportResistanceQualified = true,
         liquidityQualified = if (direction == "BUY") bullishSweep else if (direction == "SELL") bearishSweep else (bullishSweep || bearishSweep),
         marketStructureQualified = marketDirection == "BULLISH" || marketDirection == "BEARISH",
-        chochQualified = if (direction == "BUY") bullishMss else if (direction == "SELL") bearishMss else (bullishMss || bearishMss),
+        chochQualified = if (direction == "BUY") bullishChoch else if (direction == "SELL") bearishChoch else (bullishChoch || bearishChoch),
         momentumQualified = if (direction == "BUY") bullishMomentum else if (direction == "SELL") bearishMomentum else (bullishMomentum || bearishMomentum),
         ptpeProbability = ptpe,
         qualified = activeTradeDirection == null &&
@@ -2837,8 +2958,8 @@ val direction = activeTradeDirection ?: calculatedDirection
         updatedAt = System.currentTimeMillis(),
         bullishLiquidity = bullishLiquidity,
         bearishLiquidity = bearishLiquidity,
-        structures = structure.structures,
-        chochs = structure.chochs,
+        structures = marketStructures,
+        chochs = chochEvents,
         marketDirection = marketDirection,
         mssText = when {
             bullishMss -> "BULLISH CONFIRMED"
@@ -2881,7 +3002,6 @@ val direction = activeTradeDirection ?: calculatedDirection
         }
     }
     }
-
     val mssText = when {
         bullishMss -> "BULLISH CONFIRMED"
         bearishMss -> "BEARISH CONFIRMED"
@@ -2889,13 +3009,13 @@ val direction = activeTradeDirection ?: calculatedDirection
     }
     val momentumPercent = if (bullishMomentum || bearishMomentum) 100.0 else 0.0
     val chochText = when {
-        bullishMss -> "BULLISH CHOCH: YES"
-        bearishMss -> "BEARISH CHOCH: YES"
+        bullishChoch -> "BULLISH CHOCH: YES"
+        bearishChoch -> "BEARISH CHOCH: YES"
         else -> "BULLISH / BEARISH CHOCH: WAITING"
     }
     val reversalText = when {
-        marketDirection == "BEARISH" && bullishMss -> "POTENTIAL BULLISH REVERSAL"
-        marketDirection == "BULLISH" && bearishMss -> "POTENTIAL BEARISH REVERSAL"
+        marketDirection == "BEARISH" && bullishChoch -> "POTENTIAL BULLISH REVERSAL"
+        marketDirection == "BULLISH" && bearishChoch -> "POTENTIAL BEARISH REVERSAL"
         else -> "NO CONFIRMED REVERSAL"
     }
     val liquidityText = when {
@@ -2924,7 +3044,7 @@ val direction = activeTradeDirection ?: calculatedDirection
             bullishSweep || bearishSweep,
             marketDirection == "BULLISH" || marketDirection == "BEARISH",
             bullishMss || bearishMss,
-            bullishMss || bearishMss,
+            bullishChoch || bearishChoch,
             false,
             bullishMomentum || bearishMomentum,
             ptpe > 55.0,
@@ -3503,8 +3623,7 @@ val direction = activeTradeDirection ?: calculatedDirection
                 topMargin = dp(4)
             }
         )
-        }
-
+    }
     // =========================================================
     // BOTTOM NAVIGATION
     // =========================================================
@@ -4048,9 +4167,8 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
     pendingTouchBySymbol.remove(order.symbol)
     touchExecutionLocks.remove(order.symbol)
     return@runOnUiThread
-}
-
-if (payout < order.stake * 1.30) {
+    }
+    if (payout < order.stake * 1.30) {
     if (order.proposalAttempts >= 20) {
         pendingTouchOrders.remove(requestId)
         pendingTouchBySymbol.remove(order.symbol)
@@ -4496,4 +4614,3 @@ override fun onDestroy() {
     super.onDestroy()
 }
                             }
-                            
