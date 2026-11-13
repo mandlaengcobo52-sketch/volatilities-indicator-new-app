@@ -2341,51 +2341,50 @@ private object NewLiquidityEngine {
         val penetrationPrice: Double
     )
 
-    fun classifyLiquidityEvents(
-        pools: List<LiquidityPool>,
-        candles: List<DerivApiClient.Candle>,
-        nowEpoch: Long = System.currentTimeMillis() / 1000L
-    ): List<LiquidityEvent> {
+fun classifyLiquidityEvents(
+    pools: List<LiquidityPool>,
+    candles: List<DerivApiClient.Candle>,
+    nowEpoch: Long = System.currentTimeMillis() / 1000L
+): List<LiquidityEvent> {
 
-        val sorted = candles
-            .filter {
-                it.high > 0.0 &&
-                it.low > 0.0 &&
-                it.high >= it.low
-            }
-            .distinctBy { it.epoch }
-            .sortedBy { it.epoch }
+    val sorted = candles
+        .filter {
+            it.high > 0.0 &&
+            it.low > 0.0 &&
+            it.high >= it.low
+        }
+        .distinctBy { it.epoch }
+        .sortedBy { it.epoch }
 
-        val results = mutableListOf<LiquidityEvent>()
+    val results = mutableListOf<LiquidityEvent>()
 
-        for (pool in pools) {
+    for (pool in pools) {
 
-            if (!pool.active) continue
+        if (!pool.active) continue
 
-            val closedCandles = sorted.filter {
-                it.epoch + H1_SECONDS <= nowEpoch &&
-                it.epoch > pool.lastTouchAt
-            }
+        val closedCandles = sorted.filter {
+            it.epoch + H1_SECONDS <= nowEpoch &&
+            it.epoch > pool.lastTouchAt
+        }
 
-            var event: LiquidityEvent? = null
+        val poolEvents = mutableListOf<LiquidityEvent>()
 
-            // Find the first confirmed penetration after pool formation.
+        // Preserve every rejection.
+        // Continue monitoring until a confirmed sweep or breakout.
 
-            for (candle in closedCandles) {
+        for (candle in closedCandles) {
 
-                val penetrated = if (
-                    pool.type == "BUY_SIDE_LIQUIDITY"
-                ) {
+            val penetrated =
+                if (pool.type == "BUY_SIDE_LIQUIDITY") {
                     candle.high > pool.upperBoundary
                 } else {
                     candle.low < pool.lowerBoundary
                 }
 
-                if (!penetrated) continue
+            if (!penetrated) continue
 
-                val status = if (
-                    pool.type == "BUY_SIDE_LIQUIDITY"
-                ) {
+            val status =
+                if (pool.type == "BUY_SIDE_LIQUIDITY") {
                     when {
                         candle.close < pool.lowerBoundary ->
                             "SWEPT"
@@ -2409,40 +2408,51 @@ private object NewLiquidityEngine {
                     }
                 }
 
-                event = LiquidityEvent(
+            poolEvents.add(
+                LiquidityEvent(
                     pool = pool,
                     status = status,
                     eventAt = candle.epoch,
                     candleClose = candle.close,
-                    penetrationPrice = if (
-                        pool.type == "BUY_SIDE_LIQUIDITY"
-                    ) candle.high else candle.low
+                    penetrationPrice =
+                        if (pool.type == "BUY_SIDE_LIQUIDITY") {
+                            candle.high
+                        } else {
+                            candle.low
+                        }
                 )
+            )
 
+            // A sweep or breakout ends active monitoring
+            // of this original liquidity zone.
+            if (status == "SWEPT" || status == "BREAKOUT") {
                 break
             }
+        }
 
-            if (event != null) {
-                results.add(event)
-                continue
-            }
+        // Check the currently open H1 candle only if
+        // no confirmed sweep or breakout has occurred.
 
-            // No confirmed event: check the currently open H1 candle.
+        val terminalEvent = poolEvents.any {
+            it.status == "SWEPT" || it.status == "BREAKOUT"
+        }
+
+        if (!terminalEvent) {
 
             val openCandle = sorted.lastOrNull {
+                it.epoch <= nowEpoch &&
                 it.epoch + H1_SECONDS > nowEpoch &&
                 it.epoch > pool.lastTouchAt
             }
 
             val pending = openCandle?.let { candle ->
 
-                val penetrated = if (
-                    pool.type == "BUY_SIDE_LIQUIDITY"
-                ) {
-                    candle.high > pool.upperBoundary
-                } else {
-                    candle.low < pool.lowerBoundary
-                }
+                val penetrated =
+                    if (pool.type == "BUY_SIDE_LIQUIDITY") {
+                        candle.high > pool.upperBoundary
+                    } else {
+                        candle.low < pool.lowerBoundary
+                    }
 
                 if (penetrated) {
                     LiquidityEvent(
@@ -2450,17 +2460,29 @@ private object NewLiquidityEngine {
                         status = "PENDING",
                         eventAt = candle.epoch,
                         candleClose = candle.close,
-                        penetrationPrice = if (
-                            pool.type == "BUY_SIDE_LIQUIDITY"
-                        ) candle.high else candle.low
+                        penetrationPrice =
+                            if (pool.type == "BUY_SIDE_LIQUIDITY") {
+                                candle.high
+                            } else {
+                                candle.low
+                            }
                     )
                 } else {
                     null
                 }
             }
 
-            results.add(
-                pending ?: LiquidityEvent(
+            if (pending != null) {
+                poolEvents.add(pending)
+            }
+        }
+
+        // Only report UNTOUCHED if no historical or pending
+        // penetration event exists for this pool.
+
+        if (poolEvents.isEmpty()) {
+            poolEvents.add(
+                LiquidityEvent(
                     pool = pool,
                     status = "UNTOUCHED",
                     eventAt = 0L,
@@ -2470,11 +2492,14 @@ private object NewLiquidityEngine {
             )
         }
 
-        return results.sortedByDescending {
-            it.pool.lastTouchAt
-        }
+        results.addAll(poolEvents)
     }
-  
+
+    return results.sortedByDescending {
+        it.eventAt
+    }
+}
+
     // =============================================================
     // STAGE 5 — SEPARATE SWEEP AND RETEST MONITOR
     // =============================================================
