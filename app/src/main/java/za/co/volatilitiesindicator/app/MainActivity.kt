@@ -2017,7 +2017,7 @@ private fun calculateLiquidityLevels(
 ): List<LiquidityLevel> {
 
     val nowEpoch = System.currentTimeMillis() / 1000L
-
+    val cutoffEpoch = nowEpoch - (24L * 60L * 60L)
     val sorted = candles
         .filter { it.epoch + 3600L <= nowEpoch }
         .sortedBy { it.epoch }
@@ -2041,7 +2041,9 @@ private fun calculateLiquidityLevels(
                 price > sorted[i + 2].high
         }
 
-        if (confirmed) pivots.add(i to price)
+        if (confirmed && sorted[i].epoch >= cutoffEpoch) {
+    pivots.add(i to price)
+        }
     }
 
     val tolerance = 0.0015
