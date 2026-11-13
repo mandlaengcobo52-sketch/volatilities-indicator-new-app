@@ -1466,7 +1466,7 @@ if (sharedBullishLiquidity.isEmpty()) {
 } else {
     sharedBullishLiquidity.forEachIndexed { index, level ->
         detailsContainer.addView(label(
-            "SSL ${index + 1}: ${formatMarketPrice(level.price)} — ${if (level.sweepStatus == "SWEPT") "SWEPT" else "WAITING"}",
+            "SSL ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepStatus == "SWEPT") formatMarketTime(level.sweepAt) else "WAITING"}",
             11f, green, false
         ))
     }
@@ -1479,7 +1479,7 @@ if (sharedBearishLiquidity.isEmpty()) {
 } else {
     sharedBearishLiquidity.forEachIndexed { index, level ->
         detailsContainer.addView(label(
-            "BSL ${index + 1}: ${formatMarketPrice(level.price)} — ${if (level.sweepStatus == "SWEPT") "SWEPT" else "WAITING"}",
+            "BSL ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepStatus == "SWEPT") formatMarketTime(level.sweepAt) else "WAITING"}",
             11f, red, false
         ))
     }
