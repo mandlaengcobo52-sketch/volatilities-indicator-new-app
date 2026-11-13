@@ -614,7 +614,6 @@ executionMode = appPrefs.getString("executionMode", "DEMO") ?: "DEMO"
 selectedTab = appPrefs.getString("selectedTab", "Home") ?: "Home"
         if (selectedTab == "Account") selectedTab = "My profile"
 authToken = authPrefs.getString("mobile_auth_token", "").orEmpty()
-
 render()
 handleOAuthCallback(intent)
 if (authToken.isNotBlank()) refreshProfile(showMessage = false)
@@ -629,7 +628,7 @@ if (authToken.isNotBlank() && savedToken.isNotBlank() &&
     intent?.data?.host != "oauth-callback") {
     connectWithToken(savedToken)
 }
-}
+    }
 
     override fun onResume() {
         super.onResume()
@@ -1232,6 +1231,7 @@ private fun addHeader() {
 
         items.forEach { item ->
             val b = button("  $item", false)
+
             b.gravity = Gravity.START or Gravity.CENTER_VERTICAL
 
             b.setOnClickListener {
@@ -1428,12 +1428,9 @@ page.addView(monitorHeader, matchWrap())
             val analysisView = label(
                                 """
                 1. LIQUIDITY SWEEP: WAITING
-                2. MARKET STRUCTURE: WAITING
-                3. MSS: 0%
-                4. BULLISH / BEARISH CHOCH: NO
-                5. MOMENTUM: 0%
-                6. PTPE: 0%
-                7. MASTER ENGINE: WAITING
+                2. MSS: WAITING
+                3. BULLISH / BEARISH CHOCH: WAITING
+                4. MASTER ENGINE: WAITING
                 """.trimIndent(),
                 10f, yellow, false
             ).apply {
@@ -1453,7 +1450,7 @@ page.addView(monitorHeader, matchWrap())
                 setPadding(dp(8), dp(8), dp(8), dp(4))
                 background = shape(panel, accent, 8, 1)
             }
-            detailsContainer.addView(label("DETAILED ANALYSIS — EXECUTION SEQUENCE", 12f, accent, true))
+            detailsContainer.addView(label("MODULE RESULTS", 12f, accent, true))
 // SIMPLE LIQUIDITY DISPLAY — NUMERIC LEVELS AND SWEEP STATUS ONLY
 // Bullish liquidity = SSL. Bearish liquidity = BSL.
 
@@ -1465,7 +1462,7 @@ if (sharedBullishLiquidity.isEmpty()) {
 } else {
     sharedBullishLiquidity.forEachIndexed { index, level ->
         detailsContainer.addView(label(
-            "${level.sweepStatus} ${if (level.sweepAt > 0L) formatMarketTime(level.sweepAt) else ""}",
+            "PRICE: ${formatMarketPrice(level.price)} | ${level.sweepStatus} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepAt > 0L) formatMarketTime(level.sweepAt) else "—"}",
             11f, green, false
         ))
     }
@@ -1478,7 +1475,7 @@ if (sharedBearishLiquidity.isEmpty()) {
 } else {
     sharedBearishLiquidity.forEachIndexed { index, level ->
         detailsContainer.addView(label(
-            "${level.sweepStatus} ${if (level.sweepAt > 0L) formatMarketTime(level.sweepAt) else ""}",
+            "PRICE: ${formatMarketPrice(level.price)} | ${level.sweepStatus} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepAt > 0L) formatMarketTime(level.sweepAt) else "—"}",
             11f, red, false
         ))
     }
@@ -1492,20 +1489,7 @@ val qualifyingBsl = sharedBearishLiquidity.firstOrNull {
     it.sweepStatus == "SWEPT AND CONTINUATION" ||
 it.sweepStatus == "SWEPT AND REVERSED"
 }
-detailsContainer.addView(label("ANALYSIS - MARKET STRUCTURE AND CHOCH", 13f, green, true))
-detailsContainer.addView(label("MARKET STRUCTURE", 12f, green, true))
-val sharedStructures = sharedAnalysis?.structures.orEmpty()
-if (sharedStructures.isEmpty()) {
-    detailsContainer.addView(label("No confirmed market structure available.", 11f, muted, false))
-} else {
-    sharedStructures.forEach { event ->
-        detailsContainer.addView(label(
-            "${event.number}. ${event.direction} | PRICE: ${formatMarketPrice(event.price)} | CREATED: ${formatMarketTime(event.startedAt)}",
-            11f, white, false
-        ))
-    }
-}
-
+// MSS and CHOCH are displayed independently; market-structure history is not shown.
 detailsContainer.addView(label("CHANGE OF CHARACTER (CHOCH)", 12f, yellow, true))
 val sharedChochs = sharedAnalysis?.chochs.orEmpty()
 if (sharedChochs.isEmpty()) {
@@ -1529,14 +1513,6 @@ addDetailedStatus("mss",
     "MSS CONFIRMATION: ${sharedAnalysis?.mssText ?: "WAITING"}",
     if (sharedAnalysis?.mssText?.contains("CONFIRMED") == true) green else yellow, true)
 
-addDetailedStatus("momentum",
-    "MOMENTUM: ${sharedAnalysis?.momentumText ?: "WAITING"}",
-    if (sharedAnalysis?.momentumQualified == true) green else yellow, false)
-
-addDetailedStatus("ptpe",
-    "PTPE: ${String.format(java.util.Locale.US, "%.1f", sharedAnalysis?.ptpeProbability ?: 0.0)}%",
-    if ((sharedAnalysis?.ptpeProbability ?: 0.0) > 55.0) green else yellow, false)
-
 addDetailedStatus("engine",
     "MASTER ENGINE: ${if (sharedAnalysis?.qualified == true) "QUALIFIED" else "WAITING"}",
     if (sharedAnalysis?.qualified == true) green else yellow, true)
@@ -1544,38 +1520,6 @@ addDetailedStatus("engine",
 detailedAnalysisViews[symbol] = detailedViews
 
             
-// =========================================================
-// SUPPORT AND RESISTANCE
-// =========================================================
-    val candles = marketDataCandles[symbol].orEmpty()
-
-    val currentPrice = marketDataPrices[symbol]
-
-val supports = calculateSupportResistance(candles, true, currentPrice)
-val resistances = calculateSupportResistance(candles, false, currentPrice)
-
-    detailsContainer.addView(label("SUPPORT LEVELS", 12f, green, true))
-
-    supports.take(2).forEachIndexed { index, level ->
-        detailsContainer.addView(
-            label(
-                "S${index + 1}: ${formatMarketPrice(level.price)} | ${formatMarketTime(level.createdAt)}",
-                11f, green, false
-            )
-        )
-    }
-
-    detailsContainer.addView(label("RESISTANCE LEVELS", 12f, red, true))
-
-    resistances.take(2).forEachIndexed { index, level ->
-        detailsContainer.addView(
-            label(
-                "R${index + 1}: ${formatMarketPrice(level.price)} | ${formatMarketTime(level.createdAt)}",
-                11f, red, false
-            )
-        )
-    }
-
     row.addView(detailsContainer, matchWrap().apply { topMargin = dp(7) })
             // Index monitor rows are display-only.
             row.isClickable = false
@@ -1591,7 +1535,7 @@ headingRow.setOnClickListener {
     detailsContainer.visibility = if (isExpanded) View.GONE else View.VISIBLE
     expandIndicator.text = if (isExpanded) "⌄" else "⌃"
 }
-            monitorCard.addView(row, matchWrap().apply { bottomMargin = dp(6) })
+monitorCard.addView(row, matchWrap().apply { bottomMargin = dp(6) })
         }
         page.addView(monitorCard, matchWrap().apply { bottomMargin = dp(12) })
         if (connected && !marketDataRequested) {
@@ -1826,7 +1770,7 @@ val originalTarget = tracked?.target?.takeIf { it.isFinite() && it > 0.0 }
                         val sent = derivApiClient.send(JSONObject().put("sell", contractId).put("price", 0).put("req_id", nextTradeRequestId()))
                         if (!sent) toast("Unable to send close request.") else toast("Close request sent for contract $contractId.")
                     }
-                        .show()
+                    .show()
             }
             }, matchWrap().apply { topMargin = dp(8) })
         runningCard.addView(row, matchWrap().apply { topMargin = dp(7) })
@@ -2128,6 +2072,7 @@ for (i in lastPivotIndex + 1 until sorted.size - 1) {
         sweepStatus = "SWEPT AND REVERSED"
         break
     }
+
     // A failed second-candle confirmation invalidates the attempt.
     sweepAt = second.epoch
     sweepStatus = "EXPIRED / INVALIDATED"
@@ -2182,6 +2127,15 @@ private data class OrderBlockAnalysis(
 )
 
 private fun calculateOrderBlocks(
+    candles: List<DerivApiClient.Candle>
+): OrderBlockAnalysis {
+
+    val sorted = candles.sortedBy { it.epoch }
+
+    if (sorted.size < 10) {
+        return OrderBlockAnalysis(emptyList(), emptyList())
+    }
+    private fun calculateOrderBlocks(
     candles: List<DerivApiClient.Candle>
 ): OrderBlockAnalysis {
 
@@ -2474,7 +2428,6 @@ private fun calculateMarketStructure(
                 }
             }
         }
-
         val newTrend = when {
             latestHighClass == "HH" &&
                 latestLowClass == "HL" -> "BULLISH"
@@ -2709,7 +2662,7 @@ private fun calculateSupportResistance(
     candles: List<DerivApiClient.Candle>,
     support: Boolean,
     currentPrice: Double? = null
-    ): List<SupportResistanceLevel> {
+): List<SupportResistanceLevel> {
 
     if (candles.size < 5) return emptyList()
     val sevenDaysAgo =
@@ -2776,7 +2729,6 @@ private fun calculateSupportResistance(
                 candles.lastIndex,
                 pivotPosition + 6
             )
-
             val nextCandles = candles.subList(
                 pivotPosition + 1,
                 endPosition + 1
@@ -2986,22 +2938,13 @@ val direction = activeTradeDirection ?: calculatedDirection
             setTextColor(if (decision.mssText.contains("CONFIRMED")) green else yellow)
         }
 
-        views["momentum"]?.apply {
-            text = "MOMENTUM: ${decision.momentumText}"
-            setTextColor(if (decision.momentumQualified) green else yellow)
-        }
-
-        views["ptpe"]?.apply {
-            text = "PTPE: ${String.format(java.util.Locale.US, "%.1f", decision.ptpeProbability)}%"
-            setTextColor(if (decision.ptpeProbability > 55.0) green else yellow)
-        }
-
         views["engine"]?.apply {
             text = "MASTER ENGINE: ${if (decision.qualified) "QUALIFIED" else "WAITING"}"
             setTextColor(if (decision.qualified) green else yellow)
         }
     }
     }
+
     val mssText = when {
         bullishMss -> "BULLISH CONFIRMED"
         bearishMss -> "BEARISH CONFIRMED"
@@ -3028,13 +2971,9 @@ val direction = activeTradeDirection ?: calculatedDirection
     val engineText = if (engineExecuted) "EXECUTED" else if (decision.qualified) "QUALIFIED" else "WAITING"
     val summary = listOf(
         "1. LIQUIDITY SWEEP: $liquidityText",
-        "2. MARKET STRUCTURE: ${marketDirection.ifBlank { "WAITING" }}",
-        "3. MSS: $mssText",
-        "4. $chochText",
-        "5. REVERSAL STATUS: $reversalText",
-        "6. MOMENTUM: ${String.format(java.util.Locale.US, "%.0f", momentumPercent)}%",
-        "7. PTPE: ${String.format(java.util.Locale.US, "%.1f", ptpe)}%",
-        "8. MASTER ENGINE: $engineText"
+        "2. MSS: $mssText",
+        "3. $chochText",
+        "4. MASTER ENGINE: $engineText"
     ).joinToString("\n")
 
     dashboardAnalysisViews[symbol]?.let { analysisView ->
@@ -3042,12 +2981,8 @@ val direction = activeTradeDirection ?: calculatedDirection
         val colouredSummary = SpannableStringBuilder()
         val qualifiedConditions = listOf(
             bullishSweep || bearishSweep,
-            marketDirection == "BULLISH" || marketDirection == "BEARISH",
             bullishMss || bearishMss,
             bullishChoch || bearishChoch,
-            false,
-            bullishMomentum || bearishMomentum,
-            ptpe > 55.0,
             engineExecuted || decision.qualified
         )
         lines.forEachIndexed { index, line ->
@@ -3096,7 +3031,6 @@ val direction = activeTradeDirection ?: calculatedDirection
 
     marketDataIndexes.forEach { symbol ->
         val candles = marketDataCandles[symbol].orEmpty()
-
         page.addView(sectionTitle(symbol))
 
         if (candles.isEmpty()) {
@@ -3623,7 +3557,8 @@ val direction = activeTradeDirection ?: calculatedDirection
                 topMargin = dp(4)
             }
         )
-    }
+        }
+
     // =========================================================
     // BOTTOM NAVIGATION
     // =========================================================
@@ -4167,8 +4102,9 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
     pendingTouchBySymbol.remove(order.symbol)
     touchExecutionLocks.remove(order.symbol)
     return@runOnUiThread
-    }
-    if (payout < order.stake * 1.30) {
+}
+
+if (payout < order.stake * 1.30) {
     if (order.proposalAttempts >= 20) {
         pendingTouchOrders.remove(requestId)
         pendingTouchBySymbol.remove(order.symbol)
