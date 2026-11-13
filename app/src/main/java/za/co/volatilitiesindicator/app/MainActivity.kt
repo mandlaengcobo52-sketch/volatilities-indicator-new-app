@@ -2528,23 +2528,52 @@ private fun evaluateMasterEngine(symbol: String) {
     val bullishLiquidity = liquidityResult.bullish
     val bearishLiquidity = liquidityResult.bearish
 
-    val latestBullishSweep = bullishLiquidity
-        .filter { it.sweepStatus.startsWith("SWEPT") && it.sweepAt > 0L }
-        .maxByOrNull { it.sweepAt }
-    val latestBearishSweep = bearishLiquidity
-        .filter { it.sweepStatus.startsWith("SWEPT") && it.sweepAt > 0L }
-        .maxByOrNull { it.sweepAt }
+    
+// SSL = liquidity below previous lows.
+// BSL = liquidity above previous highs.
+//
+// SSL continuation = BEARISH.
+// SSL reversal = BULLISH.
+// BSL continuation = BULLISH.
+// BSL reversal = BEARISH.
+
+val latestSslSweep = bullishLiquidity
+    .filter {
+        it.sweepStatus.startsWith("SWEPT") && it.sweepAt > 0L
+    }
+    .maxByOrNull { it.sweepAt }
+
+val latestBslSweep = bearishLiquidity
+    .filter {
+        it.sweepStatus.startsWith("SWEPT") && it.sweepAt > 0L
+    }
+    .maxByOrNull { it.sweepAt }
 
 val latestSweepTime = maxOf(
-    latestBullishSweep?.sweepAt ?: 0L,
-    latestBearishSweep?.sweepAt ?: 0L
+    latestSslSweep?.sweepAt ?: 0L,
+    latestBslSweep?.sweepAt ?: 0L
 )
 
-val bullishSweep = latestSweepTime > 0L &&
-    latestBullishSweep?.sweepAt == latestSweepTime
+val latestSslIsCurrent =
+    latestSweepTime > 0L &&
+    latestSslSweep?.sweepAt == latestSweepTime
 
-val bearishSweep = latestSweepTime > 0L &&
-    latestBearishSweep?.sweepAt == latestSweepTime
+val latestBslIsCurrent =
+    latestSweepTime > 0L &&
+    latestBslSweep?.sweepAt == latestSweepTime
+
+val bullishSweep =
+    (latestSslIsCurrent &&
+        latestSslSweep?.sweepStatus == "SWEPT AND REVERSED") ||
+    (latestBslIsCurrent &&
+        latestBslSweep?.sweepStatus == "SWEPT AND CONTINUATION")
+
+val bearishSweep =
+    (latestSslIsCurrent &&
+        latestSslSweep?.sweepStatus == "SWEPT AND CONTINUATION") ||
+    (latestBslIsCurrent &&
+        latestBslSweep?.sweepStatus == "SWEPT AND REVERSED")
+    
 
     val marketStructures = evaluateMarketStructureModule(candles)
     val chochEvents = evaluateChochModule(candles)
