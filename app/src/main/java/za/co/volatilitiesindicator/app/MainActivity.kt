@@ -2246,6 +2246,88 @@ private object NewLiquidityEngine {
             lows = lows
         )
     }
+    
+    // =============================================================
+    // STAGE 2 — EQUAL HIGH / EQUAL LOW LIQUIDITY POOLS
+    // =============================================================
+
+    data class LiquidityPool(
+        val type: String,
+        val anchorPrice: Double,
+        val lowerBoundary: Double,
+        val upperBoundary: Double,
+        val swings: List<SwingPoint>,
+        val firstTouchAt: Long,
+        val lastTouchAt: Long,
+        val touchCount: Int
+    )
+
+    fun identifyLiquidityPools(
+        swings: List<SwingPoint>
+    ): List<LiquidityPool> {
+
+        val pools = mutableListOf<LiquidityPool>()
+
+        fun buildPools(
+            points: List<SwingPoint>,
+            type: String
+        ) {
+            val sorted = points.sortedBy { it.price }
+            val used = mutableSetOf<Int>()
+
+            for (i in sorted.indices) {
+
+                if (i in used) continue
+
+                val anchor = sorted[i]
+                val tolerance = anchor.atrAtExtreme * 0.10
+
+                if (tolerance <= 0.0) continue
+
+                // Every member is compared with the fixed anchor.
+                // This prevents unlimited chain grouping.
+
+                val group = sorted.indices.filter { index ->
+                    index !in used &&
+                    kotlin.math.abs(
+                        sorted[index].price - anchor.price
+                    ) <= tolerance
+                }
+
+                if (group.size < 2) continue
+
+                val members = group.map { sorted[it] }
+
+                group.forEach { used.add(it) }
+
+                pools.add(
+                    LiquidityPool(
+                        type = type,
+                        anchorPrice = anchor.price,
+                        lowerBoundary = members.minOf { it.price },
+                        upperBoundary = members.maxOf { it.price },
+                        swings = members,
+                        firstTouchAt = members.minOf { it.swingAt },
+                        lastTouchAt = members.maxOf { it.swingAt },
+                        touchCount = members.size
+                    )
+                )
+            }
+        }
+
+        buildPools(
+            swings.filter { it.type == "SWING_HIGH" },
+            "BUY_SIDE_LIQUIDITY"
+        )
+
+        buildPools(
+            swings.filter { it.type == "SWING_LOW" },
+            "SELL_SIDE_LIQUIDITY"
+        )
+
+        return pools.sortedByDescending { it.lastTouchAt }
+    }
+    
 }
 
 private data class LiquidityLevel(
