@@ -1466,7 +1466,7 @@ if (sharedBullishLiquidity.isEmpty()) {
 } else {
     sharedBullishLiquidity.forEachIndexed { index, level ->
         detailsContainer.addView(label(
-            "${level.sweepStatus} ${if (level.sweepAt > 0L) formatMarketTime(level.sweepAt) else ""}"
+            "${level.sweepStatus} ${if (level.sweepAt > 0L) formatMarketTime(level.sweepAt) else ""}",
             11f, green, false
         ))
     }
@@ -1479,7 +1479,7 @@ if (sharedBearishLiquidity.isEmpty()) {
 } else {
     sharedBearishLiquidity.forEachIndexed { index, level ->
         detailsContainer.addView(label(
-            "${level.sweepStatus} ${if (level.sweepAt > 0L) formatMarketTime(level.sweepAt) else ""}"
+            "${level.sweepStatus} ${if (level.sweepAt > 0L) formatMarketTime(level.sweepAt) else ""}",
             11f, red, false
         ))
     }
