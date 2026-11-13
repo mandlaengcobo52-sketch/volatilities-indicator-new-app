@@ -3452,8 +3452,79 @@ private fun evaluateMasterEngine(symbol: String) {
     if (candles.size < 20) return
 
     val latest = candles.last()
-    val bullishLiquidity = calculateLiquidityLevels(candles, true)
-    val bearishLiquidity = calculateLiquidityLevels(candles, false)
+    
+    // NEW LIQUIDITY ENGINE — LIVE EVALUATION
+
+    val swingResult = NewLiquidityEngine.identifySwings(
+        candles,
+        nowEpoch
+    )
+
+    val confirmedSwings =
+        swingResult.highs + swingResult.lows
+
+    val liquidityPools =
+        NewLiquidityEngine.identifyLiquidityPools(
+            confirmedSwings
+        )
+
+    val liquidityEvents =
+        NewLiquidityEngine.classifyLiquidityEvents(
+            liquidityPools,
+            allCandles,
+            nowEpoch
+        )
+
+    val updatedLiquidityPools =
+        NewLiquidityEngine.applyZoneInvalidation(
+            liquidityPools,
+            liquidityEvents
+        )
+
+    val liquidityRetests =
+        NewLiquidityEngine.monitorLiquidityRetests(
+            liquidityEvents,
+            allCandles,
+            nowEpoch
+        )
+
+    val liquidityStrengths =
+        NewLiquidityEngine.assessLiquidityStrength(
+            updatedLiquidityPools,
+            liquidityEvents,
+            nowEpoch
+        )
+
+    // Sell-side liquidity swept = bullish liquidity signal.
+    val bullishLiquidity = liquidityEvents
+        .filter {
+            it.pool.type == "SELL_SIDE_LIQUIDITY"
+        }
+        .map {
+            LiquidityLevel(
+                price = it.pool.anchorPrice,
+                createdAt = it.pool.firstTouchAt,
+                sweepAt = if (it.status == "SWEPT") it.eventAt else 0L,
+                occurrences = it.pool.touchCount,
+                sweepStatus = it.status
+            )
+        }
+
+    // Buy-side liquidity swept = bearish liquidity signal.
+    val bearishLiquidity = liquidityEvents
+        .filter {
+            it.pool.type == "BUY_SIDE_LIQUIDITY"
+        }
+        .map {
+            LiquidityLevel(
+                price = it.pool.anchorPrice,
+                createdAt = it.pool.firstTouchAt,
+                sweepAt = if (it.status == "SWEPT") it.eventAt else 0L,
+                occurrences = it.pool.touchCount,
+                sweepStatus = it.status
+            )
+        }
+        
     (bullishLiquidity + bearishLiquidity)
     .filter { it.sweepStatus == "SWEPT" && it.sweepAt > 0L }
     .forEach { level ->
