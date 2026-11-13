@@ -2533,7 +2533,7 @@ fun monitorLiquidityRetests(
 
     for (event in events) {
 
-        // Retests are monitored only after a confirmed sweep.
+        // Only confirmed sweeps can produce retests.
         if (event.status != "SWEPT") continue
 
         val pool = event.pool
@@ -2544,6 +2544,16 @@ fun monitorLiquidityRetests(
 
         var interactionRecorded = false
         var crossedRecorded = false
+        var enteredZone = false
+
+        // The sweep candle must have closed on the correct
+        // approach side before a retest can be considered.
+        var approachedFromCorrectSide =
+            if (pool.type == "BUY_SIDE_LIQUIDITY") {
+                event.candleClose < pool.lowerBoundary
+            } else {
+                event.candleClose > pool.upperBoundary
+            }
 
         for (candle in postSweepCandles) {
 
@@ -2551,42 +2561,90 @@ fun monitorLiquidityRetests(
 
             if (pool.type == "BUY_SIDE_LIQUIDITY") {
 
-                // Price approaches the BSL zone from below.
-                val enteredZone =
+                val touchedZone =
                     candle.high >= pool.lowerBoundary
 
-                if (!enteredZone) continue
+                when {
 
-                status = when {
-                    candle.close < pool.lowerBoundary ->
-                        "RETEST_SUCCESS"
+                    // Price entered the zone and then rejected
+                    // back below its lower boundary.
+                    enteredZone &&
+                    candle.close < pool.lowerBoundary -> {
+                        status = "RETEST_SUCCESS"
+                    }
 
-                    candle.close <= pool.upperBoundary ->
-                        "ZONE_INTERACTION"
+                    // Price reaches the zone from below.
+                    approachedFromCorrectSide &&
+                    touchedZone &&
+                    candle.close <= pool.upperBoundary -> {
+                        status = "ZONE_INTERACTION"
+                        enteredZone = true
+                    }
 
-                    else ->
-                        "ZONE_CROSSED"
+                    // Price crosses completely above the zone.
+                    approachedFromCorrectSide &&
+                    touchedZone &&
+                    candle.close > pool.upperBoundary -> {
+                        status = "ZONE_CROSSED"
+                        enteredZone = false
+                        approachedFromCorrectSide = false
+                    }
+
+                    // Price returns below the zone.
+                    candle.close < pool.lowerBoundary -> {
+                        approachedFromCorrectSide = true
+                    }
+
+                    // Price remains above the zone.
+                    candle.close > pool.upperBoundary -> {
+                        enteredZone = false
+                        approachedFromCorrectSide = false
+                    }
                 }
 
             } else if (
                 pool.type == "SELL_SIDE_LIQUIDITY"
             ) {
 
-                // Price approaches the SSL zone from above.
-                val enteredZone =
+                val touchedZone =
                     candle.low <= pool.upperBoundary
 
-                if (!enteredZone) continue
+                when {
 
-                status = when {
-                    candle.close > pool.upperBoundary ->
-                        "RETEST_SUCCESS"
+                    // Price entered the zone and then rejected
+                    // back above its upper boundary.
+                    enteredZone &&
+                    candle.close > pool.upperBoundary -> {
+                        status = "RETEST_SUCCESS"
+                    }
 
-                    candle.close >= pool.lowerBoundary ->
-                        "ZONE_INTERACTION"
+                    // Price reaches the zone from above.
+                    approachedFromCorrectSide &&
+                    touchedZone &&
+                    candle.close >= pool.lowerBoundary -> {
+                        status = "ZONE_INTERACTION"
+                        enteredZone = true
+                    }
 
-                    else ->
-                        "ZONE_CROSSED"
+                    // Price crosses completely below the zone.
+                    approachedFromCorrectSide &&
+                    touchedZone &&
+                    candle.close < pool.lowerBoundary -> {
+                        status = "ZONE_CROSSED"
+                        enteredZone = false
+                        approachedFromCorrectSide = false
+                    }
+
+                    // Price returns above the zone.
+                    candle.close > pool.upperBoundary -> {
+                        approachedFromCorrectSide = true
+                    }
+
+                    // Price remains below the zone.
+                    candle.close < pool.lowerBoundary -> {
+                        enteredZone = false
+                        approachedFromCorrectSide = false
+                    }
                 }
             }
 
@@ -2594,7 +2652,7 @@ fun monitorLiquidityRetests(
 
                 "ZONE_INTERACTION" -> {
 
-                    // Preserve only the first interaction.
+                    // Record only the first interaction.
                     if (!interactionRecorded) {
                         results.add(
                             RetestEvent(
@@ -2609,12 +2667,12 @@ fun monitorLiquidityRetests(
                         interactionRecorded = true
                     }
 
-                    // Continue monitoring later candles.
+                    // Continue monitoring for rejection.
                 }
 
                 "ZONE_CROSSED" -> {
 
-                    // Preserve the first crossing separately.
+                    // Record the first complete crossing.
                     if (!crossedRecorded) {
                         results.add(
                             RetestEvent(
@@ -2630,7 +2688,8 @@ fun monitorLiquidityRetests(
                     }
 
                     // Crossing is not a successful retest.
-                    // Continue monitoring later candles.
+                    // A fresh approach from the correct side
+                    // is required before another attempt.
                 }
 
                 "RETEST_SUCCESS" -> {
@@ -2645,8 +2704,7 @@ fun monitorLiquidityRetests(
                         )
                     )
 
-                    // A successful retest ends monitoring
-                    // for this original sweep.
+                    // Successful retest ends this sweep cycle.
                     break
                 }
             }
