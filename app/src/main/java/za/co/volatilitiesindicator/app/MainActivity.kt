@@ -2259,7 +2259,8 @@ private object NewLiquidityEngine {
         val swings: List<SwingPoint>,
         val firstTouchAt: Long,
         val lastTouchAt: Long,
-        val touchCount: Int
+        val touchCount: Int,
+        val active: Boolean = true
     )
 
     fun identifyLiquidityPools(
