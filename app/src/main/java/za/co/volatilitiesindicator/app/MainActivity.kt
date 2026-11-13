@@ -1999,6 +1999,255 @@ private fun registerCurrentPriceView(symbol: String, section: String, view: Text
 // ANALYSIS - LIQUIDITY AND LIQUIDITY SWEEP
 // =============================================================
 
+// =============================================================
+// NEW LIQUIDITY ENGINE — STAGE 1
+// ATR-BASED SWING IDENTIFICATION
+// =============================================================
+
+private object NewLiquidityEngine {
+
+    private const val ATR_PERIOD = 14
+    private const val ATR_MULTIPLIER = 1.0
+    private const val H1_SECONDS = 3600L
+
+    data class SwingPoint(
+        val type: String,
+        val price: Double,
+        val swingAt: Long,
+        val confirmedAt: Long,
+        val atrAtExtreme: Double
+    )
+
+    data class SwingResult(
+        val highs: List<SwingPoint>,
+        val lows: List<SwingPoint>
+    )
+
+    fun identifySwings(
+        candles: List<DerivApiClient.Candle>,
+        nowEpoch: Long = System.currentTimeMillis() / 1000L
+    ): SwingResult {
+
+        val sorted = candles
+            .filter {
+                it.epoch + H1_SECONDS <= nowEpoch &&
+                it.high > 0.0 &&
+                it.low > 0.0 &&
+                it.high >= it.low
+            }
+            .distinctBy { it.epoch }
+            .sortedBy { it.epoch }
+
+        if (sorted.size <= ATR_PERIOD + 1) {
+            return SwingResult(emptyList(), emptyList())
+        }
+
+        // Calculate True Range.
+
+        val tr = mutableListOf<Double>()
+
+        for (i in sorted.indices) {
+
+            val previousClose =
+                if (i == 0) sorted[i].close
+                else sorted[i - 1].close
+
+            val candle = sorted[i]
+
+            tr.add(
+                maxOf(
+                    candle.high - candle.low,
+                    kotlin.math.abs(candle.high - previousClose),
+                    kotlin.math.abs(candle.low - previousClose)
+                )
+            )
+        }
+
+        // Calculate Wilder ATR(14).
+
+        val atrValues = MutableList(sorted.size) { 0.0 }
+
+        var atr = tr.subList(1, ATR_PERIOD + 1).average()
+
+        atrValues[ATR_PERIOD] = atr
+
+        for (i in ATR_PERIOD + 1 until sorted.size) {
+
+            atr = (
+                atr * (ATR_PERIOD - 1) + tr[i]
+            ) / ATR_PERIOD
+
+            atrValues[i] = atr
+        }
+
+        val highs = mutableListOf<SwingPoint>()
+        val lows = mutableListOf<SwingPoint>()
+
+        var direction = 0
+
+        var candidateHigh = 0.0
+        var candidateHighIndex = -1
+        var candidateHighAtr = 0.0
+
+        var candidateLow = Double.MAX_VALUE
+        var candidateLowIndex = -1
+        var candidateLowAtr = 0.0
+
+        for (i in ATR_PERIOD + 1 until sorted.size) {
+
+            val candle = sorted[i]
+            val currentAtr = atrValues[i]
+
+            if (currentAtr <= 0.0) continue
+
+            if (candidateHighIndex == -1) {
+                candidateHigh = candle.high
+                candidateHighIndex = i
+                candidateHighAtr = currentAtr
+            }
+
+            if (candidateLowIndex == -1) {
+                candidateLow = candle.low
+                candidateLowIndex = i
+                candidateLowAtr = currentAtr
+            }
+
+            if (direction == 0) {
+
+                if (candle.high > candidateHigh) {
+                    candidateHigh = candle.high
+                    candidateHighIndex = i
+                    candidateHighAtr = currentAtr
+                }
+
+                if (candle.low < candidateLow) {
+                    candidateLow = candle.low
+                    candidateLowIndex = i
+                    candidateLowAtr = currentAtr
+                }
+
+                val highReversal =
+                    candidateHighIndex < i &&
+                    candle.close <=
+                        candidateHigh - candidateHighAtr
+
+                val lowReversal =
+                    candidateLowIndex < i &&
+                    candle.close >=
+                        candidateLow + candidateLowAtr
+
+                // If both reversals appear in one candle,
+                // do not invent an intrabar price sequence.
+                if (highReversal && lowReversal) continue
+
+                if (highReversal) {
+
+                    highs.add(
+                        SwingPoint(
+                            "SWING_HIGH",
+                            candidateHigh,
+                            sorted[candidateHighIndex].epoch,
+                            candle.epoch,
+                            candidateHighAtr
+                        )
+                    )
+
+                    direction = -1
+
+                    candidateLow = candle.low
+                    candidateLowIndex = i
+                    candidateLowAtr = currentAtr
+
+                } else if (lowReversal) {
+
+                    lows.add(
+                        SwingPoint(
+                            "SWING_LOW",
+                            candidateLow,
+                            sorted[candidateLowIndex].epoch,
+                            candle.epoch,
+                            candidateLowAtr
+                        )
+                    )
+
+                    direction = 1
+
+                    candidateHigh = candle.high
+                    candidateHighIndex = i
+                    candidateHighAtr = currentAtr
+                }
+
+            } else if (direction == 1) {
+
+                if (candle.high > candidateHigh) {
+                    candidateHigh = candle.high
+                    candidateHighIndex = i
+                    candidateHighAtr = currentAtr
+                }
+
+                if (
+                    candidateHighIndex < i &&
+                    candle.close <=
+                        candidateHigh - candidateHighAtr
+                ) {
+
+                    highs.add(
+                        SwingPoint(
+                            "SWING_HIGH",
+                            candidateHigh,
+                            sorted[candidateHighIndex].epoch,
+                            candle.epoch,
+                            candidateHighAtr
+                        )
+                    )
+
+                    direction = -1
+
+                    candidateLow = candle.low
+                    candidateLowIndex = i
+                    candidateLowAtr = currentAtr
+                }
+
+            } else if (direction == -1) {
+
+                if (candle.low < candidateLow) {
+                    candidateLow = candle.low
+                    candidateLowIndex = i
+                    candidateLowAtr = currentAtr
+                }
+
+                if (
+                    candidateLowIndex < i &&
+                    candle.close >=
+                        candidateLow + candidateLowAtr
+                ) {
+
+                    lows.add(
+                        SwingPoint(
+                            "SWING_LOW",
+                            candidateLow,
+                            sorted[candidateLowIndex].epoch,
+                            candle.epoch,
+                            candidateLowAtr
+                        )
+                    )
+
+                    direction = 1
+
+                    candidateHigh = candle.high
+                    candidateHighIndex = i
+                    candidateHighAtr = currentAtr
+                }
+            }
+        }
+
+        return SwingResult(
+            highs = highs,
+            lows = lows
+        )
+    }
+}
+
 private data class LiquidityLevel(
     val price: Double,
     val createdAt: Long,
