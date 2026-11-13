@@ -2474,6 +2474,123 @@ private object NewLiquidityEngine {
             it.pool.lastTouchAt
         }
     }
+  
+    // =============================================================
+    // STAGE 5 — SEPARATE SWEEP AND RETEST MONITOR
+    // =============================================================
+
+    data class RetestEvent(
+        val originalSweepAt: Long,
+        val originalSweepStatus: String,
+        val retestStatus: String,
+        val retestAt: Long,
+        val closePrice: Double
+    )
+
+    fun monitorLiquidityRetests(
+        events: List<LiquidityEvent>,
+        candles: List<DerivApiClient.Candle>,
+        nowEpoch: Long = System.currentTimeMillis() / 1000L
+    ): List<RetestEvent> {
+
+        val sorted = candles
+            .filter {
+                it.high > 0.0 &&
+                it.low > 0.0 &&
+                it.high >= it.low &&
+                it.epoch + H1_SECONDS <= nowEpoch
+            }
+            .distinctBy { it.epoch }
+            .sortedBy { it.epoch }
+
+        val results = mutableListOf<RetestEvent>()
+
+        for (event in events) {
+
+            // Retests are monitored only after a confirmed sweep.
+            if (event.status != "SWEPT") continue
+
+            val pool = event.pool
+
+            val postSweepCandles = sorted.filter {
+                it.epoch > event.eventAt
+            }
+
+            var retest: RetestEvent? = null
+
+            for (candle in postSweepCandles) {
+
+                if (pool.type == "BUY_SIDE_LIQUIDITY") {
+
+                    // Price must approach the BSL zone from below.
+                    val enteredZone =
+                        candle.high >= pool.lowerBoundary
+
+                    if (!enteredZone) continue
+
+                    val status = when {
+                        candle.close < pool.lowerBoundary ->
+                            "RETEST_SUCCESS"
+
+                        candle.close <= pool.upperBoundary ->
+                            "ZONE_INTERACTION"
+
+                        else ->
+                            "ZONE_CROSSED"
+                    }
+
+                    retest = RetestEvent(
+                        originalSweepAt = event.eventAt,
+                        originalSweepStatus = event.status,
+                        retestStatus = status,
+                        retestAt = candle.epoch,
+                        closePrice = candle.close
+                    )
+
+                    break
+
+                } else if (
+                    pool.type == "SELL_SIDE_LIQUIDITY"
+                ) {
+
+                    // Price must approach the SSL zone from above.
+                    val enteredZone =
+                        candle.low <= pool.upperBoundary
+
+                    if (!enteredZone) continue
+
+                    val status = when {
+                        candle.close > pool.upperBoundary ->
+                            "RETEST_SUCCESS"
+
+                        candle.close >= pool.lowerBoundary ->
+                            "ZONE_INTERACTION"
+
+                        else ->
+                            "ZONE_CROSSED"
+                    }
+
+                    retest = RetestEvent(
+                        originalSweepAt = event.eventAt,
+                        originalSweepStatus = event.status,
+                        retestStatus = status,
+                        retestAt = candle.epoch,
+                        closePrice = candle.close
+                    )
+
+                    break
+                }
+            }
+
+            if (retest != null) {
+                results.add(retest)
+            }
+        }
+
+        return results.sortedByDescending {
+            it.retestAt
+        }
+    }
     
 }
 
