@@ -2512,110 +2512,152 @@ fun classifyLiquidityEvents(
         val closePrice: Double
     )
 
-    fun monitorLiquidityRetests(
-        events: List<LiquidityEvent>,
-        candles: List<DerivApiClient.Candle>,
-        nowEpoch: Long = System.currentTimeMillis() / 1000L
-    ): List<RetestEvent> {
+    
+fun monitorLiquidityRetests(
+    events: List<LiquidityEvent>,
+    candles: List<DerivApiClient.Candle>,
+    nowEpoch: Long = System.currentTimeMillis() / 1000L
+): List<RetestEvent> {
 
-        val sorted = candles
-            .filter {
-                it.high > 0.0 &&
-                it.low > 0.0 &&
-                it.high >= it.low &&
-                it.epoch + H1_SECONDS <= nowEpoch
-            }
-            .distinctBy { it.epoch }
-            .sortedBy { it.epoch }
+    val sorted = candles
+        .filter {
+            it.high > 0.0 &&
+            it.low > 0.0 &&
+            it.high >= it.low &&
+            it.epoch + H1_SECONDS <= nowEpoch
+        }
+        .distinctBy { it.epoch }
+        .sortedBy { it.epoch }
 
-        val results = mutableListOf<RetestEvent>()
+    val results = mutableListOf<RetestEvent>()
 
-        for (event in events) {
+    for (event in events) {
 
-            // Retests are monitored only after a confirmed sweep.
-            if (event.status != "SWEPT") continue
+        // Retests are monitored only after a confirmed sweep.
+        if (event.status != "SWEPT") continue
 
-            val pool = event.pool
+        val pool = event.pool
 
-            val postSweepCandles = sorted.filter {
-                it.epoch > event.eventAt
-            }
+        val postSweepCandles = sorted.filter {
+            it.epoch > event.eventAt
+        }
 
-            var retest: RetestEvent? = null
+        var interactionRecorded = false
+        var crossedRecorded = false
 
-            for (candle in postSweepCandles) {
+        for (candle in postSweepCandles) {
 
-                if (pool.type == "BUY_SIDE_LIQUIDITY") {
+            var status: String? = null
 
-                    // Price must approach the BSL zone from below.
-                    val enteredZone =
-                        candle.high >= pool.lowerBoundary
+            if (pool.type == "BUY_SIDE_LIQUIDITY") {
 
-                    if (!enteredZone) continue
+                // Price approaches the BSL zone from below.
+                val enteredZone =
+                    candle.high >= pool.lowerBoundary
 
-                    val status = when {
-                        candle.close < pool.lowerBoundary ->
-                            "RETEST_SUCCESS"
+                if (!enteredZone) continue
 
-                        candle.close <= pool.upperBoundary ->
-                            "ZONE_INTERACTION"
+                status = when {
+                    candle.close < pool.lowerBoundary ->
+                        "RETEST_SUCCESS"
 
-                        else ->
-                            "ZONE_CROSSED"
-                    }
+                    candle.close <= pool.upperBoundary ->
+                        "ZONE_INTERACTION"
 
-                    retest = RetestEvent(
-                        originalSweepAt = event.eventAt,
-                        originalSweepStatus = event.status,
-                        retestStatus = status,
-                        retestAt = candle.epoch,
-                        closePrice = candle.close
-                    )
+                    else ->
+                        "ZONE_CROSSED"
+                }
 
-                    break
+            } else if (
+                pool.type == "SELL_SIDE_LIQUIDITY"
+            ) {
 
-                } else if (
-                    pool.type == "SELL_SIDE_LIQUIDITY"
-                ) {
+                // Price approaches the SSL zone from above.
+                val enteredZone =
+                    candle.low <= pool.upperBoundary
 
-                    // Price must approach the SSL zone from above.
-                    val enteredZone =
-                        candle.low <= pool.upperBoundary
+                if (!enteredZone) continue
 
-                    if (!enteredZone) continue
+                status = when {
+                    candle.close > pool.upperBoundary ->
+                        "RETEST_SUCCESS"
 
-                    val status = when {
-                        candle.close > pool.upperBoundary ->
-                            "RETEST_SUCCESS"
+                    candle.close >= pool.lowerBoundary ->
+                        "ZONE_INTERACTION"
 
-                        candle.close >= pool.lowerBoundary ->
-                            "ZONE_INTERACTION"
-
-                        else ->
-                            "ZONE_CROSSED"
-                    }
-
-                    retest = RetestEvent(
-                        originalSweepAt = event.eventAt,
-                        originalSweepStatus = event.status,
-                        retestStatus = status,
-                        retestAt = candle.epoch,
-                        closePrice = candle.close
-                    )
-
-                    break
+                    else ->
+                        "ZONE_CROSSED"
                 }
             }
 
-            if (retest != null) {
-                results.add(retest)
+            when (status) {
+
+                "ZONE_INTERACTION" -> {
+
+                    // Preserve only the first interaction.
+                    if (!interactionRecorded) {
+                        results.add(
+                            RetestEvent(
+                                originalSweepAt = event.eventAt,
+                                originalSweepStatus = event.status,
+                                retestStatus = status,
+                                retestAt = candle.epoch,
+                                closePrice = candle.close
+                            )
+                        )
+
+                        interactionRecorded = true
+                    }
+
+                    // Continue monitoring later candles.
+                }
+
+                "ZONE_CROSSED" -> {
+
+                    // Preserve the first crossing separately.
+                    if (!crossedRecorded) {
+                        results.add(
+                            RetestEvent(
+                                originalSweepAt = event.eventAt,
+                                originalSweepStatus = event.status,
+                                retestStatus = status,
+                                retestAt = candle.epoch,
+                                closePrice = candle.close
+                            )
+                        )
+
+                        crossedRecorded = true
+                    }
+
+                    // Crossing is not a successful retest.
+                    // Continue monitoring later candles.
+                }
+
+                "RETEST_SUCCESS" -> {
+
+                    results.add(
+                        RetestEvent(
+                            originalSweepAt = event.eventAt,
+                            originalSweepStatus = event.status,
+                            retestStatus = status,
+                            retestAt = candle.epoch,
+                            closePrice = candle.close
+                        )
+                    )
+
+                    // A successful retest ends monitoring
+                    // for this original sweep.
+                    break
+                }
             }
         }
-
-        return results.sortedByDescending {
-            it.retestAt
-        }
     }
+
+    return results.sortedByDescending {
+        it.retestAt
+    }
+}
+
   
     // =============================================================
     // STAGE 6 — PERMANENT ZONE INVALIDATION
