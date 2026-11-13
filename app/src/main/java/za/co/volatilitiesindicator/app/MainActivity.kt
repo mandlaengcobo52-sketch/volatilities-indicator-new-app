@@ -2591,6 +2591,31 @@ private object NewLiquidityEngine {
             it.retestAt
         }
     }
+  
+    // =============================================================
+    // STAGE 6 — PERMANENT ZONE INVALIDATION
+    // =============================================================
+
+    fun applyZoneInvalidation(
+        pools: List<LiquidityPool>,
+        events: List<LiquidityEvent>
+    ): List<LiquidityPool> {
+
+        // Only confirmed BREAKOUT events invalidate a zone.
+        val invalidatedPools = events
+            .filter { it.status == "BREAKOUT" }
+            .map { it.pool }
+            .toSet()
+
+        return pools.map { pool ->
+
+            if (pool in invalidatedPools) {
+                pool.copy(active = false)
+            } else {
+                pool
+            }
+        }
+    }
     
 }
 
