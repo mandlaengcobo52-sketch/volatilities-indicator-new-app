@@ -1220,7 +1220,7 @@ private fun addHeader() {
     "System Settings",
     "Logout"
 )
-            } else {
+                } else {
             listOf(
                 "Home",
                 "Trade",
@@ -1455,19 +1455,18 @@ page.addView(monitorHeader, matchWrap())
                 background = shape(panel, accent, 8, 1)
             }
             detailsContainer.addView(label("DETAILED ANALYSIS — EXECUTION SEQUENCE", 12f, accent, true))
-// LIQUIDITY, MARKET STRUCTURE, MSS, MOMENTUM AND PTPE
-// All displayed statuses are read from the same MasterEngineDecision.
-// Detailed historical event lists are also retained in that shared result.
+// SIMPLE LIQUIDITY DISPLAY — NUMERIC LEVELS AND SWEEP STATUS ONLY
+// Bullish liquidity = SSL. Bearish liquidity = BSL.
 
-detailsContainer.addView(label("LIQUIDITY SWEEP STATUS: ${sharedAnalysis?.liquidityText ?: "WAITING"}", 12f, if (sharedAnalysis?.liquidityText?.contains("SWEPT") == true) green else yellow, true))
+detailsContainer.addView(label("LIQUIDITY SWEEP: ${sharedAnalysis?.liquidityText ?: "WAITING"}", 12f, if (sharedAnalysis?.liquidityText?.contains("SWEPT") == true) green else yellow, true))
 detailsContainer.addView(label("BULLISH LIQUIDITY (SSL)", 12f, green, true))
 val sharedBullishLiquidity = sharedAnalysis?.bullishLiquidity.orEmpty()
 if (sharedBullishLiquidity.isEmpty()) {
-    detailsContainer.addView(label("No confirmed bullish liquidity.", 11f, muted, false))
+    detailsContainer.addView(label("No bullish liquidity levels identified.", 11f, muted, false))
 } else {
     sharedBullishLiquidity.forEachIndexed { index, level ->
         detailsContainer.addView(label(
-            "SSL ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepStatus == "SWEPT") "SWEPT ${formatMarketTime(level.sweepAt)}" else "WAITING"} | OCCURRENCES: ${level.occurrences}",
+            "SSL ${index + 1}: ${formatMarketPrice(level.price)} — ${if (level.sweepStatus == "SWEPT") "SWEPT" else "WAITING"}",
             11f, green, false
         ))
     }
@@ -1476,11 +1475,11 @@ if (sharedBullishLiquidity.isEmpty()) {
 detailsContainer.addView(label("BEARISH LIQUIDITY (BSL)", 12f, red, true))
 val sharedBearishLiquidity = sharedAnalysis?.bearishLiquidity.orEmpty()
 if (sharedBearishLiquidity.isEmpty()) {
-    detailsContainer.addView(label("No confirmed bearish liquidity.", 11f, muted, false))
+    detailsContainer.addView(label("No bearish liquidity levels identified.", 11f, muted, false))
 } else {
     sharedBearishLiquidity.forEachIndexed { index, level ->
         detailsContainer.addView(label(
-            "BSL ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepStatus == "SWEPT") "SWEPT ${formatMarketTime(level.sweepAt)}" else "WAITING"} | OCCURRENCES: ${level.occurrences}",
+            "BSL ${index + 1}: ${formatMarketPrice(level.price)} — ${if (level.sweepStatus == "SWEPT") "SWEPT" else "WAITING"}",
             11f, red, false
         ))
     }
@@ -1525,7 +1524,6 @@ fun addDetailedStatus(key: String, text: String, color: Int, bold: Boolean) {
     detailedViews[key] = view
     detailsContainer.addView(view)
 }
-
 addDetailedStatus("mss",
     "MSS CONFIRMATION: ${sharedAnalysis?.mssText ?: "WAITING"}",
     if (sharedAnalysis?.mssText?.contains("CONFIRMED") == true) green else yellow, true)
@@ -1829,7 +1827,7 @@ val originalTarget = tracked?.target?.takeIf { it.isFinite() && it > 0.0 }
                     }
                     .show()
             }
-        }, matchWrap().apply { topMargin = dp(8) })
+            }, matchWrap().apply { topMargin = dp(8) })
         runningCard.addView(row, matchWrap().apply { topMargin = dp(7) })
         visibleRunning++
     }
@@ -1999,7 +1997,7 @@ private fun registerCurrentPriceView(symbol: String, section: String, view: Text
 // =============================================================
 
 // =============================================================
-// SIMPLE LIQUIDITY LEVEL IDENTIFICATION AND SWEEP CONFIRMATION
+// LIQUIDITY LEVEL IDENTIFICATION AND SWEEP CONFIRMATION
 // =============================================================
 
 private data class LiquidityLevel(
@@ -2118,9 +2116,9 @@ private fun calculateLiquidityLevels(
             )
         )
     }
+
     return results.sortedByDescending { it.createdAt }
 }
-
 // =============================================================
 // ANALYSIS - BULLISH AND BEARISH ORDER BLOCKS
 // =============================================================
@@ -2421,8 +2419,7 @@ private fun calculateMarketStructure(
                 candidateHigh = minorHigh
                 minorLowIndex = minorHighIndex
                 minorLow = sorted[minorHighIndex].low
-
-            } else {
+                } else {
                 if (candle.low < candidateLow) {
                     candidateLowIndex = i
                     candidateLow = candle.low
@@ -2725,11 +2722,11 @@ private fun evaluateMasterEngine(symbol: String) {
     // SIMPLE LIQUIDITY LEVELS — NUMERIC LEVELS AND SAME-CANDLE SWEEP CONFIRMATION
     val bullishLiquidity = calculateLiquidityLevels(candles, bullish = true)
     val bearishLiquidity = calculateLiquidityLevels(candles, bullish = false)
-    val latestBullishSweep = bullishLiquidity
+
+val latestBullishSweep = bullishLiquidity
     .filter { it.sweepStatus == "SWEPT" && it.sweepAt > 0L }
     .maxByOrNull { it.sweepAt }
-
-val latestBearishSweep = bearishLiquidity
+    val latestBearishSweep = bearishLiquidity
     .filter { it.sweepStatus == "SWEPT" && it.sweepAt > 0L }
     .maxByOrNull { it.sweepAt }
 
@@ -3323,6 +3320,7 @@ val direction = activeTradeDirection ?: calculatedDirection
             badge?.visibility = if (unreadCount > 0) View.VISIBLE else View.GONE
         }
     }
+
     private fun addNotificationFeedItem(message: String) {
         val stamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).apply { timeZone = dailyCapitalTimeZone }.format(java.util.Date())
         val entry = "$stamp · $message"
@@ -3641,7 +3639,7 @@ val direction = activeTradeDirection ?: calculatedDirection
             b.setOnClickListener {
                 action()
             }
-        }
+            }
         return b
     }
     private fun card(): LinearLayout {
@@ -3925,6 +3923,7 @@ val engineQualified =
     masterEngineDecisions[symbol]?.qualified == true
 
 val (statusText, statusColor) = dashboardDecisionStatus(symbol)
+
 dashboardStatusViews[symbol]?.apply {
     text = statusText
     setTextColor(statusColor)
@@ -3944,7 +3943,7 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
 
         when (messageType) {
             "error" -> {
-    val requestId = json.optInt("req_id", 0)
+                val requestId = json.optInt("req_id", 0)
     val errorMessage = json.optJSONObject("error")
         ?.optString("message", "Unknown Deriv error")
         ?: "Unknown Deriv error"
@@ -4229,7 +4228,7 @@ if (stake > 0.0) {
                     "contract_pair_${accountId}_${executionMode}_${partner.contractId}",
                     restoredPairId
                 )
-                     .apply()
+                .apply()
         }
     }
 }
