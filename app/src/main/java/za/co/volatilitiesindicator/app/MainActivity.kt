@@ -2328,6 +2328,152 @@ private object NewLiquidityEngine {
 
         return pools.sortedByDescending { it.lastTouchAt }
     }
+   
+    // =============================================================
+    // STAGE 4 — LIQUIDITY EVENT CLASSIFICATION
+    // =============================================================
+
+    data class LiquidityEvent(
+        val pool: LiquidityPool,
+        val status: String,
+        val eventAt: Long,
+        val candleClose: Double,
+        val penetrationPrice: Double
+    )
+
+    fun classifyLiquidityEvents(
+        pools: List<LiquidityPool>,
+        candles: List<DerivApiClient.Candle>,
+        nowEpoch: Long = System.currentTimeMillis() / 1000L
+    ): List<LiquidityEvent> {
+
+        val sorted = candles
+            .filter {
+                it.high > 0.0 &&
+                it.low > 0.0 &&
+                it.high >= it.low
+            }
+            .distinctBy { it.epoch }
+            .sortedBy { it.epoch }
+
+        val results = mutableListOf<LiquidityEvent>()
+
+        for (pool in pools) {
+
+            if (!pool.active) continue
+
+            val closedCandles = sorted.filter {
+                it.epoch + H1_SECONDS <= nowEpoch &&
+                it.epoch > pool.lastTouchAt
+            }
+
+            var event: LiquidityEvent? = null
+
+            // Find the first confirmed penetration after pool formation.
+
+            for (candle in closedCandles) {
+
+                val penetrated = if (
+                    pool.type == "BUY_SIDE_LIQUIDITY"
+                ) {
+                    candle.high > pool.upperBoundary
+                } else {
+                    candle.low < pool.lowerBoundary
+                }
+
+                if (!penetrated) continue
+
+                val status = if (
+                    pool.type == "BUY_SIDE_LIQUIDITY"
+                ) {
+                    when {
+                        candle.close < pool.lowerBoundary ->
+                            "SWEPT"
+
+                        candle.close <= pool.upperBoundary ->
+                            "REJECTION"
+
+                        else ->
+                            "BREAKOUT"
+                    }
+                } else {
+                    when {
+                        candle.close > pool.upperBoundary ->
+                            "SWEPT"
+
+                        candle.close >= pool.lowerBoundary ->
+                            "REJECTION"
+
+                        else ->
+                            "BREAKOUT"
+                    }
+                }
+
+                event = LiquidityEvent(
+                    pool = pool,
+                    status = status,
+                    eventAt = candle.epoch,
+                    candleClose = candle.close,
+                    penetrationPrice = if (
+                        pool.type == "BUY_SIDE_LIQUIDITY"
+                    ) candle.high else candle.low
+                )
+
+                break
+            }
+
+            if (event != null) {
+                results.add(event)
+                continue
+            }
+
+            // No confirmed event: check the currently open H1 candle.
+
+            val openCandle = sorted.lastOrNull {
+                it.epoch + H1_SECONDS > nowEpoch &&
+                it.epoch > pool.lastTouchAt
+            }
+
+            val pending = openCandle?.let { candle ->
+
+                val penetrated = if (
+                    pool.type == "BUY_SIDE_LIQUIDITY"
+                ) {
+                    candle.high > pool.upperBoundary
+                } else {
+                    candle.low < pool.lowerBoundary
+                }
+
+                if (penetrated) {
+                    LiquidityEvent(
+                        pool = pool,
+                        status = "PENDING",
+                        eventAt = candle.epoch,
+                        candleClose = candle.close,
+                        penetrationPrice = if (
+                            pool.type == "BUY_SIDE_LIQUIDITY"
+                        ) candle.high else candle.low
+                    )
+                } else {
+                    null
+                }
+            }
+
+            results.add(
+                pending ?: LiquidityEvent(
+                    pool = pool,
+                    status = "UNTOUCHED",
+                    eventAt = 0L,
+                    candleClose = 0.0,
+                    penetrationPrice = 0.0
+                )
+            )
+        }
+
+        return results.sortedByDescending {
+            it.pool.lastTouchAt
+        }
+    }
     
 }
 
