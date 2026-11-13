@@ -608,7 +608,7 @@ private var marketStructureExpanded = true
         
         window.statusBarColor = bg
 window.navigationBarColor = bg
-window.decorView.systemUiVisibility = 0
+        window.decorView.systemUiVisibility = 0
         platform = appPrefs.getString("platform", "USER") ?: "USER"
 executionMode = appPrefs.getString("executionMode", "DEMO") ?: "DEMO"
 selectedTab = appPrefs.getString("selectedTab", "Home") ?: "Home"
@@ -913,7 +913,7 @@ private fun addRegistrationScreen() {
                 }
             }
         }
-    }
+        }
     registrationCard.addView(submit, matchWrap().apply { topMargin = dp(12) })
     page.addView(registrationCard, matchWrap())
 }
@@ -1212,7 +1212,6 @@ private fun addHeader() {
         val items = if (platform == "ADMIN") {
             listOf(
     "Dashboard",
-    "ANALYSIS - SUPPORT AND RESISTANCE",
     "User Accounts",
     "Notifications",
     "Trading Logs",
@@ -1225,7 +1224,7 @@ private fun addHeader() {
                 "Trade",
                 "News",
                 "My profile",
-                "Logout"
+                     "Logout"
             )
         }
 
@@ -1527,7 +1526,6 @@ detailedAnalysisViews[symbol] = detailedViews
             // COLLAPSIBLE INDEX INDICATOR — COLLAPSED BY DEFAULT
 val expandIndicator = label("⌄", 18f, accent, true)
 headingRow.addView(expandIndicator)
-
 detailsContainer.visibility = View.GONE
 
 headingRow.setOnClickListener {
@@ -1824,7 +1822,7 @@ row.addView(
 
         contractLiveViews[running.contractId] = ContractLiveViews(
     running.stake,
-    running.symbol,
+            running.symbol,
     running.target,
     running.targetProbability,
     pnlHidden,
@@ -2108,153 +2106,6 @@ if (sweepStatus == "SWEPT AND REVERSED") {
     return results.sortedByDescending { it.createdAt }
 }
 // =============================================================
-// ANALYSIS - BULLISH AND BEARISH ORDER BLOCKS
-// =============================================================
-
-private data class OrderBlockEvent(
-    val number: Int,
-    val direction: String,
-    val low: Double,
-    val high: Double,
-    val createdAt: Long,
-    val valid: Boolean,
-    val invalidatedAt: Long
-)
-
-private data class OrderBlockAnalysis(
-    val bullish: List<OrderBlockEvent>,
-    val bearish: List<OrderBlockEvent>
-)
-
-private fun calculateOrderBlocks(
-    candles: List<DerivApiClient.Candle>
-): OrderBlockAnalysis {
-
-    val sorted = candles.sortedBy { it.epoch }
-
-    if (sorted.size < 10) {
-        return OrderBlockAnalysis(emptyList(), emptyList())
-    }
-    private fun calculateOrderBlocks(
-    candles: List<DerivApiClient.Candle>
-): OrderBlockAnalysis {
-
-    val sorted = candles.sortedBy { it.epoch }
-
-    if (sorted.size < 10) {
-        return OrderBlockAnalysis(emptyList(), emptyList())
-    }
-
-    val bullishBlocks = mutableListOf<OrderBlockEvent>()
-    val bearishBlocks = mutableListOf<OrderBlockEvent>()
-
-    val usedBullish = mutableSetOf<Long>()
-    val usedBearish = mutableSetOf<Long>()
-    var bullishNumber = 0
-    var bearishNumber = 0
-
-    for (i in 2 until sorted.size - 2) {
-
-        val swingHigh =
-            sorted[i].high > sorted[i - 1].high &&
-            sorted[i].high > sorted[i - 2].high &&
-            sorted[i].high > sorted[i + 1].high &&
-            sorted[i].high > sorted[i + 2].high
-
-        val swingLow =
-            sorted[i].low < sorted[i - 1].low &&
-            sorted[i].low < sorted[i - 2].low &&
-            sorted[i].low < sorted[i + 1].low &&
-            sorted[i].low < sorted[i + 2].low
-
-        // BULLISH ORDER BLOCK
-        if (swingHigh) {
-
-            val breakIndex = (i + 3 until sorted.size)
-                .firstOrNull { sorted[it].close > sorted[i].high }
-
-            if (breakIndex != null) {
-
-                val obIndex = (breakIndex - 1 downTo i)
-                    .firstOrNull {
-                        sorted[it].close < sorted[it].open
-                    }
-
-                if (obIndex != null) {
-
-                    val ob = sorted[obIndex]
-
-                    if (usedBullish.add(ob.epoch)) {
-                        val invalidation = (obIndex + 1 until sorted.size)
-                            .firstOrNull {
-                                sorted[it].close < ob.low
-                            }
-                            bullishNumber++
-
-                        bullishBlocks.add(
-                            OrderBlockEvent(
-                                bullishNumber,
-                                "BULLISH",
-                                ob.low,
-                                ob.high,
-                                ob.epoch,
-                                invalidation == null,
-                                invalidation?.let { sorted[it].epoch } ?: 0L
-                            )
-                        )
-                    }
-                }
-            }
-        }
-
-        // BEARISH ORDER BLOCK
-        if (swingLow) {
-
-            val breakIndex = (i + 3 until sorted.size)
-                .firstOrNull { sorted[it].close < sorted[i].low }
-
-            if (breakIndex != null) {
-
-                val obIndex = (breakIndex - 1 downTo i)
-                    .firstOrNull {
-                        sorted[it].close > sorted[it].open
-                    }
-
-                if (obIndex != null) {
-
-                    val ob = sorted[obIndex]
-
-                    if (usedBearish.add(ob.epoch)) {
-
-                        val invalidation = (obIndex + 1 until sorted.size)
-                            .firstOrNull {
-                                sorted[it].close > ob.high
-                            }
-                            bearishNumber++
-
-                        bearishBlocks.add(
-                            OrderBlockEvent(
-                                bearishNumber,
-                                "BEARISH",
-                                ob.low,
-                                ob.high,
-                                ob.epoch,
-                                invalidation == null,
-                                invalidation?.let { sorted[it].epoch } ?: 0L
-                            )
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    return OrderBlockAnalysis(
-        bullish = bullishBlocks.takeLast(10),
-        bearish = bearishBlocks.takeLast(10)
-    )
-}
-// =============================================================
 // ANALYSIS - MARKET STRUCTURE AND CHANGE OF CHARACTER
 // =============================================================
 
@@ -2264,7 +2115,6 @@ private data class MarketStructureEvent(
     val price: Double,
     val startedAt: Long
 )
-
 private data class ChochEvent(
     val number: Int,
     val direction: String,
@@ -2624,7 +2474,6 @@ private fun evaluateMssModule(
     private data class MasterEngineDecision(
     val symbol: String,
     val direction: String,
-    val supportResistanceQualified: Boolean,
     val liquidityQualified: Boolean,
     val marketStructureQualified: Boolean,
     val chochQualified: Boolean,
@@ -2647,161 +2496,6 @@ private val masterEngineDecisions =
 
 private val masterEngineNotificationKeys =
     mutableSetOf<String>()
-// =============================================================
-// ANALYSIS - SUPPORT AND RESISTANCE
-// =============================================================
-private data class SupportResistanceLevel(
-    val price: Double,
-    val createdAt: Long,
-    val touches: Int,
-    val reversalPercent: Double,
-    val lastTouch: Long,
-    val score: Double
-)
-private fun calculateSupportResistance(
-    candles: List<DerivApiClient.Candle>,
-    support: Boolean,
-    currentPrice: Double? = null
-): List<SupportResistanceLevel> {
-
-    if (candles.size < 5) return emptyList()
-    val sevenDaysAgo =
-    System.currentTimeMillis() / 1000L - (7L * 24L * 60L * 60L)
-
-    val pivots = mutableListOf<Pair<Double, Long>>()
-
-    for (i in 2 until candles.size - 2) {
-        val candle = candles[i]
-        val confirmed = if (support) {
-            candle.low < candles[i - 1].low &&
-            candle.low < candles[i - 2].low &&
-            candle.low < candles[i + 1].low &&
-            candle.low < candles[i + 2].low
-        } else {
-            candle.high > candles[i - 1].high &&
-            candle.high > candles[i - 2].high &&
-            candle.high > candles[i + 1].high &&
-            candle.high > candles[i + 2].high
-        }
-
-        if (confirmed && candle.epoch >= sevenDaysAgo) {
-            pivots.add(
-                (if (support) candle.low else candle.high) to candle.epoch
-            )
-        }
-    }
-
-    val results = mutableListOf<SupportResistanceLevel>()
-    val used = mutableSetOf<Int>()
-
-    for (i in pivots.indices) {
-        if (i in used) continue
-
-        val basePrice = pivots[i].first
-        val tolerance = basePrice * 0.0015
-
-        val group = pivots.indices.filter {
-            kotlin.math.abs(pivots[it].first - basePrice) <= tolerance
-        }
-
-        used.addAll(group)
-
-        val levelPrice = if (support) {
-            group.map { pivots[it].first }.average()
-        } else {
-            group.map { pivots[it].first }.average()
-        }
-        val createdAt = group.minOf { pivots[it].second }
-
-        var touches = 0
-        var lastTouch = createdAt
-        var strongestReversal = 0.0
-
-        for (index in group) {
-            val pivotEpoch = pivots[index].second
-            val pivotPosition = candles.indexOfFirst {
-                it.epoch == pivotEpoch
-            }
-
-            if (pivotPosition < 0) continue
-
-            val endPosition = minOf(
-                candles.lastIndex,
-                pivotPosition + 6
-            )
-            val nextCandles = candles.subList(
-                pivotPosition + 1,
-                endPosition + 1
-            )
-
-            if (nextCandles.isNotEmpty()) {
-                val reversal = if (support) {
-                    (nextCandles.maxOf { it.high } - levelPrice) /
-                        levelPrice * 100.0
-                } else {
-                    (levelPrice - nextCandles.minOf { it.low }) /
-                        levelPrice * 100.0
-                }
-
-                strongestReversal = maxOf(
-                    strongestReversal,
-                    reversal.coerceAtLeast(0.0)
-                )
-            }
-        }
-
-        for (candle in candles) {
-            if (candle.epoch <= createdAt) continue
-
-            val touched = if (support) {
-                kotlin.math.abs(candle.low - levelPrice) <= tolerance
-            } else {
-                kotlin.math.abs(candle.high - levelPrice) <= tolerance
-            }
-
-            if (touched) {
-                touches++
-                lastTouch = maxOf(lastTouch, candle.epoch)
-            }
-        }
-
-        val recencyDays = (
-            (System.currentTimeMillis() / 1000L - lastTouch) / 86400.0
-        ).coerceAtLeast(0.0)
-
-        val score =
-            (touches * 100.0) +
-            (strongestReversal * 10.0) +
-            (30.0 - recencyDays).coerceAtLeast(0.0)
-
-        results.add(
-            SupportResistanceLevel(
-                price = levelPrice,
-                createdAt = createdAt,
-                touches = touches,
-                reversalPercent = strongestReversal,
-                lastTouch = lastTouch,
-                score = score
-            )
-        )
-    }
-
-val recentLevels = results.filter {
-    it.createdAt >= sevenDaysAgo
-}
-
-return if (currentPrice != null && currentPrice > 0.0) {
-    recentLevels
-        .filter {
-            if (support) it.price < currentPrice
-            else it.price > currentPrice
-        }
-           .sortedBy { kotlin.math.abs(it.price - currentPrice) }
-        .take(2)
-} else {
-    recentLevels.sortedByDescending { it.score }.take(2)
-}
-}
 private fun calculateMomentumQualified(
     candles: List<DerivApiClient.Candle>,
     direction: String
@@ -2899,7 +2593,6 @@ val direction = activeTradeDirection ?: calculatedDirection
     val decision = MasterEngineDecision(
         symbol = symbol,
         direction = direction,
-        supportResistanceQualified = true,
         liquidityQualified = if (direction == "BUY") bullishSweep else if (direction == "SELL") bearishSweep else (bullishSweep || bearishSweep),
         marketStructureQualified = marketDirection == "BULLISH" || marketDirection == "BEARISH",
         chochQualified = if (direction == "BUY") bullishChoch else if (direction == "SELL") bearishChoch else (bullishChoch || bearishChoch),
@@ -3008,69 +2701,6 @@ val direction = activeTradeDirection ?: calculatedDirection
 // =========================================================
     // ADMIN USER APPROVAL — server verifies administrator role
     // =========================================================
-   private fun addAdminSupportResistanceScreen() {
-    page.addView(sectionTitle("ANALYSIS - SUPPORT AND RESISTANCE"))
-
-    val profile = currentProfile
-
-    if (authToken.isBlank()) {
-        page.addView(label("Sign in with the administrator account.", 14f, yellow, false))
-        return
-    }
-
-    if (profile == null) {
-        page.addView(label("Loading administrator account...", 14f, yellow, false))
-        if (!profileLoading) refreshProfile(showMessage = false)
-        return
-    }
-    if (!profile.optString("role", "user").equals("admin", ignoreCase = true)) {
-        page.addView(label("ACCESS DENIED. ADMINISTRATORS ONLY.", 14f, red, false))
-        return
-    }
-    page.addView(label("HISTORICAL WINDOW: ROLLING 30 DAYS", 13f, muted, false))
-
-    marketDataIndexes.forEach { symbol ->
-        val candles = marketDataCandles[symbol].orEmpty()
-        page.addView(sectionTitle(symbol))
-
-        if (candles.isEmpty()) {
-            page.addView(label("Waiting for historical candles...", 13f, yellow, false))
-            return@forEach
-        }
-
-        val supports = calculateSupportResistance(candles, true)
-        val resistances = calculateSupportResistance(candles, false)
-
-        page.addView(label("STRONGEST SUPPORT LEVELS", 13f, green, true))
-        if (supports.isEmpty()) {
-            page.addView(label("No confirmed support levels found.", 13f, muted, false))
-        } else {
-            supports.take(2).forEachIndexed { index, level ->
-                page.addView(
-                    label(
-                        "SUPPORT ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | TOUCHES: ${level.touches} | REVERSAL: ${String.format(java.util.Locale.US, "%.2f", level.reversalPercent)}%",
-                        13f, green, false
-                    )
-                )
-            }
-        }
-
-        page.addView(label("STRONGEST RESISTANCE LEVELS", 13f, red, true))
-
-        if (resistances.isEmpty()) {
-            page.addView(label("No confirmed resistance levels found.", 13f, muted, false))
-        } else {
-            resistances.take(2).forEachIndexed { index, level ->
-                page.addView(
-                    label(
-                        "RESISTANCE ${index + 1}: ${formatMarketPrice(level.price)} | CREATED: ${formatMarketTime(level.createdAt)} | TOUCHES: ${level.touches} | REVERSAL: ${String.format(java.util.Locale.US, "%.2f", level.reversalPercent)}%",
-                        13f, red, false
-                    )
-                )
-            }
-        }
-    }
-   }
     private fun addAdminUsersScreen() {
         page.addView(sectionTitle("USER APPROVALS"))
         val profile = currentProfile
@@ -3393,7 +3023,6 @@ val direction = activeTradeDirection ?: calculatedDirection
             render()
         }, matchWrap().apply { topMargin = dp(8) })
         page.addView(decisionCard, matchWrap().apply { bottomMargin = dp(10) })
-
         val trailingCard = card().apply { orientation = LinearLayout.VERTICAL }
         trailingCard.addView(label("STANDALONE TRAILING STOP", 15f, green, true))
         trailingCard.addView(label("Controls the existing 30% activation and 10% giveback protection.", 11f, muted, false))
@@ -3689,7 +3318,6 @@ val direction = activeTradeDirection ?: calculatedDirection
             includeFontPadding = true
         }
     }
-
     private fun button(
         text: String,
         active: Boolean,
@@ -3984,7 +3612,6 @@ derivApiClient.connectWithAccessToken(token, executionMode)
             }
         }
     }
-
     override fun onTick(symbol: String, quote: Double, epoch: Long) {
     runOnUiThread {
         if (symbol in marketDataIndexes && quote.isFinite()) {
@@ -4278,7 +3905,6 @@ val savedPairId = appPrefs.getString(
     "contract_pair_${accountId}_${executionMode}_$id",
     ""
     ).orEmpty()
-
 val savedPairSide = appPrefs.getString(
     "contract_pair_side_${accountId}_${executionMode}_$id",
     ""
@@ -4476,8 +4102,8 @@ marketDataCandles[symbol] = candles
     evaluateMasterEngine(symbol)
 
 android.util.Log.i(
-    "SupportResistance",
-    "$symbol: ${marketDataCandles[symbol]?.size ?: 0} candles stored for the rolling 30-day analysis."
+    "MarketData",
+    "$symbol: ${marketDataCandles[symbol]?.size ?: 0} candles stored."
 )
     }
     }
@@ -4540,7 +4166,7 @@ override fun onDestroy() {
                 "DerivService",
                 "Service was already unbound",
                 e
-            )
+                )
         }
     }
 
