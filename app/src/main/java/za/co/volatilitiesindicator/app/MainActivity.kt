@@ -2605,28 +2605,6 @@ val activeSweepDirection =
         ""
     }
 
-val bullishSweep = activeSweepDirection == "BULLISH"
-val bearishSweep = activeSweepDirection == "BEARISH"
-
-val newestConfirmedSweep =
-    confirmedSweeps.maxByOrNull { it.first }
-
-if (newestConfirmedSweep != null &&
-    newestConfirmedSweep.first > savedSweepTime
-) {
-    appPrefs.edit()
-        .putLong("active_sweep_time_$symbol", newestConfirmedSweep.first)
-        .putString("active_sweep_direction_$symbol", newestConfirmedSweep.second)
-        .putString("active_sweep_price_$symbol", newestConfirmedSweep.third.toString())
-        .apply()
-}
-
-val activeSweepDirection =
-    appPrefs.getString("active_sweep_direction_$symbol", "") ?: ""
-
-val bullishSweep = activeSweepDirection == "BULLISH"
-val bearishSweep = activeSweepDirection == "BEARISH"
-
 
     val marketStructures = evaluateMarketStructureModule(candles)
     val chochEvents = evaluateChochModule(candles)
