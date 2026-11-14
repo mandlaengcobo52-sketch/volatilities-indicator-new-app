@@ -2019,61 +2019,51 @@ private fun calculateLiquidityLevels(
 var sweepAt = 0L
 var sweepStatus = "WAITING"
 
-for (i in lastPivotIndex + 1 until sorted.size - 1) {
+for (i in lastPivotIndex + 1 until sorted.size) {
 
-    val first = sorted[i]
-    val second = sorted[i + 1]
+    val candle = sorted[i]
 
+    // SSL: price must penetrate below the liquidity level.
+    // BSL: price must penetrate above the liquidity level.
     val penetrated = if (bullish) {
-        first.low < levelPrice
+        candle.low < levelPrice
     } else {
-        first.high > levelPrice
+        candle.high > levelPrice
     }
 
     if (!penetrated) continue
 
-    // Direction of penetration
-    val firstContinues = if (bullish) {
-        first.close < levelPrice
+    // Confirmation is determined by the penetration candle's close.
+    if (bullish) {
+        // SSL swept and price closed back above: bullish reversal.
+        if (candle.close > levelPrice) {
+            sweepAt = candle.epoch
+            sweepStatus = "SWEPT AND REVERSED"
+        }
+        // SSL penetrated and price closed below: bearish continuation.
+        else if (candle.close < levelPrice) {
+            sweepAt = candle.epoch
+            sweepStatus = "SWEPT AND CONTINUATION"
+        } else {
+            sweepAt = candle.epoch
+            sweepStatus = "EXPIRED / INVALIDATED"
+        }
     } else {
-        first.close > levelPrice
+        // BSL swept and price closed back below: bearish reversal.
+        if (candle.close < levelPrice) {
+            sweepAt = candle.epoch
+            sweepStatus = "SWEPT AND REVERSED"
+        }
+        // BSL penetrated and price closed above: bullish continuation.
+        else if (candle.close > levelPrice) {
+            sweepAt = candle.epoch
+            sweepStatus = "SWEPT AND CONTINUATION"
+        } else {
+            sweepAt = candle.epoch
+            sweepStatus = "EXPIRED / INVALIDATED"
+        }
     }
 
-    // First candle closes back across the level
-    val firstReverses = if (bullish) {
-        first.close > levelPrice
-    } else {
-        first.close < levelPrice
-    }
-
-    // Second candle confirmation
-    val continuationConfirmed = if (bullish) {
-        second.close < levelPrice
-    } else {
-        second.close > levelPrice
-    }
-
-    val reversalConfirmed = if (bullish) {
-        second.close > levelPrice
-    } else {
-        second.close < levelPrice
-    }
-
-    if (firstContinues && continuationConfirmed) {
-        sweepAt = second.epoch
-        sweepStatus = "SWEPT AND CONTINUATION"
-        break
-    }
-
-    if (firstReverses && reversalConfirmed) {
-        sweepAt = second.epoch
-        sweepStatus = "SWEPT AND REVERSED"
-        break
-    }
-
-    // A failed second-candle confirmation invalidates the attempt.
-    sweepAt = second.epoch
-    sweepStatus = "EXPIRED / INVALIDATED"
     break
 }
 
