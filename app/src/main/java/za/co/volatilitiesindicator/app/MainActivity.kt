@@ -2604,13 +2604,14 @@ val bearishSweep =
     // Reversal qualification uses the prior confirmed structure as context:
     // bearish structure + confirmed SSL sweep + bullish MSS + bullish momentum,
     // or the exact inverse for a bearish reversal.
-    val bullishDirection = bullishSweep && marketDirection == "BEARISH" && bullishMss && bullishMomentum
-    val bearishDirection = bearishSweep && marketDirection == "BULLISH" && bearishMss && bearishMomentum
+    val bullishDirection = bullishSweep && bullishChoch
+val bearishDirection = bearishSweep && bearishChoch
 
-    val bullishScore = listOf(bullishSweep, marketDirection == "BEARISH", bullishMss, bullishMomentum)
-        .count { it } * 25.0
-    val bearishScore = listOf(bearishSweep, marketDirection == "BULLISH", bearishMss, bearishMomentum)
-        .count { it } * 25.0
+val bullishScore = listOf(bullishSweep, bullishChoch)
+    .count { it } * 50.0
+
+val bearishScore = listOf(bearishSweep, bearishChoch)
+    .count { it } * 50.0
     val ptpe = maxOf(bullishScore, bearishScore)
     val activeTradeDirection =
     runningContracts.values.firstOrNull {
