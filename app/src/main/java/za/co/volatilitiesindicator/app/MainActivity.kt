@@ -2685,6 +2685,16 @@ val direction = activeTradeDirection ?: calculatedDirection
         }
     )
     masterEngineDecisions[symbol] = decision
+    val engineExecuted = runningContracts.values.any {
+    it.symbol.equals(symbol, ignoreCase = true) &&
+    it.mode == executionMode
+}
+
+val engineText = when {
+    engineExecuted -> "TRADE RUNNING"
+    decision.qualified -> "QUALIFIED"
+    else -> "WAITING"
+}
     runOnUiThread {
     detailedAnalysisViews[symbol]?.let { views ->
         views["mss"]?.apply {
@@ -2693,8 +2703,10 @@ val direction = activeTradeDirection ?: calculatedDirection
         }
 
         views["engine"]?.apply {
-            text = "MASTER ENGINE: ${if (decision.qualified) "QUALIFIED" else "WAITING"}"
-            setTextColor(if (decision.qualified) green else yellow)
+    text = "MASTER ENGINE: $engineText"
+    setTextColor(
+        if (engineExecuted || decision.qualified) green else yellow
+    )
         }
     }
     }
@@ -2720,8 +2732,6 @@ val direction = activeTradeDirection ?: calculatedDirection
         bearishSweep -> "BEARISH SWEPT"
         else -> "WAITING"
     }
-    val engineExecuted = runningContracts.values.any { it.symbol == symbol && it.mode == executionMode }
-    val engineText = if (engineExecuted) "EXECUTED" else if (decision.qualified) "QUALIFIED" else "WAITING"
     val summary = listOf(
         "1. LIQUIDITY SWEEP: $liquidityText",
         "2. MSS: $mssText",
