@@ -583,14 +583,14 @@ private val dashboardAnalysisViews =
     mutableMapOf<String, TextView>()
     private val detailedAnalysisViews =
     mutableMapOf<String, MutableMap<String, TextView>>()
-    if (runningContracts.values.any {
-        it.symbol == symbol && it.mode == executionMode
-    }) {
-    return "TRADE RUNNING" to green
-    }
 private val marketDataErrors =
     mutableMapOf<String, String>()
 private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
+        if (runningContracts.values.any {
+            it.symbol == symbol && it.mode == executionMode
+        }) {
+        return "TRADE RUNNING" to green
+        }
     if (marketDataErrors.containsKey(symbol) && marketDataPrices[symbol] == null) {
         return "FEED ERROR" to red
     }
