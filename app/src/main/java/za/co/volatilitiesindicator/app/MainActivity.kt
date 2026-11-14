@@ -2043,7 +2043,7 @@ for (i in lastPivotIndex + 1 until sorted.size) {
         // SSL penetrated and price closed below: bearish continuation.
         else if (candle.close < levelPrice) {
             sweepAt = candle.epoch
-            sweepStatus = "SWEPT AND CONTINUATION"
+            sweepStatus = "EXPIRED / INVALIDATED"
         } else {
             sweepAt = candle.epoch
             sweepStatus = "EXPIRED / INVALIDATED"
@@ -2057,7 +2057,7 @@ for (i in lastPivotIndex + 1 until sorted.size) {
         // BSL penetrated and price closed above: bullish continuation.
         else if (candle.close > levelPrice) {
             sweepAt = candle.epoch
-            sweepStatus = "SWEPT AND CONTINUATION"
+            sweepStatus = "EXPIRED / INVALIDATED"
         } else {
             sweepAt = candle.epoch
             sweepStatus = "EXPIRED / INVALIDATED"
