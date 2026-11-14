@@ -2572,16 +2572,12 @@ val latestBslIsCurrent =
     latestBslSweep?.sweepAt == latestSweepTime
 
 val bullishSweep =
-    (latestSslIsCurrent &&
-        latestSslSweep?.sweepStatus == "SWEPT AND REVERSED") ||
-    (latestBslIsCurrent &&
-        latestBslSweep?.sweepStatus == "SWEPT AND CONTINUATION")
+    latestSslIsCurrent &&
+    latestSslSweep?.sweepStatus == "SWEPT AND REVERSED"
 
 val bearishSweep =
-    (latestSslIsCurrent &&
-        latestSslSweep?.sweepStatus == "SWEPT AND CONTINUATION") ||
-    (latestBslIsCurrent &&
-        latestBslSweep?.sweepStatus == "SWEPT AND REVERSED")
+    latestBslIsCurrent &&
+    latestBslSweep?.sweepStatus == "SWEPT AND REVERSED"
     
 
     val marketStructures = evaluateMarketStructureModule(candles)
