@@ -253,6 +253,7 @@ private fun startAndBindDerivService() {
         var takeProfitRequested: Boolean = false,
         var openContractConfirmed: Boolean = false,
         var targetNotified: Boolean = false,
+        var trailingEligible: Boolean = false,
         var trailingActivated: Boolean = false,
         var peakProfit: Double = 0.0,
         var closeRequested: Boolean = false,
@@ -291,7 +292,8 @@ private fun startAndBindDerivService() {
 var proposalAttempts: Int = 0,
 var lowerBarrierOffset: Double = 0.0,
 var upperBarrierOffset: Double = 0.0,
-var potentialPayout: Double = 0.0
+var potentialPayout: Double = 0.0,
+var sweepTime: Long = 0L
 )
     
 
@@ -320,7 +322,7 @@ private val consumedTouchQualifications = mutableMapOf<String, Long>()
         if (accountBalance <= 0.0) return 0.0
 
         appPrefs.edit()
-           .putFloat(key, accountBalance.toFloat())
+          .putFloat(key, accountBalance.toFloat())
             .putLong(timeKey, now)
             .apply()
             return accountBalance
@@ -347,6 +349,7 @@ private fun submitTouchProposal(
     symbol: String,
     direction: String,
     barrier: Double,
+    sweepTime: Long = 0L,
     manual: Boolean = false
 ): Boolean {
     if (!connected || (!manual && !autoTradeEnabled)) return false
@@ -368,7 +371,8 @@ if (!touchExecutionLocks.add(symbol)) return false
     target = stake * 0.30,
     mode = executionMode,
     proposalRequestId = requestId,
-    barrierOffset = kotlin.math.abs(barrier)
+    barrierOffset = kotlin.math.abs(barrier),
+    sweepTime = sweepTime
 )
     pendingTouchOrders[requestId] = order
     pendingTouchBySymbol[symbol] = requestId
@@ -509,6 +513,21 @@ private fun isTouchExecutionReady(symbol: String): Boolean {
     val decision = masterEngineDecisions[symbol]
         ?: return blocked("MASTER DECISION MISSING")
 
+    val activeSweepTime =
+        appPrefs.getLong("active_sweep_time_$symbol", 0L)
+    val activeSweepStatus =
+        appPrefs.getString("active_sweep_status_$symbol", "") ?: ""
+    val usedSweepTime = appPrefs.getLong(
+        "used_sweep_time_${accountId}_${executionMode}_$symbol",
+        0L
+    )
+
+    if (activeSweepTime <= 0L || activeSweepStatus != "SWEPT AND REVERSED")
+        return blocked("NO CONFIRMED SWEEP")
+
+    if (activeSweepTime <= usedSweepTime)
+        return blocked("LIQUIDITY SWEEP ALREADY USED")
+
     if (touchExecutionLocks.contains(symbol))
         return blocked("EXECUTION LOCK ACTIVE")
 
@@ -606,7 +625,6 @@ private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
     if (decision?.qualified == true) {
         return "QUALIFIED ${decision.direction}" to green
     }
-
     return "MONITORING" to yellow
 }
 private var marketDataRequested = false
@@ -1805,7 +1823,7 @@ row.addView(
         val exitBarrierView = label(
     "Exit barrier: Waiting for Deriv",
     12f, white, true
-).apply { setPadding(0, dp(4), 0, 0) }
+            ).apply { setPadding(0, dp(4), 0, 0) }
 
         val potentialProfit = (running.potentialPayout - running.stake).coerceAtLeast(0.0)
         val potentialProfitView = label(
@@ -2396,7 +2414,6 @@ private fun calculateMss(candles: List<DerivApiClient.Candle>): MssAnalysis {
         val current = swingHighs[i]
         if (current.second < previous.second) lowerHighs.add(current)
     }
-
     val higherLows = mutableListOf<Pair<Int, Double>>()
     for (i in 1 until swingLows.size) {
         val previous = swingLows[i - 1]
@@ -2706,7 +2723,6 @@ val engineText = when {
             text = "MSS CONFIRMATION: ${decision.mssText}"
             setTextColor(if (decision.mssText.contains("CONFIRMED")) green else yellow)
         }
-
         views["engine"]?.apply {
     text = "MASTER ENGINE: $engineText"
     setTextColor(
@@ -3012,7 +3028,7 @@ val engineText = when {
         if (authToken.isBlank()) {
             toast("Sign in with the administrator account first.")
             return
-        }
+            }
         if (adminUsersLoading) return
         adminUsersLoading = true
         adminUsers = null
@@ -3592,7 +3608,6 @@ val engineText = when {
             }
         })
     }
-
     private fun oauthError(body: String): String = try {
         val j = JSONObject(body); val err = j.optJSONObject("error")
         err?.optString("message")?.takeIf { !it.isNullOrBlank() } ?: j.optString("message", body.take(180))
@@ -3704,10 +3719,12 @@ dashboardQualifiedCountView?.text =
     val latest = marketDataCandles[symbol]?.lastOrNull() ?: return@runOnUiThread
 
     val barrier = quote * 0.01
+    val sweepTime = appPrefs.getLong("active_sweep_time_$symbol", 0L)
     val submitted = submitTouchProposal(
     symbol,
     decision.direction,
-    barrier
+    barrier,
+    sweepTime
 )
 
 if (submitted) {
@@ -3896,7 +3913,7 @@ order.buyRequestId = buyRequestId
 
 val sent = derivApiClient.send(
     JSONObject()
-        .put("buy", proposalId)
+    .put("buy", proposalId)
         .put("price", askPrice)
         .put("req_id", buyRequestId)
 )
@@ -3943,8 +3960,18 @@ return@runOnUiThread
         target = order.target,
         targetProbability = masterEngineDecisions[order.symbol]?.ptpeProbability ?: 0.0,
         mode = order.mode,
+        trailingEligible = true,
         potentialPayout = order.stake * 1.30
     )
+
+    if (order.sweepTime > 0L) {
+        appPrefs.edit()
+            .putLong(
+                "used_sweep_time_${accountId}_${order.mode}_${order.symbol}",
+                order.sweepTime
+            )
+            .apply()
+    }
 
     notifyEvent(
         "TOUCH executed",
@@ -4093,31 +4120,50 @@ if (stake > 0.0) {
                             liveContractProfits[id] = liveProfit
                             liveContractProfitModes[id] = "${accountId}_$executionMode"
 
-                           val profitTarget = running.stake * 0.30
+                           if (trailingStopEnabled && running.trailingEligible) {
+    val activationProfit = running.stake * 0.30
+    val givebackAmount = running.stake * 0.10
 
-if (liveProfit >= profitTarget && !running.closeRequested) {
-    running.closeRequested = true
-    running.closeReason = "30% Profit Target"
-
-    val closeSent = derivApiClient.send(
-        JSONObject()
-            .put("sell", id)
-            .put("price", 0)
-            .put("req_id", nextTradeRequestId())
-    )
-
-    if (!closeSent) {
-        running.closeRequested = false
-        running.closeReason = ""
-    } else {
-        running.targetNotified = true
+    if (!running.trailingActivated && liveProfit >= activationProfit) {
+        running.trailingActivated = true
+        running.peakProfit = liveProfit
         notifyEvent(
-            "30% Profit Target Reached",
-            "${running.symbol} · Contract $id · Profit ${formatMoney(liveProfit)} · Automatic close request sent.",
-            "profit_target_close_$id"
+            "Trailing Stop Activated",
+            "${running.symbol} · Contract $id · Profit ${formatMoney(liveProfit)}",
+            "trailing_activated_$id"
         )
     }
-} 
+
+    if (running.trailingActivated) {
+        if (liveProfit > running.peakProfit) {
+            running.peakProfit = liveProfit
+        }
+
+        val trailingExit = running.peakProfit - givebackAmount
+        if (liveProfit <= trailingExit && !running.closeRequested) {
+            running.closeRequested = true
+            running.closeReason = "Trailing Stop"
+
+            val closeSent = derivApiClient.send(
+                JSONObject()
+                    .put("sell", id)
+                    .put("price", 0)
+                    .put("req_id", nextTradeRequestId())
+            )
+
+            if (!closeSent) {
+                running.closeRequested = false
+                running.closeReason = ""
+            } else {
+                notifyEvent(
+                    "Trailing Stop Triggered",
+                    "${running.symbol} · Contract $id · Peak ${formatMoney(running.peakProfit)} · Current ${formatMoney(liveProfit)}",
+                    "trailing_close_$id"
+                )
+            }
+        }
+    }
+}
                         } else if (isClosed) {
                             liveContractProfits.remove(id)
                             liveContractProfitModes.remove(id)
