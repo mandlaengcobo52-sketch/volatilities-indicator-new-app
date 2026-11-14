@@ -3691,15 +3691,14 @@ derivApiClient.connectWithAccessToken(token, executionMode)
     marketDataPrices[symbol] = quote
     marketDataErrors.remove(symbol)
     evaluateMasterEngine(symbol)
-            val qualifiedCount = marketDataIndexes.count { index ->
-    val decision = masterEngineDecisions[index]
-    decision != null &&
-        decision.qualified &&
-        decision.direction in listOf("BUY", "SELL") &&
-        decision.liquidityQualified &&
-        decision.chochQualified
+            val runningCount = marketDataIndexes.count { index ->
+    runningContracts.values.any {
+        it.symbol == index && it.mode == executionMode
+    }
 }
-dashboardQualifiedCountView?.text = "FIVE-INDEX SUMMARY  |  QUALIFIED $qualifiedCount/5  |  WAITING ${5 - qualifiedCount}/5"
+
+dashboardQualifiedCountView?.text =
+    "TRADE RUNNING $runningCount/5  |  WAITING ${5 - runningCount}/5"
             if (isTouchExecutionReady(symbol)) {
     val decision = masterEngineDecisions[symbol] ?: return@runOnUiThread
     val latest = marketDataCandles[symbol]?.lastOrNull() ?: return@runOnUiThread
