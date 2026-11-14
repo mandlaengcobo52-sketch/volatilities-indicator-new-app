@@ -1217,8 +1217,8 @@ private fun addHeader() {
     "Trading Logs",
     "System Settings",
     "Logout"
-)
-            } else {
+                )
+                } else {
             listOf(
                 "Home",
                 "Trade",
@@ -1812,12 +1812,12 @@ row.addView(
         val expiryView = label("Expiry: —", 12f, white, false)
             .apply { setPadding(0, dp(4), 0, 0) }
 
-            row.addView(pnlHidden)
+
+        row.addView(pnlHidden)
         row.addView(exitBarrierView)
         row.addView(potentialProfitView)
         row.addView(spotView)
         row.addView(expiryView)
-
         contractLiveViews[running.contractId] = ContractLiveViews(
     running.stake,
             running.symbol,
@@ -2075,19 +2075,7 @@ for (i in lastPivotIndex + 1 until sorted.size - 1) {
     break
 }
 
-// A confirmed reversal remains valid for three H1 candles.
-if (sweepStatus == "SWEPT AND REVERSED") {
-    val confirmationIndex = sorted.indexOfFirst {
-        it.epoch == sweepAt
-    }
-    val latestIndex = sorted.lastIndex
-
-    if (confirmationIndex >= 0 &&
-        latestIndex - confirmationIndex >= 3
-    ) {
-        sweepStatus = "EXPIRED / INVALIDATED"
-    }
-}
+// Confirmed sweeps are retained by Master Engine until a newer sweep is confirmed.
 
 
         results.add(
@@ -2119,11 +2107,11 @@ private data class ChochEvent(
     val price: Double,
     val changedAt: Long
 )
+
 private data class MarketStructureAnalysis(
     val structures: List<MarketStructureEvent>,
     val chochs: List<ChochEvent>
 )
-
 private fun calculateMarketStructure(
     candles: List<DerivApiClient.Candle>
 ): MarketStructureAnalysis {
@@ -2420,6 +2408,7 @@ private fun calculateMss(candles: List<DerivApiClient.Candle>): MssAnalysis {
     var consumedLowerHigh = -1
     var consumedHigherLow = -1
     var number = 0
+
     for (i in sorted.indices) {
         val candle = sorted[i]
         val latestLowerHigh = lowerHighs.lastOrNull { it.first + 2 < i }
@@ -2521,43 +2510,39 @@ private fun evaluateMasterEngine(symbol: String) {
 // BSL continuation = BULLISH.
 // BSL reversal = BEARISH.
 
-val latestSslSweep = bullishLiquidity
-    .filter {
-        it.sweepStatus.startsWith("SWEPT") && it.sweepAt > 0L
+// Confirmed sweep memory is per index and survives app restarts.
+// The 24-hour cutoff applies only to finding liquidity levels, not to
+// the lifetime of a confirmed sweep event.
+val confirmedSweeps = buildList {
+    bullishLiquidity.forEach { level ->
+        when (level.sweepStatus) {
+            "SWEPT AND REVERSED" -> add(Triple(level.sweepAt, "BULLISH", level.price))
+            "SWEPT AND CONTINUATION" -> add(Triple(level.sweepAt, "BEARISH", level.price))
+        }
     }
-    .maxByOrNull { it.sweepAt }
-
-val latestBslSweep = bearishLiquidity
-    .filter {
-        it.sweepStatus.startsWith("SWEPT") && it.sweepAt > 0L
+    bearishLiquidity.forEach { level ->
+        when (level.sweepStatus) {
+            "SWEPT AND CONTINUATION" -> add(Triple(level.sweepAt, "BULLISH", level.price))
+            "SWEPT AND REVERSED" -> add(Triple(level.sweepAt, "BEARISH", level.price))
+        }
     }
-    .maxByOrNull { it.sweepAt }
+}.filter { it.first > 0L }
 
-val latestSweepTime = maxOf(
-    latestSslSweep?.sweepAt ?: 0L,
-    latestBslSweep?.sweepAt ?: 0L
-)
+val newestConfirmedSweep = confirmedSweeps.maxByOrNull { it.first }
+val savedSweepTime = appPrefs.getLong("active_sweep_time_$symbol", 0L)
 
-val latestSslIsCurrent =
-    latestSweepTime > 0L &&
-    latestSslSweep?.sweepAt == latestSweepTime
+if (newestConfirmedSweep != null && newestConfirmedSweep.first > savedSweepTime) {
+    appPrefs.edit()
+        .putLong("active_sweep_time_$symbol", newestConfirmedSweep.first)
+        .putString("active_sweep_direction_$symbol", newestConfirmedSweep.second)
+        .putString("active_sweep_price_$symbol", newestConfirmedSweep.third.toString())
+        .apply()
+}
 
-val latestBslIsCurrent =
-    latestSweepTime > 0L &&
-    latestBslSweep?.sweepAt == latestSweepTime
+val activeSweepDirection = appPrefs.getString("active_sweep_direction_$symbol", "") ?: ""
+val bullishSweep = activeSweepDirection == "BULLISH"
+val bearishSweep = activeSweepDirection == "BEARISH"
 
-val bullishSweep =
-    (latestSslIsCurrent &&
-        latestSslSweep?.sweepStatus == "SWEPT AND REVERSED") ||
-    (latestBslIsCurrent &&
-        latestBslSweep?.sweepStatus == "SWEPT AND CONTINUATION")
-
-val bearishSweep =
-    (latestSslIsCurrent &&
-        latestSslSweep?.sweepStatus == "SWEPT AND CONTINUATION") ||
-    (latestBslIsCurrent &&
-        latestBslSweep?.sweepStatus == "SWEPT AND REVERSED")
-    
 
     val marketStructures = evaluateMarketStructureModule(candles)
     val chochEvents = evaluateChochModule(candles)
@@ -2717,7 +2702,7 @@ val direction = activeTradeDirection ?: calculatedDirection
             page.addView(label("Sign in with the administrator account to manage registrations.", 14f, yellow, false))
             page.addView(button("SIGN IN", true) { selectedTab = "Login"; render() }, matchWrap())
             return
-        }
+            }
         if (profile == null) {
             page.addView(label("Loading your account role…", 14f, yellow, false))
             if (!profileLoading) refreshProfile(showMessage = false)
@@ -2743,7 +2728,7 @@ val direction = activeTradeDirection ?: calculatedDirection
         if (users == null) {
             page.addView(label("Tap REFRESH PENDING USERS to load registrations.", 14f, muted, false))
             return
-        }
+            }
         var pendingCount = 0
         for (i in 0 until users.length()) {
             val user = users.optJSONObject(i) ?: continue
@@ -3020,6 +3005,7 @@ val direction = activeTradeDirection ?: calculatedDirection
             page.addView(row, matchWrap().apply { bottomMargin = dp(5) })
         }
     }
+
     private fun addSettingsScreen() {
         page.addView(sectionTitle("SETTINGS"))
         // Trading controls are deliberately housed in Settings; their state remains persisted in appPrefs.
@@ -3081,8 +3067,7 @@ val direction = activeTradeDirection ?: calculatedDirection
         val noReturnError = title == "Execution rejected" &&
     message.contains("This contract offers no return", ignoreCase = true)
 
-
-        val notificationScope =
+    val notificationScope =
         "${accountId}_${executionMode}_${title}_${message.substringBefore(" · ")}".hashCode().toString()
                 val statusSignature =
             "$title|${message.substringBefore(" · ")}|${message.substringAfter(" · ", message).substringBefore(".")}"
@@ -3380,7 +3365,6 @@ val direction = activeTradeDirection ?: calculatedDirection
     private fun card(): LinearLayout {
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-
             setPadding(
                 dp(16),
                 dp(15),
@@ -3633,8 +3617,8 @@ derivApiClient.connectWithAccessToken(token, executionMode)
         decision.direction in listOf("BUY", "SELL") &&
         decision.liquidityQualified &&
         decision.chochQualified
-            }
-            dashboardQualifiedCountView?.text = "FIVE-INDEX SUMMARY  |  QUALIFIED $qualifiedCount/5  |  WAITING ${5 - qualifiedCount}/5"
+}
+dashboardQualifiedCountView?.text = "FIVE-INDEX SUMMARY  |  QUALIFIED $qualifiedCount/5  |  WAITING ${5 - qualifiedCount}/5"
             if (isTouchExecutionReady(symbol)) {
     val decision = masterEngineDecisions[symbol] ?: return@runOnUiThread
     val latest = marketDataCandles[symbol]?.lastOrNull() ?: return@runOnUiThread
@@ -3666,8 +3650,7 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
             }
         }
         }
-}
-
+    }
     override fun onTradeData(json: JSONObject) {
     runOnUiThread {
         val messageType = json.optString("msg_type", "")
@@ -3938,6 +3921,7 @@ if (stake > 0.0) {
             it.pairId.isBlank() &&
             !it.isRecovery
         }
+
         if (partner != null) {
             val restoredPairId =
                 "restored_${accountId}_${executionMode}_$symbol"
