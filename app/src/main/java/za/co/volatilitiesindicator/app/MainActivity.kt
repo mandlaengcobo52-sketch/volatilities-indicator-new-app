@@ -2289,8 +2289,17 @@ private fun calculateMarketStructure(
         }
 
         if (newTrend.isNotEmpty() && newTrend != trend) {
-            trend = newTrend
-            structureNumber++
+    trend = newTrend
+
+    if (trend == "BULLISH") {
+        lastConfirmedLH = null
+        consumedBullishReference = -1
+    } else if (trend == "BEARISH") {
+        lastConfirmedHL = null
+        consumedBearishReference = -1
+    }
+
+    structureNumber++
 
             structures.add(
                 MarketStructureEvent(
@@ -2580,7 +2589,12 @@ val bearishSweep =
     val mssResult = evaluateMssModule(candles)
 
     val marketDirection = marketStructures.lastOrNull()?.direction ?: ""
-    val latestChoch = chochEvents.lastOrNull()?.takeIf { it.changedAt == latest.epoch }
+    val chochValiditySeconds = 3L * 60L * 60L
+
+    val latestChoch = chochEvents.lastOrNull()?.takeIf {
+    it.changedAt <= latest.epoch &&
+    latest.epoch - it.changedAt <= chochValiditySeconds
+}
     val chochDirection = latestChoch?.direction ?: ""
     val latestMss = mssResult.events.lastOrNull()?.takeIf { it.changedAt == latest.epoch }
     val mssDirection = latestMss?.direction ?: ""
