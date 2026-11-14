@@ -1494,7 +1494,7 @@ val sharedChochs = sharedAnalysis?.chochs.orEmpty()
 if (sharedChochs.isEmpty()) {
     detailsContainer.addView(label("No confirmed CHOCH available.", 11f, muted, false))
 } else {
-    sharedChochs.forEach { event ->
+    sharedChochs.takeLast(2).asReversed().forEach { event ->
         detailsContainer.addView(label(
             "${event.number}. ${event.direction} | PRICE: ${formatMarketPrice(event.price)} | CONFIRMED: ${formatMarketTime(event.changedAt)}",
             11f, yellow, false
