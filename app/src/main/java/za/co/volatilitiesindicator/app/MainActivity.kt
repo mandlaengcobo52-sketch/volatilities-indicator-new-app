@@ -2447,12 +2447,20 @@ private data class LiquiditySweepModuleResult(
     val bullish: List<LiquidityLevel>,
     val bearish: List<LiquidityLevel>
 )
-
 private fun evaluateLiquiditySweepModule(
-    candles: List<DerivApiClient.Candle>
+    candles: List<DerivApiClient.Candle>,
+    historicalRecovery: Boolean = false
 ): LiquiditySweepModuleResult = LiquiditySweepModuleResult(
-    bullish = calculateLiquidityLevels(candles, bullish = true),
-    bearish = calculateLiquidityLevels(candles, bullish = false)
+    bullish = calculateLiquidityLevels(
+        candles,
+        bullish = true,
+        historicalRecovery = historicalRecovery
+    ),
+    bearish = calculateLiquidityLevels(
+        candles,
+        bullish = false,
+        historicalRecovery = historicalRecovery
+    )
 )
 
 private fun evaluateChochModule(
@@ -2512,28 +2520,68 @@ private fun evaluateMasterEngine(symbol: String) {
 // BSL continuation = BULLISH.
 // BSL reversal = BEARISH.
 
-// Confirmed sweep memory is per index and survives app restarts.
-// The 24-hour cutoff applies only to finding liquidity levels, not to
-// the lifetime of a confirmed sweep event.
-val confirmedSweeps = buildList {
+// Confirmed sweep memory is maintained per index.
+var confirmedSweeps = buildList {
     bullishLiquidity.forEach { level ->
         when (level.sweepStatus) {
-            "SWEPT AND REVERSED" -> add(Triple(level.sweepAt, "BULLISH", level.price))
-            "SWEPT AND CONTINUATION" -> add(Triple(level.sweepAt, "BEARISH", level.price))
+            "SWEPT AND REVERSED" ->
+                add(Triple(level.sweepAt, "BULLISH", level.price))
+
+            "SWEPT AND CONTINUATION" ->
+                add(Triple(level.sweepAt, "BEARISH", level.price))
         }
     }
+
     bearishLiquidity.forEach { level ->
         when (level.sweepStatus) {
-            "SWEPT AND CONTINUATION" -> add(Triple(level.sweepAt, "BULLISH", level.price))
-            "SWEPT AND REVERSED" -> add(Triple(level.sweepAt, "BEARISH", level.price))
+            "SWEPT AND CONTINUATION" ->
+                add(Triple(level.sweepAt, "BULLISH", level.price))
+
+            "SWEPT AND REVERSED" ->
+                add(Triple(level.sweepAt, "BEARISH", level.price))
         }
     }
 }.filter { it.first > 0L }
 
-val newestConfirmedSweep = confirmedSweeps.maxByOrNull { it.first }
-val savedSweepTime = appPrefs.getLong("active_sweep_time_$symbol", 0L)
+val savedSweepTime =
+    appPrefs.getLong("active_sweep_time_$symbol", 0L)
 
-if (newestConfirmedSweep != null && newestConfirmedSweep.first > savedSweepTime) {
+// Recover historical sweep if no saved or current sweep exists.
+if (savedSweepTime == 0L && confirmedSweeps.isEmpty()) {
+    val recovered = evaluateLiquiditySweepModule(
+        candles,
+        historicalRecovery = true
+    )
+
+    confirmedSweeps = buildList {
+        recovered.bullish.forEach { level ->
+            when (level.sweepStatus) {
+                "SWEPT AND REVERSED" ->
+                    add(Triple(level.sweepAt, "BULLISH", level.price))
+
+                "SWEPT AND CONTINUATION" ->
+                    add(Triple(level.sweepAt, "BEARISH", level.price))
+            }
+        }
+
+        recovered.bearish.forEach { level ->
+            when (level.sweepStatus) {
+                "SWEPT AND CONTINUATION" ->
+                    add(Triple(level.sweepAt, "BULLISH", level.price))
+
+                "SWEPT AND REVERSED" ->
+                    add(Triple(level.sweepAt, "BEARISH", level.price))
+            }
+        }
+    }.filter { it.first > 0L }
+}
+
+val newestConfirmedSweep =
+    confirmedSweeps.maxByOrNull { it.first }
+
+if (newestConfirmedSweep != null &&
+    newestConfirmedSweep.first > savedSweepTime
+) {
     appPrefs.edit()
         .putLong("active_sweep_time_$symbol", newestConfirmedSweep.first)
         .putString("active_sweep_direction_$symbol", newestConfirmedSweep.second)
@@ -2541,7 +2589,9 @@ if (newestConfirmedSweep != null && newestConfirmedSweep.first > savedSweepTime)
         .apply()
 }
 
-val activeSweepDirection = appPrefs.getString("active_sweep_direction_$symbol", "") ?: ""
+val activeSweepDirection =
+    appPrefs.getString("active_sweep_direction_$symbol", "") ?: ""
+
 val bullishSweep = activeSweepDirection == "BULLISH"
 val bearishSweep = activeSweepDirection == "BEARISH"
 
