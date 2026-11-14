@@ -288,7 +288,10 @@ private fun startAndBindDerivService() {
     var proposalId: String = "",
     var buyRequestId: Int = 0,
     var barrierOffset: Double = 0.0,
-    var proposalAttempts: Int = 0
+var proposalAttempts: Int = 0,
+var lowerBarrierOffset: Double = 0.0,
+var upperBarrierOffset: Double = 0.0,
+var potentialPayout: Double = 0.0
 )
     
 
@@ -3686,7 +3689,7 @@ dashboardQualifiedCountView?.text = "FIVE-INDEX SUMMARY  |  QUALIFIED $qualified
     val decision = masterEngineDecisions[symbol] ?: return@runOnUiThread
     val latest = marketDataCandles[symbol]?.lastOrNull() ?: return@runOnUiThread
 
-    val barrier = quote * 0.05
+    val barrier = quote * 0.01
     val submitted = submitTouchProposal(
     symbol,
     decision.direction,
@@ -3782,24 +3785,65 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
     return@runOnUiThread
 }
 
-if (payout < order.stake * 1.30) {
-    if (order.proposalAttempts >= 20) {
+val targetPayout = order.stake * 1.30
+val tolerance = maxOf(0.01, targetPayout * 0.02)
+
+if (kotlin.math.abs(payout - targetPayout) > tolerance) {
+
+    if (order.proposalAttempts >= 24) {
+        pendingTouchOrders.remove(requestId)
+        pendingTouchBySymbol.remove(order.symbol)
+        touchExecutionLocks.remove(order.symbol)
+
+        toast("${order.symbol}: Could not obtain the required 30% stake-profit payout.")
+        return@runOnUiThread
+    }
+
+    order.proposalAttempts++
+
+    if (payout > targetPayout) {
+        // Payout too high: move barrier closer.
+        order.upperBarrierOffset = order.barrierOffset
+
+        order.barrierOffset =
+            if (order.lowerBarrierOffset > 0.0) {
+                (order.lowerBarrierOffset + order.upperBarrierOffset) / 2.0
+            } else {
+                order.barrierOffset / 2.0
+            }
+
+    } else {
+        // Payout too low: move barrier farther away.
+        order.lowerBarrierOffset = order.barrierOffset
+
+        order.barrierOffset =
+            if (order.upperBarrierOffset > 0.0) {
+                (order.lowerBarrierOffset + order.upperBarrierOffset) / 2.0
+            } else {
+                order.barrierOffset * 2.0
+            }
+    }
+
+    if (order.barrierOffset <= 0.0) {
         pendingTouchOrders.remove(requestId)
         pendingTouchBySymbol.remove(order.symbol)
         touchExecutionLocks.remove(order.symbol)
         return@runOnUiThread
     }
 
-    order.proposalAttempts++
-    order.barrierOffset *= 1.10
-
     val nextRequestId = nextTradeRequestId()
     order.proposalRequestId = nextRequestId
 
+    val barrierValue = String.format(
+        java.util.Locale.US,
+        "%.2f",
+        order.barrierOffset
+    )
+
     val signedBarrier = if (order.direction == "BUY") {
-        "+${order.barrierOffset}"
+        "+$barrierValue"
     } else {
-        "-${order.barrierOffset}"
+        "-$barrierValue"
     }
 
     pendingTouchOrders.remove(requestId)
@@ -3829,6 +3873,8 @@ if (payout < order.stake * 1.30) {
 
     return@runOnUiThread
 }
+
+order.potentialPayout = payout
 
 order.proposalId = proposalId
                 val buyRequestId = nextTradeRequestId()
