@@ -1954,11 +1954,13 @@ private data class LiquidityLevel(
 // Confirmation must happen on the penetration candle itself.
 private fun calculateLiquidityLevels(
     candles: List<DerivApiClient.Candle>,
-    bullish: Boolean
+    bullish: Boolean,
+    historicalRecovery: Boolean = false
 ): List<LiquidityLevel> {
 
     val nowEpoch = System.currentTimeMillis() / 1000L
-    val cutoffEpoch = nowEpoch - (24L * 60L * 60L)
+    val cutoffEpoch = nowEpoch -
+    (if (historicalRecovery) 30L else 24L) * 60L * 60L
     val sorted = candles
         .filter { it.epoch + 3600L <= nowEpoch }
         .sortedBy { it.epoch }
