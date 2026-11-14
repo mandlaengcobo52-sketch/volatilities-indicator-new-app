@@ -1218,7 +1218,7 @@ private fun addHeader() {
     "System Settings",
     "Logout"
 )
-                } else {
+            } else {
             listOf(
                 "Home",
                 "Trade",
@@ -1518,8 +1518,7 @@ addDetailedStatus("engine",
 
 detailedAnalysisViews[symbol] = detailedViews
 
-            
-    row.addView(detailsContainer, matchWrap().apply { topMargin = dp(7) })
+            row.addView(detailsContainer, matchWrap().apply { topMargin = dp(7) })
             // Index monitor rows are display-only.
             row.isClickable = false
             row.isFocusable = false
@@ -1813,8 +1812,7 @@ row.addView(
         val expiryView = label("Expiry: —", 12f, white, false)
             .apply { setPadding(0, dp(4), 0, 0) }
 
-
-        row.addView(pnlHidden)
+            row.addView(pnlHidden)
         row.addView(exitBarrierView)
         row.addView(potentialProfitView)
         row.addView(spotView)
@@ -2121,7 +2119,6 @@ private data class ChochEvent(
     val price: Double,
     val changedAt: Long
 )
-
 private data class MarketStructureAnalysis(
     val structures: List<MarketStructureEvent>,
     val chochs: List<ChochEvent>
@@ -2423,7 +2420,6 @@ private fun calculateMss(candles: List<DerivApiClient.Candle>): MssAnalysis {
     var consumedLowerHigh = -1
     var consumedHigherLow = -1
     var number = 0
-
     for (i in sorted.indices) {
         val candle = sorted[i]
         val latestLowerHigh = lowerHighs.lastOrNull { it.first + 2 < i }
@@ -2484,9 +2480,8 @@ private fun evaluateMssModule(
     val symbol: String,
     val direction: String,
     val liquidityQualified: Boolean,
-    val marketStructureQualified: Boolean,
     val chochQualified: Boolean,
-    val momentumQualified: Boolean,
+    // Retained for existing trade-history compatibility; not used for qualification.
     val ptpeProbability: Double,
     val qualified: Boolean,
     val updatedAt: Long,
@@ -2496,8 +2491,7 @@ private fun evaluateMssModule(
     val chochs: List<ChochEvent>,
     val marketDirection: String,
     val mssText: String,
-    val liquidityText: String,
-    val momentumText: String
+    val liquidityText: String
 )
 
 private val masterEngineDecisions =
@@ -2505,25 +2499,6 @@ private val masterEngineDecisions =
 
 private val masterEngineNotificationKeys =
     mutableSetOf<String>()
-private fun calculateMomentumQualified(
-    candles: List<DerivApiClient.Candle>,
-    direction: String
-): Boolean {
-    if (candles.size < 12) return false
-    val latest = candles.last()
-    val recentBodies = candles.takeLast(11).dropLast(1).map { kotlin.math.abs(it.close - it.open) }
-    val averageBody = recentBodies.average().coerceAtLeast(0.0000001)
-    val latestBody = kotlin.math.abs(latest.close - latest.open)
-    val range = (latest.high - latest.low).coerceAtLeast(0.0000001)
-    val closePosition = (latest.close - latest.low) / range
-    val strongBody = latestBody >= averageBody * 1.15
-    return when (direction) {
-        "BULLISH" -> latest.close > latest.open && strongBody && closePosition >= 0.65
-        "BEARISH" -> latest.close < latest.open && strongBody && closePosition <= 0.35
-        else -> false
-    }
-}
-
 private fun evaluateMasterEngine(symbol: String) {
     val allCandles = marketDataCandles[symbol].orEmpty()
     val nowEpoch = System.currentTimeMillis() / 1000L
@@ -2572,12 +2547,16 @@ val latestBslIsCurrent =
     latestBslSweep?.sweepAt == latestSweepTime
 
 val bullishSweep =
-    latestSslIsCurrent &&
-    latestSslSweep?.sweepStatus == "SWEPT AND REVERSED"
+    (latestSslIsCurrent &&
+        latestSslSweep?.sweepStatus == "SWEPT AND REVERSED") ||
+    (latestBslIsCurrent &&
+        latestBslSweep?.sweepStatus == "SWEPT AND CONTINUATION")
 
 val bearishSweep =
-    latestBslIsCurrent &&
-    latestBslSweep?.sweepStatus == "SWEPT AND REVERSED"
+    (latestSslIsCurrent &&
+        latestSslSweep?.sweepStatus == "SWEPT AND CONTINUATION") ||
+    (latestBslIsCurrent &&
+        latestBslSweep?.sweepStatus == "SWEPT AND REVERSED")
     
 
     val marketStructures = evaluateMarketStructureModule(candles)
@@ -2598,21 +2577,11 @@ val bearishSweep =
     val bearishMss = mssDirection == "BEARISH"
     val bullishChoch = chochDirection == "BULLISH"
     val bearishChoch = chochDirection == "BEARISH"
-    val bullishMomentum = calculateMomentumQualified(candles, "BULLISH")
-    val bearishMomentum = calculateMomentumQualified(candles, "BEARISH")
-
-    // Reversal qualification uses the prior confirmed structure as context:
-    // bearish structure + confirmed SSL sweep + bullish MSS + bullish momentum,
-    // or the exact inverse for a bearish reversal.
+    // MASTER ENGINE QUALIFICATION:
+    // Liquidity Sweep and CHOCH must confirm the SAME direction.
+    // MSS and Market Structure remain independent analysis/display modules.
     val bullishDirection = bullishSweep && bullishChoch
-val bearishDirection = bearishSweep && bearishChoch
-
-val bullishScore = listOf(bullishSweep, bullishChoch)
-    .count { it } * 50.0
-
-val bearishScore = listOf(bearishSweep, bearishChoch)
-    .count { it } * 50.0
-    val ptpe = maxOf(bullishScore, bearishScore)
+    val bearishDirection = bearishSweep && bearishChoch
     val activeTradeDirection =
     runningContracts.values.firstOrNull {
         it.symbol.equals(symbol, ignoreCase = true) &&
@@ -2623,21 +2592,27 @@ val bearishScore = listOf(bearishSweep, bearishChoch)
             it.mode == executionMode
         }?.direction
     val calculatedDirection = when {
-    bullishDirection && bullishScore > 55.0 -> "BUY"
-    bearishDirection && bearishScore > 55.0 -> "SELL"
-    else -> "WAIT"
-}
+        bullishDirection -> "BUY"
+        bearishDirection -> "SELL"
+        else -> "WAIT"
+    }
 
 val direction = activeTradeDirection ?: calculatedDirection
 
     val decision = MasterEngineDecision(
         symbol = symbol,
         direction = direction,
-        liquidityQualified = if (direction == "BUY") bullishSweep else if (direction == "SELL") bearishSweep else (bullishSweep || bearishSweep),
-        marketStructureQualified = marketDirection == "BULLISH" || marketDirection == "BEARISH",
-        chochQualified = if (direction == "BUY") bullishChoch else if (direction == "SELL") bearishChoch else (bullishChoch || bearishChoch),
-        momentumQualified = if (direction == "BUY") bullishMomentum else if (direction == "SELL") bearishMomentum else (bullishMomentum || bearishMomentum),
-        ptpeProbability = ptpe,
+        liquidityQualified = when (direction) {
+            "BUY" -> bullishSweep
+            "SELL" -> bearishSweep
+            else -> false
+        },
+        chochQualified = when (direction) {
+            "BUY" -> bullishChoch
+            "SELL" -> bearishChoch
+            else -> false
+        },
+        ptpeProbability = 0.0,
         qualified = activeTradeDirection == null &&
     calculatedDirection != "WAIT",
         updatedAt = System.currentTimeMillis(),
@@ -2656,11 +2631,6 @@ val direction = activeTradeDirection ?: calculatedDirection
             bullishSweep -> "BULLISH SWEPT"
             bearishSweep -> "BEARISH SWEPT"
             else -> "WAITING"
-        },
-        momentumText = when {
-            bullishMomentum -> "BULLISH — 100% QUALIFIED"
-            bearishMomentum -> "BEARISH — 100% QUALIFIED"
-            else -> "NOT QUALIFIED — 0%"
         }
     )
     masterEngineDecisions[symbol] = decision
@@ -2683,7 +2653,6 @@ val direction = activeTradeDirection ?: calculatedDirection
         bearishMss -> "BEARISH CONFIRMED"
         else -> "WAITING"
     }
-    val momentumPercent = if (bullishMomentum || bearishMomentum) 100.0 else 0.0
     val chochText = when {
         bullishChoch -> "BULLISH CHOCH: YES"
         bearishChoch -> "BEARISH CHOCH: YES"
@@ -2748,7 +2717,7 @@ val direction = activeTradeDirection ?: calculatedDirection
             page.addView(label("Sign in with the administrator account to manage registrations.", 14f, yellow, false))
             page.addView(button("SIGN IN", true) { selectedTab = "Login"; render() }, matchWrap())
             return
-            }
+        }
         if (profile == null) {
             page.addView(label("Loading your account role…", 14f, yellow, false))
             if (!profileLoading) refreshProfile(showMessage = false)
@@ -3051,7 +3020,6 @@ val direction = activeTradeDirection ?: calculatedDirection
             page.addView(row, matchWrap().apply { bottomMargin = dp(5) })
         }
     }
-
     private fun addSettingsScreen() {
         page.addView(sectionTitle("SETTINGS"))
         // Trading controls are deliberately housed in Settings; their state remains persisted in appPrefs.
@@ -3664,12 +3632,9 @@ derivApiClient.connectWithAccessToken(token, executionMode)
         decision.qualified &&
         decision.direction in listOf("BUY", "SELL") &&
         decision.liquidityQualified &&
-        decision.marketStructureQualified &&
-        decision.chochQualified &&
-        decision.momentumQualified &&
-        decision.ptpeProbability > 55.0
-}
-dashboardQualifiedCountView?.text = "FIVE-INDEX SUMMARY  |  QUALIFIED $qualifiedCount/5  |  WAITING ${5 - qualifiedCount}/5"
+        decision.chochQualified
+            }
+            dashboardQualifiedCountView?.text = "FIVE-INDEX SUMMARY  |  QUALIFIED $qualifiedCount/5  |  WAITING ${5 - qualifiedCount}/5"
             if (isTouchExecutionReady(symbol)) {
     val decision = masterEngineDecisions[symbol] ?: return@runOnUiThread
     val latest = marketDataCandles[symbol]?.lastOrNull() ?: return@runOnUiThread
@@ -3973,7 +3938,6 @@ if (stake > 0.0) {
             it.pairId.isBlank() &&
             !it.isRecovery
         }
-
         if (partner != null) {
             val restoredPairId =
                 "restored_${accountId}_${executionMode}_$symbol"
