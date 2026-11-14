@@ -2605,13 +2605,6 @@ val activeSweepDirection =
         ""
     }
 
-val activeSweepDirection =
-    if (activeSweepStatus == "SWEPT AND REVERSED") {
-        appPrefs.getString("active_sweep_direction_$symbol", "") ?: ""
-    } else {
-        ""
-    }
-
 val bullishSweep = activeSweepDirection == "BULLISH"
 val bearishSweep = activeSweepDirection == "BEARISH"
     val marketStructures = evaluateMarketStructureModule(candles)
