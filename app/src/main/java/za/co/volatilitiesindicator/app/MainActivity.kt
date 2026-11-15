@@ -2056,7 +2056,10 @@ private fun calculateLiquidityLevels(
             otherIndex !in used &&
                 kotlin.math.abs(pivots[otherIndex].second - pivot.second) <= equalLevelTolerance
         }
-        groupIndices.forEach(used::add)
+        // A valid liquidity pool requires at least two confirmed pivots.
+if (groupIndices.size < 2) return@forEachIndexed
+
+groupIndices.forEach(used::add)
 
         val group = groupIndices.map { pivots[it] }
         val zoneLow = group.minOf { it.second }
