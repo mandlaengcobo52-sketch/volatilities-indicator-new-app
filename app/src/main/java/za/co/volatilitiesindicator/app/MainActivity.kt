@@ -2025,15 +2025,37 @@ private fun calculateLiquidityLevels(
         if (confirmed) pivots.add(i to price)
     }
 
-    val tolerance = 0.0015
+    // H1 ATR(14) — shared calculation for all five indexes.
+val atrPeriod = 14
+
+val atrValues = sorted.mapIndexedNotNull { index, candle ->
+    if (index == 0) return@mapIndexedNotNull null
+
+    val previousClose = sorted[index - 1].close
+
+    maxOf(
+        candle.high - candle.low,
+        kotlin.math.abs(candle.high - previousClose),
+        kotlin.math.abs(candle.low - previousClose)
+    )
+}
+
+val atr = atrValues
+    .takeLast(atrPeriod)
+    .average()
+
+if (!atr.isFinite() || atr <= 0.0) return emptyList()
+
+// Equal highs/equal lows tolerance = 0.10 H1 ATR.
+val tolerance = atr * 0.10
     val used = mutableSetOf<Int>()
     val results = mutableListOf<LiquidityLevel>()
 
     pivots.forEachIndexed { index, pivot ->
         if (index in used) return@forEachIndexed
         val group = pivots.filterIndexed { otherIndex, other ->
-            otherIndex !in used && kotlin.math.abs(other.second - pivot.second) /
-                pivot.second.coerceAtLeast(0.000001) <= tolerance
+            otherIndex !in used &&
+    kotlin.math.abs(other.second - pivot.second) <= tolerance
         }
         group.forEach { member ->
             pivots.indexOf(member).takeIf { it >= 0 }?.let(used::add)
