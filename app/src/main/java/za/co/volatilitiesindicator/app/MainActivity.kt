@@ -2057,7 +2057,6 @@ private fun calculateLiquidityLevels(
                 kotlin.math.abs(pivots[otherIndex].second - pivot.second) <= equalLevelTolerance
         }
         groupIndices.forEach(used::add)
-        if (groupIndices.size < 2) return@forEachIndexed
 
         val group = groupIndices.map { pivots[it] }
         val zoneLow = group.minOf { it.second }
@@ -2087,11 +2086,14 @@ private fun calculateLiquidityLevels(
                 sweepAt = candle.epoch
             }
 
-            // The complete sweep-and-reversal sequence must finish within 3 hours.
-            if (candle.epoch - sweepAt >= sweepExpirySeconds) {
-                sweepStatus = "EXPIRED"
-                break
-            }
+            // Do not expire on the candle that starts the sweep.
+if (
+    firstSweepIndex >= 0 &&
+    candle.epoch - sweepAt >= sweepExpirySeconds
+) {
+    sweepStatus = "EXPIRED"
+    break
+}
 
             val closesOnReversalSide = if (bullish) {
                 candle.close > zoneHigh
@@ -2111,11 +2113,14 @@ private fun calculateLiquidityLevels(
             }
         }
 
-        // If three hours have elapsed in real time without a confirmed reversal, expire it.
-        if (firstSweepIndex >= 0 && sweepStatus == "WAITING" &&
-            nowEpoch - sweepAt >= sweepExpirySeconds) {
-            sweepStatus = "EXPIRED"
-        }
+        // Expire an unconfirmed sweep after exactly 3 hours.
+if (
+    firstSweepIndex >= 0 &&
+    sweepStatus == "WAITING" &&
+    nowEpoch - sweepAt >= sweepExpirySeconds
+) {
+    sweepStatus = "EXPIRED"
+}
 
         // Zone identification time is the close of the second confirming pivot candle.
         val identifiedAt = sorted[identificationIndex].epoch + 3600L
