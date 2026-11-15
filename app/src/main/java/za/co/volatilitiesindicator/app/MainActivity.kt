@@ -617,7 +617,6 @@ private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
     if (marketDataPrices[symbol] == null) {
         return "WAITING FOR PRICE" to yellow
     }
-
     val decision = masterEngineDecisions[symbol]
 
     if (decision?.qualified == true) {
@@ -1527,7 +1526,6 @@ if (sharedChochs.isEmpty()) {
     }
 }
 val detailedViews = mutableMapOf<String, TextView>()
-
 fun addDetailedStatus(key: String, text: String, color: Int, bold: Boolean) {
     val view = label(text, 11f, color, bold)
     detailedViews[key] = view
@@ -1663,7 +1661,7 @@ monitorCard.addView(row, matchWrap().apply { bottomMargin = dp(6) })
             }
         )
                             }
-                             // =========================================================
+ // =========================================================
 // TRADE SCREEN
 // =========================================================
 private fun addTradeScreen() {
@@ -1829,8 +1827,6 @@ row.addView(
             "Potential profit: ${if (running.potentialPayout > 0.0) formatMoney(potentialProfit) else "Awaiting Deriv payout"}",
             12f, green, true
         ).apply { setPadding(0, dp(4), 0, 0) }
-
-
         val spotView = label("Current value/spot: —", 12f, white, false)
             .apply { setPadding(0, dp(4), 0, 0) }
 
@@ -1983,7 +1979,7 @@ private fun calculateLiquidityLevels(
     historicalRecovery: Boolean = false
 ): List<LiquidityLevel> {
     val nowEpoch = System.currentTimeMillis() / 1000L
-    // Liquidity levels and sweep display are restricted to the latest 24 hours.
+    // Keep liquidity levels and swept-candle display to the latest 24 hours.
     val cutoffEpoch = nowEpoch - 24L * 60L * 60L
     val sorted = candles
         .filter { it.epoch + 3600L <= nowEpoch && it.epoch >= cutoffEpoch }
@@ -2025,56 +2021,58 @@ private fun calculateLiquidityLevels(
         var firstSweepIndex = -1
         var sweepAt = 0L
         var sweepStatus = "WAITING"
-        var failedCloseCount = 0
+        var consecutiveFailedCloses = 0
+        var firstSweepClosedOnReversalSide = false
 
-        // SSL (bottom): penetrate below, then two consecutive closes above.
-        // BSL (top): penetrate above, then two consecutive closes below.
+        // Bottom/SSL sweep: wick below the level, then two consecutive H1 closes above it.
+        // Top/BSL sweep: wick above the level, then two consecutive H1 closes below it.
         for (i in lastPivotIndex + 1 until sorted.size) {
             val candle = sorted[i]
-            val penetrated = if (bullish) candle.low < levelPrice else candle.high > levelPrice
+            val penetrated = if (bullish) {
+                candle.low < levelPrice
+            } else {
+                candle.high > levelPrice
+            }
+
             if (firstSweepIndex < 0) {
                 if (!penetrated) continue
                 firstSweepIndex = i
                 sweepAt = candle.epoch
             }
 
-            val withinFiveCandles = i - firstSweepIndex < 5
-            if (!withinFiveCandles) {
+            // Five H1 candles are allowed, counting the first swept candle.
+            if (i - firstSweepIndex >= 5) {
                 sweepStatus = "EXPIRED"
                 break
             }
 
-            val qualifyingClose = if (bullish) {
+            val closesOnReversalSide = if (bullish) {
                 candle.close > levelPrice
             } else {
                 candle.close < levelPrice
             }
 
-            if (qualifyingClose) {
-                failedCloseCount = 0
-                // The sweep candle itself must qualify, followed immediately
-                // by the next H1 candle closing on the same side of the level.
-                if (i == firstSweepIndex + 1) {
-                    val firstSweepCandle = sorted[firstSweepIndex]
-                    val firstCloseQualified = if (bullish) {
-                        firstSweepCandle.close > levelPrice
-                    } else {
-                        firstSweepCandle.close < levelPrice
-                    }
-                    if (firstCloseQualified) {
-                        sweepStatus = "LIQUIDITY SWEEP"
-                        break
-                    }
+            if (i == firstSweepIndex) {
+                firstSweepClosedOnReversalSide = closesOnReversalSide
+            }
+
+            if (closesOnReversalSide) {
+                consecutiveFailedCloses = 0
+                // Confirmation is strictly the swept candle plus its immediate successor.
+                if (i == firstSweepIndex + 1 && firstSweepClosedOnReversalSide) {
+                    sweepStatus = "LIQUIDITY SWEEP"
+                    break
                 }
             } else {
-                failedCloseCount++
-                if (failedCloseCount >= 3) {
+                consecutiveFailedCloses++
+                if (consecutiveFailedCloses >= 3) {
                     sweepStatus = "INVALIDATED"
                     break
                 }
             }
         }
 
+        // Expire after the fifth candle has completed without confirmation.
         if (firstSweepIndex >= 0 && sweepStatus == "WAITING" &&
             sorted.lastIndex - firstSweepIndex >= 4) {
             sweepStatus = "EXPIRED"
@@ -2133,7 +2131,6 @@ private fun calculateMarketStructure(
     var candidateHigh = sorted.first().high
     var candidateLowIndex = 0
     var candidateLow = sorted.first().low
-
     var minorLowIndex = 0
     var minorLow = sorted.first().low
     var minorHighIndex = 0
@@ -2438,7 +2435,6 @@ private fun calculateMss(candles: List<DerivApiClient.Candle>): MssAnalysis {
 
     return MssAnalysis(events.takeLast(10))
 }
-
 // =============================================================
 // INDEPENDENT MODULE OUTPUTS
 // =============================================================
@@ -2543,7 +2539,8 @@ val savedSweepStatus =
 
 // Remove old saved records that cannot be verified as reversals.
 if (savedSweepTime > 0L &&
-    savedSweepStatus != "LIQUIDITY SWEEP"
+    savedSweepStatus != "LIQUIDITY SWEEP" &&
+    savedSweepStatus != "ALREADY EXECUTED"
 ) {
     appPrefs.edit()
         .remove("active_sweep_time_$symbol")
@@ -2553,29 +2550,6 @@ if (savedSweepTime > 0L &&
         .apply()
 
     savedSweepTime = 0L
-}
-
-// Recover historical reversal only when no valid sweep is saved
-// and the normal scan found no confirmed reversal.
-if (savedSweepTime == 0L && confirmedSweeps.isEmpty()) {
-    val recovered = evaluateLiquiditySweepModule(
-        candles,
-        historicalRecovery = true
-    )
-
-    confirmedSweeps = buildList {
-        recovered.bullish.forEach { level ->
-            if (level.sweepStatus == "LIQUIDITY SWEEP") {
-                add(Triple(level.sweepAt, "BULLISH", level.price))
-            }
-        }
-
-        recovered.bearish.forEach { level ->
-            if (level.sweepStatus == "LIQUIDITY SWEEP") {
-                add(Triple(level.sweepAt, "BEARISH", level.price))
-            }
-        }
-    }.filter { it.first > 0L }
 }
 
 val newestConfirmedSweep =
@@ -3653,7 +3627,7 @@ derivApiClient.connectWithAccessToken(token, executionMode)
                 accountStatus.setTextColor(yellow)
             }
         }
-    }
+        }
     override fun onConnected(accountId: String, accountType: String) {
     runOnUiThread {
         cancelDerivReconnect()
@@ -3955,6 +3929,10 @@ return@runOnUiThread
                 "used_sweep_time_${accountId}_${order.mode}_${order.symbol}",
                 order.sweepTime
             )
+            .putString(
+                "active_sweep_status_${order.symbol}",
+                "ALREADY EXECUTED"
+            )
             .apply()
     }
 
@@ -4241,8 +4219,7 @@ marketDataCandles[symbol] = candles
     .filter { it.epoch >= cutoffEpoch }
     .sortedBy { it.epoch }
     evaluateMasterEngine(symbol)
-
-android.util.Log.i(
+    android.util.Log.i(
     "MarketData",
     "$symbol: ${marketDataCandles[symbol]?.size ?: 0} candles stored."
 )
