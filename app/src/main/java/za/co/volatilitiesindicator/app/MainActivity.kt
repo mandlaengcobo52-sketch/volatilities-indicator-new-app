@@ -2011,7 +2011,23 @@ private fun calculateLiquidityLevels(
         .sortedBy { it.epoch }
 
     if (sorted.size < 10) return emptyList()
+    // H1 ATR(14), calculated from closed H1 candles.
+val atrValues = sorted.mapIndexedNotNull { index, candle ->
+    if (index == 0) return@mapIndexedNotNull null
 
+    val previousClose = sorted[index - 1].close
+    maxOf(
+        candle.high - candle.low,
+        kotlin.math.abs(candle.high - previousClose),
+        kotlin.math.abs(candle.low - previousClose)
+    )
+}
+
+val atr = atrValues.takeLast(14).average()
+if (!atr.isFinite() || atr <= 0.0) return emptyList()
+
+// Equal-high/equal-low tolerance: 0.10 H1 ATR.
+val tolerance = atr * 0.10
     val pivots = mutableListOf<Pair<Int, Double>>()
     for (i in 2 until sorted.size - 2) {
         val price = if (bullish) sorted[i].low else sorted[i].high
@@ -2025,15 +2041,13 @@ private fun calculateLiquidityLevels(
         if (confirmed) pivots.add(i to price)
     }
 
-    val tolerance = 0.0015
     val used = mutableSetOf<Int>()
     val results = mutableListOf<LiquidityLevel>()
 
     pivots.forEachIndexed { index, pivot ->
         if (index in used) return@forEachIndexed
         val group = pivots.filterIndexed { otherIndex, other ->
-            otherIndex !in used && kotlin.math.abs(other.second - pivot.second) /
-    pivot.second.coerceAtLeast(0.000001) <= tolerance
+            otherIndex !in used && kotlin.math.abs(other.second - pivot.second) <= tolerance
         }
         group.forEach { member ->
             pivots.indexOf(member).takeIf { it >= 0 }?.let(used::add)
@@ -2041,6 +2055,8 @@ private fun calculateLiquidityLevels(
         if (group.size < 2) return@forEachIndexed
 
         val levelPrice = group.map { it.second }.average()
+        val zoneLow = group.minOf { it.second }
+        val zoneHigh = group.maxOf { it.second }
         val firstPivotIndex = group.minOf { it.first }
         val lastPivotIndex = group.maxOf { it.first }
         var firstSweepIndex = -1
@@ -2054,7 +2070,10 @@ private fun calculateLiquidityLevels(
         for (i in lastPivotIndex + 1 until sorted.size) {
             val candle = sorted[i]
             val penetrated = if (bullish) {
-                candle.low < levelPrice
+    candle.low < zoneLow
+} else {
+    candle.high > zoneHigh
+            }
             } else {
                 candle.high > levelPrice
             }
