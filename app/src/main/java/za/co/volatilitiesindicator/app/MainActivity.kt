@@ -617,6 +617,7 @@ private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
     if (marketDataPrices[symbol] == null) {
         return "WAITING FOR PRICE" to yellow
     }
+
     val decision = masterEngineDecisions[symbol]
 
     if (decision?.qualified == true) {
@@ -629,7 +630,6 @@ private var marketDataRequested = false
 private var marketStructureExpanded = true
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
         window.statusBarColor = bg
 window.navigationBarColor = bg
         window.decorView.systemUiVisibility = 0
@@ -1242,7 +1242,7 @@ private fun addHeader() {
     "System Settings",
     "Logout"
                 )
-                } else {
+            } else {
             listOf(
                 "Home",
                 "Trade",
@@ -1477,9 +1477,14 @@ page.addView(monitorHeader, matchWrap())
 // SIMPLE LIQUIDITY DISPLAY — NUMERIC LEVELS AND SWEEP STATUS ONLY
 // Bullish liquidity = SSL. Bearish liquidity = BSL.
 
-detailsContainer.addView(label("LIQUIDITY SWEEP: ${sharedAnalysis?.liquidityText ?: "WAITING"}", 12f, if (sharedAnalysis?.liquidityText?.contains("SWEPT") == true) green else yellow, true))
-detailsContainer.addView(label("BULLISH LIQUIDITY (SSL)", 12f, green, true))
 val sharedBullishLiquidity = sharedAnalysis?.bullishLiquidity.orEmpty()
+val bottomSweepStatus = sharedBullishLiquidity.firstOrNull { it.sweepStatus == "LIQUIDITY SWEEP" }?.sweepStatus
+    ?: sharedBullishLiquidity.firstOrNull { it.sweepStatus == "ALREADY EXECUTED" }?.sweepStatus
+    ?: sharedBullishLiquidity.firstOrNull { it.sweepStatus == "INVALIDATED" }?.sweepStatus
+    ?: sharedBullishLiquidity.firstOrNull { it.sweepStatus == "EXPIRED" }?.sweepStatus
+    ?: "WAITING"
+detailsContainer.addView(label("BOTTOM LIQUIDITY SWEEP (SSL): $bottomSweepStatus", 12f, if (bottomSweepStatus == "LIQUIDITY SWEEP" || bottomSweepStatus == "ALREADY EXECUTED") green else yellow, true))
+detailsContainer.addView(label("BOTTOM LIQUIDITY LEVELS (SSL)", 12f, green, true))
 if (sharedBullishLiquidity.isEmpty()) {
     detailsContainer.addView(label("No bullish liquidity levels identified.", 11f, muted, false))
 } else {
@@ -1491,8 +1496,14 @@ if (sharedBullishLiquidity.isEmpty()) {
     }
 }
 
-detailsContainer.addView(label("BEARISH LIQUIDITY (BSL)", 12f, red, true))
 val sharedBearishLiquidity = sharedAnalysis?.bearishLiquidity.orEmpty()
+val topSweepStatus = sharedBearishLiquidity.firstOrNull { it.sweepStatus == "LIQUIDITY SWEEP" }?.sweepStatus
+    ?: sharedBearishLiquidity.firstOrNull { it.sweepStatus == "ALREADY EXECUTED" }?.sweepStatus
+    ?: sharedBearishLiquidity.firstOrNull { it.sweepStatus == "INVALIDATED" }?.sweepStatus
+    ?: sharedBearishLiquidity.firstOrNull { it.sweepStatus == "EXPIRED" }?.sweepStatus
+    ?: "WAITING"
+detailsContainer.addView(label("TOP LIQUIDITY SWEEP (BSL): $topSweepStatus", 12f, if (topSweepStatus == "LIQUIDITY SWEEP" || topSweepStatus == "ALREADY EXECUTED") green else yellow, true))
+detailsContainer.addView(label("TOP LIQUIDITY LEVELS (BSL)", 12f, red, true))
 if (sharedBearishLiquidity.isEmpty()) {
     detailsContainer.addView(label("No bearish liquidity levels identified.", 11f, muted, false))
 } else {
@@ -1526,6 +1537,7 @@ if (sharedChochs.isEmpty()) {
     }
 }
 val detailedViews = mutableMapOf<String, TextView>()
+
 fun addDetailedStatus(key: String, text: String, color: Int, bold: Boolean) {
     val view = label(text, 11f, color, bold)
     detailedViews[key] = view
@@ -1661,7 +1673,7 @@ monitorCard.addView(row, matchWrap().apply { bottomMargin = dp(6) })
             }
         )
                             }
- // =========================================================
+                             // =========================================================
 // TRADE SCREEN
 // =========================================================
 private fun addTradeScreen() {
@@ -1827,6 +1839,7 @@ row.addView(
             "Potential profit: ${if (running.potentialPayout > 0.0) formatMoney(potentialProfit) else "Awaiting Deriv payout"}",
             12f, green, true
         ).apply { setPadding(0, dp(4), 0, 0) }
+
         val spotView = label("Current value/spot: —", 12f, white, false)
             .apply { setPadding(0, dp(4), 0, 0) }
 
@@ -2131,6 +2144,7 @@ private fun calculateMarketStructure(
     var candidateHigh = sorted.first().high
     var candidateLowIndex = 0
     var candidateLow = sorted.first().low
+
     var minorLowIndex = 0
     var minorLow = sorted.first().low
     var minorHighIndex = 0
@@ -2421,7 +2435,6 @@ private fun calculateMss(candles: List<DerivApiClient.Candle>): MssAnalysis {
             events.add(MssEvent(number, "BULLISH", latestLowerHigh.second, candle.epoch))
             consumedLowerHigh = latestLowerHigh.first
         }
-
         if (latestHigherLow != null &&
             i > latestHigherLow.first &&
             candle.close < latestHigherLow.second &&
@@ -2435,6 +2448,7 @@ private fun calculateMss(candles: List<DerivApiClient.Candle>): MssAnalysis {
 
     return MssAnalysis(events.takeLast(10))
 }
+
 // =============================================================
 // INDEPENDENT MODULE OUTPUTS
 // =============================================================
@@ -2706,18 +2720,16 @@ val engineText = when {
         marketDirection == "BULLISH" && bearishChoch -> "POTENTIAL BEARISH REVERSAL"
         else -> "NO CONFIRMED REVERSAL"
     }
-    val liquidityText = when {
-        bullishSweep && bearishSweep -> "BULLISH AND BEARISH SWEPT"
-        bullishSweep -> "BULLISH SWEPT"
-        bearishSweep -> "BEARISH SWEPT"
-        else -> "WAITING"
-    }
+    val bottomSweepText = if (bullishSweep) "LIQUIDITY SWEEP" else "WAITING"
+    val topSweepText = if (bearishSweep) "LIQUIDITY SWEEP" else "WAITING"
+    val liquidityText = "BOTTOM: $bottomSweepText | TOP: $topSweepText"
     val summary = listOf(
-        "1. LIQUIDITY SWEEP: $liquidityText",
-        "2. MSS: $mssText",
-        "3. $chochText",
-        "4. MASTER ENGINE: $engineText"
-    ).joinToString("\n")
+        "1. BOTTOM LIQUIDITY SWEEP (SSL): $bottomSweepText",
+        "2. TOP LIQUIDITY SWEEP (BSL): $topSweepText",
+        "3. MSS: $mssText",
+        "4. $chochText",
+        "5. MASTER ENGINE: $engineText"
+    ).joinToString("\\n")
 
     dashboardAnalysisViews[symbol]?.let { analysisView ->
         val lines = summary.split("\n")
@@ -3627,7 +3639,7 @@ derivApiClient.connectWithAccessToken(token, executionMode)
                 accountStatus.setTextColor(yellow)
             }
         }
-        }
+    }
     override fun onConnected(accountId: String, accountType: String) {
     runOnUiThread {
         cancelDerivReconnect()
@@ -3960,8 +3972,7 @@ return@runOnUiThread
 
     val available = json.optJSONObject("contracts_for")
         ?.optJSONArray("available")
-
-    if (symbol.isNotBlank()) {
+        if (symbol.isNotBlank()) {
         touchAvailabilityPending.remove(symbol)
 
         if (available != null) {
@@ -4219,7 +4230,8 @@ marketDataCandles[symbol] = candles
     .filter { it.epoch >= cutoffEpoch }
     .sortedBy { it.epoch }
     evaluateMasterEngine(symbol)
-    android.util.Log.i(
+
+android.util.Log.i(
     "MarketData",
     "$symbol: ${marketDataCandles[symbol]?.size ?: 0} candles stored."
 )
@@ -4294,3 +4306,4 @@ override fun onDestroy() {
     super.onDestroy()
 }
                             }
+                            
