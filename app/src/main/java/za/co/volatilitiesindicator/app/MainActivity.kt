@@ -2141,7 +2141,7 @@ for (i in identificationIndex + 1 until sorted.size) {
 
         // SSL: price must trade below the zoneLow, then close above zoneHigh twice.
         // BSL: price must trade above the zoneHigh, then close below zoneLow twice.
-        val identificationIndex = (lastPivotIndex + 2).coerceAtMost(sorted.lastIndex)
+    
         for (i in identificationIndex + 1 until sorted.size) {
             val candle = sorted[i]
             if (firstSweepIndex < 0) {
