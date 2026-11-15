@@ -525,7 +525,7 @@ private fun isTouchExecutionReady(symbol: String): Boolean {
 
     if (activeSweepTime <= usedSweepTime)
         return blocked("LIQUIDITY SWEEP ALREADY USED")
-
+        
     if (touchExecutionLocks.contains(symbol))
         return blocked("EXECUTION LOCK ACTIVE")
 
@@ -2065,10 +2065,79 @@ private fun calculateLiquidityLevels(
         val lastPivotIndex = group.maxOf { it.first }
 
         var firstSweepIndex = -1
-        var sweepAt = 0L
-        var confirmationAt = 0L
-        var sweepStatus = "WAITING"
-        var consecutiveReversalCloses = 0
+var sweepAt = 0L
+var confirmationAt = 0L
+var sweepStatus = "WAITING"
+var consecutiveReversalCloses = 0
+var consecutiveFailedPostConfirmationCloses = 0
+
+// SSL: sweep below zone, then two consecutive closes above zone.
+// BSL: sweep above zone, then two consecutive closes below zone.
+// After confirmation, monitor three consecutive failed closes.
+val identificationIndex = (lastPivotIndex + 2).coerceAtMost(sorted.lastIndex)
+
+for (i in identificationIndex + 1 until sorted.size) {
+    val candle = sorted[i]
+
+    // Once confirmed, continue monitoring subsequent closed H1 candles.
+    if (sweepStatus == "LIQUIDITY SWEEP") {
+        val holdsReversal = if (bullish) {
+            candle.close > zoneHigh
+        } else {
+            candle.close < zoneLow
+        }
+
+        if (holdsReversal) {
+            consecutiveFailedPostConfirmationCloses = 0
+        } else {
+            consecutiveFailedPostConfirmationCloses++
+        }
+
+        if (consecutiveFailedPostConfirmationCloses >= 3) {
+            sweepStatus = "INVALIDATED"
+            break
+        }
+
+        continue
+    }
+
+    if (firstSweepIndex < 0) {
+        val sweptBeyondZone = if (bullish) {
+            candle.low < zoneLow
+        } else {
+            candle.high > zoneHigh
+        }
+
+        if (!sweptBeyondZone) continue
+
+        firstSweepIndex = i
+        sweepAt = candle.epoch
+    }
+
+    // Initial sweep and reversal confirmation must finish within 3 hours.
+    if (candle.epoch - sweepAt >= sweepExpirySeconds) {
+        sweepStatus = "EXPIRED"
+        break
+    }
+
+    val closesOnReversalSide = if (bullish) {
+        candle.close > zoneHigh
+    } else {
+        candle.close < zoneLow
+    }
+
+    if (closesOnReversalSide) {
+        consecutiveReversalCloses++
+
+        if (consecutiveReversalCloses >= 2) {
+            sweepStatus = "LIQUIDITY SWEEP"
+            confirmationAt = candle.epoch + 3600L
+            consecutiveFailedPostConfirmationCloses = 0
+        }
+    } else {
+        consecutiveReversalCloses = 0
+    }
+}
 
         // SSL: price must trade below the zoneLow, then close above zoneHigh twice.
         // BSL: price must trade above the zoneHigh, then close below zoneLow twice.
@@ -2586,7 +2655,32 @@ var savedSweepTime =
 
 val savedSweepStatus =
     appPrefs.getString("active_sweep_status_$symbol", "") ?: ""
+// Clear a saved sweep if its corresponding liquidity level was invalidated.
+val savedSweepDirection =
+    appPrefs.getString("active_sweep_direction_$symbol", "") ?: ""
 
+val savedSweepInvalidated = when (savedSweepDirection) {
+    "BULLISH" -> bullishLiquidity.any {
+        it.sweepAt == savedSweepTime &&
+        it.sweepStatus == "INVALIDATED"
+    }
+    "BEARISH" -> bearishLiquidity.any {
+        it.sweepAt == savedSweepTime &&
+        it.sweepStatus == "INVALIDATED"
+    }
+    else -> false
+}
+
+if (savedSweepStatus == "LIQUIDITY SWEEP" && savedSweepInvalidated) {
+    appPrefs.edit()
+        .remove("active_sweep_time_$symbol")
+        .remove("active_sweep_direction_$symbol")
+        .remove("active_sweep_price_$symbol")
+        .remove("active_sweep_status_$symbol")
+        .apply()
+
+    savedSweepTime = 0L
+}
 // A confirmed SWEPT AND REVERSE signal remains valid for three hours only.
 if (savedSweepStatus == "LIQUIDITY SWEEP" && savedSweepTime > 0L &&
     nowEpoch - savedSweepTime >= 3L * 60L * 60L) {
