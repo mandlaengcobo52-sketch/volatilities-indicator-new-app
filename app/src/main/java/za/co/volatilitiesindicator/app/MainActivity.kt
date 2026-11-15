@@ -2139,58 +2139,6 @@ for (i in identificationIndex + 1 until sorted.size) {
     }
 }
 
-        // SSL: price must trade below the zoneLow, then close above zoneHigh twice.
-        // BSL: price must trade above the zoneHigh, then close below zoneLow twice.
-    
-        for (i in identificationIndex + 1 until sorted.size) {
-            val candle = sorted[i]
-            if (firstSweepIndex < 0) {
-                val sweptBeyondZone = if (bullish) {
-                    candle.low < zoneLow
-                } else {
-                    candle.high > zoneHigh
-                }
-                if (!sweptBeyondZone) continue
-                firstSweepIndex = i
-                sweepAt = candle.epoch
-            }
-
-            // Do not expire on the candle that starts the sweep.
-if (
-    firstSweepIndex >= 0 &&
-    candle.epoch - sweepAt >= sweepExpirySeconds
-) {
-    sweepStatus = "EXPIRED"
-    break
-}
-
-            val closesOnReversalSide = if (bullish) {
-                candle.close > zoneHigh
-            } else {
-                candle.close < zoneLow
-            }
-
-            if (closesOnReversalSide) {
-                consecutiveReversalCloses++
-                if (consecutiveReversalCloses == 2) {
-                    sweepStatus = "LIQUIDITY SWEEP"
-                    confirmationAt = candle.epoch + 3600L
-                    break
-                }
-            } else {
-                consecutiveReversalCloses = 0
-            }
-        }
-
-        // Expire an unconfirmed sweep after exactly 3 hours.
-if (
-    firstSweepIndex >= 0 &&
-    sweepStatus == "WAITING" &&
-    nowEpoch - sweepAt >= sweepExpirySeconds
-) {
-    sweepStatus = "EXPIRED"
-}
-
         // Zone identification time is the close of the second confirming pivot candle.
         val identifiedAt = sorted[identificationIndex].epoch + 3600L
 
