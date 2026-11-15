@@ -1449,14 +1449,15 @@ page.addView(monitorHeader, matchWrap())
                 }
             )
             val analysisView = label(
-                                """
-                1. LIQUIDITY SWEEP: WAITING
-                2. MSS: WAITING
-                3. BULLISH / BEARISH CHOCH: WAITING
-                4. MASTER ENGINE: WAITING
-                """.trimIndent(),
-                10f, yellow, false
-            ).apply {
+    """
+    1. BOTTOM LIQUIDITY SWEEP (SSL): WAITING
+    2. TOP LIQUIDITY SWEEP (BSL): WAITING
+    3. MSS: WAITING
+    4. BULLISH / BEARISH CHOCH: WAITING
+    5. MASTER ENGINE: WAITING
+    """.trimIndent(),
+    10f, yellow, false
+).apply {
                 setPadding(dp(9), dp(9), dp(9), dp(9))
                 background = shape(panel2, accent, 8, 1)
                 setLineSpacing(dp(2).toFloat(), 1.0f)
@@ -2729,7 +2730,7 @@ val engineText = when {
         "3. MSS: $mssText",
         "4. $chochText",
         "5. MASTER ENGINE: $engineText"
-    ).joinToString("\\n")
+    ).joinToString("\n")
 
     dashboardAnalysisViews[symbol]?.let { analysisView ->
         val lines = summary.split("\n")
