@@ -1491,7 +1491,11 @@ if (sharedBullishLiquidity.isEmpty()) {
 } else {
     sharedBullishLiquidity.forEachIndexed { index, level ->
         detailsContainer.addView(label(
-            "PRICE: ${formatMarketPrice(level.price)} | ${level.sweepStatus} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepAt > 0L) formatMarketTime(level.sweepAt) else "—"}",
+            "ZONE: ${formatMarketPrice(level.zoneLow)} - ${formatMarketPrice(level.zoneHigh)} | " +
+"IDENTIFIED: ${formatMarketTime(level.createdAt)} | " +
+"SWEEP: ${if (level.sweepAt > 0L) formatMarketTime(level.sweepAt) else "—"} | " +
+"CONFIRMED: ${if (level.confirmationAt > 0L) formatMarketTime(level.confirmationAt) else "—"} | " +
+"POINTS: ${level.occurrences} | STATUS: ${level.sweepStatus}",
             11f, green, false
         ))
     }
@@ -1510,7 +1514,11 @@ if (sharedBearishLiquidity.isEmpty()) {
 } else {
     sharedBearishLiquidity.forEachIndexed { index, level ->
         detailsContainer.addView(label(
-            "PRICE: ${formatMarketPrice(level.price)} | ${level.sweepStatus} | CREATED: ${formatMarketTime(level.createdAt)} | SWEPT: ${if (level.sweepAt > 0L) formatMarketTime(level.sweepAt) else "—"}",
+            "ZONE: ${formatMarketPrice(level.zoneLow)} - ${formatMarketPrice(level.zoneHigh)} | " +
+"IDENTIFIED: ${formatMarketTime(level.createdAt)} | " +
+"SWEEP: ${if (level.sweepAt > 0L) formatMarketTime(level.sweepAt) else "—"} | " +
+"CONFIRMED: ${if (level.confirmationAt > 0L) formatMarketTime(level.confirmationAt) else "—"} | " +
+"POINTS: ${level.occurrences} | STATUS: ${level.sweepStatus}",
             11f, red, false
         ))
     }
@@ -1978,8 +1986,11 @@ private fun registerCurrentPriceView(symbol: String, section: String, view: Text
 
 private data class LiquidityLevel(
     val price: Double,
+    val zoneLow: Double,
+    val zoneHigh: Double,
     val createdAt: Long,
     val sweepAt: Long,
+    val confirmationAt: Long,
     val occurrences: Int,
     val sweepStatus: String = "WAITING"
 )
@@ -2092,15 +2103,34 @@ private fun calculateLiquidityLevels(
             sweepStatus = "EXPIRED"
         }
 
-        results.add(
-            LiquidityLevel(
-                price = levelPrice,
-                createdAt = sorted[firstPivotIndex].epoch,
-                sweepAt = sweepAt,
-                occurrences = group.size,
-                sweepStatus = sweepStatus
-            )
-        )
+        val zoneLow = group.minOf { it.second }
+val zoneHigh = group.maxOf { it.second }
+
+// The pool is identified only after the latest grouped pivot
+// has been confirmed by two subsequent closed H1 candles.
+val identificationIndex = (lastPivotIndex + 2).coerceAtMost(sorted.lastIndex)
+val identifiedAt = sorted[identificationIndex].epoch + 3600L
+
+val confirmationAt = if (sweepStatus == "LIQUIDITY SWEEP" &&
+    firstSweepIndex >= 0
+) {
+    sorted[firstSweepIndex + 1].epoch
+} else {
+    0L
+}
+
+results.add(
+    LiquidityLevel(
+        price = levelPrice,
+        zoneLow = zoneLow,
+        zoneHigh = zoneHigh,
+        createdAt = identifiedAt,
+        sweepAt = sweepAt,
+        confirmationAt = confirmationAt,
+        occurrences = group.size,
+        sweepStatus = sweepStatus
+    )
+)
     }
     return results.sortedByDescending { it.createdAt }
 }
