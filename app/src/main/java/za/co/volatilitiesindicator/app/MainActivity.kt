@@ -2085,9 +2085,9 @@ for (i in identificationIndex + 1 until sorted.size) {
     // Once confirmed, continue monitoring subsequent closed H1 candles.
     if (sweepStatus == "LIQUIDITY SWEEP") {
         val holdsReversal = if (bullish) {
-            candle.close > zoneHigh
-        } else {
-            candle.close < zoneLow
+    candle.close > levelPrice
+} else {
+    candle.close < levelPrice
         }
 
         if (holdsReversal) {
@@ -2124,9 +2124,9 @@ for (i in identificationIndex + 1 until sorted.size) {
     }
 
     val closesOnReversalSide = if (bullish) {
-        candle.close > zoneHigh
-    } else {
-        candle.close < zoneLow
+    candle.close > levelPrice
+} else {
+    candle.close < levelPrice
     }
 
     if (closesOnReversalSide) {
