@@ -1772,7 +1772,7 @@ row.addView(
         "DIRECTION: $tradeDirection",
         row.addView(
     label(
-        "TRAILING STOP: " + if (trailingStopEnabled) "ON" else "OFF",
+        "TRAILING STOP: ${if (trailingStopEnabled) "ON" else "OFF"}",
         12f,
         if (trailingStopEnabled) green else red,
         true
@@ -1847,7 +1847,7 @@ row.addView(
         "DIRECTION: ${if (running.pairSide.contains("TOUCH")) running.pairSide else running.direction}",
         row.addView(
     label(
-        "TRAILING STOP: " + if (trailingStopEnabled) "ON" else "OFF",
+        "TRAILING STOP: ${if (trailingStopEnabled) "ON" else "OFF"}",
         12f,
         if (trailingStopEnabled) green else red,
         true
