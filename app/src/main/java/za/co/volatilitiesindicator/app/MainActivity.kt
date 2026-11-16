@@ -313,7 +313,7 @@ private val consumedTouchQualifications = mutableMapOf<String, Long>()
     val cycleStart = appPrefs.getLong(timeKey, 0L)
 
     if (
-      savedCapital <= 0.0 ||
+        savedCapital <= 0.0 ||
         cycleStart <= 0L ||
         now - cycleStart >= 86400000L
     ) {
@@ -613,7 +613,6 @@ private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
     }
 
     if (!connected) return "DISCONNECTED" to red
-
     if (marketDataPrices[symbol] == null) {
         return "WAITING FOR PRICE" to yellow
     }
@@ -1523,7 +1522,6 @@ if (sharedBearishLiquidity.isEmpty()) {
         "LEVEL: ${formatMarketPrice(level.price)} | IDENTIFIED: ${formatMarketTime(level.createdAt)}",
         11f, red, false
     ))
-
     detailsContainer.addView(label(
         "SWEEP TIME: ${if (level.sweepAt > 0L) formatMarketTime(level.sweepAt) else "NOT YET SWEPT"}",
         11f, red, false
@@ -1825,7 +1823,7 @@ val originalTarget = tracked?.target?.takeIf { it.isFinite() && it > 0.0 }
                     }
                     .show()
             }
-            }, matchWrap().apply { topMargin = dp(8) })
+                }, matchWrap().apply { topMargin = dp(8) })
         runningCard.addView(row, matchWrap().apply { topMargin = dp(7) })
         visibleRunning++
     }
@@ -2128,7 +2126,6 @@ private fun calculateMarketStructure(
     var candidateHigh = sorted.first().high
     var candidateLowIndex = 0
     var candidateLow = sorted.first().low
-
     var minorLowIndex = 0
     var minorLow = sorted.first().low
     var minorHighIndex = 0
@@ -2431,7 +2428,6 @@ private fun calculateMss(candles: List<DerivApiClient.Candle>): MssAnalysis {
 
     return MssAnalysis(events.takeLast(10))
 }
-
 // =============================================================
 // INDEPENDENT MODULE OUTPUTS
 // =============================================================
@@ -3935,7 +3931,6 @@ if (!sent) {
     pendingTouchBySymbol.remove(order.symbol)
     touchExecutionLocks.remove(order.symbol)
 }
-
 return@runOnUiThread
             }
             "buy" -> {
@@ -4077,28 +4072,6 @@ if (stake > 0.0) {
         isRecovery = savedIsRecovery
         )
     runningContracts[id] = restored
-if (!isClosed && running != null) {
-    val entrySpot = contract.optDouble("entry_spot", Double.NaN)
-    val barrierPrice = contract.optString("barrier", "")
-        .toDoubleOrNull() ?: Double.NaN
-
-    if (entrySpot.isFinite() && entrySpot > 0.0 &&
-        barrierPrice.isFinite() && barrierPrice > 0.0 &&
-        barrierPrice != entrySpot
-    ) {
-        val actualDirection =
-            if (barrierPrice > entrySpot) "BUY" else "SELL"
-
-        running.direction = actualDirection
-
-        appPrefs.edit()
-            .putString(
-                "contract_direction_${accountId}_${executionMode}_$id",
-                actualDirection
-            )
-            .apply()
-    }
-}
     // Reconstruct an older original pair if its pairing data was not saved.
     if (restored.pairId.isBlank() && !restored.isRecovery) {
         val partner = runningContracts.values.firstOrNull {
@@ -4142,175 +4115,175 @@ if (!isClosed && running != null) {
             "proposal_open_contract" -> {
                 openContractResponse = json
                 val contract = json.optJSONObject("proposal_open_contract")
+
                 if (contract != null) {
                     val id = contract.optLong("contract_id", 0L)
                     val status = contract.optString("status", "")
+
                     if (id > 0L) {
-                        val isClosed = status == "sold" || status == "won" ||
-                            status == "lost" || contract.optInt("is_sold", 0) == 1
+                        val isClosed = status == "sold" ||
+                            status == "won" ||
+                            status == "lost" ||
+                            contract.optInt("is_sold", 0) == 1
+
                         val liveProfit = contract.optDouble(
                             "profit",
-                            contract.optDouble("profit_open", liveContractProfits[id] ?: 0.0)
+                            contract.optDouble(
+                                "profit_open",
+                                liveContractProfits[id] ?: 0.0
+                            )
                         )
                         val running = runningContracts[id]
-                        val id = contract.optLong("contract_id", 0L)
-val status = contract.optString("status", "")
-
-if (id > 0L) {
-    val isClosed = status == "sold" || status == "won" ||
-        status == "lost" || contract.optInt("is_sold", 0) == 1
-
-    val liveProfit = contract.optDouble(
-        "profit",
-        contract.optDouble("profit_open", liveContractProfits[id] ?: 0.0)
-    )
-
-    val running = runningContracts[id]
-
-    if (!isClosed && running != null) {
-        val entrySpot = contract.optDouble("entry_spot", Double.NaN)
-        val barrierPrice = contract.optString("barrier", "")
-            .toDoubleOrNull() ?: Double.NaN
-
-        if (entrySpot.isFinite() && entrySpot > 0.0 &&
-            barrierPrice.isFinite() && barrierPrice > 0.0 &&
-            barrierPrice != entrySpot
-        ) {
-            val actualDirection =
-                if (barrierPrice > entrySpot) "BUY" else "SELL"
-
-            running.direction = actualDirection
-
-            appPrefs.edit()
-                .putString(
-                    "contract_direction_${accountId}_${executionMode}_$id",
-                    actualDirection
-                )
-                .apply()
-        }
-
-        liveContractProfits[id] = liveProfit
-        liveContractProfitModes[id] = "${accountId}_$executionMode"
 
                         if (!isClosed && running != null) {
+                            val entrySpot = contract.optDouble(
+                                "entry_spot",
+                                Double.NaN
+                            )
+                            val barrierPrice = contract.optString("barrier", "")
+                                .toDoubleOrNull() ?: Double.NaN
+
+                            if (entrySpot.isFinite() && entrySpot > 0.0 &&
+                                barrierPrice.isFinite() && barrierPrice > 0.0 &&
+                                barrierPrice != entrySpot
+                            ) {
+                                val actualDirection =
+                                    if (barrierPrice > entrySpot) "BUY" else "SELL"
+
+                                running.direction = actualDirection
+
+                                appPrefs.edit()
+                                    .putString(
+                                        "contract_direction_${accountId}_${executionMode}_$id",
+                                        actualDirection
+                                    )
+                                    .apply()
+                            }
+
                             liveContractProfits[id] = liveProfit
                             liveContractProfitModes[id] = "${accountId}_$executionMode"
 
-                           if (trailingStopEnabled && running.trailingEligible) {
-    val activationProfit = running.stake * 0.30
-    val givebackAmount = running.stake * 0.10
+                            if (trailingStopEnabled && running.trailingEligible) {
+                                val activationProfit = running.stake * 0.30
+                                val givebackAmount = running.stake * 0.10
 
-    if (!running.trailingActivated && liveProfit >= activationProfit) {
-        running.trailingActivated = true
-        running.peakProfit = liveProfit
-        notifyEvent(
-            "Trailing Stop Activated",
-            "${running.symbol} · Contract $id · Profit ${formatMoney(liveProfit)}",
-            "trailing_activated_$id"
-        )
-    }
+                                if (!running.trailingActivated && liveProfit >= activationProfit) {
+                                    running.trailingActivated = true
+                                    running.peakProfit = liveProfit
+                                    notifyEvent(
+                                        "Trailing Stop Activated",
+                                        "${running.symbol} · Contract $id · Profit ${formatMoney(liveProfit)}",
+                                        "trailing_activated_$id"
+                                    )
+                                }
 
-    if (running.trailingActivated) {
-        if (liveProfit > running.peakProfit) {
-            running.peakProfit = liveProfit
-        }
+                                if (running.trailingActivated) {
+                                    if (liveProfit > running.peakProfit) {
+                                        running.peakProfit = liveProfit
+                                    }
 
-        val trailingExit = running.peakProfit - givebackAmount
-        if (liveProfit <= trailingExit && !running.closeRequested) {
-            running.closeRequested = true
-            running.closeReason = "Trailing Stop"
+                                    val trailingExit = running.peakProfit - givebackAmount
+                                    if (liveProfit <= trailingExit && !running.closeRequested) {
+                                        running.closeRequested = true
+                                        running.closeReason = "Trailing Stop"
 
-            val closeSent = derivApiClient.send(
-                JSONObject()
-                    .put("sell", id)
-                    .put("price", 0)
-                    .put("req_id", nextTradeRequestId())
-            )
+                                        val closeSent = derivApiClient.send(
+                                            JSONObject()
+                                                .put("sell", id)
+                                                .put("price", 0)
+                                                .put("req_id", nextTradeRequestId())
+                                        )
 
-            if (!closeSent) {
-                running.closeRequested = false
-                running.closeReason = ""
-            } else {
-                notifyEvent(
-                    "Trailing Stop Triggered",
-                    "${running.symbol} · Contract $id · Peak ${formatMoney(running.peakProfit)} · Current ${formatMoney(liveProfit)}",
-                    "trailing_close_$id"
-                )
-            }
-        }
-    }
-}
+                                        if (!closeSent) {
+                                            running.closeRequested = false
+                                            running.closeReason = ""
+                                        } else {
+                                            notifyEvent(
+                                                "Trailing Stop Triggered",
+                                                "${running.symbol} · Contract $id · Peak ${formatMoney(running.peakProfit)} · Current ${formatMoney(liveProfit)}",
+                                                "trailing_close_$id"
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         } else if (isClosed) {
                             liveContractProfits.remove(id)
                             liveContractProfitModes.remove(id)
                         }
-                    }
-                    if (id > 0L) {
-                        val liveProfit = contract.optDouble("profit", contract.optDouble("profit_open", liveContractProfits[id] ?: 0.0))
+
                         val views = contractLiveViews[id]
                         if (views != null) {
-                            views.pnl.text = "Stake: ${formatMoney(views.stake)}   P/L: ${formatMoney(liveProfit)}"
+                            views.pnl.text =
+                                "Stake: ${formatMoney(views.stake)}   P/L: ${formatMoney(liveProfit)}"
                             views.pnl.setTextColor(profitColor(liveProfit))
-                            val spot = contract.optDouble("current_spot", contract.optDouble("current_spot_display_value", 0.0))
-                            views.spot.text = "Current value/spot: ${if (spot > 0.0) formatMoney(spot) else "—"}"
+
+                            val spot = contract.optDouble(
+                                "current_spot",
+                                contract.optDouble("current_spot_display_value", 0.0)
+                            )
+                            views.spot.text =
+                                "Current value/spot: ${if (spot > 0.0) formatMoney(spot) else "—"}"
+
                             val barrierValue = contract.optString("barrier", "")
-    .takeIf { it.isNotBlank() && it != "null" }
-    ?: "Waiting for Deriv"
+                                .takeIf { it.isNotBlank() && it != "null" }
+                                ?: "Waiting for Deriv"
 
-val expiryEpoch = contract.optLong(
-    "date_expiry",
-    contract.optLong("expiry_time", 0L)
-)
-
-val expiryRemaining =
-    if (expiryEpoch > 0L) {
-        (expiryEpoch - System.currentTimeMillis() / 1000L)
-            .coerceAtLeast(0L)
-    } else 0L
-
-val expiryText =
-    if (expiryEpoch > 0L) {
-        String.format(
-            java.util.Locale.US,
-            "%02d:%02d:%02d",
-            expiryRemaining / 3600,
-            (expiryRemaining % 3600) / 60,
-            expiryRemaining % 60
-        )
-    } else "—"
-
-views.exitBarrier.text = "Exit barrier: $barrierValue"
-views.expiry.text = "Expiry: $expiryText"
+                            val expiryEpoch = contract.optLong(
+                                "date_expiry",
+                                contract.optLong("expiry_time", 0L)
+                            )
+                            val expiryRemaining =
+                                if (expiryEpoch > 0L) {
+                                    (expiryEpoch - System.currentTimeMillis() / 1000L)
+                                        .coerceAtLeast(0L)
+                                } else 0L
+                            val expiryText =
+                                if (expiryEpoch > 0L) {
+                                    String.format(
+                                        java.util.Locale.US,
+                                        "%02d:%02d:%02d",
+                                        expiryRemaining / 3600,
+                                        (expiryRemaining % 3600) / 60,
+                                        expiryRemaining % 60
+                                    )
+                                } else "—"
+                            views.exitBarrier.text = "Exit barrier: $barrierValue"
+                            views.expiry.text = "Expiry: $expiryText"
                         }
-                    val pl = liveContractProfits.filterKeys { liveContractProfitModes[it] == "${accountId}_$executionMode" }.values.sum()
-                    if (::openPlView.isInitialized) {
-                        openPlView.text = "Open P/L:  ${formatMoney(pl)}"
-                        openPlView.setTextColor(profitColor(pl))
-                    }
-                    runningTotalPlView?.apply {
-                        text = "TOTAL OPEN P/L: ${formatMoney(pl)}"
-                        setTextColor(profitColor(pl))
-                    }
-                    if (status == "sold" || status == "won" ||
-    status == "lost" || contract.optInt("is_sold", 0) == 1
-) {
-    val closedTrade = runningContracts.remove(id)
 
-    if (closedTrade != null) {
-        notifyEvent(
-    "Trade closed",
-    "${closedTrade.symbol} · Contract $id closed.",
-    "trade_closed_$id"
-)
-        touchExecutionLocks.remove(closedTrade.symbol)
-        pendingTouchBySymbol.remove(closedTrade.symbol)
-    }
+                        val pl = liveContractProfits
+                            .filterKeys {
+                                liveContractProfitModes[it] == "${accountId}_$executionMode"
+                            }
+                            .values.sum()
 
-    if (selectedTab == "Trade") render()
+                        if (::openPlView.isInitialized) {
+                            openPlView.text = "Open P/L:  ${formatMoney(pl)}"
+                            openPlView.setTextColor(profitColor(pl))
+                        }
+                        runningTotalPlView?.apply {
+                            text = "TOTAL OPEN P/L: ${formatMoney(pl)}"
+                            setTextColor(profitColor(pl))
+                        }
+
+                        if (isClosed) {
+                            val closedTrade = runningContracts.remove(id)
+                            if (closedTrade != null) {
+                                notifyEvent(
+                                    "Trade closed",
+                                    "${closedTrade.symbol} · Contract $id closed.",
+                                    "trade_closed_$id"
+                                )
+                                touchExecutionLocks.remove(closedTrade.symbol)
+                                pendingTouchBySymbol.remove(closedTrade.symbol)
+                            }
+                            if (selectedTab == "Trade") render()
+                        }
                     }
                 }
             }
-                }
+            "profit_table" -> {
                 if (connected && accountId.isNotBlank()) tradeHistoryResponse = json
             }
         }
@@ -4407,6 +4380,3 @@ override fun onDestroy() {
     super.onDestroy()
 }
                             }
-
-                            
-                        
