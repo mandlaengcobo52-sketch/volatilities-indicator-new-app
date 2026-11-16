@@ -1514,11 +1514,11 @@ if (sharedBearishLiquidity.isEmpty()) {
 } else {
     sharedBearishLiquidity.forEachIndexed { index, level ->
         detailsContainer.addView(label(
-            "ZONE: ${formatMarketPrice(level.zoneLow)} - ${formatMarketPrice(level.zoneHigh)} | " +
+            "LEVEL: ${formatMarketPrice(level.price)} | " +
 "IDENTIFIED: ${formatMarketTime(level.createdAt)} | " +
 "SWEEP: ${if (level.sweepAt > 0L) formatMarketTime(level.sweepAt) else "—"} | " +
 "CONFIRMED: ${if (level.confirmationAt > 0L) formatMarketTime(level.confirmationAt) else "—"} | " +
-"POINTS: ${level.occurrences} | STATUS: ${level.sweepStatus}",
+"STATUS: ${level.sweepStatus}",
             11f, red, false
         ))
     }
@@ -2054,11 +2054,12 @@ private fun calculateLiquidityLevels(
             candle.high > level && candle.close < level
         }
 
-        if (sweptAndRejected) {
-            sweepAt = candle.epoch
-            confirmationAt = candle.epoch + 3600L
-            status = "LIQUIDITY SWEEP"
-        }
+         if (sweptAndRejected) {
+    sweepAt = candle.epoch
+    confirmationAt = candle.epoch + 3600L
+    status = "LIQUIDITY SWEEP"
+    break
+         }
     }
 
     return listOf(
