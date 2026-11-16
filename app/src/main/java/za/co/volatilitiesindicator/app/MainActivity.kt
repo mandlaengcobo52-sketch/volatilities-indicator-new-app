@@ -263,7 +263,10 @@ private fun startAndBindDerivService() {
         var pairSide: String = "",
         val isRecovery: Boolean = false,
         var recoveryTriggered: Boolean = false,
-        var potentialPayout: Double = 0.0
+        var potentialPayout: Double = 0.0,
+        var budgetDate: String = "",
+        var budgetSlot: Int = 0,
+        var budgetResultRecorded: Boolean = false
     )
 
     private data class ContractLiveViews(
@@ -297,7 +300,9 @@ var potentialPayout: Double = 0.0,
 var sweepTime: Long = 0L,
 var mssTime: Long = 0L,
 var chochTime: Long = 0L,
-var liquidityCreatedAt: Long = 0L
+var liquidityCreatedAt: Long = 0L,
+var budgetDate: String = "",
+var budgetSlot: Int = 0
 )
     
 
@@ -332,8 +337,125 @@ private val consumedTouchQualifications = mutableMapOf<String, Long>()
     return savedCapital
 }
 
+// MY BUDGET: daily starting capital, up to four slots, target two profitable closes.
+private fun budgetKey(): String = "my_budget_${accountId}_${executionMode}"
+private fun budgetRoot(): JSONObject {
+    val raw = appPrefs.getString(budgetKey(), "") ?: ""
+    return try { if (raw.isBlank()) JSONObject() else JSONObject(raw) } catch (_: Exception) { JSONObject() }
+}
+private fun saveBudget(root: JSONObject) {
+    appPrefs.edit().putString(budgetKey(), root.toString()).apply()
+}
+private fun budgetDateNow(): String = maxOf(saDayKey(), "2026-11-17")
+private fun budgetDayName(date: String): String = try {
+    val parsed = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).parse(date)
+    java.text.SimpleDateFormat("EEEE", java.util.Locale.US).format(parsed ?: java.util.Date())
+} catch (_: Exception) { "—" }
+private fun budgetRows(root: JSONObject): JSONArray = root.optJSONArray("days") ?: JSONArray()
+private fun findBudgetDay(days: JSONArray, date: String): JSONObject? {
+    for (i in 0 until days.length()) {
+        val day = days.optJSONObject(i) ?: continue
+        if (day.optString("date") == date) return day
+    }
+    return null
+}
+private fun ensureBudgetDay(): JSONObject? {
+    val root = budgetRoot()
+    val days = budgetRows(root)
+    val today = budgetDateNow()
+    var day = findBudgetDay(days, today)
+    if (day == null) {
+        val capital = if (days.length() > 0) {
+            val previous = days.optJSONObject(days.length() - 1)
+            previous?.optDouble("capital", 0.0)?.plus(previous.optDouble("totalProfit", 0.0)) ?: 0.0
+        } else root.optDouble("initialCapital", 0.0)
+        if (capital <= 0.0) return null
+        day = JSONObject().put("date", today).put("day", budgetDayName(today))
+            .put("capital", capital).put("trades", JSONArray()).put("totalProfit", 0.0)
+            .put("profitableTrades", 0)
+        days.put(day)
+        root.put("days", days)
+        saveBudget(root)
+    }
+    return day
+}
+private fun budgetTradeCount(day: JSONObject): Int = day.optJSONArray("trades")?.length() ?: 0
+private fun budgetCanTrade(day: JSONObject): Boolean =
+    budgetTradeCount(day) < 4 && day.optInt("profitableTrades", 0) < 2
+private fun reserveBudgetSlot(): Pair<String, Int>? {
+    val day = ensureBudgetDay() ?: return null
+    if (!budgetCanTrade(day)) return null
+    val root = budgetRoot()
+    val days = budgetRows(root)
+    val date = day.optString("date")
+    val stored = findBudgetDay(days, date) ?: return null
+    val trades = stored.optJSONArray("trades") ?: JSONArray()
+    val usedSlots = (0 until trades.length()).mapNotNull { trades.optJSONObject(it)?.optInt("slot") }.toSet()
+    val slot = (1..4).firstOrNull { it !in usedSlots } ?: return null
+    val stake = kotlin.math.round(stored.optDouble("capital", 0.0) * 0.30 * 100.0) / 100.0
+    if (stake <= 0.0) return null
+    trades.put(JSONObject().put("slot", slot).put("stake", stake).put("profit", 0.0)
+        .put("contractId", 0L).put("closed", false).put("reserved", true))
+    stored.put("trades", trades)
+    root.put("days", days)
+    saveBudget(root)
+    return date to slot
+}
+private fun releaseBudgetSlot(date: String, slot: Int) {
+    if (date.isBlank() || slot <= 0) return
+    val root = budgetRoot(); val days = budgetRows(root); val day = findBudgetDay(days, date) ?: return
+    val trades = day.optJSONArray("trades") ?: return
+    val rebuilt = JSONArray()
+    for (i in 0 until trades.length()) {
+        val t = trades.optJSONObject(i) ?: continue
+        if (t.optInt("slot") != slot || t.optBoolean("closed") || t.optLong("contractId") > 0L) rebuilt.put(t)
+    }
+    day.put("trades", rebuilt); root.put("days", days); saveBudget(root)
+}
+private fun budgetTradeForContract(contractId: Long): Pair<String, Int> {
+    val days = budgetRows(budgetRoot())
+    for (i in 0 until days.length()) {
+        val day = days.optJSONObject(i) ?: continue
+        val trades = day.optJSONArray("trades") ?: continue
+        for (j in 0 until trades.length()) {
+            val trade = trades.optJSONObject(j) ?: continue
+            if (trade.optLong("contractId") == contractId && contractId > 0L) {
+                return day.optString("date") to trade.optInt("slot")
+            }
+        }
+    }
+    return "" to 0
+}
+private fun attachBudgetContract(date: String, slot: Int, contractId: Long) {
+    val root = budgetRoot(); val days = budgetRows(root); val day = findBudgetDay(days, date) ?: return
+    val trades = day.optJSONArray("trades") ?: return
+    for (i in 0 until trades.length()) { val t = trades.optJSONObject(i) ?: continue
+        if (t.optInt("slot") == slot) { t.put("contractId", contractId).put("reserved", false); break }
+    }
+    day.put("trades", trades); root.put("days", days); saveBudget(root)
+}
+private fun recordBudgetClose(date: String, slot: Int, contractId: Long, profit: Double) {
+    if (date.isBlank() || slot <= 0) return
+    val root = budgetRoot(); val days = budgetRows(root); val day = findBudgetDay(days, date) ?: return
+    val trades = day.optJSONArray("trades") ?: return
+    for (i in 0 until trades.length()) {
+        val t = trades.optJSONObject(i) ?: continue
+        if (t.optInt("slot") == slot && (t.optLong("contractId") == contractId || t.optLong("contractId") == 0L)) {
+            if (t.optBoolean("closed")) return
+            t.put("contractId", contractId).put("profit", profit).put("closed", true).put("reserved", false)
+            break
+        }
+    }
+    var total = 0.0; var wins = 0
+    for (i in 0 until trades.length()) { val t = trades.optJSONObject(i) ?: continue
+        if (t.optBoolean("closed")) { val result = t.optDouble("profit", 0.0); total += result; if (result > 0.0) wins++ }
+    }
+    day.put("trades", trades).put("totalProfit", total).put("profitableTrades", wins)
+    root.put("days", days); saveBudget(root)
+}
 private fun dailyTradeStake(): Double {
-    return dailyCycleCapital() * 0.33
+    val day = ensureBudgetDay() ?: return 0.0
+    return kotlin.math.round(day.optDouble("capital", 0.0) * 0.30 * 100.0) / 100.0
 }
 
     private var autoTradeEnabled: Boolean
@@ -361,8 +483,17 @@ private fun submitTouchProposal(
 if (direction != "BUY" && direction != "SELL") return false
 if (!touchExecutionLocks.add(symbol)) return false
 
-    val stake = kotlin.math.round(dailyTradeStake() * 100.0) / 100.0
+    val budgetReservation = reserveBudgetSlot()
+    if (budgetReservation == null) {
+        touchExecutionLocks.remove(symbol)
+        toast("MY BUDGET: daily limit reached or starting capital not set.")
+        return false
+    }
+    val budgetDate = budgetReservation.first
+    val budgetSlot = budgetReservation.second
+    val stake = dailyTradeStake()
     if (stake <= 0.0 || accountCurrency.isBlank()) {
+        releaseBudgetSlot(budgetDate, budgetSlot)
         touchExecutionLocks.remove(symbol)
         return false
     }
@@ -380,7 +511,9 @@ if (!touchExecutionLocks.add(symbol)) return false
     sweepTime = sweepTime,
     mssTime = mssTime,
     chochTime = chochTime,
-    liquidityCreatedAt = liquidityCreatedAt
+    liquidityCreatedAt = liquidityCreatedAt,
+    budgetDate = budgetDate,
+    budgetSlot = budgetSlot
 )
     pendingTouchOrders[requestId] = order
     pendingTouchBySymbol[symbol] = requestId
@@ -415,6 +548,7 @@ val signedBarrier = if (direction == "BUY") {
     if (!sent) {
         pendingTouchOrders.remove(requestId)
         pendingTouchBySymbol.remove(symbol)
+        releaseBudgetSlot(budgetDate, budgetSlot)
         touchExecutionLocks.remove(symbol)
     }
     return sent
@@ -623,7 +757,7 @@ private val dashboardAnalysisViews =
     mutableMapOf<String, MutableMap<String, TextView>>()
 private val marketDataErrors =
     mutableMapOf<String, String>()
-    private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
+private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
         if (runningContracts.values.any {
             it.symbol == symbol && it.mode == executionMode
         }) {
@@ -786,6 +920,7 @@ if (savedToken.isNotBlank()) {
     addUserProfileScreen(page)
 }
 "User Accounts" -> addAdminUsersScreen()
+"My Budget" -> addMyBudgetScreen()
 "Notifications" -> addNotificationsScreen()
 "Settings", "System Settings" -> addSettingsScreen()
 "Trading Logs" -> addTradingLogsScreen()
@@ -1257,6 +1392,7 @@ private fun addHeader() {
             listOf(
     "Dashboard",
     "User Accounts",
+    "My Budget",
     "Notifications",
     "Trading Logs",
     "System Settings",
@@ -1266,6 +1402,7 @@ private fun addHeader() {
             listOf(
                 "Home",
                 "Trade",
+                "My Budget",
                 "News",
                 "My profile",
                      "Logout"
@@ -1382,7 +1519,6 @@ private fun addHeader() {
 )
        page.addView(row)
     }
-
     // Five-index live monitor shown on the dashboard.
     private fun addDashboardIndexMonitor() {
         page.addView(sectionTitle("INDEX MONITOR"))
@@ -1533,7 +1669,7 @@ val topSweepStatus = sharedBearishLiquidity.firstOrNull { it.sweepStatus == "LIQ
     ?: sharedBearishLiquidity.firstOrNull { it.sweepStatus == "INVALIDATED" }?.sweepStatus
     ?: sharedBearishLiquidity.firstOrNull { it.sweepStatus == "EXPIRED" }?.sweepStatus
     ?: "WAITING"
-            detailsContainer.addView(label("TOP LIQUIDITY SWEEP (BSL): $topSweepStatus", 12f, if (topSweepStatus == "LIQUIDITY SWEEP" || topSweepStatus == "ALREADY EXECUTED") green else yellow, true))
+detailsContainer.addView(label("TOP LIQUIDITY SWEEP (BSL): $topSweepStatus", 12f, if (topSweepStatus == "LIQUIDITY SWEEP" || topSweepStatus == "ALREADY EXECUTED") green else yellow, true))
 detailsContainer.addView(label("TOP LIQUIDITY LEVELS (BSL)", 12f, red, true))
 if (sharedBearishLiquidity.isEmpty()) {
     detailsContainer.addView(label("No bearish liquidity levels identified.", 11f, muted, false))
@@ -1684,7 +1820,7 @@ monitorCard.addView(row, matchWrap().apply { bottomMargin = dp(6) })
             weighted()
         )
         buttons.addView(
-          button("⟳  REFRESH", false) {
+            button("⟳  REFRESH", false) {
                 if (connected) {
                     derivApiClient.requestBalance()
                     derivApiClient.requestOpenTrades()
@@ -1832,7 +1968,7 @@ val originalTarget = tracked?.target?.takeIf { it.isFinite() && it > 0.0 }
     stake,
     symbol,
     tracked?.target,
-            tracked?.targetProbability ?: 0.0,
+    tracked?.targetProbability ?: 0.0,
     pnlHidden,
     spotView,
     exitBarrierView,
@@ -2005,6 +2141,96 @@ row.addView(
     page.addView(button("NOTIFICATIONS", false) { selectedTab = "Notifications"; render() }, matchWrap().apply { bottomMargin = dp(6) })
     page.addView(button("MY PROFILE", false) { selectedTab = "My profile"; render() }, matchWrap())
 }
+private fun addMyBudgetScreen() {
+    page.addView(sectionTitle("MY BUDGET"))
+    page.addView(label("Daily allocation: 30% of the capital at the start of that day · Maximum 4 trades · Stop after 2 profitable trades.", 12f, yellow, false))
+    val root = budgetRoot()
+    var days = budgetRows(root)
+    val initial = root.optDouble("initialCapital", 0.0)
+    if (accountId.isBlank()) {
+        page.addView(label("Connect your Deriv account first. MY BUDGET is stored separately for each Deriv account and execution mode.", 13f, yellow, false))
+        return
+    }
+    if (initial <= 0.0) {
+        val setup = card().apply { orientation = LinearLayout.VERTICAL }
+        setup.addView(label("SET STARTING CAPITAL", 14f, green, true))
+        setup.addView(label("Enter the capital available when you begin on 17 November 2026. The app will calculate and allocate each actual Deriv stake automatically.", 12f, white, false))
+        val amountInput = EditText(this).apply {
+            hint = "Starting capital (${accountCurrency.ifBlank { "account currency" }})"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            setTextColor(white); setHintTextColor(muted); setSingleLine(true)
+        }
+        setup.addView(amountInput, matchWrap().apply { topMargin = dp(8) })
+        setup.addView(button("SAVE STARTING CAPITAL", true) {
+            val amount = amountInput.text.toString().trim().replace(",", ".").toDoubleOrNull() ?: 0.0
+            if (amount <= 0.0) { toast("Enter a valid starting capital amount."); return@button }
+            val newRoot = JSONObject().put("initialCapital", amount).put("days", JSONArray())
+            saveBudget(newRoot)
+            ensureBudgetDay()
+            render()
+        }, matchWrap().apply { topMargin = dp(10) })
+        page.addView(setup, matchWrap().apply { topMargin = dp(10); bottomMargin = dp(10) })
+        return
+    }
+    val today = ensureBudgetDay()
+    days = budgetRows(budgetRoot())
+    val currentCapital = if (days.length() > 0) {
+        val last = days.optJSONObject(days.length() - 1)
+        (last?.optDouble("capital", initial) ?: initial) + (last?.optDouble("totalProfit", 0.0) ?: 0.0)
+    } else initial
+    val summary = card().apply { orientation = LinearLayout.VERTICAL }
+    summary.addView(label("AVAILABLE CAPITAL: ${formatMoney(currentCapital)} ${accountCurrency}", 16f, green, true))
+    if (today != null) {
+        val used = budgetTradeCount(today)
+        val wins = today.optInt("profitableTrades", 0)
+        summary.addView(label("TODAY'S STARTING CAPITAL: ${formatMoney(today.optDouble("capital", 0.0))}", 12f, white, false))
+        summary.addView(label("TRADE SLOTS USED: $used / 4    PROFITABLE TRADES: $wins / 2", 12f, yellow, true))
+        summary.addView(label("TODAY'S NET RESULT: ${formatMoney(today.optDouble("totalProfit", 0.0))}", 13f, profitColor(today.optDouble("totalProfit", 0.0)), true))
+        summary.addView(label(if (wins >= 2) "DAILY TARGET ACHIEVED — trading allocation stopped." else if (used >= 4) "FOUR SLOTS USED — new day starts with available capital." else "BUDGET ACTIVE — each trade stake is 30% of today's starting capital." , 11f, if (wins >= 2 || used >= 4) green else yellow, true))
+    }
+    page.addView(summary, matchWrap().apply { topMargin = dp(8); bottomMargin = dp(10) })
+    page.addView(sectionTitle("DAILY BUDGET RECORD"))
+    val tableCard = card().apply { orientation = LinearLayout.VERTICAL }
+    val horizontal = android.widget.HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = true }
+    val table = android.widget.TableLayout(this).apply { isStretchAllColumns = false }
+    fun cell(value: String, headerCell: Boolean = false): TextView = label(
+        value, 10f, if (headerCell) green else white, headerCell
+    ).apply { setPadding(dp(7), dp(8), dp(7), dp(8)); minWidth = dp(78) }
+    val headings = listOf("Date", "Day", "Capital", "Amount trade 1", "Profit trade 1", "Amount trade 2", "Profit trade 2", "Total profit", "Total capital")
+    val headingRow = android.widget.TableRow(this)
+    headings.forEach { headingRow.addView(cell(it, true)) }
+    table.addView(headingRow)
+    for (i in 0 until days.length()) {
+        val d = days.optJSONObject(i) ?: continue
+        val trades = d.optJSONArray("trades") ?: JSONArray()
+        fun tradeAt(slot: Int): JSONObject? {
+            for (j in 0 until trades.length()) { val t = trades.optJSONObject(j) ?: continue; if (t.optInt("slot") == slot) return t }
+            return null
+        }
+        val t1 = tradeAt(1); val t2 = tradeAt(2); val t3 = tradeAt(3); val t4 = tradeAt(4)
+        val total = d.optDouble("totalProfit", 0.0)
+        val capital = d.optDouble("capital", 0.0)
+        fun amount(t: JSONObject?): String = t?.let { formatMoney(it.optDouble("stake", 0.0)) } ?: "—"
+        fun result(t: JSONObject?): String = t?.let { if (it.optBoolean("closed")) formatMoney(it.optDouble("profit", 0.0)) else "Pending" } ?: "—"
+        val dataRow = android.widget.TableRow(this)
+        listOf(d.optString("date"), d.optString("day", budgetDayName(d.optString("date"))),
+            formatMoney(capital), amount(t1), result(t1), amount(t2), result(t2),
+            formatMoney(total), formatMoney(capital + total)).forEach { dataRow.addView(cell(it)) }
+        table.addView(dataRow)
+        if (t3 != null || t4 != null) {
+            val extra = android.widget.TableRow(this)
+            val extraText = "Recovery slots — Trade 3: ${amount(t3)} / ${result(t3)}; Trade 4: ${amount(t4)} / ${result(t4)}"
+            val extraCell = cell(extraText).apply { setTextColor(yellow) }
+            extra.addView(extraCell, android.widget.TableRow.LayoutParams().apply { span = 9 })
+            table.addView(extra)
+        }
+    }
+    if (days.length() == 0) tableCard.addView(label("No daily records yet.", 12f, yellow, false))
+    horizontal.addView(table)
+    tableCard.addView(horizontal, matchWrap())
+    page.addView(tableCard, matchWrap())
+}
+
 // =========================================================
 // LIVE MARKET DISPLAY HELPERS
 // =========================================================
@@ -2137,6 +2363,7 @@ private data class ChochEvent(
     val price: Double,
     val changedAt: Long
 )
+
 private data class MarketStructureAnalysis(
     val structures: List<MarketStructureEvent>,
     val chochs: List<ChochEvent>
@@ -2208,7 +2435,7 @@ private fun calculateMarketStructure(
                         candidateHighIndex = i
                         candidateHigh = candle.high
                     }
-                    if (candle.low < candidateLow) {
+                       if (candle.low < candidateLow) {
                         candidateLowIndex = i
                         candidateLow = candle.low
                     }
@@ -2422,6 +2649,7 @@ private fun calculateMss(candles: List<DerivApiClient.Candle>): MssAnalysis {
         val current = swingHighs[i]
         if (current.second < previous.second) lowerHighs.add(current)
     }
+
     val higherLows = mutableListOf<Pair<Int, Double>>()
     for (i in 1 until swingLows.size) {
         val previous = swingLows[i - 1]
@@ -2505,7 +2733,7 @@ private fun evaluateMssModule(
     val ptpeProbability: Double,
     val qualified: Boolean,
     val updatedAt: Long,
-    val bullishLiquidity: List<LiquidityLevel>,
+        val bullishLiquidity: List<LiquidityLevel>,
     val bearishLiquidity: List<LiquidityLevel>,
     val structures: List<MarketStructureEvent>,
     val chochs: List<ChochEvent>,
@@ -2800,7 +3028,6 @@ val topSweepText = when {
     topLevel.sweepAt > 0L -> "SWEPT"
     else -> "IDENTIFIED"
 }
-
 val bottomStatusText = bottomLevel?.let {
     "1. BOTTOM SSL: $bottomSweepText | LEVEL: ${formatMarketPrice(it.price)} | IDENTIFIED: ${formatMarketTime(it.createdAt)} | SWEEP: ${if (it.sweepAt > 0L) formatMarketTime(it.sweepAt) else "NOT YET SWEPT"} | CONFIRMATION: ${if (it.confirmationAt > 0L) formatMarketTime(it.confirmationAt) else "NOT YET CONFIRMED"}"
 } ?: "1. BOTTOM SSL: NOT IDENTIFIED"
@@ -3364,9 +3591,9 @@ val summary = listOf(
         val tabs = if (authToken.isBlank()) {
             listOf("⌂" to "Home", "↪" to "Login", "+" to "Register")
         } else if (platform == "ADMIN") {
-            listOf("⌂" to "Home", "▥" to "Trade", "🔔" to "Notifications", "⚙" to "Settings")
+            listOf("⌂" to "Home", "▥" to "Trade", "▤" to "My Budget", "🔔" to "Notifications", "⚙" to "Settings")
         } else {
-            listOf("⌂" to "Home", "▥" to "Trade", "🔔" to "Notifications", "♙" to "My profile")
+            listOf("⌂" to "Home", "▥" to "Trade", "▤" to "My Budget", "🔔" to "Notifications", "♙" to "My profile")
         }
         tabs.forEach { (icon, name) ->
             val selected = selectedTab == name
@@ -3404,7 +3631,7 @@ val summary = listOf(
                         setStroke(dp(1), bg)
                     }
                 }
-                bottomNotificationBadge 
+                bottomNotificationBadge = navBadge
                 iconFrame.addView(
                     navBadge,
                     FrameLayout.LayoutParams(dp(19), dp(19), Gravity.TOP or Gravity.END)
@@ -3843,6 +4070,7 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
         val order = orderEntry.value
         pendingTouchOrders.remove(orderEntry.key)
         pendingTouchBySymbol.remove(order.symbol)
+        releaseBudgetSlot(order.budgetDate, order.budgetSlot)
         touchExecutionLocks.remove(order.symbol)
 
         android.util.Log.e(
@@ -3866,6 +4094,7 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
     if (proposal == null) {
         pendingTouchOrders.remove(requestId)
         pendingTouchBySymbol.remove(order.symbol)
+        releaseBudgetSlot(order.budgetDate, order.budgetSlot)
         touchExecutionLocks.remove(order.symbol)
         return@runOnUiThread
     }
@@ -3877,6 +4106,7 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
     if (askPrice <= 0.0 || proposalId.isBlank()) {
     pendingTouchOrders.remove(requestId)
     pendingTouchBySymbol.remove(order.symbol)
+    releaseBudgetSlot(order.budgetDate, order.budgetSlot)
     touchExecutionLocks.remove(order.symbol)
     return@runOnUiThread
 }
@@ -3889,6 +4119,7 @@ if (kotlin.math.abs(payout - targetPayout) > tolerance) {
     if (order.proposalAttempts >= 24) {
         pendingTouchOrders.remove(requestId)
         pendingTouchBySymbol.remove(order.symbol)
+        releaseBudgetSlot(order.budgetDate, order.budgetSlot)
         touchExecutionLocks.remove(order.symbol)
 
         toast("${order.symbol}: Could not obtain the required 30% stake-profit payout.")
@@ -3923,6 +4154,7 @@ if (kotlin.math.abs(payout - targetPayout) > tolerance) {
     if (order.barrierOffset <= 0.0) {
         pendingTouchOrders.remove(requestId)
         pendingTouchBySymbol.remove(order.symbol)
+        releaseBudgetSlot(order.budgetDate, order.budgetSlot)
         touchExecutionLocks.remove(order.symbol)
         return@runOnUiThread
     }
@@ -3964,6 +4196,7 @@ if (kotlin.math.abs(payout - targetPayout) > tolerance) {
     if (!sent) {
         pendingTouchOrders.remove(nextRequestId)
         pendingTouchBySymbol.remove(order.symbol)
+        releaseBudgetSlot(order.budgetDate, order.budgetSlot)
         touchExecutionLocks.remove(order.symbol)
     }
 
@@ -3986,6 +4219,7 @@ val sent = derivApiClient.send(
 if (!sent) {
     pendingTouchOrders.remove(requestId)
     pendingTouchBySymbol.remove(order.symbol)
+    releaseBudgetSlot(order.budgetDate, order.budgetSlot)
     touchExecutionLocks.remove(order.symbol)
 }
 return@runOnUiThread
@@ -4002,17 +4236,21 @@ return@runOnUiThread
     if (buy == null) {
         pendingTouchOrders.remove(entry.key)
         pendingTouchBySymbol.remove(order.symbol)
+        releaseBudgetSlot(order.budgetDate, order.budgetSlot)
         touchExecutionLocks.remove(order.symbol)
         return@runOnUiThread
     }
     val contractId = buy.optLong("contract_id", 0L)
+
     if (contractId <= 0L) {
         pendingTouchOrders.remove(entry.key)
         pendingTouchBySymbol.remove(order.symbol)
+        releaseBudgetSlot(order.budgetDate, order.budgetSlot)
         touchExecutionLocks.remove(order.symbol)
         return@runOnUiThread
     }
 
+    attachBudgetContract(order.budgetDate, order.budgetSlot, contractId)
     runningContracts[contractId] = RunningContract(
         contractId = contractId,
         symbol = order.symbol,
@@ -4023,7 +4261,9 @@ return@runOnUiThread
         mode = order.mode,
         trailingEligible = true,
         trailingEnabled = appPrefs.getBoolean("contract_trailing_enabled_${accountId}_${order.mode}_$contractId", true),
-        potentialPayout = order.stake * 1.30
+        potentialPayout = order.stake * 1.30,
+        budgetDate = order.budgetDate,
+        budgetSlot = order.budgetSlot
     )
 
     if (order.sweepTime > 0L && order.mssTime > 0L && order.chochTime > 0L && order.liquidityCreatedAt > 0L) {
@@ -4122,8 +4362,11 @@ val savedIsRecovery = appPrefs.getBoolean(
     false
     )
 if (stake > 0.0) {
+    val savedBudget = budgetTradeForContract(id)
     val restored = RunningContract(
         id, symbol, direction, stake, barrier, 0.0, executionMode,
+        budgetDate = savedBudget.first,
+        budgetSlot = savedBudget.second,
         pairId = savedPairId,
         pairSide = savedPairSide,
         trailingEligible = true,
@@ -4287,8 +4530,19 @@ if (stake > 0.0) {
                                 }
                             }
                         } else if (isClosed) {
+                            if (running != null && !running.budgetResultRecorded && running.budgetSlot > 0) {
+                                val finalProfit = contract.optDouble("profit", liveProfit)
+                                recordBudgetClose(running.budgetDate, running.budgetSlot, id, finalProfit)
+                                running.budgetResultRecorded = true
+                                notifyEvent(
+                                    if (finalProfit > 0.0) "MY BUDGET: TRADE PROFIT" else "MY BUDGET: TRADE LOSS",
+                                    "${running.symbol} · Slot ${running.budgetSlot} · ${formatMoney(finalProfit)}",
+                                    "budget_result_$id"
+                                )
+                            }
                             liveContractProfits.remove(id)
                             liveContractProfitModes.remove(id)
+                            if (selectedTab == "My Budget") render()
                         }
 
                         val views = contractLiveViews[id]
@@ -4418,7 +4672,7 @@ android.util.Log.i(
             connected = false
             marketDataRequested = false
             if (::accountStatus.isInitialized) {
-                accountStatus.text = "●  RECONNECTING"
+           accountStatus.text = "●  RECONNECTING"
                 accountStatus.setTextColor(yellow)
             }
         }
