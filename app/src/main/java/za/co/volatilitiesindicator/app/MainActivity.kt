@@ -2740,16 +2740,36 @@ val engineText = when {
         marketDirection == "BULLISH" && bearishChoch -> "POTENTIAL BEARISH REVERSAL"
         else -> "NO CONFIRMED REVERSAL"
     }
-    val bottomSweepText = if (bullishSweep) "LIQUIDITY SWEEP" else "WAITING"
-    val topSweepText = if (bearishSweep) "LIQUIDITY SWEEP" else "WAITING"
-    val liquidityText = "BOTTOM: $bottomSweepText | TOP: $topSweepText"
-    val summary = listOf(
-        "1. BOTTOM LIQUIDITY SWEEP (SSL): $bottomSweepText",
-        "2. TOP LIQUIDITY SWEEP (BSL): $topSweepText",
-        "3. MSS: $mssText",
-        "4. $chochText",
-        "5. MASTER ENGINE: $engineText"
-    ).joinToString("\n")
+    val bottomLevel = bullishLiquidity.firstOrNull()
+val topLevel = bearishLiquidity.firstOrNull()
+
+val bottomSweepText = when {
+    bottomLevel == null -> "NOT IDENTIFIED"
+    bottomLevel.sweepAt > 0L -> "SWEPT"
+    else -> "IDENTIFIED"
+}
+
+val topSweepText = when {
+    topLevel == null -> "NOT IDENTIFIED"
+    topLevel.sweepAt > 0L -> "SWEPT"
+    else -> "IDENTIFIED"
+}
+
+val bottomStatusText = bottomLevel?.let {
+    "1. BOTTOM SSL: $bottomSweepText | LEVEL: ${formatMarketPrice(it.price)} | IDENTIFIED: ${formatMarketTime(it.createdAt)} | SWEEP: ${if (it.sweepAt > 0L) formatMarketTime(it.sweepAt) else "NOT YET SWEPT"} | CONFIRMATION: ${if (it.confirmationAt > 0L) formatMarketTime(it.confirmationAt) else "NOT YET CONFIRMED"}"
+} ?: "1. BOTTOM SSL: NOT IDENTIFIED"
+
+val topStatusText = topLevel?.let {
+    "2. TOP BSL: $topSweepText | LEVEL: ${formatMarketPrice(it.price)} | IDENTIFIED: ${formatMarketTime(it.createdAt)} | SWEEP: ${if (it.sweepAt > 0L) formatMarketTime(it.sweepAt) else "NOT YET SWEPT"} | CONFIRMATION: ${if (it.confirmationAt > 0L) formatMarketTime(it.confirmationAt) else "NOT YET CONFIRMED"}"
+} ?: "2. TOP BSL: NOT IDENTIFIED"
+
+val summary = listOf(
+    bottomStatusText,
+    topStatusText,
+    "3. MSS: $mssText",
+    "4. $chochText",
+    "5. MASTER ENGINE: $engineText"
+).joinToString("\n")
 
     dashboardAnalysisViews[symbol]?.let { analysisView ->
         val lines = summary.split("\n")
