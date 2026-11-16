@@ -1491,11 +1491,11 @@ if (sharedBullishLiquidity.isEmpty()) {
 } else {
     sharedBullishLiquidity.forEachIndexed { index, level ->
         detailsContainer.addView(label(
-            "ZONE: ${formatMarketPrice(level.zoneLow)} - ${formatMarketPrice(level.zoneHigh)} | " +
+            "LEVEL: ${formatMarketPrice(level.price)} | " +
 "IDENTIFIED: ${formatMarketTime(level.createdAt)} | " +
 "SWEEP: ${if (level.sweepAt > 0L) formatMarketTime(level.sweepAt) else "—"} | " +
 "CONFIRMED: ${if (level.confirmationAt > 0L) formatMarketTime(level.confirmationAt) else "—"} | " +
-"POINTS: ${level.occurrences} | STATUS: ${level.sweepStatus}",
+"STATUS: ${level.sweepStatus}",
             11f, green, false
         ))
     }
@@ -1995,172 +1995,86 @@ private data class LiquidityLevel(
     val sweepStatus: String = "WAITING"
 )
 
-// Evaluate only fully closed H1 candles.
-// Every penetration is an independent sweep attempt.
-// Confirmation must happen on the penetration candle itself.
+// Identify the latest confirmed swing liquidity level from the
+// most recent 24 fully closed H1 candles.
 private fun calculateLiquidityLevels(
     candles: List<DerivApiClient.Candle>,
     bullish: Boolean,
     historicalRecovery: Boolean = false
 ): List<LiquidityLevel> {
+
     val nowEpoch = System.currentTimeMillis() / 1000L
-    val cutoffEpoch = nowEpoch - 24L * 60L * 60L
+
     val sorted = candles
-        .filter { it.epoch + 3600L <= nowEpoch && it.epoch >= cutoffEpoch }
+        .filter { it.epoch + 3600L <= nowEpoch }
         .distinctBy { it.epoch }
         .sortedBy { it.epoch }
+        .takeLast(24)
 
-    if (sorted.size < 10) return emptyList()
+    if (sorted.size < 5) return emptyList()
 
-    // H1 ATR(14), calculated from closed candles only.
-    val trueRanges = DoubleArray(sorted.size)
-    for (i in sorted.indices) {
-        val previousClose = if (i > 0) sorted[i - 1].close else sorted[i].close
-        trueRanges[i] = maxOf(
-            sorted[i].high - sorted[i].low,
-            kotlin.math.abs(sorted[i].high - previousClose),
-            kotlin.math.abs(sorted[i].low - previousClose)
-        )
-    }
-    fun atrAt(index: Int): Double {
-        val from = (index - 13).coerceAtLeast(0)
-        val sample = trueRanges.slice(from..index)
-        return sample.average().takeIf { it.isFinite() && it > 0.0 } ?: 0.0
-    }
-
-    val pivots = mutableListOf<Pair<Int, Double>>()
-    for (i in 2 until sorted.size - 2) {
-        val price = if (bullish) sorted[i].low else sorted[i].high
-        val confirmed = if (bullish) {
-            price < sorted[i - 1].low && price < sorted[i - 2].low &&
-                price < sorted[i + 1].low && price < sorted[i + 2].low
-        } else {
-            price > sorted[i - 1].high && price > sorted[i - 2].high &&
-                price > sorted[i + 1].high && price > sorted[i + 2].high
+    // Confirmed swing:
+    // Two candles before and two candles after the swing.
+    val swingIndex = (2 until sorted.size - 2)
+        .filter { i ->
+            if (bullish) {
+                sorted[i].low < sorted[i - 1].low &&
+                sorted[i].low < sorted[i - 2].low &&
+                sorted[i].low < sorted[i + 1].low &&
+                sorted[i].low < sorted[i + 2].low
+            } else {
+                sorted[i].high > sorted[i - 1].high &&
+                sorted[i].high > sorted[i - 2].high &&
+                sorted[i].high > sorted[i + 1].high &&
+                sorted[i].high > sorted[i + 2].high
+            }
         }
-        if (confirmed) pivots.add(i to price)
-    }
+        .lastOrNull()
+        ?: return emptyList()
 
-    val used = mutableSetOf<Int>()
-    val results = mutableListOf<LiquidityLevel>()
-    val sweepExpirySeconds = 3L * 60L * 60L
-
-    pivots.forEachIndexed { index, pivot ->
-        if (index in used) return@forEachIndexed
-        val pivotAtr = atrAt(pivot.first)
-        if (pivotAtr <= 0.0) return@forEachIndexed
-        val equalLevelTolerance = pivotAtr * 0.10
-
-        // Cluster equal lows (SSL) or equal highs (BSL) within 0.10 H1 ATR.
-        val groupIndices = pivots.indices.filter { otherIndex ->
-            otherIndex !in used &&
-                kotlin.math.abs(pivots[otherIndex].second - pivot.second) <= equalLevelTolerance
-        }
-        // A valid liquidity pool requires at least two confirmed pivots.
-if (groupIndices.size < 2) return@forEachIndexed
-
-groupIndices.forEach(used::add)
-
-        val group = groupIndices.map { pivots[it] }
-        val zoneLow = group.minOf { it.second }
-        val zoneHigh = group.maxOf { it.second }
-        val levelPrice = (zoneLow + zoneHigh) / 2.0
-        val lastPivotIndex = group.maxOf { it.first }
-
-        var firstSweepIndex = -1
-var sweepAt = 0L
-var confirmationAt = 0L
-var sweepStatus = "WAITING"
-var consecutiveReversalCloses = 0
-var consecutiveFailedPostConfirmationCloses = 0
-
-// SSL: sweep below zone, then two consecutive closes above zone.
-// BSL: sweep above zone, then two consecutive closes below zone.
-// After confirmation, monitor three consecutive failed closes.
-val identificationIndex = (lastPivotIndex + 2).coerceAtMost(sorted.lastIndex)
-
-for (i in identificationIndex + 1 until sorted.size) {
-    val candle = sorted[i]
-
-    // Once confirmed, continue monitoring subsequent closed H1 candles.
-    if (sweepStatus == "LIQUIDITY SWEEP") {
-        val holdsReversal = if (bullish) {
-    candle.close > levelPrice
-} else {
-    candle.close < levelPrice
-        }
-
-        if (holdsReversal) {
-            consecutiveFailedPostConfirmationCloses = 0
-        } else {
-            consecutiveFailedPostConfirmationCloses++
-        }
-
-        if (consecutiveFailedPostConfirmationCloses >= 3) {
-            sweepStatus = "INVALIDATED"
-            break
-        }
-
-        continue
-    }
-
-    if (firstSweepIndex < 0) {
-        val sweptBeyondZone = if (bullish) {
-            candle.low < zoneLow
-        } else {
-            candle.high > zoneHigh
-        }
-
-        if (!sweptBeyondZone) continue
-
-        firstSweepIndex = i
-        sweepAt = candle.epoch
-    }
-
-    // Initial sweep and reversal confirmation must finish within 3 hours.
-    if (candle.epoch - sweepAt >= sweepExpirySeconds) {
-        sweepStatus = "EXPIRED"
-        break
-    }
-
-    val closesOnReversalSide = if (bullish) {
-    candle.close > levelPrice
-} else {
-    candle.close < levelPrice
-    }
-
-    if (closesOnReversalSide) {
-        consecutiveReversalCloses++
-
-        if (consecutiveReversalCloses >= 2) {
-            sweepStatus = "LIQUIDITY SWEEP"
-            confirmationAt = candle.epoch + 3600L
-            consecutiveFailedPostConfirmationCloses = 0
-        }
+    val level = if (bullish) {
+        sorted[swingIndex].low
     } else {
-        consecutiveReversalCloses = 0
+        sorted[swingIndex].high
     }
-}
 
-        // Zone identification time is the close of the second confirming pivot candle.
-        val identifiedAt = sorted[identificationIndex].epoch + 3600L
+    val identifiedAt = sorted[swingIndex + 2].epoch + 3600L
 
-        results.add(
-            LiquidityLevel(
-                price = levelPrice,
-                zoneLow = zoneLow,
-                zoneHigh = zoneHigh,
-                createdAt = identifiedAt,
-                sweepAt = sweepAt,
-                confirmationAt = confirmationAt,
-                occurrences = group.size,
-                sweepStatus = sweepStatus
-            )
+    var sweepAt = 0L
+    var confirmationAt = 0L
+    var status = "WAITING"
+
+    // Only candles after the swing has been confirmed can sweep it.
+    for (i in swingIndex + 3 until sorted.size) {
+        val candle = sorted[i]
+
+        val sweptAndRejected = if (bullish) {
+            candle.low < level && candle.close > level
+        } else {
+            candle.high > level && candle.close < level
+        }
+
+        if (sweptAndRejected) {
+            sweepAt = candle.epoch
+            confirmationAt = candle.epoch + 3600L
+            status = "LIQUIDITY SWEEP"
+        }
+    }
+
+    return listOf(
+        LiquidityLevel(
+            price = level,
+            zoneLow = level,
+            zoneHigh = level,
+            createdAt = identifiedAt,
+            sweepAt = sweepAt,
+            confirmationAt = confirmationAt,
+            occurrences = 1,
+            sweepStatus = status
         )
-    }
-
-    return results.sortedByDescending { it.createdAt }
+    )
 }
+
 // =============================================================
 // ANALYSIS - MARKET STRUCTURE AND CHANGE OF CHARACTER
 // =============================================================
