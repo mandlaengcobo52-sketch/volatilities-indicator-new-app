@@ -1489,15 +1489,21 @@ detailsContainer.addView(label("BOTTOM LIQUIDITY LEVELS (SSL)", 12f, green, true
 if (sharedBullishLiquidity.isEmpty()) {
     detailsContainer.addView(label("No bullish liquidity levels identified.", 11f, muted, false))
 } else {
-    sharedBullishLiquidity.forEachIndexed { index, level ->
-        detailsContainer.addView(label(
-            "LEVEL: ${formatMarketPrice(level.price)} | " +
-"IDENTIFIED: ${formatMarketTime(level.createdAt)} | " +
-"SWEEP: ${if (level.sweepAt > 0L) formatMarketTime(level.sweepAt) else "—"} | " +
-"CONFIRMED: ${if (level.confirmationAt > 0L) formatMarketTime(level.confirmationAt) else "—"} | " +
-"STATUS: ${level.sweepStatus}",
-            11f, green, false
-        ))
+    sharedBullishLiquidity.forEach { level ->
+    detailsContainer.addView(label(
+        "LEVEL: ${formatMarketPrice(level.price)} | IDENTIFIED: ${formatMarketTime(level.createdAt)}",
+        11f, green, false
+    ))
+
+    detailsContainer.addView(label(
+        "SWEEP TIME: ${if (level.sweepAt > 0L) formatMarketTime(level.sweepAt) else "NOT YET SWEPT"}",
+        11f, green, false
+    ))
+
+    detailsContainer.addView(label(
+        "CONFIRMATION TIME: ${if (level.confirmationAt > 0L) formatMarketTime(level.confirmationAt) else "NOT YET CONFIRMED"}",
+        11f, green, false
+    ))
     }
 }
 
@@ -1512,15 +1518,21 @@ detailsContainer.addView(label("TOP LIQUIDITY LEVELS (BSL)", 12f, red, true))
 if (sharedBearishLiquidity.isEmpty()) {
     detailsContainer.addView(label("No bearish liquidity levels identified.", 11f, muted, false))
 } else {
-    sharedBearishLiquidity.forEachIndexed { index, level ->
-        detailsContainer.addView(label(
-            "LEVEL: ${formatMarketPrice(level.price)} | " +
-"IDENTIFIED: ${formatMarketTime(level.createdAt)} | " +
-"SWEEP: ${if (level.sweepAt > 0L) formatMarketTime(level.sweepAt) else "—"} | " +
-"CONFIRMED: ${if (level.confirmationAt > 0L) formatMarketTime(level.confirmationAt) else "—"} | " +
-"STATUS: ${level.sweepStatus}",
-            11f, red, false
-        ))
+    sharedBearishLiquidity.forEach { level ->
+    detailsContainer.addView(label(
+        "LEVEL: ${formatMarketPrice(level.price)} | IDENTIFIED: ${formatMarketTime(level.createdAt)}",
+        11f, red, false
+    ))
+
+    detailsContainer.addView(label(
+        "SWEEP TIME: ${if (level.sweepAt > 0L) formatMarketTime(level.sweepAt) else "NOT YET SWEPT"}",
+        11f, red, false
+    ))
+
+    detailsContainer.addView(label(
+        "CONFIRMATION TIME: ${if (level.confirmationAt > 0L) formatMarketTime(level.confirmationAt) else "NOT YET CONFIRMED"}",
+        11f, red, false
+    ))
     }
 }
 val qualifyingSsl = sharedBullishLiquidity.firstOrNull {
