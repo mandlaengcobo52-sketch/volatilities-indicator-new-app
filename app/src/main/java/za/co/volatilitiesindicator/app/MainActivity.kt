@@ -244,7 +244,7 @@ private fun startAndBindDerivService() {
     private data class RunningContract(
         val contractId: Long,
         val symbol: String,
-        val direction: String,
+        var direction: String,
         val stake: Double,
         val target: Double,
         val targetProbability: Double,
@@ -4050,7 +4050,11 @@ val savedDirection = appPrefs.getString(
 )
 val direction = savedDirection
     ?.takeIf { it == "BUY" || it == "SELL" }
-    ?: if (contractType.contains("PUT") || contractType.contains("FALL")) "SELL" else "BUY"
+    ?: when {
+        contractType.contains("PUT") || contractType.contains("FALL") -> "SELL"
+        contractType.contains("CALL") || contractType.contains("RISE") -> "BUY"
+        else -> "UNKNOWN"
+    }
 
 val savedPairId = appPrefs.getString(
     "contract_pair_${accountId}_${executionMode}_$id",
@@ -4073,7 +4077,28 @@ if (stake > 0.0) {
         isRecovery = savedIsRecovery
         )
     runningContracts[id] = restored
+if (!isClosed && running != null) {
+    val entrySpot = contract.optDouble("entry_spot", Double.NaN)
+    val barrierPrice = contract.optString("barrier", "")
+        .toDoubleOrNull() ?: Double.NaN
 
+    if (entrySpot.isFinite() && entrySpot > 0.0 &&
+        barrierPrice.isFinite() && barrierPrice > 0.0 &&
+        barrierPrice != entrySpot
+    ) {
+        val actualDirection =
+            if (barrierPrice > entrySpot) "BUY" else "SELL"
+
+        running.direction = actualDirection
+
+        appPrefs.edit()
+            .putString(
+                "contract_direction_${accountId}_${executionMode}_$id",
+                actualDirection
+            )
+            .apply()
+    }
+}
     // Reconstruct an older original pair if its pairing data was not saved.
     if (restored.pairId.isBlank() && !restored.isRecovery) {
         val partner = runningContracts.values.firstOrNull {
