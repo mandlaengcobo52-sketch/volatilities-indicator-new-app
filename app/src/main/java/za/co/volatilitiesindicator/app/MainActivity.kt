@@ -253,7 +253,8 @@ private fun startAndBindDerivService() {
         var takeProfitRequested: Boolean = false,
         var openContractConfirmed: Boolean = false,
         var targetNotified: Boolean = false,
-        var trailingEligible: Boolean = false,
+        var trailingEligible: Boolean = true,
+        var trailingEnabled: Boolean = true,
         var trailingActivated: Boolean = false,
         var peakProfit: Double = 0.0,
         var closeRequested: Boolean = false,
@@ -293,7 +294,10 @@ var proposalAttempts: Int = 0,
 var lowerBarrierOffset: Double = 0.0,
 var upperBarrierOffset: Double = 0.0,
 var potentialPayout: Double = 0.0,
-var sweepTime: Long = 0L
+var sweepTime: Long = 0L,
+var mssTime: Long = 0L,
+var chochTime: Long = 0L,
+var liquidityCreatedAt: Long = 0L
 )
     
 
@@ -348,7 +352,10 @@ private fun submitTouchProposal(
     direction: String,
     barrier: Double,
     sweepTime: Long = 0L,
-    manual: Boolean = false
+    manual: Boolean = false,
+    mssTime: Long = 0L,
+    chochTime: Long = 0L,
+    liquidityCreatedAt: Long = 0L
 ): Boolean {
     if (!connected || (!manual && !autoTradeEnabled)) return false
 if (direction != "BUY" && direction != "SELL") return false
@@ -370,7 +377,10 @@ if (!touchExecutionLocks.add(symbol)) return false
     mode = executionMode,
     proposalRequestId = requestId,
     barrierOffset = kotlin.math.abs(barrier),
-    sweepTime = sweepTime
+    sweepTime = sweepTime,
+    mssTime = mssTime,
+    chochTime = chochTime,
+    liquidityCreatedAt = liquidityCreatedAt
 )
     pendingTouchOrders[requestId] = order
     pendingTouchBySymbol[symbol] = requestId
@@ -525,7 +535,18 @@ private fun isTouchExecutionReady(symbol: String): Boolean {
 
     if (activeSweepTime <= usedSweepTime)
         return blocked("LIQUIDITY SWEEP ALREADY USED")
-        
+
+    val signalKey = "${accountId}_${executionMode}_$symbol"
+    val usedMssTime = appPrefs.getLong("used_mss_time_$signalKey", 0L)
+    val usedChochTime = appPrefs.getLong("used_choch_time_$signalKey", 0L)
+    val usedLiquidityCreatedAt = appPrefs.getLong("used_liquidity_created_at_$signalKey", 0L)
+    val lastSignalExecution = appPrefs.getLong("last_signal_execution_$signalKey", 0L)
+    if (decision.sweepTime <= usedSweepTime || decision.mssTime <= usedMssTime ||
+        decision.chochTime <= usedChochTime || decision.liquidityCreatedAt <= usedLiquidityCreatedAt ||
+        decision.sweepTime <= lastSignalExecution || decision.mssTime <= lastSignalExecution ||
+        decision.chochTime <= lastSignalExecution || decision.liquidityCreatedAt <= lastSignalExecution)
+        return blocked("SIGNAL SET ALREADY EXECUTED — WAIT FOR FRESH SWEEP, MSS AND CHOCH")
+
     if (touchExecutionLocks.contains(symbol))
         return blocked("EXECUTION LOCK ACTIVE")
 
@@ -602,7 +623,7 @@ private val dashboardAnalysisViews =
     mutableMapOf<String, MutableMap<String, TextView>>()
 private val marketDataErrors =
     mutableMapOf<String, String>()
-private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
+    private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
         if (runningContracts.values.any {
             it.symbol == symbol && it.mode == executionMode
         }) {
@@ -1512,7 +1533,7 @@ val topSweepStatus = sharedBearishLiquidity.firstOrNull { it.sweepStatus == "LIQ
     ?: sharedBearishLiquidity.firstOrNull { it.sweepStatus == "INVALIDATED" }?.sweepStatus
     ?: sharedBearishLiquidity.firstOrNull { it.sweepStatus == "EXPIRED" }?.sweepStatus
     ?: "WAITING"
-detailsContainer.addView(label("TOP LIQUIDITY SWEEP (BSL): $topSweepStatus", 12f, if (topSweepStatus == "LIQUIDITY SWEEP" || topSweepStatus == "ALREADY EXECUTED") green else yellow, true))
+            detailsContainer.addView(label("TOP LIQUIDITY SWEEP (BSL): $topSweepStatus", 12f, if (topSweepStatus == "LIQUIDITY SWEEP" || topSweepStatus == "ALREADY EXECUTED") green else yellow, true))
 detailsContainer.addView(label("TOP LIQUIDITY LEVELS (BSL)", 12f, red, true))
 if (sharedBearishLiquidity.isEmpty()) {
     detailsContainer.addView(label("No bearish liquidity levels identified.", 11f, muted, false))
@@ -1793,6 +1814,15 @@ val originalTarget = tracked?.target?.takeIf { it.isFinite() && it > 0.0 }
 ).apply { setPadding(0, dp(4), 0, 0) }
         val spotView = label("Current value/spot: ${if (currentValue > 0) formatMarketPrice(currentValue) else "—"}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val expiryView = label("Expiry: $expiryText", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
+        val trailingPreferenceKey = "contract_trailing_enabled_${accountId}_${executionMode}_$contractId"
+        val trailingOn = tracked?.trailingEnabled ?: appPrefs.getBoolean(trailingPreferenceKey, true)
+        row.addView(label("TRAILING STOP: ${if (trailingOn) "ON" else "OFF"}", 12f, if (trailingOn) green else yellow, true))
+        row.addView(button(if (trailingOn) "TURN TRAILING STOP OFF" else "TURN TRAILING STOP ON", trailingOn) {
+            val nextTrailingState = !trailingOn
+            if (tracked != null) tracked.trailingEnabled = nextTrailingState
+            appPrefs.edit().putBoolean(trailingPreferenceKey, nextTrailingState).apply()
+            render()
+        }, matchWrap().apply { topMargin = dp(6) })
         row.addView(pnlHidden)
         row.addView(exitBarrierView)
         row.addView(potentialProfitView)
@@ -1802,7 +1832,7 @@ val originalTarget = tracked?.target?.takeIf { it.isFinite() && it > 0.0 }
     stake,
     symbol,
     tracked?.target,
-    tracked?.targetProbability ?: 0.0,
+            tracked?.targetProbability ?: 0.0,
     pnlHidden,
     spotView,
     exitBarrierView,
@@ -1865,7 +1895,12 @@ row.addView(
         val expiryView = label("Expiry: —", 12f, white, false)
             .apply { setPadding(0, dp(4), 0, 0) }
 
-
+        row.addView(label("TRAILING STOP: ${if (running.trailingEnabled) "ON" else "OFF"}", 12f, if (running.trailingEnabled) green else yellow, true))
+        row.addView(button(if (running.trailingEnabled) "TURN TRAILING STOP OFF" else "TURN TRAILING STOP ON", running.trailingEnabled) {
+            running.trailingEnabled = !running.trailingEnabled
+            appPrefs.edit().putBoolean("contract_trailing_enabled_${accountId}_${running.mode}_${running.contractId}", running.trailingEnabled).apply()
+            render()
+        }, matchWrap().apply { topMargin = dp(6) })
         row.addView(pnlHidden)
         row.addView(exitBarrierView)
         row.addView(potentialProfitView)
@@ -2102,7 +2137,6 @@ private data class ChochEvent(
     val price: Double,
     val changedAt: Long
 )
-
 private data class MarketStructureAnalysis(
     val structures: List<MarketStructureEvent>,
     val chochs: List<ChochEvent>
@@ -2388,7 +2422,6 @@ private fun calculateMss(candles: List<DerivApiClient.Candle>): MssAnalysis {
         val current = swingHighs[i]
         if (current.second < previous.second) lowerHighs.add(current)
     }
-
     val higherLows = mutableListOf<Pair<Int, Double>>()
     for (i in 1 until swingLows.size) {
         val previous = swingLows[i - 1]
@@ -2478,7 +2511,11 @@ private fun evaluateMssModule(
     val chochs: List<ChochEvent>,
     val marketDirection: String,
     val mssText: String,
-    val liquidityText: String
+    val liquidityText: String,
+    val sweepTime: Long,
+    val mssTime: Long,
+    val chochTime: Long,
+    val liquidityCreatedAt: Long
 )
 
 private val masterEngineDecisions =
@@ -2638,11 +2675,20 @@ val bearishSweep = activeSweepDirection == "BEARISH"
     val bearishMss = mssDirection == "BEARISH"
     val bullishChoch = chochDirection == "BULLISH"
     val bearishChoch = chochDirection == "BEARISH"
-    // MASTER ENGINE QUALIFICATION:
-    // Liquidity Sweep and CHOCH must confirm the SAME direction.
-    // MSS and Market Structure remain independent analysis/display modules.
-    val bullishDirection = bullishSweep && bullishChoch
-    val bearishDirection = bearishSweep && bearishChoch
+    // One execution requires a same-direction fresh Liquidity Sweep + MSS + CHOCH.
+    val activeSweepTimeForDecision = appPrefs.getLong("active_sweep_time_$symbol", 0L)
+    val activeLiquidityLevel = (bullishLiquidity + bearishLiquidity).firstOrNull {
+        it.sweepAt == activeSweepTimeForDecision && it.sweepStatus == "LIQUIDITY SWEEP"
+    }
+    val bullishDirection = bullishSweep && bullishMss && bullishChoch
+    val bearishDirection = bearishSweep && bearishMss && bearishChoch
+    val signalKeyForDecision = "${accountId}_${executionMode}_$symbol"
+    val signalUsedAt = appPrefs.getLong("last_signal_execution_$signalKeyForDecision", 0L)
+    val freshSignalSet = activeLiquidityLevel != null &&
+        activeSweepTimeForDecision > signalUsedAt &&
+        (latestMss?.changedAt ?: 0L) > signalUsedAt &&
+        (latestChoch?.changedAt ?: 0L) > signalUsedAt &&
+        activeLiquidityLevel.createdAt > signalUsedAt
     val activeTradeDirection =
     runningContracts.values.firstOrNull {
         it.symbol.equals(symbol, ignoreCase = true) &&
@@ -2653,8 +2699,8 @@ val bearishSweep = activeSweepDirection == "BEARISH"
             it.mode == executionMode
         }?.direction
     val calculatedDirection = when {
-        bullishDirection -> "BUY"
-        bearishDirection -> "SELL"
+        bullishDirection && freshSignalSet -> "BUY"
+        bearishDirection && freshSignalSet -> "SELL"
         else -> "WAIT"
     }
 
@@ -2675,7 +2721,7 @@ val direction = activeTradeDirection ?: calculatedDirection
         },
         ptpeProbability = 0.0,
         qualified = activeTradeDirection == null &&
-    calculatedDirection != "WAIT",
+    calculatedDirection != "WAIT" && freshSignalSet,
         updatedAt = System.currentTimeMillis(),
         bullishLiquidity = bullishLiquidity,
         bearishLiquidity = bearishLiquidity,
@@ -2692,7 +2738,11 @@ val direction = activeTradeDirection ?: calculatedDirection
             bullishSweep -> "BULLISH SWEPT"
             bearishSweep -> "BEARISH SWEPT"
             else -> "WAITING"
-        }
+        },
+        sweepTime = activeSweepTimeForDecision,
+        mssTime = latestMss?.changedAt ?: 0L,
+        chochTime = latestChoch?.changedAt ?: 0L,
+        liquidityCreatedAt = activeLiquidityLevel?.createdAt ?: 0L
     )
     masterEngineDecisions[symbol] = decision
     val engineExecuted = runningContracts.values.any {
@@ -3127,7 +3177,11 @@ val summary = listOf(
         trailingCard.addView(label("Controls the existing 30% activation and 10% giveback protection.", 11f, muted, false))
         trailingCard.addView(button(if (trailingStopEnabled) "TRAILING STOP: ON" else "TRAILING STOP: OFF", trailingStopEnabled) {
             trailingStopEnabled = !trailingStopEnabled
-            toast(if (trailingStopEnabled) "Trailing Stop enabled." else "Trailing Stop disabled.")
+            runningContracts.values.filter { it.mode == executionMode }.forEach { running ->
+                running.trailingEnabled = trailingStopEnabled
+                appPrefs.edit().putBoolean("contract_trailing_enabled_${accountId}_${running.mode}_${running.contractId}", running.trailingEnabled).apply()
+            }
+            toast(if (trailingStopEnabled) "Trailing Stop enabled for running trades." else "Trailing Stop disabled for running trades.")
             render()
         }, matchWrap().apply { topMargin = dp(8) })
         page.addView(trailingCard, matchWrap().apply { bottomMargin = dp(10) })
@@ -3350,7 +3404,7 @@ val summary = listOf(
                         setStroke(dp(1), bg)
                     }
                 }
-                bottomNotificationBadge = navBadge
+                bottomNotificationBadge 
                 iconFrame.addView(
                     navBadge,
                     FrameLayout.LayoutParams(dp(19), dp(19), Gravity.TOP or Gravity.END)
@@ -3727,13 +3781,16 @@ dashboardQualifiedCountView?.text =
     val latest = marketDataCandles[symbol]?.lastOrNull() ?: return@runOnUiThread
 
     val barrier = quote * 0.01
-    val sweepTime = appPrefs.getLong("active_sweep_time_$symbol", 0L)
     val submitted = submitTouchProposal(
-    symbol,
-    decision.direction,
-    barrier,
-    sweepTime
-)
+        symbol,
+        decision.direction,
+        barrier,
+        decision.sweepTime,
+        false,
+        decision.mssTime,
+        decision.chochTime,
+        decision.liquidityCreatedAt
+    )
 
 if (submitted) {
     consumedTouchQualifications[symbol] = latest.epoch
@@ -3949,7 +4006,6 @@ return@runOnUiThread
         return@runOnUiThread
     }
     val contractId = buy.optLong("contract_id", 0L)
-
     if (contractId <= 0L) {
         pendingTouchOrders.remove(entry.key)
         pendingTouchBySymbol.remove(order.symbol)
@@ -3966,19 +4022,20 @@ return@runOnUiThread
         targetProbability = masterEngineDecisions[order.symbol]?.ptpeProbability ?: 0.0,
         mode = order.mode,
         trailingEligible = true,
+        trailingEnabled = appPrefs.getBoolean("contract_trailing_enabled_${accountId}_${order.mode}_$contractId", true),
         potentialPayout = order.stake * 1.30
     )
 
-    if (order.sweepTime > 0L) {
+    if (order.sweepTime > 0L && order.mssTime > 0L && order.chochTime > 0L && order.liquidityCreatedAt > 0L) {
+        val signalKey = "${accountId}_${order.mode}_${order.symbol}"
+        val executedAt = System.currentTimeMillis() / 1000L
         appPrefs.edit()
-            .putLong(
-                "used_sweep_time_${accountId}_${order.mode}_${order.symbol}",
-                order.sweepTime
-            )
-            .putString(
-                "active_sweep_status_${order.symbol}",
-                "ALREADY EXECUTED"
-            )
+            .putLong("used_sweep_time_$signalKey", order.sweepTime)
+            .putLong("used_mss_time_$signalKey", order.mssTime)
+            .putLong("used_choch_time_$signalKey", order.chochTime)
+            .putLong("used_liquidity_created_at_$signalKey", order.liquidityCreatedAt)
+            .putLong("last_signal_execution_$signalKey", executedAt)
+            .putString("active_sweep_status_${order.symbol}", "ALREADY EXECUTED")
             .apply()
     }
 
@@ -4069,6 +4126,8 @@ if (stake > 0.0) {
         id, symbol, direction, stake, barrier, 0.0, executionMode,
         pairId = savedPairId,
         pairSide = savedPairSide,
+        trailingEligible = true,
+        trailingEnabled = appPrefs.getBoolean("contract_trailing_enabled_${accountId}_${executionMode}_$id", true),
         isRecovery = savedIsRecovery
         )
     runningContracts[id] = restored
@@ -4163,7 +4222,27 @@ if (stake > 0.0) {
                             liveContractProfits[id] = liveProfit
                             liveContractProfitModes[id] = "${accountId}_$executionMode"
 
-                            if (trailingStopEnabled && running.trailingEligible) {
+                            // Stop-out is independent of trailing-stop preference.
+                            val stopOutLoss = running.stake * 0.50
+                            if (liveProfit <= -stopOutLoss && !running.closeRequested) {
+                                running.closeRequested = true
+                                running.closeReason = "50% Stake Stop-Out"
+                                val stopSent = derivApiClient.send(
+                                    JSONObject().put("sell", id).put("price", 0).put("req_id", nextTradeRequestId())
+                                )
+                                if (!stopSent) {
+                                    running.closeRequested = false
+                                    running.closeReason = ""
+                                } else {
+                                    notifyEvent(
+                                        "50% STAKE STOP-OUT",
+                                        "${running.symbol} · Contract $id · Loss ${formatMoney(liveProfit)} reached 50% of stake",
+                                        "stopout_close_$id"
+                                    )
+                                }
+                            }
+
+                            if (running.trailingEnabled && running.trailingEligible && !running.closeRequested) {
                                 val activationProfit = running.stake * 0.30
                                 val givebackAmount = running.stake * 0.10
 
