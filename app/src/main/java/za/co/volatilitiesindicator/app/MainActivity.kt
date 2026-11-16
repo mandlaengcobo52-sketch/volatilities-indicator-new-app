@@ -1772,11 +1772,11 @@ row.addView(
         "DIRECTION: $tradeDirection",
         row.addView(
     label(
-        "TRAILING STOP: ${if (trailingStopEnabled) "ON" else "OFF"}",
-        13f,
+        "TRAILING STOP: " + if (trailingStopEnabled) "ON" else "OFF",
+        12f,
         if (trailingStopEnabled) green else red,
         true
-    ).apply { setPadding(0, dp(5), 0, 0) }
+    )
 )
         14f,
         if (tradeDirection == "BUY") green else red,
@@ -1847,11 +1847,11 @@ row.addView(
         "DIRECTION: ${if (running.pairSide.contains("TOUCH")) running.pairSide else running.direction}",
         row.addView(
     label(
-        "TRAILING STOP: ${if (trailingStopEnabled) "ON" else "OFF"}",
-        13f,
+        "TRAILING STOP: " + if (trailingStopEnabled) "ON" else "OFF",
+        12f,
         if (trailingStopEnabled) green else red,
         true
-    ).apply { setPadding(0, dp(5), 0, 0) }
+    )
 )
         14f,
       if (running.direction == "BUY") green else red,
