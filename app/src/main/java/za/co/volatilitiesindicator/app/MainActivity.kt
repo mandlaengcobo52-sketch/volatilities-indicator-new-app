@@ -2775,11 +2775,12 @@ val summary = listOf(
         val lines = summary.split("\n")
         val colouredSummary = SpannableStringBuilder()
         val qualifiedConditions = listOf(
-            bullishSweep || bearishSweep,
-            bullishMss || bearishMss,
-            bullishChoch || bearishChoch,
-            engineExecuted || decision.qualified
-        )
+    (bullishLiquidity.firstOrNull()?.sweepAt ?: 0L) > 0L,
+    (bearishLiquidity.firstOrNull()?.sweepAt ?: 0L) > 0L,
+    bullishMss || bearishMss,
+    bullishChoch || bearishChoch,
+    engineExecuted || decision.qualified
+)
         lines.forEachIndexed { index, line ->
             val lineStart = colouredSummary.length
             colouredSummary.append(line)
