@@ -4153,6 +4153,44 @@ if (!isClosed && running != null) {
                             contract.optDouble("profit_open", liveContractProfits[id] ?: 0.0)
                         )
                         val running = runningContracts[id]
+                        val id = contract.optLong("contract_id", 0L)
+val status = contract.optString("status", "")
+
+if (id > 0L) {
+    val isClosed = status == "sold" || status == "won" ||
+        status == "lost" || contract.optInt("is_sold", 0) == 1
+
+    val liveProfit = contract.optDouble(
+        "profit",
+        contract.optDouble("profit_open", liveContractProfits[id] ?: 0.0)
+    )
+
+    val running = runningContracts[id]
+
+    if (!isClosed && running != null) {
+        val entrySpot = contract.optDouble("entry_spot", Double.NaN)
+        val barrierPrice = contract.optString("barrier", "")
+            .toDoubleOrNull() ?: Double.NaN
+
+        if (entrySpot.isFinite() && entrySpot > 0.0 &&
+            barrierPrice.isFinite() && barrierPrice > 0.0 &&
+            barrierPrice != entrySpot
+        ) {
+            val actualDirection =
+                if (barrierPrice > entrySpot) "BUY" else "SELL"
+
+            running.direction = actualDirection
+
+            appPrefs.edit()
+                .putString(
+                    "contract_direction_${accountId}_${executionMode}_$id",
+                    actualDirection
+                )
+                .apply()
+        }
+
+        liveContractProfits[id] = liveProfit
+        liveContractProfitModes[id] = "${accountId}_$executionMode"
 
                         if (!isClosed && running != null) {
                             liveContractProfits[id] = liveProfit
