@@ -1770,14 +1770,6 @@ val accountCard = card().apply { orientation = LinearLayout.VERTICAL }
 row.addView(
     label(
         "DIRECTION: $tradeDirection",
-        row.addView(
-    label(
-        "TRAILING STOP: ${if (trailingStopEnabled) "ON" else "OFF"}",
-        12f,
-        if (trailingStopEnabled) green else red,
-        true
-    )
-)
         14f,
         if (tradeDirection == "BUY") green else red,
         true
@@ -1845,14 +1837,6 @@ val originalTarget = tracked?.target?.takeIf { it.isFinite() && it > 0.0 }
 row.addView(
     label(
         "DIRECTION: ${if (running.pairSide.contains("TOUCH")) running.pairSide else running.direction}",
-        row.addView(
-    label(
-        "TRAILING STOP: ${if (trailingStopEnabled) "ON" else "OFF"}",
-        12f,
-        if (trailingStopEnabled) green else red,
-        true
-    )
-)
         14f,
       if (running.direction == "BUY") green else red,
         true
