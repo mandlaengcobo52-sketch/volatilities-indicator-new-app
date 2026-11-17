@@ -25,7 +25,12 @@ class MainActivity : Activity() {
     private lateinit var pageHeading: TextView
     private lateinit var workspace: LinearLayout
     private val navigationItems = mutableListOf<TextView>()
+    private val priceViews = mutableMapOf<String, TextView>()
+    private lateinit var feedStatus: TextView
+    private var derivApiClient: DerivApiClient? = null
     private var selectedPage = "HOME"
+
+    private val indexSymbols = listOf("R_10", "R_25", "R_50", "R_75", "R_100")
 
     private val indexes = listOf(
     "VOLATILITY INDEX 10",
@@ -126,6 +131,9 @@ class MainActivity : Activity() {
         root.addView(navigation)
         showPage(selectedPage)
         setContentView(root)
+
+        // Public market prices start immediately; no Deriv account login is required.
+        startLiveIndexFeed()
     }
 
     private fun showPage(page: String) {
@@ -149,7 +157,14 @@ class MainActivity : Activity() {
             setPadding(2.dp(), 0, 0, 12.dp())
         })
 
-        indexes.forEach { index ->
+        feedStatus = label("CONNECTING TO DERIV LIVE PRICES...", 10f, secondary, true).apply {
+            letterSpacing = 0.04f
+            setPadding(2.dp(), 0, 2.dp(), 12.dp())
+        }
+        workspace.addView(feedStatus)
+
+        indexes.forEachIndexed { position, index ->
+            val symbol = indexSymbols[position]
             val indexCard = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
@@ -165,13 +180,65 @@ class MainActivity : Activity() {
             val name = label(index, 15f, primary, true)
             indexCard.addView(name, LinearLayout.LayoutParams(0, -2, 1f))
 
-            val pricePlaceholder = label("--", 14f, secondary, true).apply {
+            val priceView = label("--", 14f, secondary, true).apply {
                 gravity = Gravity.CENTER_VERTICAL or Gravity.END
             }
-            indexCard.addView(pricePlaceholder)
+            priceViews[symbol] = priceView
+            indexCard.addView(priceView)
 
             workspace.addView(indexCard)
         }
+    }
+
+    private fun startLiveIndexFeed() {
+        val client = DerivApiClient(object : DerivApiClient.Callback {
+            override fun onConnecting(message: String) = Unit
+            override fun onConnected(accountId: String, accountType: String) = Unit
+            override fun onBalance(balance: Double, currency: String) = Unit
+
+            override fun onTick(symbol: String, quote: Double, epoch: Long) {
+                runOnUiThread {
+                    val priceView = priceViews[symbol] ?: return@runOnUiThread
+                    priceView.text = formatIndexPrice(quote)
+                    priceView.setTextColor(primary)
+                }
+            }
+
+            override fun onCandles(symbol: String, candles: List<DerivApiClient.Candle>) = Unit
+            override fun onMarketDataError(symbol: String, message: String) {
+                runOnUiThread {
+                    if (priceViews[symbol]?.text == "--") {
+                        priceViews[symbol]?.text = "Unavailable"
+                    }
+                }
+            }
+
+            override fun onMarketDataStatus(message: String) {
+                runOnUiThread {
+                    if (::feedStatus.isInitialized) {
+                        feedStatus.text = message.uppercase()
+                        feedStatus.setTextColor(if (message.contains("established", true)) accent else secondary)
+                    }
+                }
+            }
+
+            override fun onError(message: String) = Unit
+            override fun onTradeData(json: org.json.JSONObject) = Unit
+            override fun onDisconnected() = Unit
+        })
+
+        derivApiClient = client
+        client.startPublicLivePriceFeed()
+    }
+
+    private fun formatIndexPrice(value: Double): String {
+        return java.text.DecimalFormat("#,##0.00##").format(value)
+    }
+
+    override fun onDestroy() {
+        derivApiClient?.destroy()
+        derivApiClient = null
+        super.onDestroy()
     }
 
     private fun label(value: String, size: Float, color: Int, bold: Boolean): TextView {
