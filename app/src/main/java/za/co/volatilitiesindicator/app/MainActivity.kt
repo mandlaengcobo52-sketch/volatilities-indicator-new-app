@@ -79,6 +79,18 @@ class MainActivity : Activity() {
     "VOLATILITY INDEX 75",
     "VOLATILITY INDEX 100"
 )
+        private data class RollingRange(
+        val high: Double,
+        val low: Double,
+        val highEpoch: Long,
+        val lowEpoch: Long
+    )
+
+    private val rollingRanges =
+        mutableMapOf<String, RollingRange>()
+
+    private val candleHistory =
+        mutableMapOf<String, List<DerivApiClient.Candle>>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -512,15 +524,44 @@ exchangeOAuthCode(code)
                     }
                 }
             }
-            override fun onCandles(
-    symbol: String,
-    candles: List<DerivApiClient.Candle>
-) {
-    android.util.Log.i(
-        "MarketData",
-        "$symbol: received ${candles.size} H1 candles"
-    )
-}
+                        override fun onCandles(
+                symbol: String,
+                candles: List<DerivApiClient.Candle>
+            ) {
+                val now = System.currentTimeMillis() / 1000L
+                val cutoff = now - (24L * 60L * 60L)
+
+                val recentCandles = candles.filter {
+                    it.epoch >= cutoff && it.epoch <= now
+                }
+
+                if (recentCandles.isEmpty()) {
+                    android.util.Log.e(
+                        "RollingRange",
+                        "$symbol: no valid candles within the last 24 hours"
+                    )
+                    return
+                }
+
+                val highest = recentCandles.maxByOrNull { it.high } ?: return
+                val lowest = recentCandles.minByOrNull { it.low } ?: return
+
+                synchronized(candleHistory) {
+                    candleHistory[symbol] = recentCandles
+
+                    rollingRanges[symbol] = RollingRange(
+                        high = highest.high,
+                        low = lowest.low,
+                        highEpoch = highest.epoch,
+                        lowEpoch = lowest.epoch
+                    )
+                }
+
+                android.util.Log.i(
+                    "RollingRange",
+                    "$symbol | 24H HIGH: ${highest.high} | 24H LOW: ${lowest.low}"
+                )
+                        }
 
 override fun onMarketDataStatus(message: String) {
     runOnUiThread {
