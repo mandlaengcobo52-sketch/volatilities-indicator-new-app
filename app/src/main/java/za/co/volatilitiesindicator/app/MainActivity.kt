@@ -305,7 +305,8 @@ accountPrefs.edit()
             Toast.makeText(this, "OAuth security check failed or authorization code is missing.", Toast.LENGTH_LONG).show()
             return
         }
-        exchangeOAuthCode(code)
+        showPage("CONNECTION")
+exchangeOAuthCode(code)
     }
 
     private fun exchangeOAuthCode(code: String) {
