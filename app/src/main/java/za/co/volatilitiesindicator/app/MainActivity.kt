@@ -725,7 +725,8 @@ override fun onMarketDataError(symbol: String, message: String) {
         workspace.addView(feedStatus)
 
         indexes.forEachIndexed { position, index ->
-            val symbol = indexSymbols[position]
+            val symbol =
+            indexSymbols[position]
             val indexCard = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
@@ -757,6 +758,7 @@ val rangeView = label(
 ).apply {
     setPadding(0, 4.dp(), 0, 0)
 }
+
 rangeViews[symbol] = rangeView
 details.addView(rangeView)
 
