@@ -774,7 +774,25 @@ indexCard.addView(priceView)
             workspace.addView(indexCard)
         }
     }
+private fun updateRangeDisplay(symbol: String) {
+    val rangeView = rangeViews[symbol] ?: return
 
+    val range = synchronized(candleHistory) {
+        rollingRanges[symbol]
+    }
+
+    if (range == null) {
+        rangeView.text = "24H HIGH: WAITING\n24H LOW: WAITING"
+        rangeView.setTextColor(secondary)
+        return
+    }
+
+    rangeView.text =
+        "24H HIGH: ${formatIndexPrice(range.high)}\n" +
+        "24H LOW: ${formatIndexPrice(range.low)}"
+
+    rangeView.setTextColor(accent)
+}
     private fun startLiveIndexFeed() {
         ensureDerivClient().requestHistoricalCandles()
     }
