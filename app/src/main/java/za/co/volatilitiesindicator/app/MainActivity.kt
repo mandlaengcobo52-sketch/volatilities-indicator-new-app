@@ -74,6 +74,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val liveContractProfits = mutableMapOf<Long, Double>()
     private val liveContractProfitModes = mutableMapOf<Long, String>()
     private var runningTotalPlView: TextView? = null
+}
 
     // 2. CONNECTIVITY
     private var connected = false
