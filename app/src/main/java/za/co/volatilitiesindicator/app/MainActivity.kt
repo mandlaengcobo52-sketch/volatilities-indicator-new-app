@@ -2,7 +2,10 @@ package za.co.volatilitiesindicator.app
 
 import android.app.Activity
 import android.os.Bundle
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
@@ -12,13 +15,16 @@ import android.widget.TextView
 
 class MainActivity : Activity() {
 
-    // New light interface palette
     private val pageBackground = Color.rgb(246, 248, 252)
     private val surface = Color.WHITE
     private val primary = Color.rgb(31, 48, 75)
     private val secondary = Color.rgb(103, 119, 140)
     private val accent = Color.rgb(0, 145, 150)
-    private val divider = Color.rgb(230, 235, 242)
+
+    private lateinit var pageHeading: TextView
+    private lateinit var workspace: LinearLayout
+    private val navigationItems = mutableListOf<TextView>()
+    private var selectedPage = "HOME"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -35,53 +41,55 @@ class MainActivity : Activity() {
             fitsSystemWindows = true
         }
 
-        // APP HEADER
+        // HEADER WITH ORIGINAL, DRAWN-IN-KOTLIN BRAND MARK
         val header = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(22.dp(), 20.dp(), 22.dp(), 18.dp())
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(22.dp(), 18.dp(), 22.dp(), 18.dp())
             setBackgroundColor(surface)
         }
 
-        header.addView(label("VOLATILITIES", 22f, primary, true))
-        header.addView(label("INDICATOR", 15f, accent, true).apply {
+        header.addView(BrandMark(this), LinearLayout.LayoutParams(54.dp(), 54.dp()))
+
+        val brandText = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(12.dp(), 0, 0, 0)
+        }
+        brandText.addView(label("VOLATILITIES", 21f, primary, true))
+        brandText.addView(label("INDICATOR", 15f, accent, true).apply {
             letterSpacing = 0.08f
             setPadding(0, 2.dp(), 0, 0)
         })
-
+        header.addView(brandText)
         root.addView(header)
 
-        // MAIN CONTENT AREA — intentionally kept empty for the new design.
+        // MAIN WORKSPACE
         val main = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(20.dp(), 24.dp(), 20.dp(), 20.dp())
             layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                0,
-                1f
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
             )
         }
 
-        val heading = label("HOME", 12f, secondary, true).apply {
+        pageHeading = label("HOME", 12f, secondary, true).apply {
             letterSpacing = 0.12f
             setPadding(2.dp(), 0, 0, 14.dp())
         }
-        main.addView(heading)
+        main.addView(pageHeading)
 
-        val workspace = LinearLayout(this).apply {
+        workspace = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = rounded(surface, 20)
             setPadding(18.dp(), 18.dp(), 18.dp(), 18.dp())
             layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                0,
-                1f
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
             )
         }
-
         main.addView(workspace)
         root.addView(main)
 
-        // BOTTOM NAVIGATION SHELL
+        // CLICKABLE BOTTOM NAVIGATION
         val navigation = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -89,30 +97,41 @@ class MainActivity : Activity() {
             setPadding(8.dp(), 12.dp(), 8.dp(), 12.dp())
         }
 
-        listOf("HOME", "CONNECTION", "EXECUTION").forEachIndexed { index, item ->
+        listOf("HOME", "CONNECTION", "EXECUTION").forEach { page ->
             val itemView = TextView(this).apply {
-                text = item
+                text = page
                 textSize = 10f
                 gravity = Gravity.CENTER
                 typeface = Typeface.DEFAULT_BOLD
                 letterSpacing = 0.04f
-                setTextColor(if (index == 0) accent else secondary)
+                isClickable = true
+                isFocusable = true
+                setPadding(3.dp(), 12.dp(), 3.dp(), 12.dp())
                 layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
-                setPadding(3.dp(), 10.dp(), 3.dp(), 10.dp())
+                setOnClickListener { showPage(page) }
             }
+            navigationItems.add(itemView)
             navigation.addView(itemView)
         }
 
         root.addView(navigation)
+        showPage(selectedPage)
         setContentView(root)
     }
 
-    private fun label(
-        value: String,
-        size: Float,
-        color: Int,
-        bold: Boolean
-    ): TextView {
+    private fun showPage(page: String) {
+        selectedPage = page
+        pageHeading.text = page
+        navigationItems.forEach { item ->
+            val active = item.text.toString() == page
+            item.setTextColor(if (active) accent else secondary)
+            item.alpha = if (active) 1f else 0.82f
+        }
+        // The workspace stays empty for now; each screen will be built separately.
+        workspace.removeAllViews()
+    }
+
+    private fun label(value: String, size: Float, color: Int, bold: Boolean): TextView {
         return TextView(this).apply {
             text = value
             textSize = size
@@ -130,4 +149,43 @@ class MainActivity : Activity() {
 
     private fun Int.dp(): Int =
         (this * resources.displayMetrics.density).toInt()
+
+    // Simple vector-style logo: rising bars with a curved underline.
+    private inner class BrandMark(context: android.content.Context) : View(context) {
+        private val green = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(30, 166, 75)
+            style = Paint.Style.FILL
+        }
+        private val navy = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = primary
+            style = Paint.Style.STROKE
+            strokeWidth = 5.dp().toFloat()
+            strokeCap = Paint.Cap.ROUND
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val w = width.toFloat()
+            val h = height.toFloat()
+            val base = h * 0.76f
+            val barWidth = w * 0.17f
+            val gap = w * 0.07f
+            val left = w * 0.12f
+            val heights = floatArrayOf(h * 0.30f, h * 0.48f, h * 0.67f)
+
+            heights.forEachIndexed { index, barHeight ->
+                val x = left + index * (barWidth + gap)
+                canvas.drawRoundRect(
+                    x, base - barHeight, x + barWidth, base,
+                    3.dp().toFloat(), 3.dp().toFloat(), green
+                )
+            }
+
+            val curve = Path().apply {
+                moveTo(w * 0.10f, h * 0.78f)
+                cubicTo(w * 0.32f, h * 0.98f, w * 0.82f, h * 0.92f, w * 0.91f, h * 0.48f)
+            }
+            canvas.drawPath(curve, navy)
+        }
+    }
 }
