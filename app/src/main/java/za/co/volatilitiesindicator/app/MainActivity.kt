@@ -12,6 +12,7 @@ import android.view.Gravity
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Switch
 import android.widget.Toast
 import android.content.Intent
 import android.net.Uri
@@ -65,6 +66,7 @@ class MainActivity : Activity() {
     private val oauthHttp by lazy { OkHttpClient() }
     private var oauthVerifier = ""
     private var oauthState = ""
+    private var tradeTab = "RUNNING"
     private lateinit var connectionStatusView: TextView
     private lateinit var accountDetailsView: TextView
 
@@ -112,7 +114,17 @@ class MainActivity : Activity() {
             letterSpacing = 0.08f
             setPadding(0, 2.dp(), 0, 0)
         })
-        header.addView(brandText)
+        header.addView(brandText, LinearLayout.LayoutParams(0, -2, 1f))
+
+        val notificationBell = label("♧", 25f, primary, true).apply {
+            text = "🔔"
+            gravity = Gravity.CENTER
+            setPadding(10.dp(), 8.dp(), 8.dp(), 8.dp())
+            isClickable = true
+            contentDescription = "Notifications"
+            setOnClickListener { showPage("NOTIFICATIONS") }
+        }
+        header.addView(notificationBell, LinearLayout.LayoutParams(48.dp(), 48.dp()))
         root.addView(header)
 
         // MAIN WORKSPACE
@@ -149,10 +161,10 @@ class MainActivity : Activity() {
             setPadding(8.dp(), 12.dp(), 8.dp(), 12.dp())
         }
 
-        listOf("HOME", "CONNECTION", "EXECUTION").forEach { page ->
+        listOf("HOME", "CONNECTION", "TRADE", "SETTINGS", "PROFILE").forEach { page ->
             val itemView = TextView(this).apply {
                 text = page
-                textSize = 10f
+                textSize = 8.5f
                 gravity = Gravity.CENTER
                 typeface = Typeface.DEFAULT_BOLD
                 letterSpacing = 0.04f
@@ -177,7 +189,7 @@ class MainActivity : Activity() {
 
     private fun showPage(page: String) {
         selectedPage = page
-        pageHeading.text = page
+        pageHeading.text = if (page == "NOTIFICATIONS") "NOTIFICATIONS" else page
         navigationItems.forEach { item ->
             val active = item.text.toString() == page
             item.setTextColor(if (active) accent else secondary)
@@ -188,11 +200,128 @@ class MainActivity : Activity() {
         when (page) {
             "HOME" -> showIndexes()
             "CONNECTION" -> showConnectionScreen()
-            "EXECUTION" -> {
-                workspace.addView(label("EXECUTION", 12f, primary, true))
-                workspace.addView(label("Account execution controls will be added after connection verification.", 11f, secondary, false))
+            "TRADE" -> showTradeScreen()
+            "NOTIFICATIONS" -> showNotificationsScreen()
+            "SETTINGS" -> showSettingsScreen()
+            "PROFILE" -> showProfileScreen()
+        }
+    }
+
+
+    private fun addSectionTitle(title: String, subtitle: String? = null) {
+        workspace.addView(label(title, 13f, primary, true).apply {
+            setPadding(0, 2.dp(), 0, 4.dp())
+        })
+        if (!subtitle.isNullOrBlank()) {
+            workspace.addView(label(subtitle, 10f, secondary, false).apply {
+                setPadding(0, 0, 0, 12.dp())
+            })
+        }
+    }
+
+    private fun addInfoCard(title: String, detail: String, tint: Int = indexBackgrounds[0]) {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(tint, 12)
+            setPadding(14.dp(), 13.dp(), 14.dp(), 13.dp())
+        }
+        card.addView(label(title, 11f, primary, true))
+        card.addView(label(detail, 10f, secondary, false).apply {
+            setPadding(0, 5.dp(), 0, 0)
+        })
+        val params = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, -2
+        ).apply { bottomMargin = 10.dp() }
+        workspace.addView(card, params)
+    }
+
+    private fun showTradeScreen() {
+        addSectionTitle("TRADE ACTIVITY", "Monitor open positions and review completed trades.")
+        val tabs = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = rounded(pageBackground, 10)
+            setPadding(4.dp(), 4.dp(), 4.dp(), 4.dp())
+        }
+        listOf("RUNNING", "HISTORY").forEach { tab ->
+            val selected = tradeTab == tab
+            val tabView = label(tab, 10f, if (selected) Color.WHITE else secondary, true).apply {
+                gravity = Gravity.CENTER
+                background = rounded(if (selected) accent else pageBackground, 8)
+                setPadding(8.dp(), 11.dp(), 8.dp(), 11.dp())
+                isClickable = true
+                setOnClickListener {
+                    tradeTab = tab
+                    showPage("TRADE")
+                }
+            }
+            tabs.addView(tabView, LinearLayout.LayoutParams(0, -2, 1f))
+        }
+        workspace.addView(tabs)
+        workspace.addView(View(this), LinearLayout.LayoutParams(1, 10.dp()))
+        if (tradeTab == "RUNNING") {
+            addInfoCard("RUNNING TRADES", "No running trades to display yet.", indexBackgrounds[1])
+            workspace.addView(label("When a trade is opened, its index, direction, stake, entry price and current status will appear here.", 10f, secondary, false))
+        } else {
+            addInfoCard("TRADE HISTORY", "No completed trades recorded yet.", indexBackgrounds[2])
+            workspace.addView(label("Completed trade results and profit or loss will appear here.", 10f, secondary, false))
+        }
+    }
+
+    private fun showNotificationsScreen() {
+        addSectionTitle("NOTIFICATIONS", "Important account and trading updates.")
+        addInfoCard("YOU'RE ALL CAUGHT UP", "New alerts and trade notifications will appear here.", indexBackgrounds[0])
+    }
+
+    private fun showSettingsScreen() {
+        addSectionTitle("TRADING SETTINGS", "Configure your trading preferences.")
+        val trailingEnabled = accountPrefs.getBoolean("trailing_stop_enabled", false)
+        val trailingSwitch = Switch(this).apply {
+            text = "STANDALONE TRAILING STOP"
+            textSize = 11f
+            setTextColor(primary)
+            isChecked = trailingEnabled
+            setOnCheckedChangeListener { _, checked ->
+                accountPrefs.edit().putBoolean("trailing_stop_enabled", checked).apply()
             }
         }
+        val trailingCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(indexBackgrounds[0], 12)
+            setPadding(14.dp(), 12.dp(), 14.dp(), 12.dp())
+            addView(trailingSwitch)
+            addView(label("Enable or disable the trailing-stop preference. Configuration and trade integration will be added separately.", 9.5f, secondary, false).apply {
+                setPadding(0, 5.dp(), 0, 0)
+            })
+        }
+        workspace.addView(trailingCard, LinearLayout.LayoutParams(-1, -2).apply {
+            bottomMargin = 12.dp()
+        })
+
+        val autoTradeSwitch = Switch(this).apply {
+            text = "AUTO TRADE"
+            textSize = 11f
+            setTextColor(primary)
+            isChecked = accountPrefs.getBoolean("auto_trade_enabled", false)
+            setOnCheckedChangeListener { _, checked ->
+                accountPrefs.edit().putBoolean("auto_trade_enabled", checked).apply()
+            }
+        }
+        val autoCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(indexBackgrounds[1], 12)
+            setPadding(14.dp(), 12.dp(), 14.dp(), 12.dp())
+            addView(autoTradeSwitch)
+            addView(label("Save your Auto Trade preference. This switch does not activate execution logic yet.", 9.5f, secondary, false).apply {
+                setPadding(0, 5.dp(), 0, 0)
+            })
+        }
+        workspace.addView(autoCard)
+    }
+
+    private fun showProfileScreen() {
+        addSectionTitle("USER PROFILE", "Your Volatilities Indicator account.")
+        addInfoCard("PROFILE", "User profile details can be added when registration fields are connected.", indexBackgrounds[0])
+        addInfoCard("DERIV ACCOUNT", "Type: $executionMode\nStatus: $accountStatusText\nAccount ID: ${if (connectedAccountId.isBlank()) "—" else connectedAccountId}\nBalance: $accountBalanceText", indexBackgrounds[1])
     }
 
     private fun showConnectionScreen() {
@@ -341,7 +470,7 @@ exchangeOAuthCode(code)
                     runOnUiThread { Toast.makeText(this@MainActivity, "Deriv did not return an access token.", Toast.LENGTH_LONG).show() }
                     return
                 }
-                accountPrefs.edit().putString(if (executionMode == "REAL") "real_token" else "demo_token", token)
+   accountPrefs.edit().putString(if (executionMode == "REAL") "real_token" else "demo_token", token)
                     .remove("oauth_state").remove("oauth_verifier").apply()
                 runOnUiThread {
                     accountStatusText = "CONNECTING"
