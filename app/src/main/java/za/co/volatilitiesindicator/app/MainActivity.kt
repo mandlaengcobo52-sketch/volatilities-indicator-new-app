@@ -31,24 +31,25 @@ import org.json.JSONObject
 
 class MainActivity : Activity() {
 
-    private val pageBackground = Color.rgb(246, 248, 252)
-    private val surface = Color.WHITE
-    private val primary = Color.rgb(31, 48, 75)
-    private val secondary = Color.rgb(103, 119, 140)
-    private val accent = Color.rgb(0, 145, 150)
+    // Original dark Volatilities Indicator palette.
+    private val pageBackground = Color.rgb(2, 8, 6)
+    private val surface = Color.rgb(5, 18, 15)
+    private val primary = Color.rgb(239, 246, 242)
+    private val secondary = Color.rgb(164, 181, 174)
+    private val accent = Color.rgb(0, 239, 91)
     private val indexBackgrounds = listOf(
-        Color.rgb(238, 246, 255),
-        Color.rgb(237, 249, 246),
-        Color.rgb(245, 242, 255),
-        Color.rgb(255, 247, 237),
-        Color.rgb(255, 241, 243)
+        Color.rgb(6, 20, 18),
+        Color.rgb(6, 20, 18),
+        Color.rgb(6, 20, 18),
+        Color.rgb(6, 20, 18),
+        Color.rgb(6, 20, 18)
     )
     private val indexAccents = listOf(
-        Color.rgb(48, 112, 190),
-        Color.rgb(0, 145, 120),
-        Color.rgb(116, 86, 190),
-        Color.rgb(205, 125, 35),
-        Color.rgb(190, 72, 95)
+        Color.rgb(0, 220, 230),
+        Color.rgb(0, 239, 91),
+        Color.rgb(255, 220, 65),
+        Color.rgb(255, 76, 91),
+        Color.rgb(185, 75, 255)
     )
 
     private lateinit var pageHeading: TextView
@@ -97,10 +98,8 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
 
         window.statusBarColor = pageBackground
-        window.navigationBarColor = surface
-        window.decorView.systemUiVisibility =
-            View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
-            View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        window.navigationBarColor = pageBackground
+        window.decorView.systemUiVisibility = 0
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -244,7 +243,7 @@ class MainActivity : Activity() {
     private fun addInfoCard(title: String, detail: String, tint: Int = indexBackgrounds[0]) {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = rounded(tint, 12)
+            background = outlined(tint, 12, Color.rgb(24, 62, 48), 1)
             setPadding(14.dp(), 13.dp(), 14.dp(), 13.dp())
         }
         card.addView(label(title, 11f, primary, true))
@@ -698,6 +697,7 @@ override fun onMarketDataError(symbol: String, message: String) {
 
             val highest = recent.maxByOrNull { it.high } ?: return
             val lowest = recent.minByOrNull { it.low } ?: return
+
             rollingRanges[symbol] = RollingRange(
                 high = highest.high,
                 low = lowest.low,
@@ -728,31 +728,19 @@ override fun onMarketDataError(symbol: String, message: String) {
             val indexCard = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                background = rounded(indexBackgrounds[position], 11)
-                setPadding(10.dp(), 8.dp(), 11.dp(), 8.dp())
+                background = outlined(indexBackgrounds[position], 11, indexAccents[position], 1)
+                setPadding(12.dp(), 10.dp(), 12.dp(), 10.dp())
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
                 ).apply {
                     bottomMargin = 7.dp()
                 }
             }
-
-            val accentBar = View(this).apply {
-                background = rounded(indexAccents[position], 3)
-            }
-            indexCard.addView(
-                accentBar,
-                LinearLayout.LayoutParams(4.dp(), LinearLayout.LayoutParams.MATCH_PARENT).apply {
-                    rightMargin = 9.dp()
-                }
-            )
-
-            
-val details = LinearLayout(this).apply {
+            val details = LinearLayout(this).apply {
     orientation = LinearLayout.VERTICAL
 }
 
-val name = label(index, 10.5f, indexAccents[position], true).apply {
+val name = label(symbol, 15f, indexAccents[position], true).apply {
     includeFontPadding = false
     maxLines = 1
     isSingleLine = true
@@ -777,7 +765,7 @@ indexCard.addView(
     LinearLayout.LayoutParams(0, -2, 1f)
 )
 
-val priceView = label("--", 12f, primary, true).apply {
+val priceView = label("--", 15f, primary, true).apply {
     gravity = Gravity.CENTER_VERTICAL or Gravity.END
     includeFontPadding = false
     maxLines = 1
@@ -846,45 +834,67 @@ private fun updateRangeDisplay(symbol: String) {
         }
     }
 
+    private fun outlined(color: Int, radius: Int, strokeColor: Int, strokeWidth: Int): GradientDrawable {
+        return GradientDrawable().apply {
+            setColor(color)
+            cornerRadius = radius.dp().toFloat()
+            setStroke(strokeWidth.dp(), strokeColor)
+        }
+    }
+
     private fun Int.dp(): Int =
             (this * resources.displayMetrics.density).toInt()
 
-    // Simple vector-style logo: rising bars with a curved underline.
+    // Circular green-and-silver V emblem for the dark brand identity.
     private inner class BrandMark(context: android.content.Context) : View(context) {
-        private val green = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.rgb(30, 166, 75)
+        private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(0, 220, 95)
+            style = Paint.Style.STROKE
+            strokeWidth = 3.dp().toFloat()
+        }
+        private val greenPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(0, 235, 85)
             style = Paint.Style.FILL
         }
-        private val navy = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = primary
-            style = Paint.Style.STROKE
-            strokeWidth = 5.dp().toFloat()
-            strokeCap = Paint.Cap.ROUND
+        private val silverPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(220, 230, 228)
+            style = Paint.Style.FILL
+        }
+        private val darkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(2, 8, 6)
+            style = Paint.Style.FILL
         }
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
-            val w = width.toFloat()
-            val h = height.toFloat()
-            val base = h * 0.76f
-            val barWidth = w * 0.17f
-            val gap = w * 0.07f
-            val left = w * 0.12f
-            val heights = floatArrayOf(h * 0.30f, h * 0.48f, h * 0.67f)
+            val side = minOf(width, height).toFloat()
+            val cx = width / 2f
+            val cy = height / 2f
+            val radius = side * 0.46f
 
-            heights.forEachIndexed { index, barHeight ->
-                val x = left + index * (barWidth + gap)
-                canvas.drawRoundRect(
-                    x, base - barHeight, x + barWidth, base,
-                    3.dp().toFloat(), 3.dp().toFloat(), green
-                )
-            }
+            canvas.drawCircle(cx, cy, radius, darkPaint)
+            canvas.drawCircle(cx, cy, radius, ringPaint)
 
-            val curve = Path().apply {
-                moveTo(w * 0.10f, h * 0.78f)
-                cubicTo(w * 0.32f, h * 0.98f, w * 0.82f, h * 0.92f, w * 0.91f, h * 0.48f)
+            val greenV = Path().apply {
+                moveTo(cx - side * 0.34f, cy - side * 0.27f)
+                lineTo(cx - side * 0.20f, cy - side * 0.27f)
+                lineTo(cx, cy + side * 0.19f)
+                lineTo(cx + side * 0.20f, cy - side * 0.27f)
+                lineTo(cx + side * 0.35f, cy - side * 0.27f)
+                lineTo(cx + side * 0.07f, cy + side * 0.34f)
+                lineTo(cx - side * 0.07f, cy + side * 0.34f)
+                close()
             }
-            canvas.drawPath(curve, navy)
+            canvas.drawPath(greenV, greenPaint)
+
+            val silverV = Path().apply {
+                moveTo(cx + side * 0.01f, cy + side * 0.12f)
+                lineTo(cx + side * 0.27f, cy - side * 0.27f)
+                lineTo(cx + side * 0.40f, cy - side * 0.27f)
+                lineTo(cx + side * 0.10f, cy + side * 0.20f)
+                close()
+            }
+            canvas.drawPath(silverV, silverPaint)
         }
     }
 }
