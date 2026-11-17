@@ -264,8 +264,7 @@ class MainActivity : Activity() {
             MessageDigest.getInstance("SHA-256").digest(oauthVerifier.toByteArray(Charsets.US_ASCII)),
             Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
         )
-        oauthState = UUID.randomUUID().toString()
-        accountPrefs.edit()
+        oauthState = "android-" + UUID.randomUUID().toString()
             .putString("oauth_state", oauthState)
             .putString("oauth_verifier", oauthVerifier)
             .putString("oauth_mode", executionMode)
