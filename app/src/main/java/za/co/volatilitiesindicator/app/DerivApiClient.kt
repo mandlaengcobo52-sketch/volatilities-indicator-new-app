@@ -1149,11 +1149,20 @@ fun startPublicLivePriceFeed() {
     connectMarketDataEndpoint()
 }
 
+
 fun requestHistoricalCandles() {
-    if (marketDataSocket != null) return
     livePricesOnly = false
+
+    val socket = marketDataSocket
+
+    if (socket != null) {
+        refreshHistoricalCandles()
+        return
+    }
+
     connectMarketDataEndpoint()
 }
+
 
 private fun connectMarketDataEndpoint() {
     if (marketDataSocket != null) return
