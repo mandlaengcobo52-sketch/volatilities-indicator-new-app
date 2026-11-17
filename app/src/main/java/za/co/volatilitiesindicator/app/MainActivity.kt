@@ -265,10 +265,12 @@ class MainActivity : Activity() {
             Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
         )
         oauthState = "android-" + UUID.randomUUID().toString()
-            .putString("oauth_state", oauthState)
-            .putString("oauth_verifier", oauthVerifier)
-            .putString("oauth_mode", executionMode)
-            .apply()
+
+accountPrefs.edit()
+    .putString("oauth_state", oauthState)
+    .putString("oauth_verifier", oauthVerifier)
+    .putString("oauth_mode", executionMode)
+    .apply()
 
         val authUrl = Uri.parse(DerivApiClient.OAUTH_AUTH_URL).buildUpon()
             .appendQueryParameter("response_type", "code")
