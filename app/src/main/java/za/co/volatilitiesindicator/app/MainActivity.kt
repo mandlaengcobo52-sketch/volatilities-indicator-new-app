@@ -174,34 +174,31 @@ class MainActivity : Activity() {
             setPadding(8.dp(), 12.dp(), 8.dp(), 12.dp())
         }
 
-        
-        val navIcons = linkedMapOf(
+        val navigationPages = listOf(
             "HOME" to "⌂",
             "CONNECTION" to "⇄",
             "TRADE" to "▥",
             "SETTINGS" to "⚙",
-            "PROFILE" to "●"
+            "PROFILE" to "♙"
         )
 
-        navIcons.forEach { (page, icon) ->
+        navigationPages.forEach { (page, icon) ->
             val itemView = TextView(this).apply {
                 text = icon
                 tag = page
-                textSize = 25f
+                textSize = 27f
                 gravity = Gravity.CENTER
-                typeface = Typeface.DEFAULT_BOLD
+                typeface = Typeface.DEFAULT
                 isClickable = true
                 isFocusable = true
                 contentDescription = page
-                setPadding(3.dp(), 10.dp(), 3.dp(), 10.dp())
-                layoutParams = LinearLayout.LayoutParams(0, 52.dp(), 1f)
+                setPadding(3.dp(), 8.dp(), 3.dp(), 8.dp())
+                layoutParams = LinearLayout.LayoutParams(0, 54.dp(), 1f)
                 setOnClickListener { showPage(page) }
             }
-
             navigationItems.add(itemView)
             navigation.addView(itemView)
         }
-        
 
         root.addView(navigation)
         showPage(selectedPage)
@@ -751,8 +748,7 @@ override fun onMarketDataError(symbol: String, message: String) {
                 }
             )
 
-            
-val details = LinearLayout(this).apply {
+            val details = LinearLayout(this).apply {
     orientation = LinearLayout.VERTICAL
 }
 
