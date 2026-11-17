@@ -172,6 +172,7 @@ class MainActivity : Activity() {
 
         // Public market prices start immediately; no Deriv account login is required.
         startLiveIndexFeed()
+        handleOAuthCallback(intent)
     }
 
     private fun showPage(page: String) {
