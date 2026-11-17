@@ -3,6 +3,20 @@ package za.co.volatilitiesindicator.app
 import android.app.Activity
 import android.content.ComponentName
 import android.content.Intent
+import android.net.Uri
+import android.util.Base64
+import android.app.AlertDialog
+import android.widget.EditText
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.FormBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import java.io.IOException
+import java.security.MessageDigest
+import java.security.SecureRandom
+import java.util.UUID
 import android.content.ServiceConnection
 import android.os.Build
 import android.os.Bundle
@@ -44,6 +58,14 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private var accountConnected = false
     private var accountLabel = "Not connected"
     private var accountBalanceLabel = "Balance unavailable"
+    private var executionMode = "DEMO"
+    private var accountStatusView: TextView? = null
+    private var accountBalanceView: TextView? = null
+    private var accountIdView: TextView? = null
+    private val prefs by lazy { getSharedPreferences("deriv_oauth", MODE_PRIVATE) }
+    private val httpClient = OkHttpClient()
+    private var oauthState = ""
+    private var codeVerifier = ""
     private var feedPillView: TextView? = null
 
     private var derivService: DerivConnectionService? = null
@@ -57,6 +79,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             service.attachActivity(this@MainActivity)
             // Public market feed: does not require signing in to a Deriv account.
             service.client.requestHistoricalCandles()
+            val tokenKey = if (executionMode == "REAL") "real_token" else "demo_token"
+            val savedToken = prefs.getString(tokenKey, "").orEmpty()
+            if (savedToken.isNotBlank()) {
+                service.client.ensureConnectedOnResume(savedToken, executionMode)
+            }
             runOnUiThread { updateConnectionLabels("Connecting to live market feed…") }
         }
 
@@ -78,6 +105,25 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         render()
         startMarketFeedService()
+        handleOAuthCallback(intent)
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleOAuthCallback(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val tokenKey = if (executionMode == "REAL") "real_token" else "demo_token"
+        val savedToken = prefs.getString(tokenKey, "").orEmpty()
+        if (savedToken.isNotBlank() && derivService != null &&
+            derivService?.client?.isConnected() != true &&
+            derivService?.client?.isConnecting() != true
+        ) {
+            derivService?.client?.ensureConnectedOnResume(savedToken, executionMode)
+        }
     }
 
     private fun startMarketFeedService() {
@@ -106,18 +152,33 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     override fun onConnecting(message: String) {
-        runOnUiThread { updateConnectionLabels(message) }
+        runOnUiThread {
+            accountConnected = false
+            accountStatusView?.text = message
+            accountStatusView?.setTextColor(amber)
+            if (selectedTab == "Accounts") render()
+        }
     }
 
     override fun onConnected(accountId: String, accountType: String) {
         accountConnected = true
+        executionMode = if (accountType.equals("REAL", true)) "REAL" else "DEMO"
         accountLabel = "$accountId ($accountType)"
-        runOnUiThread { updateConnectionLabels("Deriv account connected") }
+        runOnUiThread {
+            accountIdView?.text = accountLabel
+            accountStatusView?.text = "CONNECTED"
+            accountStatusView?.setTextColor(green)
+            toast("Deriv $executionMode account connected.")
+            renderIfHome()
+        }
     }
 
     override fun onBalance(balance: Double, currency: String) {
         accountBalanceLabel = String.format(Locale.US, "%.2f %s", balance, currency)
-        runOnUiThread { renderIfHome() }
+        runOnUiThread {
+            accountBalanceView?.text = accountBalanceLabel
+            renderIfHome()
+        }
     }
 
     override fun onTick(symbol: String, quote: Double, epoch: Long) {
@@ -174,7 +235,185 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     override fun onDisconnected() {
         accountConnected = false
-        runOnUiThread { updateConnectionLabels("Deriv account disconnected") }
+        accountLabel = "Not connected"
+        accountBalanceLabel = "Balance unavailable"
+        runOnUiThread {
+            accountStatusView?.text = "ACCOUNT NOT CONNECTED"
+            accountStatusView?.setTextColor(red)
+            renderIfHome()
+        }
+    }
+
+
+    private fun showAccountModeDialog() {
+        val modes = arrayOf("DEMO ACCOUNT", "REAL ACCOUNT")
+        AlertDialog.Builder(this)
+            .setTitle("Connect Deriv account")
+            .setItems(modes) { _, which ->
+                executionMode = if (which == 1) "REAL" else "DEMO"
+                beginDerivConnection()
+            }
+            .setNegativeButton("CANCEL", null)
+            .show()
+    }
+
+    private fun beginDerivConnection() {
+        val tokenKey = if (executionMode == "REAL") "real_token" else "demo_token"
+        val savedToken = prefs.getString(tokenKey, "").orEmpty()
+        if (savedToken.isNotBlank()) {
+            connectWithToken(savedToken)
+        } else {
+            startDerivOAuth()
+        }
+    }
+
+    private fun startDerivOAuth() {
+        oauthState = "android-" + UUID.randomUUID().toString()
+        codeVerifier = generateCodeVerifier()
+        prefs.edit()
+            .putString("oauth_state", oauthState)
+            .putString("code_verifier", codeVerifier)
+            .putString("oauth_mode", executionMode)
+            .apply()
+
+        val challenge = generateCodeChallenge(codeVerifier)
+        val authorizationUrl = Uri.parse(DerivApiClient.OAUTH_AUTH_URL).buildUpon()
+            .appendQueryParameter("response_type", "code")
+            .appendQueryParameter("client_id", DerivApiClient.clientId(executionMode))
+            .appendQueryParameter("redirect_uri", DerivApiClient.OAUTH_REDIRECT_URI)
+            .appendQueryParameter("scope", DerivApiClient.OAUTH_SCOPE)
+            .appendQueryParameter("state", oauthState)
+            .appendQueryParameter("code_challenge", challenge)
+            .appendQueryParameter("code_challenge_method", "S256")
+            .build()
+
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, authorizationUrl))
+        } catch (e: Exception) {
+            toast("Unable to open Deriv login: ${e.message ?: "browser unavailable"}")
+        }
+    }
+
+    private fun handleOAuthCallback(callbackIntent: Intent?) {
+        val data = callbackIntent?.data ?: return
+        if (data.scheme != "volatilitiesindicator" || data.host != "oauth-callback") return
+
+        val error = data.getQueryParameter("error")
+        if (!error.isNullOrBlank()) {
+            toast("Deriv authorization failed: $error")
+            return
+        }
+
+        val code = data.getQueryParameter("code")
+        val returnedState = data.getQueryParameter("state")
+        val expectedState = prefs.getString("oauth_state", "").orEmpty()
+        if (code.isNullOrBlank() || expectedState.isBlank() || returnedState != expectedState) {
+            toast("Deriv sign-in failed: authorization code or security state is invalid.")
+            return
+        }
+
+        executionMode = if (prefs.getString("oauth_mode", "DEMO").equals("REAL", true)) "REAL" else "DEMO"
+        exchangeOAuthCode(code)
+    }
+
+    private fun exchangeOAuthCode(code: String) {
+        val verifier = prefs.getString("code_verifier", "").orEmpty()
+        if (verifier.isBlank()) {
+            toast("Deriv sign-in failed: PKCE verifier is missing.")
+            return
+        }
+
+        val body = FormBody.Builder()
+            .add("grant_type", "authorization_code")
+            .add("code", code)
+            .add("client_id", DerivApiClient.clientId(executionMode))
+            .add("redirect_uri", DerivApiClient.OAUTH_REDIRECT_URI)
+            .add("code_verifier", verifier)
+            .build()
+
+        val request = Request.Builder()
+            .url(DerivApiClient.OAUTH_TOKEN_URL)
+            .post(body)
+            .build()
+
+        httpClient.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                runOnUiThread { toast("Deriv sign-in failed: ${e.message ?: "network error"}") }
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                val responseText = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    runOnUiThread { toast("Deriv token exchange failed (HTTP ${response.code}).") }
+                    return
+                }
+                val token = try {
+                    JSONObject(responseText).optString("access_token", "")
+                } catch (_: Exception) { "" }
+
+                if (token.isBlank()) {
+                    runOnUiThread { toast("Deriv did not return an access token.") }
+                    return
+                }
+
+                val tokenKey = if (executionMode == "REAL") "real_token" else "demo_token"
+                prefs.edit()
+                    .putString(tokenKey, token)
+                    .remove("oauth_state")
+                    .remove("code_verifier")
+                    .apply()
+
+                runOnUiThread { connectWithToken(token) }
+            }
+        })
+    }
+
+    private fun connectWithToken(token: String) {
+        if (token.isBlank()) {
+            toast("Deriv access token is empty.")
+            return
+        }
+        val service = derivService
+        if (service == null) {
+            toast("Deriv service is starting. Please try Connect again.")
+            startMarketFeedService()
+            return
+        }
+
+        accountConnected = false
+        accountLabel = "Connecting…"
+        accountBalanceLabel = "Balance loading…"
+        renderIfHome()
+        service.client.ensureConnectedOnResume(token, executionMode)
+    }
+
+    private fun disconnectDerivAccount() {
+        prefs.edit()
+            .remove("demo_token")
+            .remove("real_token")
+            .apply()
+        try { derivService?.client?.disconnect() } catch (_: Exception) {}
+        accountConnected = false
+        accountLabel = "Not connected"
+        accountBalanceLabel = "Balance unavailable"
+        render()
+        toast("Deriv account disconnected.")
+    }
+
+    private fun generateCodeVerifier(): String {
+        val bytes = ByteArray(32)
+        SecureRandom().nextBytes(bytes)
+        return Base64.encodeToString(
+            bytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
+        )
+    }
+
+    private fun generateCodeChallenge(verifier: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val hash = digest.digest(verifier.toByteArray(Charsets.US_ASCII))
+        return Base64.encodeToString(
+            hash, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
+        )
     }
 
     private fun render() {
@@ -240,10 +479,20 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val account = card()
         account.addView(text("TRADING ACCOUNT", 12f, muted, true))
         account.addView(space(8))
-        account.addView(text(if (accountConnected) accountLabel else "Not connected", 17f, ink, true))
-        account.addView(text(accountBalanceLabel, 13f, muted))
+        val accountName = text(if (accountConnected) accountLabel else "Not connected", 17f, ink, true)
+        accountIdView = accountName
+        account.addView(accountName)
+        val balanceText = text(accountBalanceLabel, 13f, muted)
+        accountBalanceView = balanceText
+        account.addView(balanceText)
+        val statusText = text(if (accountConnected) "CONNECTED" else "ACCOUNT NOT CONNECTED", 12f,
+            if (accountConnected) green else red, true)
+        accountStatusView = statusText
+        account.addView(statusText)
         account.addView(space(12))
-        account.addView(actionButton("ACCOUNT OPTIONS") { openTab("Accounts") })
+        account.addView(actionButton(if (accountConnected) "ACCOUNT OPTIONS" else "CONNECT DERIV ACCOUNT") {
+            if (accountConnected) openTab("Accounts") else showAccountModeDialog()
+        })
         content.addView(account)
         content.addView(space(18))
 
@@ -299,10 +548,16 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val deriv = card()
         deriv.addView(text("DERIV ACCOUNT", 15f, ink, true))
         deriv.addView(space(6))
+        deriv.addView(text("Account mode: $executionMode", 13f, muted))
         deriv.addView(text(if (accountConnected) accountLabel else "Connection: Disconnected", 13f, muted))
+        deriv.addView(text(accountBalanceLabel, 13f, muted))
         deriv.addView(space(12))
-        deriv.addView(actionButton("CONNECT DERIV") {
-            toast("Deriv OAuth sign-in is not yet connected to this fresh screen.")
+        deriv.addView(actionButton(if (accountConnected) "SWITCH / CONNECT ACCOUNT" else "CONNECT DERIV") {
+            showAccountModeDialog()
+        })
+        deriv.addView(space(8))
+        deriv.addView(actionButton("DISCONNECT DERIV", false) {
+            disconnectDerivAccount()
         })
         content.addView(deriv)
         content.addView(space(12))
@@ -338,7 +593,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         c.addView(divider())
         c.addView(settingRow("Market feed", if (marketFeedConnected) "Connected" else "Connecting"))
         c.addView(divider())
-        c.addView(settingRow("Trading account", if (accountConnected) "Connected" else "Not connected"))
+        c.addView(settingRow("Trading account", "$executionMode · " + if (accountConnected) "Connected" else "Not connected"))
         content.addView(c)
     }
 
