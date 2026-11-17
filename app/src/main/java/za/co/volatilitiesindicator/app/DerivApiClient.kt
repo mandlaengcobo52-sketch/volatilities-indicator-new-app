@@ -1184,10 +1184,10 @@ private fun connectMarketDataEndpoint() {
                     candleRequestSymbols[requestId] = symbol
                     val message = JSONObject().apply {
                         put("ticks_history", symbol)
-                        put("count", 1000)
+                        put("count", 1440)
                         put("end", "latest")
                         put("style", "candles")
-                        put("granularity", 3600)
+                        put("granularity", 60)
                         put("req_id", requestId)
                     }
                     webSocket.send(message.toString())
@@ -1348,10 +1348,10 @@ fun refreshHistoricalCandles() {
 
         val message = JSONObject().apply {
             put("ticks_history", symbol)
-            put("count", 1000)
+            put("count", 1440)
             put("end", "latest")
             put("style", "candles")
-            put("granularity", 3600)
+            put("granularity", 60)
             put("req_id", requestId)
         }
 
