@@ -1,101 +1,133 @@
 package za.co.volatilitiesindicator.app
 
 import android.app.Activity
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
-import android.Manifest
-import android.content.pm.PackageManager
-import android.os.Build
-import android.content.Intent
-import android.net.Uri
-import okhttp3.Call
-import okhttp3.Callback
-import okhttp3.FormBody
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.Response
-import org.json.JSONObject
-import org.json.JSONArray
-import java.io.IOException
-import java.util.UUID
+import android.os.Bundle
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.ColorDrawable
-import android.graphics.drawable.LayerDrawable
-import android.graphics.drawable.InsetDrawable
-import android.os.Bundle
-import android.os.Handler
 import android.view.Gravity
 import android.view.View
-import android.view.ViewGroup
-import android.widget.Button
-import android.widget.EditText
-import android.widget.FrameLayout
-import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
-import android.widget.Spinner
-import android.widget.ArrayAdapter
-import android.widget.Toast
-import android.util.Base64
-import java.security.MessageDigest
-import java.security.SecureRandom
-import android.content.ComponentName
-import android.content.ServiceConnection
-import android.os.IBinder
-import android.text.SpannableStringBuilder
-import android.text.style.ForegroundColorSpan
-/** Volatilities Indicator Android app. */
-class MainActivity : Activity(), DerivApiClient.Callback {
 
-    // Original Volatilities Indicator colour palette — preserved.
-    private val bg = Color.rgb(3, 8, 6)
-    private val panel = Color.rgb(8, 20, 18)
-    private val panel2 = Color.rgb(16, 34, 39)
-    private val green = Color.rgb(0, 255, 92)
-    private val greenDark = Color.rgb(0, 120, 48)
-    private val white = Color.rgb(255, 220, 45)
-    private val muted = Color.rgb(242, 248, 245)
-    private val yellow = Color.rgb(255, 220, 45)
-    private val red = Color.rgb(255, 65, 75)
-    private val cyan = Color.rgb(0, 225, 235)
-    private val blue = Color.rgb(70, 155, 255)
+class MainActivity : Activity() {
 
-    private val appPrefs by lazy {
-    getSharedPreferences("volatilities_app_settings", MODE_PRIVATE)
-}
-private val notificationsEnabled: Boolean
-    get() = appPrefs.getBoolean("notificationsEnabled", false)
-private var platform = "USER"
-    set(value) {
-        field = value
-        appPrefs.edit().putString("platform", value).apply()
+    // New light interface palette
+    private val pageBackground = Color.rgb(246, 248, 252)
+    private val surface = Color.WHITE
+    private val primary = Color.rgb(31, 48, 75)
+    private val secondary = Color.rgb(103, 119, 140)
+    private val accent = Color.rgb(0, 145, 150)
+    private val divider = Color.rgb(230, 235, 242)
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        window.statusBarColor = pageBackground
+        window.navigationBarColor = surface
+        window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
+            View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(pageBackground)
+            fitsSystemWindows = true
+        }
+
+        // APP HEADER
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(22.dp(), 20.dp(), 22.dp(), 18.dp())
+            setBackgroundColor(surface)
+        }
+
+        header.addView(label("VOLATILITIES", 22f, primary, true))
+        header.addView(label("INDICATOR", 15f, accent, true).apply {
+            letterSpacing = 0.08f
+            setPadding(0, 2.dp(), 0, 0)
+        })
+
+        root.addView(header)
+
+        // MAIN CONTENT AREA — intentionally kept empty for the new design.
+        val main = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(20.dp(), 24.dp(), 20.dp(), 20.dp())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+        }
+
+        val heading = label("HOME", 12f, secondary, true).apply {
+            letterSpacing = 0.12f
+            setPadding(2.dp(), 0, 0, 14.dp())
+        }
+        main.addView(heading)
+
+        val workspace = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(surface, 20)
+            setPadding(18.dp(), 18.dp(), 18.dp(), 18.dp())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+        }
+
+        main.addView(workspace)
+        root.addView(main)
+
+        // BOTTOM NAVIGATION SHELL
+        val navigation = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setBackgroundColor(surface)
+            setPadding(8.dp(), 12.dp(), 8.dp(), 12.dp())
+        }
+
+        listOf("HOME", "CONNECTION", "EXECUTION").forEachIndexed { index, item ->
+            val itemView = TextView(this).apply {
+                text = item
+                textSize = 10f
+                gravity = Gravity.CENTER
+                typeface = Typeface.DEFAULT_BOLD
+                letterSpacing = 0.04f
+                setTextColor(if (index == 0) accent else secondary)
+                layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+                setPadding(3.dp(), 10.dp(), 3.dp(), 10.dp())
+            }
+            navigation.addView(itemView)
+        }
+
+        root.addView(navigation)
+        setContentView(root)
     }
 
-private var executionMode = "DEMO"
-    set(value) {
-        field = value
-        appPrefs.edit().putString("executionMode", value).apply()
-    }
-
-private var selectedTab = "Home"
-    set(value) {
-        field = value
-        appPrefs.edit().putString("selectedTab", value).apply()
-    }
-
-private var drawerOpen = false
-
-    private lateinit var page: LinearLayout
-    private var mainScrollView: ScrollView? = null
-    private val profileRefreshHandler by lazy { Handler(mainLooper) }
-    private val profileRefreshRunnable = object : Runnable {
-        override fun run() {
-            if (authToken.isNotBlank() && platform != "ADMIN") refreshProfile(showMessage = false)
-            profileRefreshHandler.postDelayed(this, 15_000L)
+    private fun label(
+        value: String,
+        size: Float,
+        color: Int,
+        bold: Boolean
+    ): TextView {
+        return TextView(this).apply {
+            text = value
+            textSize = size
+            setTextColor(color)
+            if (bold) typeface = Typeface.DEFAULT_BOLD
         }
     }
+
+    private fun rounded(color: Int, radius: Int): GradientDrawable {
+        return GradientDrawable().apply {
+            setColor(color)
+            cornerRadius = radius.dp().toFloat()
+        }
+    }
+
+    private fun Int.dp(): Int =
+        (this * resources.displayMetrics.density).toInt()
+}
