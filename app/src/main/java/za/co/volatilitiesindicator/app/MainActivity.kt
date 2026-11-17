@@ -31,27 +31,18 @@ import org.json.JSONObject
 
 class MainActivity : Activity() {
 
-    // Original dark Volatilities Indicator palette.
-    private val pageBackground = Color.rgb(2, 8, 6)
-    private val surface = Color.rgb(5, 18, 15)
-    private val primary = Color.rgb(239, 246, 242)
-    private val secondary = Color.rgb(164, 181, 174)
-    private val accent = Color.rgb(0, 239, 91)
-    private val brandYellow = Color.rgb(255, 220, 65)
-    private val indexBackgrounds = listOf(
-        Color.rgb(6, 20, 18),
-        Color.rgb(6, 20, 18),
-        Color.rgb(6, 20, 18),
-        Color.rgb(6, 20, 18),
-        Color.rgb(6, 20, 18)
-    )
-    private val indexAccents = listOf(
-        Color.rgb(0, 220, 230),
-        Color.rgb(0, 239, 91),
-        Color.rgb(255, 220, 65),
-        Color.rgb(255, 76, 91),
-        Color.rgb(185, 75, 255)
-    )
+        // Original Volatilities Indicator colour palette — preserved.
+    private val bg = Color.rgb(3, 8, 6)
+    private val panel = Color.rgb(8, 20, 18)
+    private val panel2 = Color.rgb(16, 34, 39)
+    private val green = Color.rgb(0, 255, 92)
+    private val greenDark = Color.rgb(0, 120, 48)
+    private val white = Color.rgb(255, 220, 45)
+    private val muted = Color.rgb(242, 248, 245)
+    private val yellow = Color.rgb(255, 220, 45)
+    private val red = Color.rgb(255, 65, 75)
+    private val cyan = Color.rgb(0, 225, 235)
+    private val blue = Color.rgb(70, 155, 255)
 
     private lateinit var pageHeading: TextView
     private lateinit var workspace: LinearLayout
