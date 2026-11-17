@@ -790,6 +790,26 @@ indexCard.addView(priceView)
         return java.text.DecimalFormat("#,##0.00##").format(value)
     }
 
+private fun updateRangeDisplay(symbol: String) {
+    val rangeView = rangeViews[symbol] ?: return
+
+    val range = synchronized(candleHistory) {
+        rollingRanges[symbol]
+    }
+
+    if (range == null) {
+        rangeView.text = "24H HIGH: WAITING\n24H LOW: WAITING"
+        rangeView.setTextColor(secondary)
+        return
+    }
+
+    rangeView.text =
+        "24H HIGH: ${formatIndexPrice(range.high)}\n" +
+        "24H LOW: ${formatIndexPrice(range.low)}"
+
+    rangeView.setTextColor(accent)
+}
+
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         setIntent(intent)
