@@ -20,11 +20,14 @@ class MainActivity : Activity() {
     private val primary = Color.rgb(31, 48, 75)
     private val secondary = Color.rgb(103, 119, 140)
     private val accent = Color.rgb(0, 145, 150)
+    private val indexBackground = Color.rgb(248, 250, 253)
 
     private lateinit var pageHeading: TextView
     private lateinit var workspace: LinearLayout
     private val navigationItems = mutableListOf<TextView>()
     private var selectedPage = "HOME"
+
+    private val indexes = listOf("R_10", "R_25", "R_50", "R_75", "R_100")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -41,7 +44,7 @@ class MainActivity : Activity() {
             fitsSystemWindows = true
         }
 
-        // HEADER WITH ORIGINAL, DRAWN-IN-KOTLIN BRAND MARK
+        // HEADER WITH BRAND MARK
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -81,7 +84,7 @@ class MainActivity : Activity() {
         workspace = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = rounded(surface, 20)
-            setPadding(18.dp(), 18.dp(), 18.dp(), 18.dp())
+            setPadding(16.dp(), 18.dp(), 16.dp(), 18.dp())
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
             )
@@ -127,8 +130,42 @@ class MainActivity : Activity() {
             item.setTextColor(if (active) accent else secondary)
             item.alpha = if (active) 1f else 0.82f
         }
-        // The workspace stays empty for now; each screen will be built separately.
+
         workspace.removeAllViews()
+        if (page == "HOME") {
+            showIndexes()
+        }
+    }
+
+    private fun showIndexes() {
+        workspace.addView(label("INDEX MONITOR", 12f, primary, true).apply {
+            letterSpacing = 0.08f
+            setPadding(2.dp(), 0, 0, 12.dp())
+        })
+
+        indexes.forEach { index ->
+            val indexCard = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                background = rounded(indexBackground, 12)
+                setPadding(14.dp(), 13.dp(), 14.dp(), 13.dp())
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
+                ).apply {
+                    bottomMargin = 8.dp()
+                }
+            }
+
+            val name = label(index, 15f, primary, true)
+            indexCard.addView(name, LinearLayout.LayoutParams(0, -2, 1f))
+
+            val pricePlaceholder = label("--", 14f, secondary, true).apply {
+                gravity = Gravity.CENTER_VERTICAL or Gravity.END
+            }
+            indexCard.addView(pricePlaceholder)
+
+            workspace.addView(indexCard)
+        }
     }
 
     private fun label(value: String, size: Float, color: Int, bold: Boolean): TextView {
