@@ -524,6 +524,9 @@ exchangeOAuthCode(code)
                 if (!quote.isFinite() || epoch <= 0L) return
 
                 updateRollingRangeFromTick(symbol, quote, epoch)
+                runOnUiThread {
+                updateRangeDisplay(symbol)
+                }
 
                 runOnUiThread {
                     priceViews[symbol]?.text = formatIndexPrice(quote)
@@ -591,6 +594,9 @@ override fun onCandles(
             "HIGH: ${highest.high} | LOW: ${lowest.low} | " +
             "CANDLES: ${recentCandles.size}"
     )
+    runOnUiThread {
+    updateRangeDisplay(symbol)
+    }
 }
 
 
@@ -695,6 +701,7 @@ override fun onMarketDataError(symbol: String, message: String) {
 
     private fun showIndexes() {
         priceViews.clear()
+        rangeViews.clear()
 
         workspace.addView(label("INDEX MONITOR", 11f, primary, true).apply {
             letterSpacing = 0.08f
