@@ -533,44 +533,65 @@ exchangeOAuthCode(code)
                     }
                 }
                         }
-                        override fun onCandles(
-                symbol: String,
-                candles: List<DerivApiClient.Candle>
-            ) {
-                val now = System.currentTimeMillis() / 1000L
-                val cutoff = now - (24L * 60L * 60L)
+                        
+override fun onCandles(
+    symbol: String,
+    candles: List<DerivApiClient.Candle>
+) {
+    val now = System.currentTimeMillis() / 1000L
+    val cutoff = now - 86400L
 
-                val recentCandles = candles.filter {
-                    it.epoch >= cutoff && it.epoch <= now
-                }
+    val recentCandles = candles
+        .filter { it.epoch >= cutoff && it.epoch <= now }
+        .distinctBy { it.epoch }
+        .sortedBy { it.epoch }
 
-                if (recentCandles.isEmpty()) {
-                    android.util.Log.e(
-                        "RollingRange",
-                        "$symbol: no valid candles within the last 24 hours"
-                    )
-                    return
-                }
+    val oldestEpoch = recentCandles.firstOrNull()?.epoch ?: 0L
+    val newestEpoch = recentCandles.lastOrNull()?.epoch ?: 0L
+    val coverage = newestEpoch - oldestEpoch
 
-                val highest = recentCandles.maxByOrNull { it.high } ?: return
-                val lowest = recentCandles.minByOrNull { it.low } ?: return
+    val completeHistory =
+        recentCandles.size >= 1438 &&
+        oldestEpoch <= cutoff + 60L &&
+        newestEpoch >= now - 120L &&
+        coverage >= 86340L
 
-                synchronized(candleHistory) {
-                    candleHistory[symbol] = recentCandles
+    if (!completeHistory) {
+        synchronized(candleHistory) {
+            candleHistory.remove(symbol)
+            rollingRanges.remove(symbol)
+        }
 
-                    rollingRanges[symbol] = RollingRange(
-                        high = highest.high,
-                        low = lowest.low,
-                        highEpoch = highest.epoch,
-                        lowEpoch = lowest.epoch
-                    )
-                }
+        android.util.Log.w(
+            "RollingRange",
+            "$symbol: WAITING FOR COMPLETE 24H HISTORY. " +
+                "Candles: ${recentCandles.size}, Coverage: $coverage seconds"
+        )
+        return
+    }
 
-                android.util.Log.i(
-                    "RollingRange",
-                    "$symbol | 24H HIGH: ${highest.high} | 24H LOW: ${lowest.low}"
-                )
-                        }
+    val highest = recentCandles.maxByOrNull { it.high } ?: return
+    val lowest = recentCandles.minByOrNull { it.low } ?: return
+
+    synchronized(candleHistory) {
+        candleHistory[symbol] = recentCandles
+
+        rollingRanges[symbol] = RollingRange(
+            high = highest.high,
+            low = lowest.low,
+            highEpoch = highest.epoch,
+            lowEpoch = lowest.epoch
+        )
+    }
+
+    android.util.Log.i(
+        "RollingRange",
+        "$symbol | 24H HISTORY READY | " +
+            "HIGH: ${highest.high} | LOW: ${lowest.low} | " +
+            "CANDLES: ${recentCandles.size}"
+    )
+}
+
 
 override fun onMarketDataStatus(message: String) {
     runOnUiThread {
