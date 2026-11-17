@@ -390,7 +390,7 @@ private fun reserveBudgetSlot(): Pair<String, Int>? {
     val trades = stored.optJSONArray("trades") ?: JSONArray()
     val usedSlots = (0 until trades.length()).mapNotNull { trades.optJSONObject(it)?.optInt("slot") }.toSet()
     val slot = (1..4).firstOrNull { it !in usedSlots } ?: return null
-    val stake = kotlin.math.round(stored.optDouble("capital", 0.0) * 0.3333 * 100.0) / 100.0
+    val stake = kotlin.math.round(stored.optDouble("capital", 0.0) * 0.33 * 100.0) / 100.0
     if (stake <= 0.0) return null
     trades.put(JSONObject().put("slot", slot).put("stake", stake).put("profit", 0.0)
         .put("contractId", 0L).put("closed", false).put("reserved", true))
@@ -451,9 +451,31 @@ private fun recordBudgetClose(date: String, slot: Int, contractId: Long, profit:
     day.put("trades", trades).put("totalProfit", total).put("profitableTrades", wins)
     root.put("days", days); saveBudget(root)
 }
+// 24H TOUCH - PER INDEX ATR LIMITS
+fun maxBarrierForSymbol(symbol: String): Double {
+    return when (symbol) {
+        "R_10" -> 180.0
+        "R_25" -> 675.0
+        "R_50" -> 1200.0
+        "R_75" -> 1800.0
+        "R_100" -> 3300.0
+        else -> 1800.0
+    }
+}
+
+fun startBarrierForSymbol(symbol: String): Double {
+    return when (symbol) {
+        "R_10" -> 120.0
+        "R_25" -> 450.0
+        "R_50" -> 800.0
+        "R_75" -> 1200.0
+        "R_100" -> 2200.0
+        else -> 1200.0
+    }
+}
 private fun dailyTradeStake(): Double {
     val day = ensureBudgetDay() ?: return 0.0
-    return kotlin.math.round(day.optDouble("capital", 0.0) * 0.3333 * 100.0) / 100.0
+    return kotlin.math.round(day.optDouble("capital", 0.0) * 0.33 * 100.0) / 100.0
 }
 
     private var autoTradeEnabled: Boolean
@@ -4046,7 +4068,7 @@ dashboardQualifiedCountView?.text =
     val decision = masterEngineDecisions[symbol] ?: return@runOnUiThread
     val latest = marketDataCandles[symbol]?.lastOrNull() ?: return@runOnUiThread
 
-    val barrier = quote * 0.01
+    val barrier = startBarrierForSymbol(symbol)
     val submitted = submitTouchProposal(
         symbol,
         decision.direction,
@@ -4151,6 +4173,15 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
 }
 
 val targetPayout = order.stake * 1.30
+                // DECLINE RULE: If barrier needed for 30% is beyond 1.5 x ATR, do not trade
+if (order.barrierOffset > maxBarrierForSymbol(order.symbol)) {
+    pendingTouchOrders.remove(requestId)
+    pendingTouchBySymbol.remove(order.symbol)
+    releaseBudgetSlot(order.budgetDate, order.budgetSlot)
+    touchExecutionLocks.remove(order.symbol)
+    toast("${order.symbol}: Cannot reach 30% within 1.5 ATR - DECLINED")
+    return@runOnUiThread
+}
 val tolerance = maxOf(0.01, targetPayout * 0.02)
 
 if (kotlin.math.abs(payout - targetPayout) > tolerance) {
