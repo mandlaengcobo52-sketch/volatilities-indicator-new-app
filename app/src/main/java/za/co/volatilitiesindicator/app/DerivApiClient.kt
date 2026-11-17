@@ -1241,7 +1241,7 @@ private fun connectMarketDataEndpoint() {
 
                 val candlesJson = json.optJSONArray("candles") ?: json.optJSONObject("history")?.optJSONArray("candles")
                 if (candlesJson == null) {
-                    callback.onMarketDataError(symbol, "Deriv returned no H1 candles for $symbol.")
+                    callback.onMarketDataError(symbol, "Deriv returned no M1 candles for $symbol.")
                     return
                 }
                 val candles = mutableListOf<Candle>()
