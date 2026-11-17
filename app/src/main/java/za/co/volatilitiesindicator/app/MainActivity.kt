@@ -151,9 +151,9 @@ class MainActivity : Activity() {
         users.addView(text("USER ACCOUNT", 15f, ink, true))
         users.addView(text("Sign-in and registration interface will be added here.", 13f, muted))
         users.addView(space(10))
-        users.addView(actionButton("USER ACCOUNT") {
+        users.addView(actionButton("USER ACCOUNT", false) {
             toast("User account screen is not connected yet.")
-        }, false)
+        })
         content.addView(users)
         content.addView(space(12))
 
@@ -161,9 +161,9 @@ class MainActivity : Activity() {
         admin.addView(text("ADMIN ACCOUNT", 15f, ink, true))
         admin.addView(text("Administrator access and user management.", 13f, muted))
         admin.addView(space(10))
-        admin.addView(actionButton("ADMIN ACCOUNT") {
+        admin.addView(actionButton("ADMIN ACCOUNT", false) {
             toast("Admin account screen is not connected yet.")
-        }, false)
+        })
         content.addView(admin)
     }
 
