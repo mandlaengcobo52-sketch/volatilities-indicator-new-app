@@ -813,7 +813,7 @@ private val candleIndexes = listOf(
             if (
                 url.isNotEmpty()
             ) {
-                return url
+              return url
             }
 
             val websocketUrl =
@@ -1111,8 +1111,8 @@ private val liveIndexes = listOf(
     "R_75",
     "R_100"
 )
-fun subscribeToLiveTicks() {
 
+fun subscribeToLiveTicks() {
     if (!connected) {
         callback.onError(
             "Cannot subscribe to prices: Deriv is not connected."
@@ -1133,8 +1133,25 @@ fun subscribeToLiveTicks() {
 // HISTORICAL CANDLE CONNECTION
 // =============================================================
 
+/**
+ * Start the public live-price feed without authenticating a Deriv account.
+ * The market-data WebSocket subscribes to all five index symbols on open.
+ */
+fun startPublicLivePriceFeed() {
+    manuallyDisconnected = false
+    livePricesOnly = true
+    marketDataReconnectFuture?.cancel(false)
+    marketDataReconnectFuture = null
+    marketDataEndpointIndex = 0
+    marketDataAttempt = 0
+
+    callback.onMarketDataStatus("Connecting to Deriv live prices...")
+    connectMarketDataEndpoint()
+}
+
 fun requestHistoricalCandles() {
     if (marketDataSocket != null) return
+    livePricesOnly = false
     connectMarketDataEndpoint()
 }
 
@@ -1391,7 +1408,7 @@ if (tick != null) {
         )
     }
 }
-            val tradeMessageType = json.optString("msg_type", "")
+val tradeMessageType = json.optString("msg_type", "")
 
             /*
              * Forward every response needed by the trade execution state machine.
@@ -1411,6 +1428,7 @@ if (tick != null) {
             ) {
                 callback.onTradeData(json)
             }
+
             /*
              * Deriv WebSocket error. Forwarding above allows the pending trade
  Forwarding above allows the pending trade
@@ -1694,7 +1712,6 @@ if (tick != null) {
         statusCode: Int,
         body: String
     ): String {
-
         if (
             body.isBlank()
         ) {
@@ -2013,6 +2030,7 @@ candleRequestSymbols.clear()
      * to establish a connection.
      */
     fun isConnecting(): Boolean {
+
         return connecting
     }
 
