@@ -174,22 +174,34 @@ class MainActivity : Activity() {
             setPadding(8.dp(), 12.dp(), 8.dp(), 12.dp())
         }
 
-        listOf("HOME", "CONNECTION", "TRADE", "SETTINGS", "PROFILE").forEach { page ->
+        
+        val navIcons = linkedMapOf(
+            "HOME" to "⌂",
+            "CONNECTION" to "⇄",
+            "TRADE" to "▥",
+            "SETTINGS" to "⚙",
+            "PROFILE" to "●"
+        )
+
+        navIcons.forEach { (page, icon) ->
             val itemView = TextView(this).apply {
-                text = page
-                textSize = 8.5f
+                text = icon
+                tag = page
+                textSize = 25f
                 gravity = Gravity.CENTER
                 typeface = Typeface.DEFAULT_BOLD
-                letterSpacing = 0.04f
                 isClickable = true
                 isFocusable = true
-                setPadding(3.dp(), 12.dp(), 3.dp(), 12.dp())
-                layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+                contentDescription = page
+                setPadding(3.dp(), 10.dp(), 3.dp(), 10.dp())
+                layoutParams = LinearLayout.LayoutParams(0, 52.dp(), 1f)
                 setOnClickListener { showPage(page) }
             }
+
             navigationItems.add(itemView)
             navigation.addView(itemView)
         }
+        
 
         root.addView(navigation)
         showPage(selectedPage)
@@ -204,7 +216,7 @@ class MainActivity : Activity() {
         selectedPage = page
         pageHeading.text = if (page == "NOTIFICATIONS") "NOTIFICATIONS" else page
         navigationItems.forEach { item ->
-            val active = item.text.toString() == page
+            val active = item.tag.toString() == page
             item.setTextColor(if (active) accent else secondary)
             item.alpha = if (active) 1f else 0.82f
         }
