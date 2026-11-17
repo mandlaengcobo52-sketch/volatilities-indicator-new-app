@@ -12,6 +12,21 @@ import android.view.Gravity
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
+import android.content.Intent
+import android.net.Uri
+import android.util.Base64
+import java.security.MessageDigest
+import java.security.SecureRandom
+import java.util.UUID
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.FormBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import java.io.IOException
+import org.json.JSONObject
 
 class MainActivity : Activity() {
 
@@ -42,6 +57,16 @@ class MainActivity : Activity() {
     private lateinit var feedStatus: TextView
     private var derivApiClient: DerivApiClient? = null
     private var selectedPage = "HOME"
+    private var executionMode = "DEMO"
+    private var accountStatusText = "NOT CONNECTED"
+    private var connectedAccountId = ""
+    private var accountBalanceText = "—"
+    private val accountPrefs by lazy { getSharedPreferences("deriv_oauth", MODE_PRIVATE) }
+    private val oauthHttp by lazy { OkHttpClient() }
+    private var oauthVerifier = ""
+    private var oauthState = ""
+    private lateinit var connectionStatusView: TextView
+    private lateinit var accountDetailsView: TextView
 
     private val indexSymbols = listOf("R_10", "R_25", "R_50", "R_75", "R_100")
 
@@ -159,9 +184,223 @@ class MainActivity : Activity() {
         }
 
         workspace.removeAllViews()
-        if (page == "HOME") {
-            showIndexes()
+        when (page) {
+            "HOME" -> showIndexes()
+            "CONNECTION" -> showConnectionScreen()
+            "EXECUTION" -> {
+                workspace.addView(label("EXECUTION", 12f, primary, true))
+                workspace.addView(label("Account execution controls will be added after connection verification.", 11f, secondary, false))
+            }
         }
+    }
+
+    private fun showConnectionScreen() {
+        workspace.addView(label("DERIV ACCOUNT CONNECTION", 12f, primary, true))
+        workspace.addView(label("Choose the account type you want to connect.", 10f, secondary, false))
+        val modeRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 12.dp(), 0, 12.dp())
+        }
+        listOf("DEMO", "REAL").forEach { mode ->
+            val selected = mode == executionMode
+            val b = label(mode, 12f, if (selected) Color.WHITE else primary, true).apply {
+                gravity = Gravity.CENTER
+                background = rounded(if (selected) accent else indexBackgrounds[0], 10)
+                setPadding(18.dp(), 12.dp(), 18.dp(), 12.dp())
+                isClickable = true
+                setOnClickListener {
+                    executionMode = mode
+                    accountPrefs.edit().putString("account_mode", mode).apply()
+                    showPage("CONNECTION")
+                }
+            }
+            modeRow.addView(b, LinearLayout.LayoutParams(0, -2, 1f).apply {
+                if (mode == "DEMO") rightMargin = 8.dp() else leftMargin = 8.dp()
+            })
+        }
+        workspace.addView(modeRow)
+
+        connectionStatusView = label("STATUS: $accountStatusText", 11f, secondary, true)
+        connectionStatusView.setPadding(0, 8.dp(), 0, 8.dp())
+        workspace.addView(connectionStatusView)
+
+        accountDetailsView = label(
+            if (connectedAccountId.isBlank()) "Account: —\nBalance: —" else
+                "Account: $connectedAccountId\nBalance: $accountBalanceText",
+            11f, primary, false
+        )
+        accountDetailsView.setPadding(0, 4.dp(), 0, 12.dp())
+        workspace.addView(accountDetailsView)
+
+        val connectButton = label("CONNECT $executionMode ACCOUNT", 11f, Color.WHITE, true).apply {
+            gravity = Gravity.CENTER
+            background = rounded(accent, 10)
+            setPadding(14.dp(), 14.dp(), 14.dp(), 14.dp())
+            isClickable = true
+            setOnClickListener { beginDerivOAuth() }
+        }
+        workspace.addView(connectButton)
+
+        val disconnectButton = label("DISCONNECT", 10f, secondary, true).apply {
+            gravity = Gravity.CENTER
+            setPadding(14.dp(), 14.dp(), 14.dp(), 14.dp())
+            isClickable = true
+            setOnClickListener {
+                derivApiClient?.disconnect()
+                accountStatusText = "NOT CONNECTED"
+                connectedAccountId = ""
+                accountBalanceText = "—"
+                showPage("CONNECTION")
+            }
+        }
+        workspace.addView(disconnectButton)
+    }
+
+    private fun beginDerivOAuth() {
+        val bytes = ByteArray(32).also { SecureRandom().nextBytes(it) }
+        oauthVerifier = Base64.encodeToString(bytes,
+            Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        val challenge = Base64.encodeToString(
+            MessageDigest.getInstance("SHA-256").digest(oauthVerifier.toByteArray(Charsets.US_ASCII)),
+            Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
+        )
+        oauthState = UUID.randomUUID().toString()
+        accountPrefs.edit()
+            .putString("oauth_state", oauthState)
+            .putString("oauth_verifier", oauthVerifier)
+            .putString("oauth_mode", executionMode)
+            .apply()
+
+        val authUrl = Uri.parse(DerivApiClient.OAUTH_AUTH_URL).buildUpon()
+            .appendQueryParameter("response_type", "code")
+            .appendQueryParameter("client_id", DerivApiClient.clientId(executionMode))
+            .appendQueryParameter("redirect_uri", DerivApiClient.OAUTH_REDIRECT_URI)
+            .appendQueryParameter("scope", DerivApiClient.OAUTH_SCOPE)
+            .appendQueryParameter("state", oauthState)
+            .appendQueryParameter("code_challenge", challenge)
+            .appendQueryParameter("code_challenge_method", "S256")
+            .build()
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, authUrl))
+        } catch (e: Exception) {
+            Toast.makeText(this, "Unable to open Deriv login: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun handleOAuthCallback(intent: Intent?) {
+        val data = intent?.data ?: return
+        if (data.scheme != "volatilitiesindicator" || data.host != "oauth-callback") return
+        val error = data.getQueryParameter("error")
+        if (!error.isNullOrBlank()) {
+            Toast.makeText(this, "Deriv OAuth error: $error", Toast.LENGTH_LONG).show()
+            return
+        }
+        val code = data.getQueryParameter("code")
+        val returnedState = data.getQueryParameter("state")
+        val savedState = accountPrefs.getString("oauth_state", "").orEmpty()
+        oauthVerifier = accountPrefs.getString("oauth_verifier", "").orEmpty()
+        executionMode = accountPrefs.getString("oauth_mode", "DEMO") ?: "DEMO"
+        if (code.isNullOrBlank() || savedState.isBlank() || returnedState != savedState || oauthVerifier.isBlank()) {
+            Toast.makeText(this, "OAuth security check failed or authorization code is missing.", Toast.LENGTH_LONG).show()
+            return
+        }
+        exchangeOAuthCode(code)
+    }
+
+    private fun exchangeOAuthCode(code: String) {
+        val body = FormBody.Builder()
+            .add("grant_type", "authorization_code")
+            .add("code", code)
+            .add("client_id", DerivApiClient.clientId(executionMode))
+            .add("redirect_uri", DerivApiClient.OAUTH_REDIRECT_URI)
+            .add("code_verifier", oauthVerifier)
+            .build()
+        val request = Request.Builder().url(DerivApiClient.OAUTH_TOKEN_URL).post(body).build()
+        oauthHttp.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                runOnUiThread {
+                    accountStatusText = "OAUTH FAILED"
+                    Toast.makeText(this@MainActivity, "Deriv login failed: ${e.message}", Toast.LENGTH_LONG).show()
+                    if (selectedPage == "CONNECTION") showPage("CONNECTION")
+                }
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val responseText = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    runOnUiThread {
+                        accountStatusText = "OAUTH FAILED"
+                        Toast.makeText(this@MainActivity, "Deriv OAuth HTTP ${response.code}: ${responseText.take(180)}", Toast.LENGTH_LONG).show()
+                        if (selectedPage == "CONNECTION") showPage("CONNECTION")
+                    }
+                    return
+                }
+                val token = try { JSONObject(responseText).optString("access_token", "") } catch (_: Exception) { "" }
+                if (token.isBlank()) {
+                    runOnUiThread { Toast.makeText(this@MainActivity, "Deriv did not return an access token.", Toast.LENGTH_LONG).show() }
+                    return
+                }
+                accountPrefs.edit().putString(if (executionMode == "REAL") "real_token" else "demo_token", token)
+                    .remove("oauth_state").remove("oauth_verifier").apply()
+                runOnUiThread {
+                    accountStatusText = "CONNECTING"
+                    if (selectedPage == "CONNECTION") showPage("CONNECTION")
+                    ensureDerivClient().connectWithAccessToken(token, executionMode)
+                }
+            }
+        })
+    }
+
+    private fun ensureDerivClient(): DerivApiClient {
+        derivApiClient?.let { return it }
+        val client = DerivApiClient(object : DerivApiClient.Callback {
+            override fun onConnecting(message: String) {
+                runOnUiThread {
+                    accountStatusText = "CONNECTING"
+                    if (selectedPage == "CONNECTION") showPage("CONNECTION")
+                }
+            }
+            override fun onConnected(accountId: String, accountType: String) {
+                runOnUiThread {
+                    connectedAccountId = accountId
+                    accountStatusText = "CONNECTED • $accountType"
+                    if (selectedPage == "CONNECTION") showPage("CONNECTION")
+                }
+            }
+            override fun onBalance(balance: Double, currency: String) {
+                runOnUiThread {
+                    accountBalanceText = "${java.text.DecimalFormat("#,##0.00").format(balance)} $currency"
+                    if (selectedPage == "CONNECTION") showPage("CONNECTION")
+                }
+            }
+            override fun onTick(symbol: String, quote: Double, epoch: Long) {
+                runOnUiThread {
+                    priceViews[symbol]?.text = formatIndexPrice(quote)
+                    if (::feedStatus.isInitialized) {
+                        feedStatus.text = "LIVE  •  DERIV MARKET DATA"
+                        feedStatus.setTextColor(accent)
+                    }
+                }
+            }
+            override fun onCandles(symbol: String, candles: List<DerivApiClient.Candle>) = Unit
+            override fun onMarketDataError(symbol: String, message: String) = Unit
+            override fun onError(message: String) {
+                runOnUiThread {
+                    accountStatusText = "CONNECTION ERROR"
+                    Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
+                    if (selectedPage == "CONNECTION") showPage("CONNECTION")
+                }
+            }
+            override fun onTradeData(json: JSONObject) = Unit
+            override fun onDisconnected() {
+                runOnUiThread {
+                    accountStatusText = "DISCONNECTED"
+                    if (selectedPage == "CONNECTION") showPage("CONNECTION")
+                }
+            }
+        })
+        derivApiClient = client
+        client.requestHistoricalCandles()
+        return client
     }
 
     private fun showIndexes() {
@@ -224,50 +463,17 @@ class MainActivity : Activity() {
     }
 
     private fun startLiveIndexFeed() {
-        val client = DerivApiClient(object : DerivApiClient.Callback {
-            override fun onConnecting(message: String) = Unit
-            override fun onConnected(accountId: String, accountType: String) = Unit
-            override fun onBalance(balance: Double, currency: String) = Unit
-
-            override fun onTick(symbol: String, quote: Double, epoch: Long) {
-                runOnUiThread {
-                    val priceView = priceViews[symbol] ?: return@runOnUiThread
-                    priceView.text = formatIndexPrice(quote)
-                    priceView.setTextColor(primary)
-                    if (::feedStatus.isInitialized) {
-                        feedStatus.text = "LIVE  •  DERIV MARKET DATA"
-                        feedStatus.setTextColor(accent)
-                    }
-                }
-            }
-
-            override fun onCandles(symbol: String, candles: List<DerivApiClient.Candle>) = Unit
-            override fun onMarketDataError(symbol: String, message: String) {
-                runOnUiThread {
-                    if (priceViews[symbol]?.text == "--") {
-                        priceViews[symbol]?.text = "Unavailable"
-                    }
-                }
-            }
-
-            override fun onError(message: String) {
-                runOnUiThread {
-                    if (::feedStatus.isInitialized) {
-                        feedStatus.text = "LIVE PRICE FEED: $message"
-                        feedStatus.setTextColor(secondary)
-                    }
-                }
-            }
-            override fun onTradeData(json: org.json.JSONObject) = Unit
-            override fun onDisconnected() = Unit
-        })
-
-        derivApiClient = client
-        client.requestHistoricalCandles()
+        ensureDerivClient().requestHistoricalCandles()
     }
 
     private fun formatIndexPrice(value: Double): String {
         return java.text.DecimalFormat("#,##0.00##").format(value)
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleOAuthCallback(intent)
     }
 
     override fun onDestroy() {
@@ -293,7 +499,7 @@ class MainActivity : Activity() {
     }
 
     private fun Int.dp(): Int =
-        (this * resources.displayMetrics.density).toInt()
+            (this * resources.displayMetrics.density).toInt()
 
     // Simple vector-style logo: rising bars with a curved underline.
     private inner class BrandMark(context: android.content.Context) : View(context) {
