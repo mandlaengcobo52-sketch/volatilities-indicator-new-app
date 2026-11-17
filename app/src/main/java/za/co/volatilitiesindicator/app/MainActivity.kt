@@ -27,7 +27,13 @@ class MainActivity : Activity() {
     private val navigationItems = mutableListOf<TextView>()
     private var selectedPage = "HOME"
 
-    private val indexes = listOf("R_10", "R_25", "R_50", "R_75", "R_100")
+    private val indexes = listOf(
+    "VOLATILITY INDEX 10",
+    "VOLATILITY INDEX 25",
+    "VOLATILITY INDEX 50",
+    "VOLATILITY INDEX 75",
+    "VOLATILITY INDEX 100"
+)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
