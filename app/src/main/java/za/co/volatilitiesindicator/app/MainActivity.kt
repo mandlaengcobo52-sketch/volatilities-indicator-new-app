@@ -266,6 +266,8 @@ class MainActivity : Activity() {
         )
         oauthState = "android-" + UUID.randomUUID().toString()
 
+oauthState = "android-" + UUID.randomUUID().toString()
+
 accountPrefs.edit()
     .putString("oauth_state", oauthState)
     .putString("oauth_verifier", oauthVerifier)
