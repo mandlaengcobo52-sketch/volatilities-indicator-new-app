@@ -698,7 +698,6 @@ override fun onMarketDataError(symbol: String, message: String) {
 
             val highest = recent.maxByOrNull { it.high } ?: return
             val lowest = recent.minByOrNull { it.low } ?: return
-
             rollingRanges[symbol] = RollingRange(
                 high = highest.high,
                 low = lowest.low,
@@ -748,7 +747,8 @@ override fun onMarketDataError(symbol: String, message: String) {
                 }
             )
 
-            val details = LinearLayout(this).apply {
+            
+val details = LinearLayout(this).apply {
     orientation = LinearLayout.VERTICAL
 }
 
