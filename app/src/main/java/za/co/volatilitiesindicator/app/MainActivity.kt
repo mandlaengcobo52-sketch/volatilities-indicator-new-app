@@ -2281,31 +2281,33 @@ private fun calculateLiquidityLevels(
 
     val nowEpoch = System.currentTimeMillis() / 1000L
 
+    // Use only the latest 24 fully closed H1 candles.
     val sorted = candles
         .filter { it.epoch + 3600L <= nowEpoch }
         .distinctBy { it.epoch }
         .sortedBy { it.epoch }
         .takeLast(24)
 
-    if (sorted.size < 5) return emptyList()
+    if (sorted.size < 3) return emptyList()
 
-    // Confirmed swing:
-    // Two candles before and two candles after the swing.
-    val swingIndex = (2 until sorted.size - 2)
+    // A swing is confirmed by the NEXT H1 candle closing away
+    // from the candidate high or low, showing rejection.
+    val confirmedSwings = (1 until sorted.size - 1)
         .filter { i ->
+            val previous = sorted[i - 1]
+            val candidate = sorted[i]
+            val following = sorted[i + 1]
+
             if (bullish) {
-                sorted[i].low < sorted[i - 1].low &&
-                sorted[i].low < sorted[i - 2].low &&
-                sorted[i].low < sorted[i + 1].low &&
-                sorted[i].low < sorted[i + 2].low
+                candidate.low < previous.low &&
+                    following.close > candidate.low
             } else {
-                sorted[i].high > sorted[i - 1].high &&
-                sorted[i].high > sorted[i - 2].high &&
-                sorted[i].high > sorted[i + 1].high &&
-                sorted[i].high > sorted[i + 2].high
+                candidate.high > previous.high &&
+                    following.close < candidate.high
             }
         }
-        .lastOrNull()
+
+    val swingIndex = confirmedSwings.lastOrNull()
         ?: return emptyList()
 
     val level = if (bullish) {
@@ -2314,42 +2316,61 @@ private fun calculateLiquidityLevels(
         sorted[swingIndex].high
     }
 
-    val identifiedAt = sorted[swingIndex + 2].epoch + 3600L
+    val confirmationIndex = swingIndex + 1
+    val identifiedAt = sorted[confirmationIndex].epoch + 3600L
 
     var sweepAt = 0L
     var confirmationAt = 0L
     var status = "WAITING"
 
-    // Classify the first confirmed H1 reversal after the liquidity level forms.
-    // A penetration must cross the level and close back beyond it. A touch
-    // reaches the level without crossing it. Near-liquidity must stay within
-    // five index points and close in the reversal direction.
-    val priceEpsilon = kotlin.math.max(1e-8, kotlin.math.abs(level) * 1e-10)
-    for (i in swingIndex + 3 until sorted.size) {
+    val priceEpsilon = kotlin.math.max(
+        1e-8,
+        kotlin.math.abs(level) * 1e-10
+    )
+
+    // Include the rejection candle itself when checking
+    // for penetration, touch or near-liquidity reversal.
+    for (i in confirmationIndex until sorted.size) {
         val candle = sorted[i]
+
         val classification = if (bullish) {
             when {
-                candle.low < level - priceEpsilon && candle.close > level ->
+                candle.low < level - priceEpsilon &&
+                    candle.close > level ->
                     "PENETRATION AND REVERSE"
-                kotlin.math.abs(candle.low - level) <= priceEpsilon && candle.close > level ->
+
+                candle.low <= level + priceEpsilon &&
+                    candle.close > level ->
                     "TOUCH AND REVERSE"
-                candle.low > level && candle.low - level <= 5.0 &&
-                    candle.close > level && candle.close > candle.open ->
+
+                candle.low > level &&
+                    candle.low - level <= 5.0 &&
+                    candle.close > level &&
+                    candle.close > candle.open ->
                     "NEAR LIQUIDITY (5 POINTS) AND REVERSE"
+
                 else -> ""
             }
         } else {
             when {
-                candle.high > level + priceEpsilon && candle.close < level ->
+                candle.high > level + priceEpsilon &&
+                    candle.close < level ->
                     "PENETRATION AND REVERSE"
-                kotlin.math.abs(candle.high - level) <= priceEpsilon && candle.close < level ->
+
+                candle.high >= level - priceEpsilon &&
+                    candle.close < level ->
                     "TOUCH AND REVERSE"
-                candle.high < level && level - candle.high <= 5.0 &&
-                    candle.close < level && candle.close < candle.open ->
+
+                candle.high < level &&
+                    level - candle.high <= 5.0 &&
+                    candle.close < level &&
+                    candle.close < candle.open ->
                     "NEAR LIQUIDITY (5 POINTS) AND REVERSE"
+
                 else -> ""
             }
         }
+
         if (classification.isNotEmpty()) {
             sweepAt = candle.epoch
             confirmationAt = candle.epoch + 3600L
