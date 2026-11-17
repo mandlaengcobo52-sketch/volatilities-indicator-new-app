@@ -2646,23 +2646,19 @@ private data class MssAnalysis(
 
 private fun calculateMss(candles: List<DerivApiClient.Candle>): MssAnalysis {
     val sorted = candles.sortedBy { it.epoch }
-    if (sorted.size < 5) return MssAnalysis(emptyList())
+    if (sorted.size < 3) return MssAnalysis(emptyList())
 
     val swingHighs = mutableListOf<Pair<Int, Double>>()
     val swingLows = mutableListOf<Pair<Int, Double>>()
 
-    for (i in 2 until sorted.size - 2) {
-        val candle = sorted[i]
-        val confirmedHigh =
-            candle.high > sorted[i - 1].high &&
-            candle.high > sorted[i - 2].high &&
-            candle.high > sorted[i + 1].high &&
-            candle.high > sorted[i + 2].high
-        val confirmedLow =
-            candle.low < sorted[i - 1].low &&
-            candle.low < sorted[i - 2].low &&
-            candle.low < sorted[i + 1].low &&
-            candle.low < sorted[i + 2].low
+    for (i in 1 until sorted.size - 1) {
+    val candle = sorted[i]
+    val confirmedHigh =
+        candle.high > sorted[i - 1].high &&
+        candle.high > sorted[i + 1].high
+    val confirmedLow =
+        candle.low < sorted[i - 1].low &&
+        candle.low < sorted[i + 1].low
 
         if (confirmedHigh) swingHighs.add(i to candle.high)
         if (confirmedLow) swingLows.add(i to candle.low)
@@ -2924,7 +2920,10 @@ val bearishSweep = activeSweepDirection == "BEARISH"
     latest.epoch - it.changedAt <= chochValiditySeconds
 }
     val chochDirection = latestChoch?.direction ?: ""
-    val latestMss = mssResult.events.lastOrNull()?.takeIf { it.changedAt == latest.epoch }
+    val latestMss = mssResult.events.lastOrNull()?.takeIf {
+    it.changedAt <= latest.epoch &&
+    latest.epoch - it.changedAt <= chochValiditySeconds
+    }
     val mssDirection = latestMss?.direction ?: ""
     val bullishMss = mssDirection == "BULLISH"
     val bearishMss = mssDirection == "BEARISH"
