@@ -265,11 +265,6 @@ class MainActivity : Activity() {
             Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
         )
         oauthState = "android-" + UUID.randomUUID().toString()
-
-oauthState = "android-" + UUID.randomUUID().toString()
-
-oauthState = "android-" + UUID.randomUUID().toString()
-
 accountPrefs.edit()
     .putString("oauth_state", oauthState)
     .putString("oauth_verifier", oauthVerifier)
@@ -418,8 +413,6 @@ override fun onMarketDataError(symbol: String, message: String) {
         }
     }
 }
-
-override fun onError(message: String) {
             override fun onError(message: String) {
                 runOnUiThread {
                     accountStatusText = "CONNECTION ERROR"
