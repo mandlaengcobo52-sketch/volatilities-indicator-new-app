@@ -515,15 +515,24 @@ exchangeOAuthCode(code)
                     if (selectedPage == "CONNECTION") showPage("CONNECTION")
                 }
             }
-            override fun onTick(symbol: String, quote: Double, epoch: Long) {
+                        override fun onTick(
+                symbol: String,
+                quote: Double,
+                epoch: Long
+            ) {
+                if (!quote.isFinite() || epoch <= 0L) return
+
+                updateRollingRangeFromTick(symbol, quote, epoch)
+
                 runOnUiThread {
                     priceViews[symbol]?.text = formatIndexPrice(quote)
+
                     if (::feedStatus.isInitialized) {
-                        feedStatus.text = "LIVE  •  DERIV MARKET DATA"
+                        feedStatus.text = "LIVE • DERIV MARKET DATA"
                         feedStatus.setTextColor(accent)
                     }
                 }
-            }
+                        }
                         override fun onCandles(
                 symbol: String,
                 candles: List<DerivApiClient.Candle>
@@ -604,6 +613,63 @@ override fun onMarketDataError(symbol: String, message: String) {
         client.requestHistoricalCandles()
         return client
     }
+        private fun updateRollingRangeFromTick(
+        symbol: String,
+        quote: Double,
+        epoch: Long
+    ) {
+        if (symbol !in indexSymbols) return
+
+        synchronized(candleHistory) {
+            val history = candleHistory[symbol]?.toMutableList() ?: return
+            val minuteEpoch = (epoch / 60L) * 60L
+
+            val existingIndex = history.indexOfLast {
+                it.epoch == minuteEpoch
+            }
+
+            if (existingIndex >= 0) {
+                val previous = history[existingIndex]
+
+                history[existingIndex] = DerivApiClient.Candle(
+                    epoch = minuteEpoch,
+                    open = previous.open,
+                    high = maxOf(previous.high, quote),
+                    low = minOf(previous.low, quote),
+                    close = quote
+                )
+            } else {
+                history.add(
+                    DerivApiClient.Candle(
+                        epoch = minuteEpoch,
+                        open = quote,
+                        high = quote,
+                        low = quote,
+                        close = quote
+                    )
+                )
+            }
+
+            val cutoff = epoch - 86400L
+            val recent = history
+                .filter { it.epoch >= cutoff && it.epoch <= epoch }
+                .sortedBy { it.epoch }
+
+            if (recent.isEmpty()) return
+
+            candleHistory[symbol] = recent
+
+            val highest = recent.maxByOrNull { it.high } ?: return
+            val lowest = recent.minByOrNull { it.low } ?: return
+
+            rollingRanges[symbol] = RollingRange(
+                high = highest.high,
+                low = lowest.low,
+                highEpoch = highest.epoch,
+                lowEpoch = lowest.epoch
+            )
+        }
+        }
 
     private fun showIndexes() {
         priceViews.clear()
