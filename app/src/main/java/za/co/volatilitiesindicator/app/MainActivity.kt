@@ -20,7 +20,20 @@ class MainActivity : Activity() {
     private val primary = Color.rgb(31, 48, 75)
     private val secondary = Color.rgb(103, 119, 140)
     private val accent = Color.rgb(0, 145, 150)
-    private val indexBackground = Color.rgb(248, 250, 253)
+    private val indexBackgrounds = listOf(
+        Color.rgb(238, 246, 255),
+        Color.rgb(237, 249, 246),
+        Color.rgb(245, 242, 255),
+        Color.rgb(255, 247, 237),
+        Color.rgb(255, 241, 243)
+    )
+    private val indexAccents = listOf(
+        Color.rgb(48, 112, 190),
+        Color.rgb(0, 145, 120),
+        Color.rgb(116, 86, 190),
+        Color.rgb(205, 125, 35),
+        Color.rgb(190, 72, 95)
+    )
 
     private lateinit var pageHeading: TextView
     private lateinit var workspace: LinearLayout
@@ -152,14 +165,17 @@ class MainActivity : Activity() {
     }
 
     private fun showIndexes() {
-        workspace.addView(label("INDEX MONITOR", 12f, primary, true).apply {
+        priceViews.clear()
+
+        workspace.addView(label("INDEX MONITOR", 11f, primary, true).apply {
             letterSpacing = 0.08f
-            setPadding(2.dp(), 0, 0, 12.dp())
+            setPadding(2.dp(), 0, 0, 8.dp())
         })
 
-        feedStatus = label("CONNECTING TO DERIV LIVE PRICES...", 10f, secondary, true).apply {
+        feedStatus = label("CONNECTING TO DERIV...", 9f, secondary, true).apply {
             letterSpacing = 0.04f
-            setPadding(2.dp(), 0, 2.dp(), 12.dp())
+            setPadding(2.dp(), 0, 0, 10.dp())
+            includeFontPadding = false
         }
         workspace.addView(feedStatus)
 
@@ -168,20 +184,37 @@ class MainActivity : Activity() {
             val indexCard = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                background = rounded(indexBackground, 12)
-                setPadding(14.dp(), 13.dp(), 14.dp(), 13.dp())
+                background = rounded(indexBackgrounds[position], 11)
+                setPadding(10.dp(), 8.dp(), 11.dp(), 8.dp())
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
                 ).apply {
-                    bottomMargin = 8.dp()
+                    bottomMargin = 7.dp()
                 }
             }
 
-            val name = label(index, 15f, primary, true)
+            val accentBar = View(this).apply {
+                background = rounded(indexAccents[position], 3)
+            }
+            indexCard.addView(
+                accentBar,
+                LinearLayout.LayoutParams(4.dp(), LinearLayout.LayoutParams.MATCH_PARENT).apply {
+                    rightMargin = 9.dp()
+                }
+            )
+
+            val name = label(index, 10.5f, indexAccents[position], true).apply {
+                includeFontPadding = false
+                maxLines = 1
+                isSingleLine = true
+                setTextColor(indexAccents[position])
+            }
             indexCard.addView(name, LinearLayout.LayoutParams(0, -2, 1f))
 
-            val priceView = label("--", 14f, secondary, true).apply {
+            val priceView = label("--", 12f, primary, true).apply {
                 gravity = Gravity.CENTER_VERTICAL or Gravity.END
+                includeFontPadding = false
+                maxLines = 1
             }
             priceViews[symbol] = priceView
             indexCard.addView(priceView)
@@ -201,6 +234,10 @@ class MainActivity : Activity() {
                     val priceView = priceViews[symbol] ?: return@runOnUiThread
                     priceView.text = formatIndexPrice(quote)
                     priceView.setTextColor(primary)
+                    if (::feedStatus.isInitialized) {
+                        feedStatus.text = "LIVE  •  DERIV MARKET DATA"
+                        feedStatus.setTextColor(accent)
+                    }
                 }
             }
 
