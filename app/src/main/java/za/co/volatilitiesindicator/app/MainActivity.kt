@@ -386,8 +386,40 @@ accountPrefs.edit()
                     }
                 }
             }
-            override fun onCandles(symbol: String, candles: List<DerivApiClient.Candle>) = Unit
-            override fun onMarketDataError(symbol: String, message: String) = Unit
+            override fun onCandles(
+    symbol: String,
+    candles: List<DerivApiClient.Candle>
+) {
+    android.util.Log.i(
+        "MarketData",
+        "$symbol: received ${candles.size} H1 candles"
+    )
+}
+
+override fun onMarketDataStatus(message: String) {
+    runOnUiThread {
+        if (::feedStatus.isInitialized) {
+            feedStatus.text = message
+            feedStatus.setTextColor(secondary)
+        }
+    }
+}
+
+override fun onMarketDataError(symbol: String, message: String) {
+    android.util.Log.e(
+        "MarketData",
+        "$symbol: $message"
+    )
+
+    runOnUiThread {
+        if (::feedStatus.isInitialized) {
+            feedStatus.text = "DATA ERROR • $symbol: $message"
+            feedStatus.setTextColor(Color.RED)
+        }
+    }
+}
+
+override fun onError(message: String) {
             override fun onError(message: String) {
                 runOnUiThread {
                     accountStatusText = "CONNECTION ERROR"
