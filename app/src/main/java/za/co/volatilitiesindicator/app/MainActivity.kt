@@ -213,22 +213,20 @@ class MainActivity : Activity() {
                 }
             }
 
-            override fun onMarketDataStatus(message: String) {
+            override fun onError(message: String) {
                 runOnUiThread {
                     if (::feedStatus.isInitialized) {
-                        feedStatus.text = message.uppercase()
-                        feedStatus.setTextColor(if (message.contains("established", true)) accent else secondary)
+                        feedStatus.text = "LIVE PRICE FEED: $message"
+                        feedStatus.setTextColor(secondary)
                     }
                 }
             }
-
-            override fun onError(message: String) = Unit
             override fun onTradeData(json: org.json.JSONObject) = Unit
             override fun onDisconnected() = Unit
         })
 
         derivApiClient = client
-        client.startPublicLivePriceFeed()
+        client.requestHistoricalCandles()
     }
 
     private fun formatIndexPrice(value: Double): String {
