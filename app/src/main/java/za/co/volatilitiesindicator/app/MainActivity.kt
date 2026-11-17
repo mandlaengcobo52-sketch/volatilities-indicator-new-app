@@ -2290,25 +2290,19 @@ private fun calculateLiquidityLevels(
 
     if (sorted.size < 3) return emptyList()
 
-    // A swing is confirmed by the NEXT H1 candle closing away
-    // from the candidate high or low, showing rejection.
-    val confirmedSwings = (1 until sorted.size - 1)
-        .filter { i ->
-            val previous = sorted[i - 1]
-            val candidate = sorted[i]
-            val following = sorted[i + 1]
-
-            if (bullish) {
-                candidate.low < previous.low &&
-                    following.close > candidate.low
-            } else {
-                candidate.high > previous.high &&
-                    following.close < candidate.high
-            }
+// Confirm using the next H1 candle closing away from the level.
+val swingIndex = (1 until sorted.size - 1)
+    .filter { i ->
+        if (bullish) {
+            sorted[i].low < sorted[i - 1].low &&
+            sorted[i + 1].close > sorted[i].low
+        } else {
+            sorted[i].high > sorted[i - 1].high &&
+            sorted[i + 1].close < sorted[i].high
         }
-
-    val swingIndex = confirmedSwings.lastOrNull()
-        ?: return emptyList()
+    }
+    .lastOrNull()
+    ?: return emptyList()
 
     val level = if (bullish) {
         sorted[swingIndex].low
@@ -2317,7 +2311,7 @@ private fun calculateLiquidityLevels(
     }
 
     val confirmationIndex = swingIndex + 1
-    val identifiedAt = sorted[confirmationIndex].epoch + 3600L
+    val identifiedAt = sorted[swingIndex + 1].epoch + 3600L
 
     var sweepAt = 0L
     var confirmationAt = 0L
