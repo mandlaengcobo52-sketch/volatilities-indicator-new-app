@@ -253,7 +253,8 @@ private fun startAndBindDerivService() {
         var takeProfitRequested: Boolean = false,
         var openContractConfirmed: Boolean = false,
         var targetNotified: Boolean = false,
-        var trailingEligible: Boolean = false,
+        var trailingEligible: Boolean = true,
+        var trailingEnabled: Boolean = true,
         var trailingActivated: Boolean = false,
         var peakProfit: Double = 0.0,
         var closeRequested: Boolean = false,
@@ -262,7 +263,10 @@ private fun startAndBindDerivService() {
         var pairSide: String = "",
         val isRecovery: Boolean = false,
         var recoveryTriggered: Boolean = false,
-        var potentialPayout: Double = 0.0
+        var potentialPayout: Double = 0.0,
+        var budgetDate: String = "",
+        var budgetSlot: Int = 0,
+        var budgetResultRecorded: Boolean = false
     )
 
     private data class ContractLiveViews(
@@ -295,11 +299,12 @@ var upperBarrierOffset: Double = 0.0,
 var potentialPayout: Double = 0.0,
 var sweepTime: Long = 0L,
 var mssTime: Long = 0L,
-var chochTime: Long = 0L
+var chochTime: Long = 0L,
+var liquidityCreatedAt: Long = 0L,
+var budgetDate: String = "",
+var budgetSlot: Int = 0
 )
-    
-
-private val pendingTouchOrders = mutableMapOf<Int, PendingTouchOrder>()
+    private val pendingTouchOrders = mutableMapOf<Int, PendingTouchOrder>()
 private val pendingTouchBySymbol = mutableMapOf<String, Int>()
 private val touchExecutionLocks = mutableSetOf<String>()
 private val consumedTouchQualifications = mutableMapOf<String, Long>()
@@ -330,8 +335,125 @@ private val consumedTouchQualifications = mutableMapOf<String, Long>()
     return savedCapital
 }
 
+// MY BUDGET: daily starting capital, up to four slots, target two profitable closes.
+private fun budgetKey(): String = "my_budget_${accountId}_${executionMode}"
+private fun budgetRoot(): JSONObject {
+    val raw = appPrefs.getString(budgetKey(), "") ?: ""
+    return try { if (raw.isBlank()) JSONObject() else JSONObject(raw) } catch (_: Exception) { JSONObject() }
+}
+private fun saveBudget(root: JSONObject) {
+    appPrefs.edit().putString(budgetKey(), root.toString()).apply()
+}
+private fun budgetDateNow(): String = maxOf(saDayKey(), "2026-11-17")
+private fun budgetDayName(date: String): String = try {
+    val parsed = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).parse(date)
+    java.text.SimpleDateFormat("EEEE", java.util.Locale.US).format(parsed ?: java.util.Date())
+} catch (_: Exception) { "—" }
+private fun budgetRows(root: JSONObject): JSONArray = root.optJSONArray("days") ?: JSONArray()
+private fun findBudgetDay(days: JSONArray, date: String): JSONObject? {
+    for (i in 0 until days.length()) {
+        val day = days.optJSONObject(i) ?: continue
+        if (day.optString("date") == date) return day
+    }
+    return null
+}
+private fun ensureBudgetDay(): JSONObject? {
+    val root = budgetRoot()
+    val days = budgetRows(root)
+    val today = budgetDateNow()
+    var day = findBudgetDay(days, today)
+    if (day == null) {
+        val capital = if (days.length() > 0) {
+            val previous = days.optJSONObject(days.length() - 1)
+            previous?.optDouble("capital", 0.0)?.plus(previous.optDouble("totalProfit", 0.0)) ?: 0.0
+        } else root.optDouble("initialCapital", 0.0)
+        if (capital <= 0.0) return null
+        day = JSONObject().put("date", today).put("day", budgetDayName(today))
+            .put("capital", capital).put("trades", JSONArray()).put("totalProfit", 0.0)
+            .put("profitableTrades", 0)
+        days.put(day)
+        root.put("days", days)
+        saveBudget(root)
+    }
+    return day
+}
+private fun budgetTradeCount(day: JSONObject): Int = day.optJSONArray("trades")?.length() ?: 0
+private fun budgetCanTrade(day: JSONObject): Boolean =
+    budgetTradeCount(day) < 4 && day.optInt("profitableTrades", 0) < 2
+private fun reserveBudgetSlot(): Pair<String, Int>? {
+    val day = ensureBudgetDay() ?: return null
+    if (!budgetCanTrade(day)) return null
+    val root = budgetRoot()
+    val days = budgetRows(root)
+    val date = day.optString("date")
+    val stored = findBudgetDay(days, date) ?: return null
+    val trades = stored.optJSONArray("trades") ?: JSONArray()
+    val usedSlots = (0 until trades.length()).mapNotNull { trades.optJSONObject(it)?.optInt("slot") }.toSet()
+    val slot = (1..4).firstOrNull { it !in usedSlots } ?: return null
+    val stake = kotlin.math.round(stored.optDouble("capital", 0.0) * 0.3333 * 100.0) / 100.0
+    if (stake <= 0.0) return null
+    trades.put(JSONObject().put("slot", slot).put("stake", stake).put("profit", 0.0)
+        .put("contractId", 0L).put("closed", false).put("reserved", true))
+    stored.put("trades", trades)
+    root.put("days", days)
+    saveBudget(root)
+    return date to slot
+}
+private fun releaseBudgetSlot(date: String, slot: Int) {
+    if (date.isBlank() || slot <= 0) return
+    val root = budgetRoot(); val days = budgetRows(root); val day = findBudgetDay(days, date) ?: return
+    val trades = day.optJSONArray("trades") ?: return
+    val rebuilt = JSONArray()
+    for (i in 0 until trades.length()) {
+        val t = trades.optJSONObject(i) ?: continue
+        if (t.optInt("slot") != slot || t.optBoolean("closed") || t.optLong("contractId") > 0L) rebuilt.put(t)
+    }
+    day.put("trades", rebuilt); root.put("days", days); saveBudget(root)
+}
+private fun budgetTradeForContract(contractId: Long): Pair<String, Int> {
+    val days = budgetRows(budgetRoot())
+    for (i in 0 until days.length()) {
+        val day = days.optJSONObject(i) ?: continue
+        val trades = day.optJSONArray("trades") ?: continue
+        for (j in 0 until trades.length()) {
+            val trade = trades.optJSONObject(j) ?: continue
+            if (trade.optLong("contractId") == contractId && contractId > 0L) {
+                return day.optString("date") to trade.optInt("slot")
+            }
+        }
+    }
+    return "" to 0
+}
+private fun attachBudgetContract(date: String, slot: Int, contractId: Long) {
+    val root = budgetRoot(); val days = budgetRows(root); val day = findBudgetDay(days, date) ?: return
+    val trades = day.optJSONArray("trades") ?: return
+    for (i in 0 until trades.length()) { val t = trades.optJSONObject(i) ?: continue
+        if (t.optInt("slot") == slot) { t.put("contractId", contractId).put("reserved", false); break }
+    }
+    day.put("trades", trades); root.put("days", days); saveBudget(root)
+}
+private fun recordBudgetClose(date: String, slot: Int, contractId: Long, profit: Double) {
+    if (date.isBlank() || slot <= 0) return
+    val root = budgetRoot(); val days = budgetRows(root); val day = findBudgetDay(days, date) ?: return
+    val trades = day.optJSONArray("trades") ?: return
+    for (i in 0 until trades.length()) {
+        val t = trades.optJSONObject(i) ?: continue
+        if (t.optInt("slot") == slot && (t.optLong("contractId") == contractId || t.optLong("contractId") == 0L)) {
+            if (t.optBoolean("closed")) return
+            t.put("contractId", contractId).put("profit", profit).put("closed", true).put("reserved", false)
+            break
+        }
+    }
+    var total = 0.0; var wins = 0
+    for (i in 0 until trades.length()) { val t = trades.optJSONObject(i) ?: continue
+        if (t.optBoolean("closed")) { val result = t.optDouble("profit", 0.0); total += result; if (result > 0.0) wins++ }
+    }
+    day.put("trades", trades).put("totalProfit", total).put("profitableTrades", wins)
+    root.put("days", days); saveBudget(root)
+}
 private fun dailyTradeStake(): Double {
-    return dailyCycleCapital() * 0.33
+    val day = ensureBudgetDay() ?: return 0.0
+    return kotlin.math.round(day.optDouble("capital", 0.0) * 0.3333 * 100.0) / 100.0
 }
 
     private var autoTradeEnabled: Boolean
@@ -350,16 +472,26 @@ private fun submitTouchProposal(
     direction: String,
     barrier: Double,
     sweepTime: Long = 0L,
+    manual: Boolean = false,
     mssTime: Long = 0L,
     chochTime: Long = 0L,
-    manual: Boolean = false
+    liquidityCreatedAt: Long = 0L
 ): Boolean {
     if (!connected || (!manual && !autoTradeEnabled)) return false
 if (direction != "BUY" && direction != "SELL") return false
 if (!touchExecutionLocks.add(symbol)) return false
 
-    val stake = kotlin.math.round(dailyTradeStake() * 100.0) / 100.0
+    val budgetReservation = reserveBudgetSlot()
+    if (budgetReservation == null) {
+        touchExecutionLocks.remove(symbol)
+        toast("MY BUDGET: daily limit reached or starting capital not set.")
+        return false
+    }
+    val budgetDate = budgetReservation.first
+    val budgetSlot = budgetReservation.second
+    val stake = dailyTradeStake()
     if (stake <= 0.0 || accountCurrency.isBlank()) {
+        releaseBudgetSlot(budgetDate, budgetSlot)
         touchExecutionLocks.remove(symbol)
         return false
     }
@@ -376,7 +508,10 @@ if (!touchExecutionLocks.add(symbol)) return false
     barrierOffset = kotlin.math.abs(barrier),
     sweepTime = sweepTime,
     mssTime = mssTime,
-    chochTime = chochTime
+    chochTime = chochTime,
+    liquidityCreatedAt = liquidityCreatedAt,
+    budgetDate = budgetDate,
+    budgetSlot = budgetSlot
 )
     pendingTouchOrders[requestId] = order
     pendingTouchBySymbol[symbol] = requestId
@@ -411,6 +546,7 @@ val signedBarrier = if (direction == "BUY") {
     if (!sent) {
         pendingTouchOrders.remove(requestId)
         pendingTouchBySymbol.remove(symbol)
+        releaseBudgetSlot(budgetDate, budgetSlot)
         touchExecutionLocks.remove(symbol)
     }
     return sent
@@ -478,7 +614,6 @@ private fun durationToSeconds(value: String): Long {
         else -> -1L
     }
 }
-
 private fun isTouchExecutionReady(symbol: String): Boolean {
 
     fun blocked(reason: String): Boolean {
@@ -526,12 +661,23 @@ private fun isTouchExecutionReady(symbol: String): Boolean {
         0L
     )
 
-    if (activeSweepTime <= 0L || activeSweepStatus !in setOf("SWEPT & REVERSED", "TOUCH & REVERSE", "NEAR LIQUIDITY (5 POINTS) & REVERSED"))
-        return blocked("NO CONFIRMED SWEEP")
+    if (activeSweepTime <= 0L || !isConfirmedLiquidityReversal(activeSweepStatus))
+        return blocked("NO CONFIRMED LIQUIDITY REVERSAL")
 
     if (activeSweepTime <= usedSweepTime)
         return blocked("LIQUIDITY SWEEP ALREADY USED")
-        
+
+    val signalKey = "${accountId}_${executionMode}_$symbol"
+    val usedMssTime = appPrefs.getLong("used_mss_time_$signalKey", 0L)
+    val usedChochTime = appPrefs.getLong("used_choch_time_$signalKey", 0L)
+    val usedLiquidityCreatedAt = appPrefs.getLong("used_liquidity_created_at_$signalKey", 0L)
+    val lastSignalExecution = appPrefs.getLong("last_signal_execution_$signalKey", 0L)
+    if (decision.sweepTime <= usedSweepTime || decision.mssTime <= usedMssTime ||
+        decision.chochTime <= usedChochTime || decision.liquidityCreatedAt <= usedLiquidityCreatedAt ||
+        decision.sweepTime <= lastSignalExecution || decision.mssTime <= lastSignalExecution ||
+        decision.chochTime <= lastSignalExecution || decision.liquidityCreatedAt <= lastSignalExecution)
+        return blocked("SIGNAL SET ALREADY EXECUTED — WAIT FOR FRESH SWEEP, MSS AND CHOCH")
+
     if (touchExecutionLocks.contains(symbol))
         return blocked("EXECUTION LOCK ACTIVE")
 
@@ -622,6 +768,7 @@ private fun dashboardDecisionStatus(symbol: String): Pair<String, Int> {
     if (marketDataPrices[symbol] == null) {
         return "WAITING FOR PRICE" to yellow
     }
+
     val decision = masterEngineDecisions[symbol]
 
     if (decision?.qualified == true) {
@@ -770,6 +917,7 @@ if (savedToken.isNotBlank()) {
     addUserProfileScreen(page)
 }
 "User Accounts" -> addAdminUsersScreen()
+"My Budget" -> addMyBudgetScreen()
 "Notifications" -> addNotificationsScreen()
 "Settings", "System Settings" -> addSettingsScreen()
 "Trading Logs" -> addTradingLogsScreen()
@@ -1241,6 +1389,7 @@ private fun addHeader() {
             listOf(
     "Dashboard",
     "User Accounts",
+    "My Budget",
     "Notifications",
     "Trading Logs",
     "System Settings",
@@ -1250,6 +1399,7 @@ private fun addHeader() {
             listOf(
                 "Home",
                 "Trade",
+                "My Budget",
                 "News",
                 "My profile",
                      "Logout"
@@ -1366,8 +1516,7 @@ private fun addHeader() {
 )
        page.addView(row)
     }
-
-    // Five-index live monitor shown on the dashboard.
+        // Five-index live monitor shown on the dashboard.
     private fun addDashboardIndexMonitor() {
         page.addView(sectionTitle("INDEX MONITOR"))
         dashboardQualifiedCountView = TextView(this).apply {
@@ -1483,12 +1632,12 @@ page.addView(monitorHeader, matchWrap())
 // Bullish liquidity = SSL. Bearish liquidity = BSL.
 
 val sharedBullishLiquidity = sharedAnalysis?.bullishLiquidity.orEmpty()
-val bottomSweepStatus = sharedBullishLiquidity.firstOrNull { it.sweepStatus in setOf("SWEPT & REVERSED", "TOUCH & REVERSE", "NEAR LIQUIDITY (5 POINTS) & REVERSED") }?.sweepStatus
+val bottomSweepStatus = sharedBullishLiquidity.firstOrNull { isConfirmedLiquidityReversal(it.sweepStatus) }?.sweepStatus
     ?: sharedBullishLiquidity.firstOrNull { it.sweepStatus == "ALREADY EXECUTED" }?.sweepStatus
     ?: sharedBullishLiquidity.firstOrNull { it.sweepStatus == "INVALIDATED" }?.sweepStatus
     ?: sharedBullishLiquidity.firstOrNull { it.sweepStatus == "EXPIRED" }?.sweepStatus
     ?: "WAITING"
-detailsContainer.addView(label("BOTTOM LIQUIDITY SWEEP (SSL): $bottomSweepStatus", 12f, if (bottomSweepStatus in setOf("SWEPT & REVERSED", "TOUCH & REVERSE", "NEAR LIQUIDITY (5 POINTS) & REVERSED", "ALREADY EXECUTED")) green else yellow, true))
+detailsContainer.addView(label("BOTTOM LIQUIDITY SWEEP (SSL): $bottomSweepStatus", 12f, if (isConfirmedLiquidityReversal(bottomSweepStatus ?: "") || bottomSweepStatus == "ALREADY EXECUTED") green else yellow, true))
 detailsContainer.addView(label("BOTTOM LIQUIDITY LEVELS (SSL)", 12f, green, true))
 if (sharedBullishLiquidity.isEmpty()) {
     detailsContainer.addView(label("No bullish liquidity levels identified.", 11f, muted, false))
@@ -1505,22 +1654,19 @@ if (sharedBullishLiquidity.isEmpty()) {
     ))
 
     detailsContainer.addView(label(
-        "CONFIRMATION TIME: ${if (level.confirmationAt > 0L) formatMarketTime(level.confirmationAt) else "NOT YET CONFIRMED"} | ${level.sweepStatus}",
+        "CONFIRMATION TIME: ${if (level.confirmationAt > 0L) formatMarketTime(level.confirmationAt) else "NOT YET CONFIRMED"}",
         11f, green, false
     ))
-    if (level.sweepStatus == "NEAR LIQUIDITY (5 POINTS) & REVERSED") {
-        detailsContainer.addView(label("DISTANCE: ${formatMarketPrice(level.reversalDistance)} POINTS", 11f, green, false))
-    }
     }
 }
 
 val sharedBearishLiquidity = sharedAnalysis?.bearishLiquidity.orEmpty()
-val topSweepStatus = sharedBearishLiquidity.firstOrNull { it.sweepStatus in setOf("SWEPT & REVERSED", "TOUCH & REVERSE", "NEAR LIQUIDITY (5 POINTS) & REVERSED") }?.sweepStatus
+val topSweepStatus = sharedBearishLiquidity.firstOrNull { isConfirmedLiquidityReversal(it.sweepStatus) }?.sweepStatus
     ?: sharedBearishLiquidity.firstOrNull { it.sweepStatus == "ALREADY EXECUTED" }?.sweepStatus
     ?: sharedBearishLiquidity.firstOrNull { it.sweepStatus == "INVALIDATED" }?.sweepStatus
     ?: sharedBearishLiquidity.firstOrNull { it.sweepStatus == "EXPIRED" }?.sweepStatus
     ?: "WAITING"
-detailsContainer.addView(label("TOP LIQUIDITY SWEEP (BSL): $topSweepStatus", 12f, if (topSweepStatus in setOf("SWEPT & REVERSED", "TOUCH & REVERSE", "NEAR LIQUIDITY (5 POINTS) & REVERSED", "ALREADY EXECUTED")) green else yellow, true))
+detailsContainer.addView(label("TOP LIQUIDITY SWEEP (BSL): $topSweepStatus", 12f, if (isConfirmedLiquidityReversal(topSweepStatus ?: "") || topSweepStatus == "ALREADY EXECUTED") green else yellow, true))
 detailsContainer.addView(label("TOP LIQUIDITY LEVELS (BSL)", 12f, red, true))
 if (sharedBearishLiquidity.isEmpty()) {
     detailsContainer.addView(label("No bearish liquidity levels identified.", 11f, muted, false))
@@ -1536,22 +1682,19 @@ if (sharedBearishLiquidity.isEmpty()) {
     ))
 
     detailsContainer.addView(label(
-        "CONFIRMATION TIME: ${if (level.confirmationAt > 0L) formatMarketTime(level.confirmationAt) else "NOT YET CONFIRMED"} | ${level.sweepStatus}",
+        "CONFIRMATION TIME: ${if (level.confirmationAt > 0L) formatMarketTime(level.confirmationAt) else "NOT YET CONFIRMED"}",
         11f, red, false
     ))
-    if (level.sweepStatus == "NEAR LIQUIDITY (5 POINTS) & REVERSED") {
-        detailsContainer.addView(label("DISTANCE: ${formatMarketPrice(level.reversalDistance)} POINTS", 11f, red, false))
-    }
     }
 }
 val qualifyingSsl = sharedBullishLiquidity.firstOrNull {
-    it.sweepStatus in setOf("SWEPT & REVERSED", "TOUCH & REVERSE", "NEAR LIQUIDITY (5 POINTS) & REVERSED") ||
-it.sweepStatus in setOf("SWEPT & REVERSED", "TOUCH & REVERSE", "NEAR LIQUIDITY (5 POINTS) & REVERSED")
+    isConfirmedLiquidityReversal(it.sweepStatus) ||
+isConfirmedLiquidityReversal(it.sweepStatus)
 }
 
 val qualifyingBsl = sharedBearishLiquidity.firstOrNull {
-    it.sweepStatus in setOf("SWEPT & REVERSED", "TOUCH & REVERSE", "NEAR LIQUIDITY (5 POINTS) & REVERSED") ||
-it.sweepStatus in setOf("SWEPT & REVERSED", "TOUCH & REVERSE", "NEAR LIQUIDITY (5 POINTS) & REVERSED")
+    isConfirmedLiquidityReversal(it.sweepStatus) ||
+isConfirmedLiquidityReversal(it.sweepStatus)
 }
 // MSS and CHOCH are displayed independently; market-structure history is not shown.
 detailsContainer.addView(label("CHANGE OF CHARACTER (CHOCH)", 12f, yellow, true))
@@ -1674,7 +1817,7 @@ monitorCard.addView(row, matchWrap().apply { bottomMargin = dp(6) })
             weighted()
         )
         buttons.addView(
-          button("⟳  REFRESH", false) {
+            button("⟳  REFRESH", false) {
                 if (connected) {
                     derivApiClient.requestBalance()
                     derivApiClient.requestOpenTrades()
@@ -1804,6 +1947,15 @@ val originalTarget = tracked?.target?.takeIf { it.isFinite() && it > 0.0 }
 ).apply { setPadding(0, dp(4), 0, 0) }
         val spotView = label("Current value/spot: ${if (currentValue > 0) formatMarketPrice(currentValue) else "—"}", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
         val expiryView = label("Expiry: $expiryText", 12f, white, false).apply { setPadding(0, dp(4), 0, 0) }
+        val trailingPreferenceKey = "contract_trailing_enabled_${accountId}_${executionMode}_$contractId"
+        val trailingOn = tracked?.trailingEnabled ?: appPrefs.getBoolean(trailingPreferenceKey, true)
+        row.addView(label("TRAILING STOP: ${if (trailingOn) "ON" else "OFF"}", 12f, if (trailingOn) green else yellow, true))
+        row.addView(button(if (trailingOn) "TURN TRAILING STOP OFF" else "TURN TRAILING STOP ON", trailingOn) {
+            val nextTrailingState = !trailingOn
+            if (tracked != null) tracked.trailingEnabled = nextTrailingState
+            appPrefs.edit().putBoolean(trailingPreferenceKey, nextTrailingState).apply()
+            render()
+        }, matchWrap().apply { topMargin = dp(6) })
         row.addView(pnlHidden)
         row.addView(exitBarrierView)
         row.addView(potentialProfitView)
@@ -1876,7 +2028,12 @@ row.addView(
         val expiryView = label("Expiry: —", 12f, white, false)
             .apply { setPadding(0, dp(4), 0, 0) }
 
-
+        row.addView(label("TRAILING STOP: ${if (running.trailingEnabled) "ON" else "OFF"}", 12f, if (running.trailingEnabled) green else yellow, true))
+        row.addView(button(if (running.trailingEnabled) "TURN TRAILING STOP OFF" else "TURN TRAILING STOP ON", running.trailingEnabled) {
+            running.trailingEnabled = !running.trailingEnabled
+            appPrefs.edit().putBoolean("contract_trailing_enabled_${accountId}_${running.mode}_${running.contractId}", running.trailingEnabled).apply()
+            render()
+        }, matchWrap().apply { topMargin = dp(6) })
         row.addView(pnlHidden)
         row.addView(exitBarrierView)
         row.addView(potentialProfitView)
@@ -1981,6 +2138,96 @@ row.addView(
     page.addView(button("NOTIFICATIONS", false) { selectedTab = "Notifications"; render() }, matchWrap().apply { bottomMargin = dp(6) })
     page.addView(button("MY PROFILE", false) { selectedTab = "My profile"; render() }, matchWrap())
 }
+private fun addMyBudgetScreen() {
+    page.addView(sectionTitle("MY BUDGET"))
+    page.addView(label("Daily allocation: 30% of the capital at the start of that day · Maximum 4 trades · Stop after 2 profitable trades.", 12f, yellow, false))
+    val root = budgetRoot()
+    var days = budgetRows(root)
+    val initial = root.optDouble("initialCapital", 0.0)
+    if (accountId.isBlank()) {
+        page.addView(label("Connect your Deriv account first. MY BUDGET is stored separately for each Deriv account and execution mode.", 13f, yellow, false))
+        return
+    }
+    if (initial <= 0.0) {
+        val setup = card().apply { orientation = LinearLayout.VERTICAL }
+        setup.addView(label("SET STARTING CAPITAL", 14f, green, true))
+        setup.addView(label("Enter the capital available when you begin on 17 November 2026. The app will calculate and allocate each actual Deriv stake automatically.", 12f, white, false))
+        val amountInput = EditText(this).apply {
+            hint = "Starting capital (${accountCurrency.ifBlank { "account currency" }})"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            setTextColor(white); setHintTextColor(muted); setSingleLine(true)
+        }
+        setup.addView(amountInput, matchWrap().apply { topMargin = dp(8) })
+        setup.addView(button("SAVE STARTING CAPITAL", true) {
+            val amount = amountInput.text.toString().trim().replace(",", ".").toDoubleOrNull() ?: 0.0
+            if (amount <= 0.0) { toast("Enter a valid starting capital amount."); return@button }
+            val newRoot = JSONObject().put("initialCapital", amount).put("days", JSONArray())
+            saveBudget(newRoot)
+            ensureBudgetDay()
+            render()
+        }, matchWrap().apply { topMargin = dp(10) })
+        page.addView(setup, matchWrap().apply { topMargin = dp(10); bottomMargin = dp(10) })
+        return
+    }
+    val today = ensureBudgetDay()
+    days = budgetRows(budgetRoot())
+    val currentCapital = if (days.length() > 0) {
+        val last = days.optJSONObject(days.length() - 1)
+        (last?.optDouble("capital", initial) ?: initial) + (last?.optDouble("totalProfit", 0.0) ?: 0.0)
+    } else initial
+    val summary = card().apply { orientation = LinearLayout.VERTICAL }
+    summary.addView(label("AVAILABLE CAPITAL: ${formatMoney(currentCapital)} ${accountCurrency}", 16f, green, true))
+    if (today != null) {
+        val used = budgetTradeCount(today)
+        val wins = today.optInt("profitableTrades", 0)
+        summary.addView(label("TODAY'S STARTING CAPITAL: ${formatMoney(today.optDouble("capital", 0.0))}", 12f, white, false))
+        summary.addView(label("TRADE SLOTS USED: $used / 4    PROFITABLE TRADES: $wins / 2", 12f, yellow, true))
+        summary.addView(label("TODAY'S NET RESULT: ${formatMoney(today.optDouble("totalProfit", 0.0))}", 13f, profitColor(today.optDouble("totalProfit", 0.0)), true))
+        summary.addView(label(if (wins >= 2) "DAILY TARGET ACHIEVED — trading allocation stopped." else if (used >= 4) "FOUR SLOTS USED — new day starts with available capital." else "BUDGET ACTIVE — each trade stake is 30% of today's starting capital." , 11f, if (wins >= 2 || used >= 4) green else yellow, true))
+    }
+    page.addView(summary, matchWrap().apply { topMargin = dp(8); bottomMargin = dp(10) })
+    page.addView(sectionTitle("DAILY BUDGET RECORD"))
+    val tableCard = card().apply { orientation = LinearLayout.VERTICAL }
+    val horizontal = android.widget.HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = true }
+    val table = android.widget.TableLayout(this).apply { isStretchAllColumns = false }
+    fun cell(value: String, headerCell: Boolean = false): TextView = label(
+        value, 10f, if (headerCell) green else white, headerCell
+    ).apply { setPadding(dp(7), dp(8), dp(7), dp(8)); minWidth = dp(78) }
+    val headings = listOf("Date", "Day", "Capital", "Amount trade 1", "Profit trade 1", "Amount trade 2", "Profit trade 2", "Total profit", "Total capital")
+    val headingRow = android.widget.TableRow(this)
+    headings.forEach { headingRow.addView(cell(it, true)) }
+    table.addView(headingRow)
+    for (i in 0 until days.length()) {
+        val d = days.optJSONObject(i) ?: continue
+        val trades = d.optJSONArray("trades") ?: JSONArray()
+        fun tradeAt(slot: Int): JSONObject? {
+            for (j in 0 until trades.length()) { val t = trades.optJSONObject(j) ?: continue; if (t.optInt("slot") == slot) return t }
+            return null
+        }
+        val t1 = tradeAt(1); val t2 = tradeAt(2); val t3 = tradeAt(3); val t4 = tradeAt(4)
+        val total = d.optDouble("totalProfit", 0.0)
+        val capital = d.optDouble("capital", 0.0)
+        fun amount(t: JSONObject?): String = t?.let { formatMoney(it.optDouble("stake", 0.0)) } ?: "—"
+        fun result(t: JSONObject?): String = t?.let { if (it.optBoolean("closed")) formatMoney(it.optDouble("profit", 0.0)) else "Pending" } ?: "—"
+        val dataRow = android.widget.TableRow(this)
+        listOf(d.optString("date"), d.optString("day", budgetDayName(d.optString("date"))),
+            formatMoney(capital), amount(t1), result(t1), amount(t2), result(t2),
+            formatMoney(total), formatMoney(capital + total)).forEach { dataRow.addView(cell(it)) }
+        table.addView(dataRow)
+        if (t3 != null || t4 != null) {
+            val extra = android.widget.TableRow(this)
+            val extraText = "Recovery slots — Trade 3: ${amount(t3)} / ${result(t3)}; Trade 4: ${amount(t4)} / ${result(t4)}"
+            val extraCell = cell(extraText).apply { setTextColor(yellow) }
+            extra.addView(extraCell, android.widget.TableRow.LayoutParams().apply { span = 9 })
+            table.addView(extra)
+        }
+    }
+    if (days.length() == 0) tableCard.addView(label("No daily records yet.", 12f, yellow, false))
+    horizontal.addView(table)
+    tableCard.addView(horizontal, matchWrap())
+    page.addView(tableCard, matchWrap())
+}
+
 // =========================================================
 // LIVE MARKET DISPLAY HELPERS
 // =========================================================
@@ -2013,8 +2260,15 @@ private data class LiquidityLevel(
     val sweepAt: Long,
     val confirmationAt: Long,
     val occurrences: Int,
-    val sweepStatus: String = "WAITING",
-    val reversalDistance: Double = 0.0
+    val sweepStatus: String = "WAITING"
+)
+
+private fun isConfirmedLiquidityReversal(status: String): Boolean = status in setOf(
+    "PENETRATION AND REVERSE",
+    "TOUCH AND REVERSE",
+    "NEAR LIQUIDITY (5 POINTS) AND REVERSE",
+    // Keep persisted signals from earlier versions readable.
+    "LIQUIDITY SWEEP"
 )
 
 // Identify the latest confirmed swing liquidity level from the
@@ -2065,49 +2319,41 @@ private fun calculateLiquidityLevels(
     var sweepAt = 0L
     var confirmationAt = 0L
     var status = "WAITING"
-    var reversalDistance = 0.0
 
-    // Classify the reaction to the liquidity level using fully closed H1 candles.
-    // SSL (bullish liquidity): reaction must close above the level.
-    // BSL (bearish liquidity): reaction must close below the level.
+    // Classify the first confirmed H1 reversal after the liquidity level forms.
+    // A penetration must cross the level and close back beyond it. A touch
+    // reaches the level without crossing it. Near-liquidity must stay within
+    // five index points and close in the reversal direction.
+    val priceEpsilon = kotlin.math.max(1e-8, kotlin.math.abs(level) * 1e-10)
     for (i in swingIndex + 3 until sorted.size) {
         val candle = sorted[i]
-        val next = sorted.getOrNull(i + 1)
-        val reactionClose = if (bullish) candle.close > level else candle.close < level
-        val nextCloseConfirms = next != null &&
-            if (bullish) next.close > level else next.close < level
-
-        val penetrated = if (bullish) candle.low < level else candle.high > level
-        val touched = if (bullish) candle.low <= level else candle.high >= level
-        val distance = if (bullish) {
-            kotlin.math.max(0.0, candle.low - level)
+        val classification = if (bullish) {
+            when {
+                candle.low < level - priceEpsilon && candle.close > level ->
+                    "PENETRATION AND REVERSE"
+                kotlin.math.abs(candle.low - level) <= priceEpsilon && candle.close > level ->
+                    "TOUCH AND REVERSE"
+                candle.low > level && candle.low - level <= 5.0 &&
+                    candle.close > level && candle.close > candle.open ->
+                    "NEAR LIQUIDITY (5 POINTS) AND REVERSE"
+                else -> ""
+            }
         } else {
-            kotlin.math.max(0.0, level - candle.high)
+            when {
+                candle.high > level + priceEpsilon && candle.close < level ->
+                    "PENETRATION AND REVERSE"
+                kotlin.math.abs(candle.high - level) <= priceEpsilon && candle.close < level ->
+                    "TOUCH AND REVERSE"
+                candle.high < level && level - candle.high <= 5.0 &&
+                    candle.close < level && candle.close < candle.open ->
+                    "NEAR LIQUIDITY (5 POINTS) AND REVERSE"
+                else -> ""
+            }
         }
-
-        // Penetration requires reversal close plus a second H1 close on the
-        // reversal side. A wick through the level alone is not confirmation.
-        if (penetrated && reactionClose && nextCloseConfirms) {
-            sweepAt = candle.epoch
-            confirmationAt = next!!.epoch + 3600L
-            status = "SWEPT & REVERSED"
-            break
-        }
-
-        // A direct touch is distinct from a penetration/sweep.
-        if (!penetrated && touched && reactionClose) {
+        if (classification.isNotEmpty()) {
             sweepAt = candle.epoch
             confirmationAt = candle.epoch + 3600L
-            status = "TOUCH & REVERSE"
-            break
-        }
-
-        // Near-liquidity reaction: no contact, within five quoted price points.
-        if (!touched && distance in 0.0000001..5.0 && reactionClose) {
-            sweepAt = candle.epoch
-            confirmationAt = candle.epoch + 3600L
-            reversalDistance = distance
-            status = "NEAR LIQUIDITY (5 POINTS) & REVERSED"
+            status = classification
             break
         }
     }
@@ -2121,8 +2367,7 @@ private fun calculateLiquidityLevels(
             sweepAt = sweepAt,
             confirmationAt = confirmationAt,
             occurrences = 1,
-            sweepStatus = status,
-            reversalDistance = reversalDistance
+            sweepStatus = status
         )
     )
 }
@@ -2176,7 +2421,6 @@ private fun calculateMarketStructure(
     var previousConfirmedLow: Pair<Int, Double>? = null
     var latestHighClass = ""
     var latestLowClass = ""
-
     var lastConfirmedLH: Pair<Int, Double>? = null
     var lastConfirmedHL: Pair<Int, Double>? = null
     var trend = ""
@@ -2215,7 +2459,7 @@ private fun calculateMarketStructure(
                         candidateHighIndex = i
                         candidateHigh = candle.high
                     }
-                    if (candle.low < candidateLow) {
+                       if (candle.low < candidateLow) {
                         candidateLowIndex = i
                         candidateLow = candle.low
                     }
@@ -2436,6 +2680,7 @@ private fun calculateMss(candles: List<DerivApiClient.Candle>): MssAnalysis {
         val current = swingLows[i]
         if (current.second > previous.second) higherLows.add(current)
     }
+
     val events = mutableListOf<MssEvent>()
     var consumedLowerHigh = -1
     var consumedHigherLow = -1
@@ -2507,22 +2752,22 @@ private fun evaluateMssModule(
     val symbol: String,
     val direction: String,
     val liquidityQualified: Boolean,
-    val mssQualified: Boolean,
     val chochQualified: Boolean,
-    val sweepTime: Long,
-    val mssTime: Long,
-    val chochTime: Long,
     // Retained for existing trade-history compatibility; not used for qualification.
     val ptpeProbability: Double,
     val qualified: Boolean,
     val updatedAt: Long,
-    val bullishLiquidity: List<LiquidityLevel>,
+        val bullishLiquidity: List<LiquidityLevel>,
     val bearishLiquidity: List<LiquidityLevel>,
     val structures: List<MarketStructureEvent>,
     val chochs: List<ChochEvent>,
     val marketDirection: String,
     val mssText: String,
-    val liquidityText: String
+    val liquidityText: String,
+    val sweepTime: Long,
+    val mssTime: Long,
+    val chochTime: Long,
+    val liquidityCreatedAt: Long
 )
 
 private val masterEngineDecisions =
@@ -2552,16 +2797,16 @@ private fun evaluateMasterEngine(symbol: String) {
 // BSL continuation = BULLISH.
 // BSL reversal = BEARISH.
 
-// Each confirmed liquidity-reversal classification can qualify for the Master Engine.
+// ONLY SWEPT AND REVERSED can become an active sweep.
 var confirmedSweeps = buildList {
     bullishLiquidity.forEach { level ->
-        if (level.sweepStatus in setOf("SWEPT & REVERSED", "TOUCH & REVERSE", "NEAR LIQUIDITY (5 POINTS) & REVERSED")) {
+        if (isConfirmedLiquidityReversal(level.sweepStatus)) {
             add(Triple(level.sweepAt, "BULLISH", level.price))
         }
     }
 
     bearishLiquidity.forEach { level ->
-        if (level.sweepStatus in setOf("SWEPT & REVERSED", "TOUCH & REVERSE", "NEAR LIQUIDITY (5 POINTS) & REVERSED")) {
+        if (isConfirmedLiquidityReversal(level.sweepStatus)) {
             add(Triple(level.sweepAt, "BEARISH", level.price))
         }
     }
@@ -2589,7 +2834,7 @@ val savedSweepInvalidated = when (savedSweepDirection) {
     else -> false
 }
 
-if (savedSweepStatus in setOf("SWEPT & REVERSED", "TOUCH & REVERSE", "NEAR LIQUIDITY (5 POINTS) & REVERSED") && savedSweepInvalidated) {
+if (isConfirmedLiquidityReversal(savedSweepStatus) && savedSweepInvalidated) {
     appPrefs.edit()
         .remove("active_sweep_time_$symbol")
         .remove("active_sweep_direction_$symbol")
@@ -2600,7 +2845,7 @@ if (savedSweepStatus in setOf("SWEPT & REVERSED", "TOUCH & REVERSE", "NEAR LIQUI
     savedSweepTime = 0L
 }
 // A confirmed SWEPT AND REVERSE signal remains valid for three hours only.
-if (savedSweepStatus in setOf("SWEPT & REVERSED", "TOUCH & REVERSE", "NEAR LIQUIDITY (5 POINTS) & REVERSED") && savedSweepTime > 0L &&
+if (isConfirmedLiquidityReversal(savedSweepStatus) && savedSweepTime > 0L &&
     nowEpoch - savedSweepTime >= 3L * 60L * 60L) {
     appPrefs.edit()
         .remove("active_sweep_time_$symbol")
@@ -2613,7 +2858,7 @@ if (savedSweepStatus in setOf("SWEPT & REVERSED", "TOUCH & REVERSE", "NEAR LIQUI
 
 // Remove old saved records that cannot be verified as reversals.
 if (savedSweepTime > 0L &&
-    savedSweepStatus !in setOf("SWEPT & REVERSED", "TOUCH & REVERSE", "NEAR LIQUIDITY (5 POINTS) & REVERSED") &&
+    !isConfirmedLiquidityReversal(savedSweepStatus) &&
     savedSweepStatus != "ALREADY EXECUTED"
 ) {
     appPrefs.edit()
@@ -2647,8 +2892,10 @@ if (newestConfirmedSweep != null &&
         )
         .putString(
             "active_sweep_status_$symbol",
-            (bullishLiquidity + bearishLiquidity).firstOrNull { it.sweepAt == newestConfirmedSweep.first }?.sweepStatus
-                ?: "SWEPT & REVERSED"
+            newestConfirmedSweep.let { event ->
+                (bullishLiquidity + bearishLiquidity).firstOrNull { it.sweepAt == event.first }?.sweepStatus
+                    ?: "PENETRATION AND REVERSE"
+            }
         )
         .apply()
 }
@@ -2657,7 +2904,7 @@ val activeSweepStatus =
     appPrefs.getString("active_sweep_status_$symbol", "") ?: ""
 
 val activeSweepDirection =
-    if (activeSweepStatus in setOf("SWEPT & REVERSED", "TOUCH & REVERSE", "NEAR LIQUIDITY (5 POINTS) & REVERSED")) {
+    if (isConfirmedLiquidityReversal(activeSweepStatus)) {
         appPrefs.getString("active_sweep_direction_$symbol", "") ?: ""
     } else {
         ""
@@ -2676,21 +2923,27 @@ val bearishSweep = activeSweepDirection == "BEARISH"
     it.changedAt <= latest.epoch &&
     latest.epoch - it.changedAt <= chochValiditySeconds
 }
+    val chochDirection = latestChoch?.direction ?: ""
     val latestMss = mssResult.events.lastOrNull()?.takeIf { it.changedAt == latest.epoch }
-    val usedMssTime = appPrefs.getLong("used_mss_time_${accountId}_${executionMode}_$symbol", 0L)
-    val usedChochTime = appPrefs.getLong("used_choch_time_${accountId}_${executionMode}_$symbol", 0L)
-    val freshMss = latestMss?.takeIf { it.changedAt > usedMssTime }
-    val freshChoch = latestChoch?.takeIf { it.changedAt > usedChochTime }
-    val mssDirection = freshMss?.direction ?: ""
-    val chochDirection = freshChoch?.direction ?: ""
+    val mssDirection = latestMss?.direction ?: ""
     val bullishMss = mssDirection == "BULLISH"
     val bearishMss = mssDirection == "BEARISH"
     val bullishChoch = chochDirection == "BULLISH"
     val bearishChoch = chochDirection == "BEARISH"
-    // MASTER ENGINE QUALIFICATION: liquidity reversal, MSS and CHOCH
-    // must all confirm the same direction on completed H1 candles.
+    // One execution requires a same-direction fresh Liquidity Sweep + MSS + CHOCH.
+    val activeSweepTimeForDecision = appPrefs.getLong("active_sweep_time_$symbol", 0L)
+    val activeLiquidityLevel = (bullishLiquidity + bearishLiquidity).firstOrNull {
+        it.sweepAt == activeSweepTimeForDecision && isConfirmedLiquidityReversal(it.sweepStatus)
+    }
     val bullishDirection = bullishSweep && bullishMss && bullishChoch
     val bearishDirection = bearishSweep && bearishMss && bearishChoch
+    val signalKeyForDecision = "${accountId}_${executionMode}_$symbol"
+    val signalUsedAt = appPrefs.getLong("last_signal_execution_$signalKeyForDecision", 0L)
+    val freshSignalSet = activeLiquidityLevel != null &&
+        activeSweepTimeForDecision > signalUsedAt &&
+        (latestMss?.changedAt ?: 0L) > signalUsedAt &&
+        (latestChoch?.changedAt ?: 0L) > signalUsedAt &&
+        activeLiquidityLevel.createdAt > signalUsedAt
     val activeTradeDirection =
     runningContracts.values.firstOrNull {
         it.symbol.equals(symbol, ignoreCase = true) &&
@@ -2701,8 +2954,8 @@ val bearishSweep = activeSweepDirection == "BEARISH"
             it.mode == executionMode
         }?.direction
     val calculatedDirection = when {
-        bullishDirection -> "BUY"
-        bearishDirection -> "SELL"
+        bullishDirection && freshSignalSet -> "BUY"
+        bearishDirection && freshSignalSet -> "SELL"
         else -> "WAIT"
     }
 
@@ -2716,22 +2969,14 @@ val direction = activeTradeDirection ?: calculatedDirection
             "SELL" -> bearishSweep
             else -> false
         },
-        mssQualified = when (direction) {
-            "BUY" -> bullishMss
-            "SELL" -> bearishMss
-            else -> false
-        },
         chochQualified = when (direction) {
             "BUY" -> bullishChoch
             "SELL" -> bearishChoch
             else -> false
         },
-        sweepTime = appPrefs.getLong("active_sweep_time_$symbol", 0L),
-        mssTime = freshMss?.changedAt ?: 0L,
-        chochTime = freshChoch?.changedAt ?: 0L,
         ptpeProbability = 0.0,
         qualified = activeTradeDirection == null &&
-    calculatedDirection != "WAIT",
+    calculatedDirection != "WAIT" && freshSignalSet,
         updatedAt = System.currentTimeMillis(),
         bullishLiquidity = bullishLiquidity,
         bearishLiquidity = bearishLiquidity,
@@ -2748,7 +2993,11 @@ val direction = activeTradeDirection ?: calculatedDirection
             bullishSweep -> "BULLISH SWEPT"
             bearishSweep -> "BEARISH SWEPT"
             else -> "WAITING"
-        }
+        },
+        sweepTime = activeSweepTimeForDecision,
+        mssTime = latestMss?.changedAt ?: 0L,
+        chochTime = latestChoch?.changedAt ?: 0L,
+        liquidityCreatedAt = activeLiquidityLevel?.createdAt ?: 0L
     )
     masterEngineDecisions[symbol] = decision
     val engineExecuted = runningContracts.values.any {
@@ -2776,7 +3025,6 @@ val engineText = when {
         }
     }
     }
-
     val mssText = when {
         bullishMss -> "BULLISH CONFIRMED"
         bearishMss -> "BEARISH CONFIRMED"
@@ -2797,16 +3045,15 @@ val topLevel = bearishLiquidity.firstOrNull()
 
 val bottomSweepText = when {
     bottomLevel == null -> "NOT IDENTIFIED"
-    bottomLevel.sweepAt > 0L -> "SWEPT"
+    isConfirmedLiquidityReversal(bottomLevel.sweepStatus) -> bottomLevel.sweepStatus
     else -> "IDENTIFIED"
 }
 
 val topSweepText = when {
     topLevel == null -> "NOT IDENTIFIED"
-    topLevel.sweepAt > 0L -> "SWEPT"
+    isConfirmedLiquidityReversal(topLevel.sweepStatus) -> topLevel.sweepStatus
     else -> "IDENTIFIED"
 }
-
 val bottomStatusText = bottomLevel?.let {
     "1. BOTTOM SSL: $bottomSweepText | LEVEL: ${formatMarketPrice(it.price)} | IDENTIFIED: ${formatMarketTime(it.createdAt)} | SWEEP: ${if (it.sweepAt > 0L) formatMarketTime(it.sweepAt) else "NOT YET SWEPT"} | CONFIRMATION: ${if (it.confirmationAt > 0L) formatMarketTime(it.confirmationAt) else "NOT YET CONFIRMED"}"
 } ?: "1. BOTTOM SSL: NOT IDENTIFIED"
@@ -2849,7 +3096,7 @@ val summary = listOf(
     if (decision.qualified) {
         val eventKey = "${saDayKey()}_${accountId}_${executionMode}_${symbol}_${direction}_${latest.epoch}"
         if (masterEngineNotificationKeys.add(eventKey)) {
-            notifyEvent("Master Engine Qualified", "$symbol · $direction · SMC sequence and PTPE threshold qualified.", "master_engine_$eventKey")
+            notifyEvent("Master Engine Qualified", "$symbol · $direction · Liquidity reversal, MSS and CHOCH qualified in the same direction.", "master_engine_$eventKey")
         }
     }
 }
@@ -3183,7 +3430,11 @@ val summary = listOf(
         trailingCard.addView(label("Controls the existing 30% activation and 10% giveback protection.", 11f, muted, false))
         trailingCard.addView(button(if (trailingStopEnabled) "TRAILING STOP: ON" else "TRAILING STOP: OFF", trailingStopEnabled) {
             trailingStopEnabled = !trailingStopEnabled
-            toast(if (trailingStopEnabled) "Trailing Stop enabled." else "Trailing Stop disabled.")
+            runningContracts.values.filter { it.mode == executionMode }.forEach { running ->
+                running.trailingEnabled = trailingStopEnabled
+                appPrefs.edit().putBoolean("contract_trailing_enabled_${accountId}_${running.mode}_${running.contractId}", running.trailingEnabled).apply()
+            }
+            toast(if (trailingStopEnabled) "Trailing Stop enabled for running trades." else "Trailing Stop disabled for running trades.")
             render()
         }, matchWrap().apply { topMargin = dp(8) })
         page.addView(trailingCard, matchWrap().apply { bottomMargin = dp(10) })
@@ -3366,9 +3617,9 @@ val summary = listOf(
         val tabs = if (authToken.isBlank()) {
             listOf("⌂" to "Home", "↪" to "Login", "+" to "Register")
         } else if (platform == "ADMIN") {
-            listOf("⌂" to "Home", "▥" to "Trade", "🔔" to "Notifications", "⚙" to "Settings")
+            listOf("⌂" to "Home", "▥" to "Trade", "▤" to "My Budget", "🔔" to "Notifications", "⚙" to "Settings")
         } else {
-            listOf("⌂" to "Home", "▥" to "Trade", "🔔" to "Notifications", "♙" to "My profile")
+            listOf("⌂" to "Home", "▥" to "Trade", "▤" to "My Budget", "🔔" to "Notifications", "♙" to "My profile")
         }
         tabs.forEach { (icon, name) ->
             val selected = selectedTab == name
@@ -3672,7 +3923,6 @@ val summary = listOf(
             }
         })
     }
-
     private fun oauthError(body: String): String = try {
         val j = JSONObject(body); val err = j.optJSONObject("error")
         err?.optString("message")?.takeIf { !it.isNullOrBlank() } ?: j.optString("message", body.take(180))
@@ -3784,13 +4034,15 @@ dashboardQualifiedCountView?.text =
 
     val barrier = quote * 0.01
     val submitted = submitTouchProposal(
-    symbol,
-    decision.direction,
-    barrier,
-    decision.sweepTime,
-    decision.mssTime,
-    decision.chochTime
-)
+        symbol,
+        decision.direction,
+        barrier,
+        decision.sweepTime,
+        false,
+        decision.mssTime,
+        decision.chochTime,
+        decision.liquidityCreatedAt
+    )
 
 if (submitted) {
     consumedTouchQualifications[symbol] = latest.epoch
@@ -3843,6 +4095,7 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
         val order = orderEntry.value
         pendingTouchOrders.remove(orderEntry.key)
         pendingTouchBySymbol.remove(order.symbol)
+        releaseBudgetSlot(order.budgetDate, order.budgetSlot)
         touchExecutionLocks.remove(order.symbol)
 
         android.util.Log.e(
@@ -3866,6 +4119,7 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
     if (proposal == null) {
         pendingTouchOrders.remove(requestId)
         pendingTouchBySymbol.remove(order.symbol)
+        releaseBudgetSlot(order.budgetDate, order.budgetSlot)
         touchExecutionLocks.remove(order.symbol)
         return@runOnUiThread
     }
@@ -3877,6 +4131,7 @@ dashboardPriceViews[symbol]?.text = formatMarketPrice(quote)
     if (askPrice <= 0.0 || proposalId.isBlank()) {
     pendingTouchOrders.remove(requestId)
     pendingTouchBySymbol.remove(order.symbol)
+    releaseBudgetSlot(order.budgetDate, order.budgetSlot)
     touchExecutionLocks.remove(order.symbol)
     return@runOnUiThread
 }
@@ -3889,6 +4144,7 @@ if (kotlin.math.abs(payout - targetPayout) > tolerance) {
     if (order.proposalAttempts >= 24) {
         pendingTouchOrders.remove(requestId)
         pendingTouchBySymbol.remove(order.symbol)
+        releaseBudgetSlot(order.budgetDate, order.budgetSlot)
         touchExecutionLocks.remove(order.symbol)
 
         toast("${order.symbol}: Could not obtain the required 30% stake-profit payout.")
@@ -3919,10 +4175,10 @@ if (kotlin.math.abs(payout - targetPayout) > tolerance) {
                 order.barrierOffset * 2.0
             }
     }
-
     if (order.barrierOffset <= 0.0) {
         pendingTouchOrders.remove(requestId)
         pendingTouchBySymbol.remove(order.symbol)
+        releaseBudgetSlot(order.budgetDate, order.budgetSlot)
         touchExecutionLocks.remove(order.symbol)
         return@runOnUiThread
     }
@@ -3941,6 +4197,7 @@ if (kotlin.math.abs(payout - targetPayout) > tolerance) {
     } else {
         "-$barrierValue"
     }
+
     pendingTouchOrders.remove(requestId)
     pendingTouchOrders[nextRequestId] = order
     pendingTouchBySymbol[order.symbol] = nextRequestId
@@ -3963,6 +4220,7 @@ if (kotlin.math.abs(payout - targetPayout) > tolerance) {
     if (!sent) {
         pendingTouchOrders.remove(nextRequestId)
         pendingTouchBySymbol.remove(order.symbol)
+        releaseBudgetSlot(order.budgetDate, order.budgetSlot)
         touchExecutionLocks.remove(order.symbol)
     }
 
@@ -3985,6 +4243,7 @@ val sent = derivApiClient.send(
 if (!sent) {
     pendingTouchOrders.remove(requestId)
     pendingTouchBySymbol.remove(order.symbol)
+    releaseBudgetSlot(order.budgetDate, order.budgetSlot)
     touchExecutionLocks.remove(order.symbol)
 }
 return@runOnUiThread
@@ -4001,6 +4260,7 @@ return@runOnUiThread
     if (buy == null) {
         pendingTouchOrders.remove(entry.key)
         pendingTouchBySymbol.remove(order.symbol)
+        releaseBudgetSlot(order.budgetDate, order.budgetSlot)
         touchExecutionLocks.remove(order.symbol)
         return@runOnUiThread
     }
@@ -4009,10 +4269,12 @@ return@runOnUiThread
     if (contractId <= 0L) {
         pendingTouchOrders.remove(entry.key)
         pendingTouchBySymbol.remove(order.symbol)
+        releaseBudgetSlot(order.budgetDate, order.budgetSlot)
         touchExecutionLocks.remove(order.symbol)
         return@runOnUiThread
     }
 
+    attachBudgetContract(order.budgetDate, order.budgetSlot, contractId)
     runningContracts[contractId] = RunningContract(
         contractId = contractId,
         symbol = order.symbol,
@@ -4022,14 +4284,21 @@ return@runOnUiThread
         targetProbability = masterEngineDecisions[order.symbol]?.ptpeProbability ?: 0.0,
         mode = order.mode,
         trailingEligible = true,
-        potentialPayout = order.stake * 1.30
+        trailingEnabled = appPrefs.getBoolean("contract_trailing_enabled_${accountId}_${order.mode}_$contractId", true),
+        potentialPayout = order.stake * 1.30,
+        budgetDate = order.budgetDate,
+        budgetSlot = order.budgetSlot
     )
 
-    if (order.sweepTime > 0L) {
+    if (order.sweepTime > 0L && order.mssTime > 0L && order.chochTime > 0L && order.liquidityCreatedAt > 0L) {
+        val signalKey = "${accountId}_${order.mode}_${order.symbol}"
+        val executedAt = System.currentTimeMillis() / 1000L
         appPrefs.edit()
-            .putLong("used_sweep_time_${accountId}_${order.mode}_${order.symbol}", order.sweepTime)
-            .putLong("used_mss_time_${accountId}_${order.mode}_${order.symbol}", order.mssTime)
-            .putLong("used_choch_time_${accountId}_${order.mode}_${order.symbol}", order.chochTime)
+            .putLong("used_sweep_time_$signalKey", order.sweepTime)
+            .putLong("used_mss_time_$signalKey", order.mssTime)
+            .putLong("used_choch_time_$signalKey", order.chochTime)
+            .putLong("used_liquidity_created_at_$signalKey", order.liquidityCreatedAt)
+            .putLong("last_signal_execution_$signalKey", executedAt)
             .putString("active_sweep_status_${order.symbol}", "ALREADY EXECUTED")
             .apply()
     }
@@ -4117,10 +4386,15 @@ val savedIsRecovery = appPrefs.getBoolean(
     false
     )
 if (stake > 0.0) {
+    val savedBudget = budgetTradeForContract(id)
     val restored = RunningContract(
         id, symbol, direction, stake, barrier, 0.0, executionMode,
+        budgetDate = savedBudget.first,
+        budgetSlot = savedBudget.second,
         pairId = savedPairId,
         pairSide = savedPairSide,
+        trailingEligible = true,
+        trailingEnabled = appPrefs.getBoolean("contract_trailing_enabled_${accountId}_${executionMode}_$id", true),
         isRecovery = savedIsRecovery
         )
     runningContracts[id] = restored
@@ -4215,7 +4489,27 @@ if (stake > 0.0) {
                             liveContractProfits[id] = liveProfit
                             liveContractProfitModes[id] = "${accountId}_$executionMode"
 
-                            if (trailingStopEnabled && running.trailingEligible) {
+                            // Stop-out is independent of trailing-stop preference.
+                            val stopOutLoss = running.stake * 0.50
+                            if (liveProfit <= -stopOutLoss && !running.closeRequested) {
+                                running.closeRequested = true
+                                running.closeReason = "50% Stake Stop-Out"
+                                val stopSent = derivApiClient.send(
+                                    JSONObject().put("sell", id).put("price", 0).put("req_id", nextTradeRequestId())
+                                )
+                                if (!stopSent) {
+                                    running.closeRequested = false
+                                    running.closeReason = ""
+                                } else {
+                                    notifyEvent(
+                                        "50% STAKE STOP-OUT",
+                                        "${running.symbol} · Contract $id · Loss ${formatMoney(liveProfit)} reached 50% of stake",
+                                        "stopout_close_$id"
+                                    )
+                                }
+                            }
+
+                            if (running.trailingEnabled && running.trailingEligible && !running.closeRequested) {
                                 val activationProfit = running.stake * 0.30
                                 val givebackAmount = running.stake * 0.10
 
@@ -4245,6 +4539,7 @@ if (stake > 0.0) {
                                                 .put("price", 0)
                                                 .put("req_id", nextTradeRequestId())
                                         )
+
                                         if (!closeSent) {
                                             running.closeRequested = false
                                             running.closeReason = ""
@@ -4259,8 +4554,19 @@ if (stake > 0.0) {
                                 }
                             }
                         } else if (isClosed) {
+                            if (running != null && !running.budgetResultRecorded && running.budgetSlot > 0) {
+                                val finalProfit = contract.optDouble("profit", liveProfit)
+                                recordBudgetClose(running.budgetDate, running.budgetSlot, id, finalProfit)
+                                running.budgetResultRecorded = true
+                                notifyEvent(
+                                    if (finalProfit > 0.0) "MY BUDGET: TRADE PROFIT" else "MY BUDGET: TRADE LOSS",
+                                    "${running.symbol} · Slot ${running.budgetSlot} · ${formatMoney(finalProfit)}",
+                                    "budget_result_$id"
+                                )
+                            }
                             liveContractProfits.remove(id)
                             liveContractProfitModes.remove(id)
+                            if (selectedTab == "My Budget") render()
                         }
 
                         val views = contractLiveViews[id]
@@ -4328,7 +4634,7 @@ if (stake > 0.0) {
                                 )
                                 touchExecutionLocks.remove(closedTrade.symbol)
                                 pendingTouchBySymbol.remove(closedTrade.symbol)
-                            }
+                                }
                             if (selectedTab == "Trade") render()
                         }
                     }
@@ -4390,7 +4696,7 @@ android.util.Log.i(
             connected = false
             marketDataRequested = false
             if (::accountStatus.isInitialized) {
-                accountStatus.text = "●  RECONNECTING"
+           accountStatus.text = "●  RECONNECTING"
                 accountStatus.setTextColor(yellow)
             }
         }
@@ -4431,3 +4737,4 @@ override fun onDestroy() {
     super.onDestroy()
 }
                             }
+          
