@@ -55,6 +55,7 @@ class MainActivity : Activity() {
     private lateinit var workspace: LinearLayout
     private val navigationItems = mutableListOf<TextView>()
     private val priceViews = mutableMapOf<String, TextView>()
+    private val rangeViews = mutableMapOf<String, TextView>()
     private lateinit var feedStatus: TextView
     private var derivApiClient: DerivApiClient? = null
     private var selectedPage = "HOME"
@@ -731,21 +732,44 @@ override fun onMarketDataError(symbol: String, message: String) {
                 }
             )
 
-            val name = label(index, 10.5f, indexAccents[position], true).apply {
-                includeFontPadding = false
-                maxLines = 1
-                isSingleLine = true
-                setTextColor(indexAccents[position])
-            }
-            indexCard.addView(name, LinearLayout.LayoutParams(0, -2, 1f))
+            
+val details = LinearLayout(this).apply {
+    orientation = LinearLayout.VERTICAL
+}
 
-            val priceView = label("--", 12f, primary, true).apply {
-                gravity = Gravity.CENTER_VERTICAL or Gravity.END
-                includeFontPadding = false
-                maxLines = 1
-            }
-            priceViews[symbol] = priceView
-            indexCard.addView(priceView)
+val name = label(index, 10.5f, indexAccents[position], true).apply {
+    includeFontPadding = false
+    maxLines = 1
+    isSingleLine = true
+}
+
+details.addView(name)
+
+val rangeView = label(
+    "24H HIGH: WAITING\n24H LOW: WAITING",
+    9f,
+    secondary,
+    false
+).apply {
+    setPadding(0, 4.dp(), 0, 0)
+}
+
+rangeViews[symbol] = rangeView
+details.addView(rangeView)
+
+indexCard.addView(
+    details,
+    LinearLayout.LayoutParams(0, -2, 1f)
+)
+
+val priceView = label("--", 12f, primary, true).apply {
+    gravity = Gravity.CENTER_VERTICAL or Gravity.END
+    includeFontPadding = false
+    maxLines = 1
+}
+
+priceViews[symbol] = priceView
+indexCard.addView(priceView)
 
             workspace.addView(indexCard)
         }
