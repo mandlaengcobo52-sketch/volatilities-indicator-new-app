@@ -1139,7 +1139,7 @@ fun subscribeToLiveTicks() {
  */
 fun startPublicLivePriceFeed() {
     manuallyDisconnected = false
-    livePricesOnly = true
+    livePricesOnly = false
     marketDataReconnectFuture?.cancel(false)
     marketDataReconnectFuture = null
     marketDataEndpointIndex = 0
