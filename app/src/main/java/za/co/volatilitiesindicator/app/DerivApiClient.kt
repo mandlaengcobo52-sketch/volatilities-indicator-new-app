@@ -55,6 +55,10 @@ class DerivApiClient(
             // Optional callback for public market-data errors.
         }
 
+        fun onMarketDataStatus(message: String) {
+            // Optional callback for public market-data connection status.
+        }
+
         fun onError(message: String)
         
                 fun onTradeData(json: JSONObject) {
@@ -229,6 +233,7 @@ class DerivApiClient(
     private var lastAuthenticatedMessageAt: Long = 0L
 
     private var marketDataSocket: WebSocket? = null
+    @Volatile private var livePricesOnly = false
     private var marketDataEndpointIndex = 0
     private var marketDataAttempt = 0
     private var marketDataTimeout: java.util.concurrent.ScheduledFuture<*>? = null
@@ -808,7 +813,6 @@ private val candleIndexes = listOf(
             if (
                 url.isNotEmpty()
             ) {
-
                 return url
             }
 
@@ -1107,7 +1111,6 @@ private val liveIndexes = listOf(
     "R_75",
     "R_100"
 )
-
 fun subscribeToLiveTicks() {
 
     if (!connected) {
@@ -1158,19 +1161,23 @@ private fun connectMarketDataEndpoint() {
                 }
             }, 20, java.util.concurrent.TimeUnit.SECONDS)
 
-            for (symbol in candleIndexes) {
-                val requestId = marketDataRequestId++
-                candleRequestSymbols[requestId] = symbol
-                val message = JSONObject().apply {
-                    put("ticks_history", symbol)
-                    put("count", 1000)
-                    put("end", "latest")
-                    put("style", "candles")
-                    put("granularity", 3600)
-                    put("req_id", requestId)
+            if (!livePricesOnly) {
+                for (symbol in candleIndexes) {
+                    val requestId = marketDataRequestId++
+                    candleRequestSymbols[requestId] = symbol
+                    val message = JSONObject().apply {
+                        put("ticks_history", symbol)
+                        put("count", 1000)
+                        put("end", "latest")
+                        put("style", "candles")
+                        put("granularity", 3600)
+                        put("req_id", requestId)
+                    }
+                    webSocket.send(message.toString())
                 }
-                webSocket.send(message.toString())
             }
+
+            // Subscribe to live quotes for all five synthetic indices.
             for (symbol in candleIndexes) {
                 val tickRequest = JSONObject().apply {
                     put("ticks", symbol)
@@ -1179,6 +1186,7 @@ private fun connectMarketDataEndpoint() {
                 }
                 webSocket.send(tickRequest.toString())
             }
+            callback.onMarketDataStatus("Deriv live-price connection established.")
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
@@ -1260,6 +1268,7 @@ private fun connectMarketDataEndpoint() {
                 marketDataEndpointIndex = (marketDataEndpointIndex + 1) % marketDataEndpoints.size
                 scheduleMarketDataReconnect(700L)
             } else {
+                callback.onMarketDataStatus("Market-data connection failed; retrying...")
                 for (symbol in candleIndexes) {
                     callback.onMarketDataError(symbol, "Market-data connection failed; retrying automatically. Last HTTP=${response?.code ?: "unknown"}; ${t.message ?: "network error"}")
                 }
@@ -1402,7 +1411,6 @@ if (tick != null) {
             ) {
                 callback.onTradeData(json)
             }
-
             /*
              * Deriv WebSocket error. Forwarding above allows the pending trade
  Forwarding above allows the pending trade
@@ -2005,7 +2013,6 @@ candleRequestSymbols.clear()
      * to establish a connection.
      */
     fun isConnecting(): Boolean {
-
         return connecting
     }
 
