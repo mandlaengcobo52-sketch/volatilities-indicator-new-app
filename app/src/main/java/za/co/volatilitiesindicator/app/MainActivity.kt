@@ -37,6 +37,7 @@ class MainActivity : Activity() {
     private val primary = Color.rgb(239, 246, 242)
     private val secondary = Color.rgb(164, 181, 174)
     private val accent = Color.rgb(0, 239, 91)
+    private val brandYellow = Color.rgb(255, 220, 65)
     private val indexBackgrounds = listOf(
         Color.rgb(6, 20, 18),
         Color.rgb(6, 20, 18),
@@ -115,7 +116,7 @@ class MainActivity : Activity() {
             setBackgroundColor(surface)
         }
 
-        header.addView(BrandMark(this), LinearLayout.LayoutParams(54.dp(), 54.dp()))
+        header.addView(BrandMark(this), LinearLayout.LayoutParams(64.dp(), 64.dp()))
 
         val brandText = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -148,7 +149,7 @@ class MainActivity : Activity() {
             )
         }
 
-        pageHeading = label("HOME", 12f, secondary, true).apply {
+        pageHeading = label("HOME", 12f, brandYellow, true).apply {
             letterSpacing = 0.12f
             setPadding(2.dp(), 0, 0, 14.dp())
         }
@@ -213,7 +214,7 @@ class MainActivity : Activity() {
         pageHeading.text = if (page == "NOTIFICATIONS") "NOTIFICATIONS" else page
         navigationItems.forEach { item ->
             val active = item.tag.toString() == page
-            item.setTextColor(if (active) accent else secondary)
+            item.setTextColor(if (active) accent else brandYellow)
             item.alpha = if (active) 1f else 0.82f
         }
 
@@ -230,7 +231,7 @@ class MainActivity : Activity() {
 
 
     private fun addSectionTitle(title: String, subtitle: String? = null) {
-        workspace.addView(label(title, 13f, primary, true).apply {
+        workspace.addView(label(title, 13f, brandYellow, true).apply {
             setPadding(0, 2.dp(), 0, 4.dp())
         })
         if (!subtitle.isNullOrBlank()) {
@@ -711,7 +712,7 @@ override fun onMarketDataError(symbol: String, message: String) {
         priceViews.clear()
         rangeViews.clear()
 
-        workspace.addView(label("INDEX MONITOR", 11f, primary, true).apply {
+        workspace.addView(label("INDEX MONITOR", 11f, brandYellow, true).apply {
             letterSpacing = 0.08f
             setPadding(2.dp(), 0, 0, 8.dp())
         })
@@ -728,7 +729,7 @@ override fun onMarketDataError(symbol: String, message: String) {
             val indexCard = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                background = outlined(indexBackgrounds[position], 11, indexAccents[position], 1)
+                background = outlined(indexBackgrounds[position], 13, indexAccents[position], 2)
                 setPadding(12.dp(), 10.dp(), 12.dp(), 10.dp())
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
@@ -756,7 +757,6 @@ val rangeView = label(
 ).apply {
     setPadding(0, 4.dp(), 0, 0)
 }
-
 rangeViews[symbol] = rangeView
 details.addView(rangeView)
 
@@ -875,23 +875,21 @@ private fun updateRangeDisplay(symbol: String) {
             canvas.drawCircle(cx, cy, radius, darkPaint)
             canvas.drawCircle(cx, cy, radius, ringPaint)
 
+            // Green left arm and silver right arm form the original two-tone V.
             val greenV = Path().apply {
-                moveTo(cx - side * 0.34f, cy - side * 0.27f)
-                lineTo(cx - side * 0.20f, cy - side * 0.27f)
-                lineTo(cx, cy + side * 0.19f)
-                lineTo(cx + side * 0.20f, cy - side * 0.27f)
-                lineTo(cx + side * 0.35f, cy - side * 0.27f)
-                lineTo(cx + side * 0.07f, cy + side * 0.34f)
-                lineTo(cx - side * 0.07f, cy + side * 0.34f)
+                moveTo(cx - side * 0.34f, cy - side * 0.28f)
+                lineTo(cx - side * 0.20f, cy - side * 0.28f)
+                lineTo(cx + side * 0.015f, cy + side * 0.22f)
+                lineTo(cx - side * 0.075f, cy + side * 0.34f)
                 close()
             }
             canvas.drawPath(greenV, greenPaint)
 
             val silverV = Path().apply {
-                moveTo(cx + side * 0.01f, cy + side * 0.12f)
-                lineTo(cx + side * 0.27f, cy - side * 0.27f)
-                lineTo(cx + side * 0.40f, cy - side * 0.27f)
-                lineTo(cx + side * 0.10f, cy + side * 0.20f)
+                moveTo(cx - side * 0.015f, cy + side * 0.22f)
+                lineTo(cx + side * 0.20f, cy - side * 0.28f)
+                lineTo(cx + side * 0.35f, cy - side * 0.28f)
+                lineTo(cx + side * 0.075f, cy + side * 0.34f)
                 close()
             }
             canvas.drawPath(silverV, silverPaint)
