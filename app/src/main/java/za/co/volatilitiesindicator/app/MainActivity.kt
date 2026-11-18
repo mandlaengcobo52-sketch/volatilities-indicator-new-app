@@ -148,6 +148,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     )
 
     private val positions = linkedMapOf<String, Position>()
+    private val trailingStopEnabled = false
     private val pendingRequests = mutableMapOf<Int, String>()
     private val dailyLevels = mutableMapOf<String, Pair<Double, Double>>() // high, low
     private val candlesByIndex = mutableMapOf<String, List<DerivApiClient.Candle>>()
@@ -895,10 +896,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             "PUT" -> p.direction = "FALL"
         }
         p.profit = contract.optDouble("profit", p.profit)
+        if (trailingStopEnabled) {
         if (p.profit > p.peakProfit) p.peakProfit = p.profit
         val trailingStartPercent = 30.0
         val percent = if (p.stake > 0.0) (p.peakProfit / p.stake) * 100.0 else 0.0
-        if (percent >= trailingStartPercent) {
+        if (trailingStopEnabled && percent >= trailingStartPercent) {
             val level = kotlin.math.floor(percent / 10.0) * 10.0
             val protected = p.stake * (level / 100.0)
             if (protected > p.protectedProfit) {
@@ -909,7 +911,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             }
         }
         val minimumProtected = p.stake * (trailingStartPercent / 100.0)
-        if (p.protectedProfit >= minimumProtected && p.profit >= p.protectedProfit) {
+        if (trailingStopEnabled && p.protectedProfit >= minimumProtected) {
             // Arm as soon as the 30% threshold (or a higher
             // 10% step) is reached; do not sell on the same tick that sets the peak.
             p.trailingLockArmed = true
@@ -919,7 +921,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val trailingExitReached = p.trailingLockArmed && p.protectedProfit >= minimumProtected &&
             p.profit < p.protectedProfit && p.profit < p.peakProfit && hasMinimumPeak
 
-        if (!isSold && !p.trailingCloseRequested && trailingExitReached &&
+        if (trailingStopEnabled && !isSold && !p.trailingCloseRequested && trailingExitReached &&
             contract.optInt("is_valid_to_sell", 0) == 1) {
             p.trailingCloseRequested = true
             p.status = "CLOSING BY TRAILING"
