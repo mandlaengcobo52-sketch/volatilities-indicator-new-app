@@ -916,6 +916,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             // 10% step) is reached; do not sell on the same tick that sets the peak.
             p.trailingLockArmed = true
         }
+        }
         val isSold = contract.optInt("is_sold", 0) == 1 || contract.optInt("is_expired", 0) == 1
         val hasMinimumPeak = p.peakProfit >= minimumProtected
         val trailingExitReached = p.trailingLockArmed && p.protectedProfit >= minimumProtected &&
