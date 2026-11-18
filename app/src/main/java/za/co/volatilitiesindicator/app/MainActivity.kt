@@ -1,6 +1,12 @@
 package za.co.volatilitiesindicator.app
 
 import android.app.Activity
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.pm.PackageManager
+import android.Manifest
 import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
@@ -60,6 +66,24 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val priceViews = mutableMapOf<String, TextView>()
     private val indexStatusViews = mutableMapOf<String, TextView>()
     private val marketStatusViews = mutableMapOf<String, TextView>()
+    private val levelStatusViews = mutableMapOf<String, TextView>()
+    private val recoveryStatusViews = mutableMapOf<String, TextView>()
+
+    private data class AppNotification(
+        val id: Long,
+        val page: String,
+        val title: String,
+        val message: String,
+        val timestamp: Long,
+        var read: Boolean = false
+    )
+
+    private val appNotifications = mutableListOf<AppNotification>()
+    private val notificationPrefs by lazy {
+        getSharedPreferences("vi_notifications", MODE_PRIVATE)
+    }
+    private val notificationChannelId = "vi_app_alerts"
+    private val notificationPermissionRequest = 9001
 
     private var marketFeedConnected = false
     private var accountConnected = false
@@ -153,7 +177,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         tradingDayKey = tradePrefs.getString("day_key", "").orEmpty()
         dailyCapital = tradePrefs.getFloat("daily_capital", 0f).toDouble()
         loadPositions()
+        loadNotifications()
         originalTriggered.addAll(tradePrefs.getStringSet("triggered_$tradingDayKey", emptySet()) ?: emptySet())
+        createNotificationChannel()
+        requestNotificationPermissionIfNeeded()
+        handleNotificationIntent(intent, false)
         render()
         startMarketFeedService()
         handleOAuthCallback(intent)
@@ -162,6 +190,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         setIntent(intent)
+        handleNotificationIntent(intent)
         handleOAuthCallback(intent)
     }
 
@@ -217,6 +246,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         accountConnected = true
         executionMode = if (accountType.equals("REAL", true)) "REAL" else "DEMO"
         accountLabel = "$accountId ($accountType)"
+        addNotification("Accounts", "Deriv account connected", "$accountLabel is connected.")
         derivService?.client?.requestOpenTrades()
         runOnUiThread {
             accountIdView?.text = accountLabel
@@ -258,6 +288,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 text = "LIVE"
                 setTextColor(green)
             }
+            updateMasterDecisionViews(symbol)
         }
     }
 
@@ -278,7 +309,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     text = "LIVE"
                     setTextColor(green)
                 }
+                updateMasterDecisionViews(symbol)
+                updateRecoveryStatusView(symbol)
             }
+            if (selectedTab == "Home") runOnUiThread { updateMasterDecisionViews(symbol); updateRecoveryStatusView(symbol) }
         }
     }
 
@@ -289,12 +323,14 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 setTextColor(red)
             }
             marketStatusViews[symbol]?.text = message
+            addNotification("Home", "Market data error · ${displayIndexName(symbol)}", message)
             updateConnectionLabels("Market data error: $symbol")
         }
     }
 
     override fun onError(message: String) {
         runOnUiThread {
+            addNotification("Accounts", "Deriv connection issue", message)
             if (accountConnected) {
                 toast(message)
             } else {
@@ -344,6 +380,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 if (position.contractId <= 0L) { position.status = "BUY FAILED"; return }
                 position.status = "OPEN"
                 savePositions()
+                addNotification("Trade", "${displayIndexName(position.symbol)} ${position.role.lowercase(Locale.US)} opened", "${position.direction} contract opened. Stake: ${formatMoney(position.stake)}.")
                 subscribePosition(position.contractId)
                 runOnUiThread { if (selectedTab == "Trade") render() }
             }
@@ -360,7 +397,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     override fun onDisconnected() {
+        val wasConnected = accountConnected
         accountConnected = false
+        if (wasConnected) addNotification("Accounts", "Deriv account disconnected", "The authenticated Deriv account connection was lost.")
         accountLabel = "Not connected"
         accountBalanceLabel = "Balance unavailable"
         runOnUiThread {
@@ -370,6 +409,244 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
     }
 
+
+    private fun handleNotificationIntent(intent: Intent?, shouldRender: Boolean = true) {
+        if (intent == null) return
+        val page = intent.getStringExtra("notification_page")
+        val notificationId = intent.getLongExtra("notification_id", -1L)
+        if (!page.isNullOrBlank() && page in listOf("Home", "Trade", "Accounts", "Settings")) {
+            selectedTab = page
+        }
+        if (notificationId > 0L) {
+            appNotifications.firstOrNull { it.id == notificationId }?.read = true
+            saveNotifications()
+        }
+        intent.removeExtra("notification_page")
+        intent.removeExtra("notification_id")
+        if (shouldRender && !page.isNullOrBlank()) render()
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(
+                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                notificationPermissionRequest
+            )
+        }
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                notificationChannelId,
+                "Volatilities Indicator Alerts",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply {
+                description = "Market, trading, recovery and account notifications"
+            }
+            val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun addNotification(page: String, title: String, message: String) {
+        runOnUiThread {
+            val duplicate = appNotifications.any {
+                it.page == page && it.title == title && it.message == message && !it.read
+            }
+            if (duplicate) return@runOnUiThread
+
+            val now = System.currentTimeMillis()
+            val item = AppNotification(now, page, title, message, now)
+            appNotifications.add(0, item)
+            while (appNotifications.size > 250) appNotifications.removeAt(appNotifications.lastIndex)
+            saveNotifications()
+            showAndroidNotification(item)
+            if (selectedTab == page) render()
+        }
+    }
+
+    private fun showAndroidNotification(item: AppNotification) {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+
+        val tapIntent = Intent(this, MainActivity::class.java).apply {
+            putExtra("notification_page", item.page)
+            putExtra("notification_id", item.id)
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            item.id.hashCode(),
+            tapIntent,
+    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, notificationChannelId)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this).setPriority(Notification.PRIORITY_DEFAULT)
+        }
+        builder.setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle(item.title)
+            .setContentText(item.message)
+            .setStyle(Notification.BigTextStyle().bigText(item.message))
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+
+        val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(item.id.hashCode(), builder.build())
+    }
+
+    private fun saveNotifications() {
+        val array = JSONArray()
+        appNotifications.forEach { item ->
+            array.put(JSONObject()
+                .put("id", item.id)
+                .put("page", item.page)
+                .put("title", item.title)
+                .put("message", item.message)
+                .put("timestamp", item.timestamp)
+                .put("read", item.read))
+        }
+        notificationPrefs.edit().putString("items", array.toString()).apply()
+    }
+
+    private fun loadNotifications() {
+        val raw = notificationPrefs.getString("items", "") ?: return
+        try {
+            val array = JSONArray(raw)
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                appNotifications.add(AppNotification(
+                    obj.optLong("id"),
+                    obj.optString("page", "Home"),
+                    obj.optString("title"),
+                    obj.optString("message"),
+                    obj.optLong("timestamp"),
+                    obj.optBoolean("read", false)
+                ))
+            }
+        } catch (_: Exception) {
+            appNotifications.clear()
+        }
+    }
+
+    private fun notificationBar(): View {
+        val row = horizontal()
+        row.addView(text(selectedTab.uppercase(Locale.US), 13f, muted, true),
+            LinearLayout.LayoutParams(0, -2, 1f))
+        val unread = appNotifications.count { it.page == selectedTab && !it.read }
+        val bell = TextView(this).apply {
+            text = if (unread > 0) "🔔 $unread" else "🔔"
+            textSize = 16f
+            gravity = Gravity.CENTER
+            setTextColor(if (unread > 0) red else green)
+            setPadding(dp(13), dp(8), dp(13), dp(8))
+            background = rounded(Color.WHITE, lineColor, 22)
+            contentDescription = "$unread unread $selectedTab notifications"
+            setOnClickListener { showNotificationsDialog() }
+        }
+        row.addView(bell)
+        return row
+    }
+
+    private fun showNotificationsDialog() {
+        val pageItems = appNotifications.filter { it.page == selectedTab }
+        if (pageItems.isEmpty()) {
+            AlertDialog.Builder(this)
+                .setTitle("$selectedTab notifications")
+                .setMessage("There are no notifications for this page.")
+                .setPositiveButton("CLOSE", null)
+                .show()
+            return
+        }
+        val labels = pageItems.map { item ->
+            val state = if (item.read) "READ" else "UNREAD"
+            val time = java.text.DateFormat.getDateTimeInstance().format(java.util.Date(item.timestamp))
+            "$state · ${item.title}\n${item.message}\n$time"
+        }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("$selectedTab notifications (${pageItems.count { !it.read }} unread)")
+            .setItems(labels) { _, which ->
+                val item = pageItems[which]
+                item.read = true
+                saveNotifications()
+                AlertDialog.Builder(this)
+                    .setTitle(item.title)
+                    .setMessage(item.message)
+                    .setPositiveButton("CLOSE") { _, _ -> render() }
+                    .show()
+            }
+            .setNeutralButton("MARK ALL READ") { _, _ ->
+                pageItems.forEach { it.read = true }
+                saveNotifications()
+                render()
+            }
+            .setNegativeButton("CLOSE", null)
+            .show()
+    }
+
+    private fun referenceLevelsText(symbol: String): String {
+        val levels = dailyLevels[symbol] ?: return "REFERENCE HIGH: --\nREFERENCE LOW: --"
+        return "PREVIOUS DAY HIGH: ${formatPrice(levels.first)}\nPREVIOUS DAY LOW: ${formatPrice(levels.second)}"
+    }
+
+    private fun masterDecisionText(symbol: String): String {
+        if (!marketFeedConnected || latestPrices[symbol] == null) {
+            return "Waiting for live market price data."
+        }
+        val levels = dailyLevels[symbol]
+            ?: return "Waiting for completed daily candles to establish the previous-day reference high and low."
+        if (!accountConnected) {
+            return "Reference levels are available. Waiting for Deriv account connection before entry conditions can be evaluated."
+        }
+        val price = latestPrices[symbol] ?: return "Waiting for live market price data."
+        return when {
+            price >= levels.first -> "Price is at or above the previous-day high. The high-side entry condition is being evaluated."
+            price <= levels.second -> "Price is at or below the previous-day low. The low-side entry condition is being evaluated."
+            else -> "Waiting for price to reach the previous-day high (${formatPrice(levels.first)}) or low (${formatPrice(levels.second)})."
+        }
+    }
+
+    private fun recoveryStatusText(symbol: String): String {
+        val waitingOriginal = positions.values.firstOrNull {
+            it.symbol == symbol && it.role == "ORIGINAL" && it.status == "CLOSED" && it.localId in recoveryWaiting
+        }
+        if (waitingOriginal == null) {
+            val openOriginal = positions.values.any {
+                it.symbol == symbol && it.role == "ORIGINAL" && it.status != "CLOSED" && !it.status.startsWith("ERROR")
+            }
+            return if (openOriginal) {
+                "Waiting for the original trade to close before recovery evaluation."
+            } else {
+                "No eligible closed original trade. Recovery is waiting for an original trade to complete."
+            }
+        }
+        val mss = recoveryMss[symbol]
+        val choch = recoveryChoch[symbol]
+        return when {
+            mss.isNullOrBlank() && choch.isNullOrBlank() -> "Original trade closed. Waiting for confirmed candle-close MSS and CHOCH."
+            !mss.isNullOrBlank() && choch.isNullOrBlank() -> "MSS confirmed ${mss.lowercase(Locale.US)}. Waiting for CHOCH confirmation."
+            mss.isNullOrBlank() && !choch.isNullOrBlank() -> "CHOCH confirmed ${choch.lowercase(Locale.US)}. Waiting for MSS confirmation."
+            mss == choch -> "MSS and CHOCH agree (${mss.lowercase(Locale.US)}). Recovery conditions are aligned."
+            else -> "MSS and CHOCH disagree. Waiting for matching confirmation."
+        }
+    }
+
+    private fun updateMasterDecisionViews(symbol: String) {
+        levelStatusViews[symbol]?.text = referenceLevelsText(symbol)
+        marketStatusViews[symbol]?.text = masterDecisionText(symbol)
+    }
+
+    private fun updateRecoveryStatusView(symbol: String) {
+        recoveryStatusViews[symbol]?.text = recoveryStatusText(symbol)
+    }
+
+    private fun formatMoney(value: Double): String =
+        String.format(Locale.US, "%.2f %s", value, accountCurrency)
 
     private fun nextRequestId(): Int = ++requestCounter
 
@@ -386,7 +663,17 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val completed = grouped.filterKeys { it < currentDay }.entries.lastOrNull() ?: return
         val high = completed.value.maxOf { it.high }
         val low = completed.value.minOf { it.low }
-        if (high > low && high.isFinite() && low.isFinite()) dailyLevels[symbol] = high to low
+        if (high > low && high.isFinite() && low.isFinite()) {
+            val previous = dailyLevels[symbol]
+            dailyLevels[symbol] = high to low
+            if (previous == null || previous.first != high || previous.second != low) {
+                addNotification(
+                    "Home",
+                    "${displayIndexName(symbol)} reference levels updated",
+                    "Previous completed-day high: ${formatPrice(high)}; low: ${formatPrice(low)}."
+                )
+            }
+        }
     }
 
     private fun evaluateOriginalEntries(symbol: String, quote: Double) {
@@ -430,6 +717,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             .put("underlying_symbol", symbol)
             .put("req_id", req)
         p.status = "REQUESTING PROPOSAL"
+        if (role == "RECOVERY") {
+            addNotification("Trade", "${displayIndexName(symbol)} recovery setup", "Recovery ${direction.lowercase(Locale.US)} proposal requested after the existing recovery conditions aligned.")
+        }
         derivService?.client?.send(proposal)
         savePositions()
         runOnUiThread { if (selectedTab == "Trade") render() }
@@ -443,6 +733,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private fun handleOpenContract(contract: JSONObject) {
         val contractId = contract.optLong("contract_id", 0L)
         val p = positions.values.firstOrNull { it.contractId == contractId } ?: return
+        val wasAlreadyClosed = p.status == "CLOSED"
         p.profit = contract.optDouble("profit", p.profit)
         if (p.profit > p.peakProfit) p.peakProfit = p.profit
         val percent = if (p.stake > 0.0) (p.peakProfit / p.stake) * 100.0 else 0.0
@@ -458,8 +749,14 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             p.status = "CLOSING BY TRAILING"
         } else if (isSold) {
             p.status = "CLOSED"
+            if (!wasAlreadyClosed) {
+                addNotification("Trade", "${displayIndexName(p.symbol)} trade closed", "${p.role} ${p.direction} trade closed. Final reported profit: ${formatMoney(p.profit)}.")
+            }
             if (p.role == "ORIGINAL" && p.localId !in recoveryWaiting) {
                 recoveryWaiting.add(p.localId)
+                if (!wasAlreadyClosed) {
+                    addNotification("Trade", "${displayIndexName(p.symbol)} recovery waiting", "Original trade closed. Waiting for the existing recovery MSS and CHOCH confirmation logic.")
+                }
                 savePositions()
             }
         } else {
@@ -488,21 +785,31 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             last.close < lastLow -> "FALL"
             else -> ""
         }
-        if (mssDirection.isNotBlank()) recoveryMss[symbol] = mssDirection
+        if (mssDirection.isNotBlank() && recoveryMss[symbol] != mssDirection) {
+            recoveryMss[symbol] = mssDirection
+            addNotification("Trade", "${displayIndexName(symbol)} recovery MSS detected", "A closed-candle market-structure shift was detected in the ${mssDirection.lowercase(Locale.US)} direction.")
+        }
         // CHOCH is the closed-candle break of the opposing one-candle swing.
         val chochDirection = when {
             last.close > lastHigh && last.close > last.open -> "RISE"
             last.close < lastLow && last.close < last.open -> "FALL"
             else -> ""
         }
-        if (chochDirection.isNotBlank()) recoveryChoch[symbol] = chochDirection
+        if (chochDirection.isNotBlank() && recoveryChoch[symbol] != chochDirection) {
+            recoveryChoch[symbol] = chochDirection
+            addNotification("Trade", "${displayIndexName(symbol)} recovery CHOCH detected", "A closed-candle CHOCH was detected in the ${chochDirection.lowercase(Locale.US)} direction.")
+        }
         val mss = recoveryMss[symbol]
         val choch = recoveryChoch[symbol]
-        if (mss.isNullOrBlank() || mss != choch) return
+        if (mss.isNullOrBlank() || mss != choch) {
+            runOnUiThread { updateRecoveryStatusView(symbol) }
+            return
+        }
         val eligible = positions.values.filter { it.symbol == symbol && it.role == "ORIGINAL" && it.status == "CLOSED" && it.localId in recoveryWaiting }
         val original = eligible.firstOrNull() ?: return
         val recoveryStake = original.stake + original.profit.coerceAtLeast(0.0)
         recoveryWaiting.remove(original.localId)
+        addNotification("Trade", "${displayIndexName(symbol)} recovery confirmed", "MSS and CHOCH agree on ${mss.lowercase(Locale.US)}. Recovery proposal is being prepared.")
         recoveryMss.remove(symbol)
         recoveryChoch.remove(symbol)
         openPosition(symbol, mss, "RECOVERY", recoveryStake, original.localId)
@@ -689,6 +996,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         accountConnected = false
         accountLabel = "Not connected"
         accountBalanceLabel = "Balance unavailable"
+        addNotification("Accounts", "Deriv account disconnected", "The Deriv account was disconnected from the application.")
         render()
         toast("Deriv account disconnected.")
     }
@@ -713,6 +1021,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         priceViews.clear()
         indexStatusViews.clear()
         marketStatusViews.clear()
+        levelStatusViews.clear()
+        recoveryStatusViews.clear()
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -730,6 +1040,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         root.addView(bottomNavigation())
         setContentView(root)
+
+        content.addView(notificationBar())
+        content.addView(space(12))
 
         when (selectedTab) {
             "Home" -> showHome()
@@ -767,7 +1080,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         status.addView(feedPill)
         content.addView(status)
         content.addView(space(12))
-
         val account = card()
         account.addView(text("TRADING ACCOUNT", 12f, muted, true))
         account.addView(space(8))
@@ -818,9 +1130,21 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             indexCard.addView(space(8))
             indexCard.addView(text("MASTER DECISION", 11f, muted, true))
             indexCard.addView(text("WAITING", 12f, amber, true))
-            val feedDetail = text("Waiting for market data…", 11f, muted)
+            val levelsView = text(referenceLevelsText(symbol), 12f, ink, true)
+            levelStatusViews[symbol] = levelsView
+            indexCard.addView(levelsView)
+            indexCard.addView(space(6))
+            val feedDetail = text(masterDecisionText(symbol), 11f, muted)
             marketStatusViews[symbol] = feedDetail
+            indexCard.addView(text("WAITING FOR", 10f, muted, true))
             indexCard.addView(feedDetail)
+            indexCard.addView(space(8))
+            indexCard.addView(divider())
+            indexCard.addView(space(8))
+            indexCard.addView(text("RECOVERY STATUS", 11f, muted, true))
+            val recoveryView = text(recoveryStatusText(symbol), 11f, muted)
+            recoveryStatusViews[symbol] = recoveryView
+            indexCard.addView(recoveryView)
             content.addView(indexCard)
             content.addView(space(9))
         }
@@ -837,7 +1161,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (positions.isEmpty()) {
             val empty = card()
             empty.addView(text("NO RUNNING TRADES", 15f, ink, true))
-            empty.addView(text("The engine is waiting for the previous completed daily high or low.", 13f, muted))
+            empty.addView(text("No trade is currently recorded. Entry evaluation requires live prices, previous completed-day reference levels and a connected Deriv account.", 13f, muted))
             content.addView(empty)
         } else {
             positions.values.forEach { p ->
