@@ -49,18 +49,17 @@ import org.json.JSONArray
 
 class MainActivity : Activity(), DerivApiClient.Callback {
 
-    private val replacementWhite = Color.parseColor("#FFCDDC39")
     private var darkInterface = true
     private val ink: Int get() = if (darkInterface) Color.rgb(242, 246, 244) else Color.rgb(28, 39, 51)
-    private val muted: Int get() = if (darkInterface) replacementWhite else Color.rgb(28, 39, 51)
-    private val whiteText: Int get() = if (darkInterface) replacementWhite else ink
+    private val muted: Int get() = if (darkInterface) Color.WHITE else Color.rgb(28, 39, 51)
+    private val whiteText: Int get() = if (darkInterface) Color.WHITE else ink
     private val green = Color.rgb(0, 200, 83)
     private val red = Color.rgb(244, 67, 54)
     private val amber = Color.rgb(255, 214, 0)
     private val gold = Color.rgb(255, 214, 0)
     private val blue = Color.rgb(33, 150, 243)
     private val pageColor: Int get() = if (darkInterface) Color.rgb(0, 7, 5) else Color.rgb(245, 247, 250)
-    private val cardColor: Int get() = if (darkInterface) Color.rgb(5, 25, 18) else replacementWhite
+    private val cardColor: Int get() = if (darkInterface) Color.rgb(5, 25, 18) else Color.WHITE
     private val lineColor: Int get() = if (darkInterface) Color.rgb(25, 91, 62) else Color.rgb(190, 225, 205)
 
     private lateinit var content: LinearLayout
@@ -201,14 +200,14 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.statusBarColor = pageColor
-        window.navigationBarColor = replacementWhite
+        window.navigationBarColor = Color.WHITE
         window.decorView.systemUiVisibility =
             View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
                 View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         darkInterface = settingsPrefs.getBoolean("dark_interface", true)
         autoTradingEnabled = settingsPrefs.getBoolean("auto_trading_enabled", true)
         window.statusBarColor = pageColor
-        window.navigationBarColor = if (darkInterface) Color.rgb(19, 25, 33) else replacementWhite
+        window.navigationBarColor = if (darkInterface) Color.rgb(19, 25, 33) else Color.WHITE
         window.decorView.systemUiVisibility = if (darkInterface) 0 else
             View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         tradingDayKey = tradePrefs.getString("day_key", "").orEmpty()
@@ -338,7 +337,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (accountConnected) evaluateOriginalEntries(symbol, quote)
         runOnUiThread {
             feedPillView?.text = "LIVE"
-            feedPillView?.setTextColor(green)
+            feedPillView?.setTextColor(Color.WHITE)
             priceViews[symbol]?.text = formatPrice(quote)
             indexStatusViews[symbol]?.apply {
                 text = "LIVE"
@@ -359,7 +358,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             if (!latestPrices.containsKey(symbol)) latestPrices[symbol] = lastClose
             runOnUiThread {
                 feedPillView?.text = "LIVE"
-                feedPillView?.setTextColor(green)
+                feedPillView?.setTextColor(Color.WHITE)
                 priceViews[symbol]?.text = formatPrice(latestPrices[symbol] ?: lastClose)
                 indexStatusViews[symbol]?.apply {
                     text = "LIVE"
@@ -679,9 +678,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             text = if (unread > 0) "🔔 $unread" else "🔔"
             textSize = 16f
             gravity = Gravity.CENTER
-            setTextColor(if (unread > 0) red else gold)
+            setTextColor(Color.BLACK)
             setPadding(dp(13), dp(8), dp(13), dp(8))
-            background = rounded(replacementWhite, lineColor, 22)
+            background = rounded(Color.WHITE, lineColor, 22)
             contentDescription = "$unread unread $selectedTab notifications"
             setOnClickListener { showNotificationsDialog() }
         }
@@ -693,7 +692,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private fun updateNotificationBadge() {
         val unread = appNotifications.count { it.page == selectedTab && !it.read }
         notificationBellView?.text = if (unread > 0) "🔔 $unread" else "🔔"
-        notificationBellView?.setTextColor(if (unread > 0) red else gold)
+        notificationBellView?.setTextColor(Color.BLACK)
     }
 
     private fun showNotificationsDialog() {
@@ -1510,9 +1509,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         accountStatusView = statusText
         account.addView(statusText)
         account.addView(space(12))
-        account.addView(actionButton(if (accountConnected) "ACCOUNT OPTIONS" else "CONNECT DERIV ACCOUNT") {
+        val accountOptionsButton = actionButton(if (accountConnected) "ACCOUNT OPTIONS" else "CONNECT DERIV ACCOUNT") {
             if (accountConnected) openTab("Accounts") else showAccountModeDialog()
-        })
+        }
+        accountOptionsButton.setTextColor(Color.BLACK)
+        account.addView(accountOptionsButton)
         content.addView(account)
         content.addView(space(18))
 
@@ -1544,7 +1545,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             indexCard.addView(space(8))
             indexCard.addView(divider())
             indexCard.addView(space(8))
-            indexCard.addView(text("MASTER DECISION", 11f, replacementWhite, true))
+            indexCard.addView(text("MASTER DECISION", 11f, Color.WHITE, true))
             val decisionView = text(runningDirectionText(symbol) ?: "WAITING", 12f,
                 if (runningDirectionText(symbol) != null) green else amber, true)
             masterDecisionViews[symbol] = decisionView
@@ -1557,9 +1558,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             indexCard.addView(highView)
             indexCard.addView(lowView)
             indexCard.addView(space(6))
-            val feedDetail = text(masterDecisionText(symbol), 11f, replacementWhite)
+            val feedDetail = text(masterDecisionText(symbol), 11f, Color.WHITE)
             marketStatusViews[symbol] = feedDetail
-            indexCard.addView(text("WAITING FOR", 10f, replacementWhite, true))
+            indexCard.addView(text("WAITING FOR", 10f, Color.WHITE, true))
             indexCard.addView(feedDetail)
             indexCard.addView(space(8))
             indexCard.addView(divider())
@@ -1610,22 +1611,52 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             empty.addView(text("No trade is currently open.", 13f, muted))
             content.addView(empty)
         } else {
-            activePositions.forEach { p ->
-                val c = card(indexNameColor(p.symbol))
-                c.addView(text("${displayIndexName(p.symbol)} · ${p.role}", 14f, indexNameColor(p.symbol), true))
-                c.addView(text("DIRECTION: ${p.direction}", 14f, if (p.direction == "RISE") green else red, true))
-                c.addView(text("Contract: ${if (p.contractId > 0L) p.contractId.toString() else "Pending"}", 12f, replacementWhite))
-                c.addView(text("Stake: ${formatMoney(p.stake)}", 13f, gold))
-                val statusView = text("Status: ${p.status}", 13f, if (p.status == "OPEN") green else amber, true)
-                tradeStatusViews[p.localId] = statusView
-                c.addView(statusView)
-                val profitView = text("Profit / Loss: ${formatMoney(p.profit)}", 14f, if (p.profit >= 0.0) green else red, true)
-                tradeProfitViews[p.localId] = profitView
-                c.addView(profitView)
-                if (p.contractId > 0L && p.status == "OPEN") {
-                    c.addView(space(8))
-                    c.addView(actionButton("CLOSE RUNNING TRADE", primary = false) { closeRunningPosition(p) })
+            // Keep one card per index, with each running contract displayed
+            // independently inside that card.
+            activePositions.groupBy { it.symbol }.forEach { (symbol, indexPositions) ->
+                val c = card(indexNameColor(symbol))
+                c.addView(text("${displayIndexName(symbol)} · RUNNING POSITIONS", 14f,
+                    indexNameColor(symbol), true))
+                c.addView(space(8))
+
+                indexPositions.forEachIndexed { index, p ->
+                    if (index > 0) {
+                        c.addView(space(8))
+                        c.addView(divider())
+                        c.addView(space(8))
+                    }
+
+                    c.addView(text("${p.role} · ${p.direction}", 14f,
+                        if (p.direction == "RISE") green else red, true))
+                    c.addView(text("Contract: ${if (p.contractId > 0L) p.contractId.toString() else "Pending"}",
+                        12f, Color.WHITE))
+                    c.addView(text("Stake: ${formatMoney(p.stake)}", 13f, gold))
+
+                    val statusView = text("Status: ${p.status}", 13f,
+                        if (p.status == "OPEN") green else amber, true)
+                    tradeStatusViews[p.localId] = statusView
+                    c.addView(statusView)
+
+                    val profitView = text("Profit / Loss: ${formatMoney(p.profit)}", 14f,
+                        if (p.profit >= 0.0) green else red, true)
+                    tradeProfitViews[p.localId] = profitView
+                    c.addView(profitView)
+
+                    if (p.contractId > 0L && p.status == "OPEN") {
+                        c.addView(space(6))
+                        c.addView(actionButton("CLOSE THIS ${p.direction} TRADE", primary = false) {
+                            closeRunningPosition(p)
+                        })
+                    }
                 }
+
+                val combinedProfit = indexPositions.sumOf { it.profit }
+                c.addView(space(8))
+                c.addView(divider())
+                c.addView(space(8))
+                c.addView(text("INDEX COMBINED P/L: ${formatMoney(combinedProfit)}", 13f,
+                    if (combinedProfit >= 0.0) green else red, true))
+
                 content.addView(c)
                 content.addView(space(8))
             }
@@ -1634,7 +1665,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         content.addView(space(10))
         content.addView(divider())
         content.addView(space(14))
-        content.addView(text("TRADE HISTORY", 17f, replacementWhite, true))
+        content.addView(text("TRADE HISTORY", 17f, Color.WHITE, true))
         content.addView(text("Completed original and recovery contracts.", 12f, whiteText))
         content.addView(space(8))
         if (closedPositions.isEmpty()) {
@@ -1644,10 +1675,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 val c = card(indexNameColor(p.symbol))
                 c.addView(text("${displayIndexName(p.symbol)} · ${p.role}", 14f, indexNameColor(p.symbol), true))
                 c.addView(text("DIRECTION: ${p.direction}", 14f, if (p.direction == "RISE") green else red, true))
-                c.addView(text("Stake: ${formatMoney(p.stake)}", 13f, replacementWhite))
+                c.addView(text("Stake: ${formatMoney(p.stake)}", 13f, Color.WHITE))
                 c.addView(text("FINAL P/L: ${formatMoney(p.profit)}", 14f, if (p.profit >= 0.0) green else red, true))
                 val closedText = if (p.closedAt > 0L) java.text.DateFormat.getDateTimeInstance().format(java.util.Date(p.closedAt * 1000L)) else "Time unavailable"
-                c.addView(text("Closed: $closedText", 11f, replacementWhite))
+                c.addView(text("Closed: $closedText", 11f, Color.WHITE))
                 content.addView(c)
                 content.addView(space(8))
             }
@@ -1673,7 +1704,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         deriv.addView(text("DERIV ACCOUNT", 15f, gold, true))
         deriv.addView(space(6))
         deriv.addView(text("Account mode: $executionMode", 13f, if (executionMode == "REAL") blue else red, true))
-        deriv.addView(text(if (accountConnected) accountLabel else "Connection: Disconnected", 13f, replacementWhite))
+        deriv.addView(text(if (accountConnected) accountLabel else "Connection: Disconnected", 13f, Color.WHITE))
         deriv.addView(text(accountBalanceLabel, 13f, blue))
         val pl = accountProfitLoss()
         accountOpenPlView = text("OPEN TRADE P/L: ${formatMoney(pl.first)}", 13f, if (pl.first >= 0) green else red, true)
@@ -1683,9 +1714,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         deriv.addView(accountClosedPlView)
         deriv.addView(accountTotalPlView)
         deriv.addView(space(12))
-        deriv.addView(actionButton(if (accountConnected) "SWITCH / CONNECT ACCOUNT" else "CONNECT DERIV") {
+        val switchAccountButton = actionButton(if (accountConnected) "SWITCH / CONNECT ACCOUNT" else "CONNECT DERIV") {
             showAccountModeDialog()
-        })
+        }
+        switchAccountButton.setTextColor(Color.BLACK)
+        deriv.addView(switchAccountButton)
         deriv.addView(space(8))
         deriv.addView(actionButton("DISCONNECT DERIV", false) {
             disconnectDerivAccount()
@@ -1718,7 +1751,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             if (autoTradingEnabled) "AUTO TRADING: ON" else "AUTO TRADING: OFF",
             primary = autoTradingEnabled
         ) { toggleAutoTrading() }
-        button.setTextColor(replacementWhite)
+        button.setTextColor(Color.BLACK)
         button.background = rounded(
             if (autoTradingEnabled) green else red,
             if (autoTradingEnabled) green else red,
@@ -1787,7 +1820,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private fun updateConnectionLabels(message: String) {
         if (selectedTab == "Home") {
             feedPillView?.text = if (marketFeedConnected) "LIVE" else "CONNECTING"
-            feedPillView?.setTextColor(if (marketFeedConnected) green else amber)
+            feedPillView?.setTextColor(if (marketFeedConnected) Color.WHITE else amber)
         }
     }
 
@@ -1797,7 +1830,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     private fun pageHeading(title: String, subtitle: String) {
         content.addView(text(title, 21f, gold, true))
-        content.addView(text(subtitle, 13f, replacementWhite))
+        content.addView(text(subtitle, 13f, Color.WHITE))
         content.addView(space(18))
     }
 
@@ -1809,7 +1842,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             LinearLayout.LayoutParams(0, -2, 1f))
         val valueColor = if (label == "Trading account") {
             if (executionMode == "REAL") blue else red
-        } else replacementWhite
+        } else Color.WHITE
         row.addView(text(value, 13f, valueColor))
         if (action != null) {
             row.isClickable = true
@@ -1832,7 +1865,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 settingsPrefs.edit().putBoolean("dark_interface", darkInterface).apply()
                 dialog.dismiss()
                 window.statusBarColor = pageColor
-                window.navigationBarColor = if (darkInterface) pageColor else replacementWhite
+                window.navigationBarColor = if (darkInterface) pageColor else Color.WHITE
                 window.decorView.systemUiVisibility = if (darkInterface) 0 else
                     View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
                 render()
@@ -1845,7 +1878,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setBackgroundColor(if (darkInterface) Color.rgb(0, 7, 5) else replacementWhite)
+            setBackgroundColor(if (darkInterface) Color.rgb(0, 7, 5) else Color.WHITE)
             setPadding(dp(6), dp(8), dp(6), dp(8))
             elevation = dp(8).toFloat()
         }
@@ -1890,7 +1923,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             text = label
             textSize = 12f
             isAllCaps = false
-            setTextColor(if (primary) replacementWhite else green)
+            setTextColor(if (primary) Color.WHITE else green)
             background = rounded(if (primary) green else if (darkInterface) Color.rgb(8, 42, 28) else Color.rgb(235, 247, 241),
                 if (primary) green else if (darkInterface) lineColor else Color.rgb(210, 235, 222), 10)
             setPadding(dp(12), dp(8), dp(12), dp(8))
@@ -1903,9 +1936,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             text = label
             textSize = 10f
             setTypeface(null, Typeface.BOLD)
-            setTextColor(color)
+            setTextColor(if (label == "LIVE") Color.BLACK else color)
             setPadding(dp(9), dp(5), dp(9), dp(5))
-            background = rounded(replacementWhite, color, 20)
+            background = rounded(Color.WHITE, color, 20)
         }
     }
 
