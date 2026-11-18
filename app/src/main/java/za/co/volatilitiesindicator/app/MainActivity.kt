@@ -337,7 +337,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (accountConnected) evaluateOriginalEntries(symbol, quote)
         runOnUiThread {
             feedPillView?.text = "LIVE"
-            feedPillView?.setTextColor(Color.WHITE)
+            feedPillView?.setTextColor(green)
             priceViews[symbol]?.text = formatPrice(quote)
             indexStatusViews[symbol]?.apply {
                 text = "LIVE"
@@ -358,7 +358,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             if (!latestPrices.containsKey(symbol)) latestPrices[symbol] = lastClose
             runOnUiThread {
                 feedPillView?.text = "LIVE"
-                feedPillView?.setTextColor(Color.WHITE)
+                feedPillView?.setTextColor(green)
                 priceViews[symbol]?.text = formatPrice(latestPrices[symbol] ?: lastClose)
                 indexStatusViews[symbol]?.apply {
                     text = "LIVE"
@@ -678,7 +678,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             text = if (unread > 0) "🔔 $unread" else "🔔"
             textSize = 16f
             gravity = Gravity.CENTER
-            setTextColor(Color.BLACK)
+            setTextColor(if (unread > 0) red else gold)
             setPadding(dp(13), dp(8), dp(13), dp(8))
             background = rounded(Color.WHITE, lineColor, 22)
             contentDescription = "$unread unread $selectedTab notifications"
@@ -692,7 +692,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private fun updateNotificationBadge() {
         val unread = appNotifications.count { it.page == selectedTab && !it.read }
         notificationBellView?.text = if (unread > 0) "🔔 $unread" else "🔔"
-        notificationBellView?.setTextColor(Color.BLACK)
+        notificationBellView?.setTextColor(if (unread > 0) red else gold)
     }
 
     private fun showNotificationsDialog() {
@@ -1509,11 +1509,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         accountStatusView = statusText
         account.addView(statusText)
         account.addView(space(12))
-        val accountOptionsButton = actionButton(if (accountConnected) "ACCOUNT OPTIONS" else "CONNECT DERIV ACCOUNT") {
+        account.addView(actionButton(if (accountConnected) "ACCOUNT OPTIONS" else "CONNECT DERIV ACCOUNT") {
             if (accountConnected) openTab("Accounts") else showAccountModeDialog()
-        }
-        accountOptionsButton.setTextColor(Color.BLACK)
-        account.addView(accountOptionsButton)
+        })
         content.addView(account)
         content.addView(space(18))
 
@@ -1714,11 +1712,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         deriv.addView(accountClosedPlView)
         deriv.addView(accountTotalPlView)
         deriv.addView(space(12))
-        val switchAccountButton = actionButton(if (accountConnected) "SWITCH / CONNECT ACCOUNT" else "CONNECT DERIV") {
+        deriv.addView(actionButton(if (accountConnected) "SWITCH / CONNECT ACCOUNT" else "CONNECT DERIV") {
             showAccountModeDialog()
-        }
-        switchAccountButton.setTextColor(Color.BLACK)
-        deriv.addView(switchAccountButton)
+        })
         deriv.addView(space(8))
         deriv.addView(actionButton("DISCONNECT DERIV", false) {
             disconnectDerivAccount()
@@ -1751,7 +1747,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             if (autoTradingEnabled) "AUTO TRADING: ON" else "AUTO TRADING: OFF",
             primary = autoTradingEnabled
         ) { toggleAutoTrading() }
-        button.setTextColor(Color.BLACK)
+        button.setTextColor(Color.WHITE)
         button.background = rounded(
             if (autoTradingEnabled) green else red,
             if (autoTradingEnabled) green else red,
@@ -1820,7 +1816,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private fun updateConnectionLabels(message: String) {
         if (selectedTab == "Home") {
             feedPillView?.text = if (marketFeedConnected) "LIVE" else "CONNECTING"
-            feedPillView?.setTextColor(if (marketFeedConnected) Color.WHITE else amber)
+            feedPillView?.setTextColor(if (marketFeedConnected) green else amber)
         }
     }
 
@@ -1936,7 +1932,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             text = label
             textSize = 10f
             setTypeface(null, Typeface.BOLD)
-            setTextColor(if (label == "LIVE") Color.BLACK else color)
+            setTextColor(color)
             setPadding(dp(9), dp(5), dp(9), dp(5))
             background = rounded(Color.WHITE, color, 20)
         }
