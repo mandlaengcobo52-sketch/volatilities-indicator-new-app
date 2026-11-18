@@ -49,26 +49,36 @@ import org.json.JSONArray
 
 class MainActivity : Activity(), DerivApiClient.Callback {
 
-    // Original Volatilities Indicator dark / neon-green / gold palette.
-    private val ink = Color.rgb(238, 247, 241)
-    private val muted = Color.rgb(166, 183, 176)
-    private val green = Color.rgb(0, 240, 86)
-    private val red = Color.rgb(255, 75, 94)
-    private val amber = Color.rgb(255, 218, 48)
-    private val pageColor = Color.rgb(3, 8, 6)
-    private val cardColor = Color.rgb(7, 22, 17)
-    private val lineColor = Color.rgb(24, 91, 59)
+    private var darkInterface = false
+    private val ink: Int get() = if (darkInterface) Color.rgb(235, 240, 246) else Color.rgb(28, 39, 51)
+    private val muted: Int get() = if (darkInterface) Color.rgb(165, 177, 190) else Color.rgb(112, 125, 140)
+    private val whiteText: Int get() = if (darkInterface) Color.WHITE else ink
+    private val green = Color.rgb(20, 150, 92)
+    private val red = Color.rgb(205, 70, 70)
+    private val amber = Color.rgb(207, 145, 35)
+    private val pageColor: Int get() = if (darkInterface) Color.rgb(19, 25, 33) else Color.rgb(245, 247, 250)
+    private val cardColor: Int get() = if (darkInterface) Color.rgb(31, 40, 51) else Color.WHITE
+    private val lineColor: Int get() = if (darkInterface) Color.rgb(57, 68, 82) else Color.rgb(226, 231, 237)
 
     private lateinit var content: LinearLayout
     private var selectedTab = "Home"
+    private var renderedTab = ""
+    private var pageScrollView: ScrollView? = null
+    private val scrollPositions = mutableMapOf<String, Int>()
+    private val settingsPrefs by lazy { getSharedPreferences("vi_settings", MODE_PRIVATE) }
 
     private val indexes = listOf("R_10", "R_25", "R_50", "R_75", "R_100")
     private val latestPrices = mutableMapOf<String, Double>()
     private val priceViews = mutableMapOf<String, TextView>()
     private val indexStatusViews = mutableMapOf<String, TextView>()
     private val marketStatusViews = mutableMapOf<String, TextView>()
+    private val masterDecisionViews = mutableMapOf<String, TextView>()
     private val levelStatusViews = mutableMapOf<String, TextView>()
+    private val highLevelViews = mutableMapOf<String, TextView>()
+    private val lowLevelViews = mutableMapOf<String, TextView>()
     private val recoveryStatusViews = mutableMapOf<String, TextView>()
+    private val mssStatusViews = mutableMapOf<String, TextView>()
+    private val chochStatusViews = mutableMapOf<String, TextView>()
 
     private data class AppNotification(
         val id: Long,
@@ -113,7 +123,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private data class Position(
         val localId: String,
         val symbol: String,
-        val direction: String,
+        var direction: String,
         val role: String,
         val stake: Double,
         val originalId: String = "",
@@ -122,6 +132,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var peakProfit: Double = 0.0,
         var protectedProfit: Double = 0.0,
         var status: String = "PROPOSAL",
+        var trailingCloseRequested: Boolean = false,
+        var trailingCloseConfirmed: Boolean = false,
+        var trailingLockArmed: Boolean = false,
+        var recoveryEligible: Boolean = false,
+        var recoveryUsed: Boolean = false,
         var closedAt: Long = 0L
     )
 
@@ -172,11 +187,22 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.statusBarColor = pageColor
-        window.navigationBarColor = Color.rgb(3, 8, 6)
-        window.decorView.systemUiVisibility = 0
+        window.navigationBarColor = Color.WHITE
+        window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
+                View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        darkInterface = settingsPrefs.getBoolean("dark_interface", false)
+        window.statusBarColor = pageColor
+        window.navigationBarColor = if (darkInterface) Color.rgb(19, 25, 33) else Color.WHITE
+        window.decorView.systemUiVisibility = if (darkInterface) 0 else
+            View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         tradingDayKey = tradePrefs.getString("day_key", "").orEmpty()
         dailyCapital = tradePrefs.getFloat("daily_capital", 0f).toDouble()
         loadPositions()
+        indexes.forEach { symbol ->
+            tradePrefs.getString("signal_mss_$symbol", null)?.let { recoveryMss[symbol] = it }
+            tradePrefs.getString("signal_choch_$symbol", null)?.let { recoveryChoch[symbol] = it }
+        }
         loadNotifications()
         originalTriggered.addAll(tradePrefs.getStringSet("triggered_$tradingDayKey", emptySet()) ?: emptySet())
         createNotificationChannel()
@@ -194,9 +220,16 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         handleOAuthCallback(intent)
     }
 
+    override fun onPause() {
+        pageScrollView?.let { scrollPositions[selectedTab] = it.scrollY }
+        super.onPause()
+    }
+
     override fun onResume() {
         super.onResume()
+        val previousMode = executionMode
         executionMode = if (prefs.getString("oauth_mode", executionMode).equals("REAL", true)) "REAL" else "DEMO"
+        if (previousMode != executionMode && ::content.isInitialized) render()
         val tokenKey = if (executionMode == "REAL") "real_token" else "demo_token"
         val savedToken = prefs.getString(tokenKey, "").orEmpty()
         if (savedToken.isNotBlank() && derivService != null &&
@@ -248,12 +281,15 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         accountLabel = "$accountId ($accountType)"
         addNotification("Accounts", "Deriv account connected", "$accountLabel is connected.")
         derivService?.client?.requestOpenTrades()
+        // Re-check already-qualified MSS/CHOCH against any waiting closed original
+        // immediately after the execution account reconnects.
+        candlesByIndex.forEach { (symbol, candles) -> evaluateRecoverySignals(symbol, candles) }
         runOnUiThread {
             accountIdView?.text = accountLabel
             accountStatusView?.text = "CONNECTED"
             accountStatusView?.setTextColor(green)
             toast("Deriv $executionMode account connected.")
-            renderIfHome()
+            render()
         }
     }
 
@@ -352,7 +388,16 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (error != null) {
             if (localId != null) {
                 pendingRequests.remove(reqId)
-                positions[localId]?.status = "ERROR: ${error.optString("message", "Deriv request failed")}" 
+                val failedPosition = positions[localId]
+                if (failedPosition?.status == "CLOSING BY TRAILING") {
+                    failedPosition.trailingCloseRequested = false
+                    failedPosition.trailingCloseConfirmed = false
+                    failedPosition.status = "OPEN"
+                    addNotification("Trade", "${displayIndexName(failedPosition.symbol)} trailing close failed", error.optString("message", "Deriv could not close the contract"))
+                } else if (failedPosition != null) {
+                    failedPosition.status = "ERROR: ${error.optString("message", "Deriv request failed")}" 
+                }
+                savePositions()
                 runOnUiThread { if (selectedTab == "Trade") render() }
             }
             return
@@ -382,7 +427,28 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 savePositions()
                 addNotification("Trade", "${displayIndexName(position.symbol)} ${position.role.lowercase(Locale.US)} opened", "${position.direction} contract opened. Stake: ${formatMoney(position.stake)}.")
                 subscribePosition(position.contractId)
-                runOnUiThread { if (selectedTab == "Trade") render() }
+                runOnUiThread {
+                    updateMasterDecisionViews(position.symbol)
+                    if (selectedTab == "Trade") render()
+                }
+            }
+            "sell" -> {
+                if (localId == null) return
+                pendingRequests.remove(reqId)
+                val soldPosition = positions[localId] ?: return
+                soldPosition.trailingCloseConfirmed = true
+                if (soldPosition.status == "CLOSED") {
+                    soldPosition.recoveryEligible = soldPosition.role == "ORIGINAL" &&
+                        soldPosition.peakProfit >= soldPosition.stake * 0.30 &&
+                        soldPosition.profit >= soldPosition.stake * 0.30
+                    if (soldPosition.recoveryEligible && !soldPosition.recoveryUsed) {
+                        recoveryWaiting.add(soldPosition.localId)
+                        addNotification("Trade", "${displayIndexName(soldPosition.symbol)} qualifying win confirmed", "Trailing-stop sale confirmed by Deriv with at least 30% realised profit. The opposite original leg remains open.")
+                        candlesByIndex[soldPosition.symbol]?.let { evaluateRecoverySignals(soldPosition.symbol, it) }
+                    }
+                }
+                savePositions()
+                runOnUiThread { updateRecoveryStatusView(soldPosition.symbol); if (selectedTab == "Trade") render() }
             }
             "proposal_open_contract" -> handleOpenContract(json.optJSONObject("proposal_open_contract") ?: return)
             "portfolio" -> {
@@ -536,16 +602,16 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     private fun notificationBar(): View {
         val row = horizontal()
-        row.addView(text(selectedTab.uppercase(Locale.US), 13f, amber, true),
+        row.addView(text(selectedTab.uppercase(Locale.US), 13f, muted, true),
             LinearLayout.LayoutParams(0, -2, 1f))
         val unread = appNotifications.count { it.page == selectedTab && !it.read }
         val bell = TextView(this).apply {
             text = if (unread > 0) "🔔 $unread" else "🔔"
             textSize = 16f
             gravity = Gravity.CENTER
-            setTextColor(if (unread > 0) amber else green)
+            setTextColor(if (unread > 0) red else green)
             setPadding(dp(13), dp(8), dp(13), dp(8))
-            background = rounded(cardColor, lineColor, 22)
+            background = rounded(Color.WHITE, lineColor, 22)
             contentDescription = "$unread unread $selectedTab notifications"
             setOnClickListener { showNotificationsDialog() }
         }
@@ -594,7 +660,19 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         return "PREVIOUS DAY HIGH: ${formatPrice(levels.first)}\nPREVIOUS DAY LOW: ${formatPrice(levels.second)}"
     }
 
+    private fun runningDirectionText(symbol: String): String? {
+        val running = positions.values.filter {
+            it.symbol == symbol && it.contractId > 0L &&
+                it.status !in setOf("CLOSED") && !it.status.startsWith("ERROR") &&
+                it.status !in setOf("BUY FAILED", "PROPOSAL FAILED")
+        }
+        if (running.isEmpty()) return null
+        val directions = running.map { it.direction }.distinct()
+        return "TRADE RUNNING · " + directions.joinToString(" + ")
+    }
+
     private fun masterDecisionText(symbol: String): String {
+        runningDirectionText(symbol)?.let { return "$it. Contract is active on Deriv." }
         if (!marketFeedConnected || latestPrices[symbol] == null) {
             return "Waiting for live market price data."
         }
@@ -612,39 +690,60 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     private fun recoveryStatusText(symbol: String): String {
-        val waitingOriginal = positions.values.firstOrNull {
-            it.symbol == symbol && it.role == "ORIGINAL" && it.status == "CLOSED" && it.localId in recoveryWaiting
+        val eligibleWinner = positions.values.firstOrNull {
+            it.symbol == symbol && it.role == "ORIGINAL" && it.status == "CLOSED" &&
+                it.recoveryEligible && !it.recoveryUsed
         }
-        if (waitingOriginal == null) {
-            val openOriginal = positions.values.any {
-                it.symbol == symbol && it.role == "ORIGINAL" && it.status != "CLOSED" && !it.status.startsWith("ERROR")
+        if (eligibleWinner == null) {
+            val originalRunning = positions.values.any {
+                it.symbol == symbol && it.role == "ORIGINAL" &&
+                    it.status !in setOf("CLOSED", "ERROR", "BUY FAILED", "PROPOSAL FAILED") &&
+                    !it.status.startsWith("ERROR")
             }
-            return if (openOriginal) {
-                "Waiting for the original trade to close before recovery evaluation."
+            return if (originalRunning) {
+                "Original RISE/FALL pair is running. Recovery waits for a winning leg to close with at least 30% profit through trailing protection."
             } else {
-                "No eligible closed original trade. Recovery is waiting for an original trade to complete."
+                "No qualifying winning original closure. Recovery is not eligible."
             }
         }
         val mss = recoveryMss[symbol]
         val choch = recoveryChoch[symbol]
         return when {
-            mss.isNullOrBlank() && choch.isNullOrBlank() -> "Original trade closed. Waiting for confirmed candle-close MSS and CHOCH."
-            !mss.isNullOrBlank() && choch.isNullOrBlank() -> "MSS confirmed ${mss.lowercase(Locale.US)}. Waiting for CHOCH confirmation."
-            mss.isNullOrBlank() && !choch.isNullOrBlank() -> "CHOCH confirmed ${choch.lowercase(Locale.US)}. Waiting for MSS confirmation."
-            mss == choch -> "MSS and CHOCH agree (${mss.orEmpty().lowercase(Locale.US)}). Recovery conditions are aligned."
-            else -> "MSS and CHOCH disagree. Waiting for matching confirmation."
+            mss.isNullOrBlank() && choch.isNullOrBlank() -> "Winning original closed with at least 30% protected profit. Waiting for MSS and CHOCH."
+            !mss.isNullOrBlank() && choch.isNullOrBlank() -> "Qualifying winner closed. MSS confirmed ${mss.lowercase(Locale.US)}. Waiting for CHOCH."
+            mss.isNullOrBlank() && !choch.isNullOrBlank() -> "Qualifying winner closed. CHOCH confirmed ${choch.lowercase(Locale.US)}. Waiting for MSS."
+            mss == choch -> "Qualifying winner closed. MSS and CHOCH agree (${mss.orEmpty().lowercase(Locale.US)}). Recovery is eligible."
+            else -> "Qualifying winner closed, but MSS and CHOCH disagree. Waiting for matching confirmation."
         }
     }
 
     private fun updateMasterDecisionViews(symbol: String) {
-        levelStatusViews[symbol]?.text = referenceLevelsText(symbol)
+        val levels = dailyLevels[symbol]
+        highLevelViews[symbol]?.text = "PREVIOUS DAY HIGH: ${levels?.first?.let { formatPrice(it) } ?: "--"}"
+        lowLevelViews[symbol]?.text = "PREVIOUS DAY LOW: ${levels?.second?.let { formatPrice(it) } ?: "--"}"
+        val running = runningDirectionText(symbol)
+        masterDecisionViews[symbol]?.apply {
+            text = running ?: "WAITING"
+            setTextColor(if (running != null) green else amber)
+        }
         marketStatusViews[symbol]?.text = masterDecisionText(symbol)
+    }
+
+    private fun signalQualificationText(signal: String?): String {
+        return if (signal.isNullOrBlank()) "NOT QUALIFIED" else "QUALIFIED · $signal"
     }
 
     private fun updateRecoveryStatusView(symbol: String) {
         recoveryStatusViews[symbol]?.text = recoveryStatusText(symbol)
+        mssStatusViews[symbol]?.apply {
+            text = signalQualificationText(recoveryMss[symbol])
+            setTextColor(if (recoveryMss[symbol].isNullOrBlank()) amber else green)
+        }
+        chochStatusViews[symbol]?.apply {
+            text = signalQualificationText(recoveryChoch[symbol])
+            setTextColor(if (recoveryChoch[symbol].isNullOrBlank()) amber else green)
+        }
     }
-
     private fun formatMoney(value: Double): String =
         String.format(Locale.US, "%.2f %s", value, accountCurrency)
 
@@ -680,18 +779,24 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (!accountConnected || dailyCapital <= 0.0 || !quote.isFinite()) return
         val levels = dailyLevels[symbol] ?: return
         val today = utcDayKey(System.currentTimeMillis() / 1000L)
-        val stake = dailyCapital * 0.25
-        val riseKey = "$today|$symbol|RISE"
-        val fallKey = "$today|$symbol|FALL"
-        if (quote <= levels.second && riseKey !in originalTriggered) {
-            originalTriggered.add(riseKey)
-            openPosition(symbol, "RISE", "ORIGINAL", stake)
-        }
-        if (quote >= levels.first && fallKey !in originalTriggered) {
-            originalTriggered.add(fallKey)
-            openPosition(symbol, "FALL", "ORIGINAL", stake)
-        }
+        val pairKey = "$today|$symbol|PAIR"
+        val legacyRiseKey = "$today|$symbol|RISE"
+        val legacyFallKey = "$today|$symbol|FALL"
+        if (pairKey in originalTriggered || legacyRiseKey in originalTriggered || legacyFallKey in originalTriggered) return
+
+        // A single qualifying boundary starts the agreed simultaneous RISE/FALL pair.
+        val boundaryReached = quote <= levels.second || quote >= levels.first
+        if (!boundaryReached) return
+
+        val stake = roundStake(dailyCapital * 0.25)
+        val pairId = "PAIR-${today}-${symbol}-${UUID.randomUUID()}"
+        originalTriggered.add(pairKey)
+        originalTriggered.add(legacyRiseKey)
+        originalTriggered.add(legacyFallKey)
         tradePrefs.edit().putStringSet("triggered_$today", originalTriggered.toSet()).apply()
+        openPosition(symbol, "RISE", "ORIGINAL", stake, pairId)
+        openPosition(symbol, "FALL", "ORIGINAL", stake, pairId)
+        addNotification("Trade", "${displayIndexName(symbol)} original pair opened", "RISE and FALL opened together with the same stake of ${formatMoney(stake)} each.")
     }
 
     private fun roundStake(value: Double): Double =
@@ -705,7 +810,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         positions[localId] = p
         val req = nextRequestId()
         pendingRequests[req] = localId
-        val contractType = if (direction == "RISE") "PUT" else "CALL"
+        // Deriv contract types: CALL = Rise, PUT = Fall.
+        val contractType = if (direction == "RISE") "CALL" else "PUT"
         val proposal = JSONObject()
             .put("proposal", 1)
             .put("amount", roundStake(roundedStake))
@@ -734,44 +840,74 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val contractId = contract.optLong("contract_id", 0L)
         val p = positions.values.firstOrNull { it.contractId == contractId } ?: return
         val wasAlreadyClosed = p.status == "CLOSED"
+        // Reconcile the app label with Deriv's actual contract type.
+        when (contract.optString("contract_type").uppercase(Locale.US)) {
+            "CALL" -> p.direction = "RISE"
+            "PUT" -> p.direction = "FALL"
+        }
         p.profit = contract.optDouble("profit", p.profit)
         if (p.profit > p.peakProfit) p.peakProfit = p.profit
         val percent = if (p.stake > 0.0) (p.peakProfit / p.stake) * 100.0 else 0.0
         if (percent >= 30.0) {
             val level = kotlin.math.floor(percent / 10.0) * 10.0
             val protected = p.stake * (level / 100.0)
-            if (protected > p.protectedProfit) p.protectedProfit = protected
+            if (protected > p.protectedProfit) {
+                p.protectedProfit = protected
+                // A newly raised protection level must first be exceeded before
+                // a pullback can trigger the trailing sale.
+                p.trailingLockArmed = false
+            }
+        }
+        if (p.protectedProfit >= p.stake * 0.30 && p.profit > p.protectedProfit) {
+            p.trailingLockArmed = true
         }
         val isSold = contract.optInt("is_sold", 0) == 1 || contract.optInt("is_expired", 0) == 1
-        if (!isSold && p.protectedProfit > 0.0 && p.profit <= p.protectedProfit && contract.optInt("is_valid_to_sell", 0) == 1) {
-            val sell = JSONObject().put("sell", contractId).put("price", 0)
-            derivService?.client?.send(sell)
+        val hasThirtyPercentProtected = p.peakProfit >= p.stake * 0.30
+        val trailingExitReached = p.trailingLockArmed && p.protectedProfit >= p.stake * 0.30 &&
+            p.profit <= p.protectedProfit && hasThirtyPercentProtected
+
+        if (!isSold && !p.trailingCloseRequested && trailingExitReached &&
+            contract.optInt("is_valid_to_sell", 0) == 1) {
+            p.trailingCloseRequested = true
             p.status = "CLOSING BY TRAILING"
+            savePositions()
+            val sellReq = nextRequestId()
+            pendingRequests[sellReq] = p.localId
+            val sell = JSONObject().put("sell", contractId).put("price", 0).put("req_id", sellReq)
+            derivService?.client?.send(sell)
         } else if (isSold) {
             p.status = "CLOSED"
+            p.closedAt = contract.optLong("sell_time", 0L).takeIf { it > 0L }
+                ?: contract.optLong("date_expiry", 0L).takeIf { it > 0L }
+                ?: System.currentTimeMillis() / 1000L
+            // Only an app-issued trailing-stop sale with a realised gain of at least
+            // 30% of stake can qualify an ORIGINAL winning leg for recovery.
+            p.recoveryEligible = p.role == "ORIGINAL" && p.trailingCloseConfirmed &&
+                p.peakProfit >= p.stake * 0.30 && p.profit >= p.stake * 0.30
+            if (p.recoveryEligible && !p.recoveryUsed) recoveryWaiting.add(p.localId)
             if (!wasAlreadyClosed) {
-                addNotification("Trade", "${displayIndexName(p.symbol)} trade closed", "${p.role} ${p.direction} trade closed. Final reported profit: ${formatMoney(p.profit)}.")
+                val reason = if (p.recoveryEligible) "Qualifying trailing-stop win" else "Non-qualifying closure"
+                addNotification("Trade", "${displayIndexName(p.symbol)} trade closed", "$reason. ${p.role} ${p.direction} final P/L: ${formatMoney(p.profit)}. ${if (p.recoveryEligible) "Recovery may proceed after matching MSS and CHOCH." else "This closure cannot trigger recovery."}")
             }
-            p.closedAt = contract.optLong("sell_time", System.currentTimeMillis() / 1000L) * 1000L
-            if (p.role == "ORIGINAL" && p.localId !in recoveryWaiting) {
-                recoveryWaiting.add(p.localId)
-                if (!wasAlreadyClosed) {
-                    addNotification("Trade", "${displayIndexName(p.symbol)} recovery waiting", "Original trade closed. Waiting for the existing recovery MSS and CHOCH confirmation logic.")
-                }
-                savePositions()
-            }
-        } else {
+        } else if (p.status != "CLOSING BY TRAILING") {
             p.status = "OPEN"
         }
         savePositions()
-        runOnUiThread { if (selectedTab == "Trade") render() }
+        runOnUiThread {
+            updateMasterDecisionViews(p.symbol)
+            updateRecoveryStatusView(p.symbol)
+            if (selectedTab == "Trade") render()
+        }
+        if (p.recoveryEligible && !p.recoveryUsed) {
+            candlesByIndex[p.symbol]?.let { evaluateRecoverySignals(p.symbol, it) }
+        }
     }
 
     private fun evaluateRecoverySignals(symbol: String, candles: List<DerivApiClient.Candle>) {
-        if (!accountConnected || candles.size < 5) return
+        if (candles.size < 5) return
         val closed = candles.sortedBy { it.epoch }.dropLast(1)
         if (closed.size < 4) return
-       val last = closed.last()
+        val last = closed.last()
         val prior = closed.dropLast(1)
         val swingHighs = mutableListOf<Double>()
         val swingLows = mutableListOf<Double>()
@@ -779,18 +915,22 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             if (prior[i].high > prior[i - 1].high && prior[i].high > prior[i + 1].high) swingHighs.add(prior[i].high)
             if (prior[i].low < prior[i - 1].low && prior[i].low < prior[i + 1].low) swingLows.add(prior[i].low)
         }
-        val lastHigh = swingHighs.lastOrNull() ?: return
-        val lastLow = swingLows.lastOrNull() ?: return
+        val lastHigh = swingHighs.lastOrNull()
+        val lastLow = swingLows.lastOrNull()
+        if (lastHigh == null || lastLow == null) return
+
         val mssDirection = when {
             last.close > lastHigh -> "RISE"
             last.close < lastLow -> "FALL"
             else -> ""
         }
-          if (mssDirection.isNotBlank() && recoveryMss[symbol] != mssDirection) {
+        if (mssDirection.isNotBlank() && recoveryMss[symbol] != mssDirection) {
             recoveryMss[symbol] = mssDirection
-            addNotification("Trade", "${displayIndexName(symbol)} recovery MSS detected", "A closed-candle market-structure shift was detected in the ${mssDirection.lowercase(Locale.US)} direction.")
+            tradePrefs.edit().putString("signal_mss_$symbol", mssDirection).apply()
+            addNotification("Home", "${displayIndexName(symbol)} MSS qualified", "MSS qualified in the ${mssDirection.lowercase(Locale.US)} direction on a completed candle.")
         }
-        // CHOCH is the closed-candle break of the opposing one-candle swing.
+
+        // Preserve the existing CHOCH qualification rule; its display is independent of recovery.
         val chochDirection = when {
             last.close > lastHigh && last.close > last.open -> "RISE"
             last.close < lastLow && last.close < last.open -> "FALL"
@@ -798,22 +938,41 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
         if (chochDirection.isNotBlank() && recoveryChoch[symbol] != chochDirection) {
             recoveryChoch[symbol] = chochDirection
-            addNotification("Trade", "${displayIndexName(symbol)} recovery CHOCH detected", "A closed-candle CHOCH was detected in the ${chochDirection.lowercase(Locale.US)} direction.")
+            tradePrefs.edit().putString("signal_choch_$symbol", chochDirection).apply()
+            addNotification("Home", "${displayIndexName(symbol)} CHOCH qualified", "CHOCH qualified in the ${chochDirection.lowercase(Locale.US)} direction on a completed candle.")
         }
+
+        runOnUiThread {
+            updateRecoveryStatusView(symbol)
+            mssStatusViews[symbol]?.apply {
+                text = signalQualificationText(recoveryMss[symbol])
+                setTextColor(if (recoveryMss[symbol].isNullOrBlank()) amber else green)
+            }
+            chochStatusViews[symbol]?.apply {
+                text = signalQualificationText(recoveryChoch[symbol])
+                setTextColor(if (recoveryChoch[symbol].isNullOrBlank()) amber else green)
+            }
+        }
+
         val mss = recoveryMss[symbol]
         val choch = recoveryChoch[symbol]
-        if (mss.isNullOrBlank() || mss != choch) {
-            runOnUiThread { updateRecoveryStatusView(symbol) }
-            return
-        }
-        val eligible = positions.values.filter { it.symbol == symbol && it.role == "ORIGINAL" && it.status == "CLOSED" && it.localId in recoveryWaiting }
-        val original = eligible.firstOrNull() ?: return
-        val recoveryStake = original.stake + original.profit.coerceAtLeast(0.0)
-        recoveryWaiting.remove(original.localId)
-        addNotification("Trade", "${displayIndexName(symbol)} recovery confirmed", "MSS and CHOCH agree on ${mss.lowercase(Locale.US)}. Recovery proposal is being prepared.")
-        recoveryMss.remove(symbol)
-        recoveryChoch.remove(symbol)
-        openPosition(symbol, mss, "RECOVERY", recoveryStake, original.localId)
+        if (!accountConnected || mss.isNullOrBlank() || mss != choch) return
+
+        val winningOriginal = positions.values.firstOrNull {
+            it.symbol == symbol && it.role == "ORIGINAL" && it.status == "CLOSED" &&
+                it.recoveryEligible && !it.recoveryUsed
+        } ?: return
+
+        // The opposite original leg is deliberately left open. Recovery is a separate
+        // position in the confirmed MSS/CHOCH direction, funded by winner stake + profit.
+        val recoveryStake = roundStake(winningOriginal.stake + winningOriginal.profit)
+        if (recoveryStake <= 0.0) return
+        winningOriginal.recoveryUsed = true
+        recoveryWaiting.remove(winningOriginal.localId)
+        savePositions()
+        addNotification("Trade", "${displayIndexName(symbol)} recovery confirmed", "MSS and CHOCH agree on ${mss.lowercase(Locale.US)}. Recovery stake: ${formatMoney(recoveryStake)}. The opposite original position remains open.")
+        openPosition(symbol, mss, "RECOVERY", recoveryStake, winningOriginal.localId)
+        runOnUiThread { updateRecoveryStatusView(symbol) }
     }
 
     private fun savePositions() {
@@ -823,6 +982,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 .put("role", p.role).put("stake", p.stake).put("original", p.originalId)
                 .put("contract", p.contractId).put("profit", p.profit).put("peak", p.peakProfit)
                 .put("protected", p.protectedProfit).put("status", p.status)
+                .put("trailingCloseRequested", p.trailingCloseRequested)
+                .put("trailingCloseConfirmed", p.trailingCloseConfirmed)
+                .put("trailingLockArmed", p.trailingLockArmed)
+                .put("recoveryEligible", p.recoveryEligible)
+                .put("recoveryUsed", p.recoveryUsed)
                 .put("closedAt", p.closedAt))
         }
         tradePrefs.edit().putString("positions", array.toString()).apply()
@@ -840,7 +1004,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 p.peakProfit = o.optDouble("peak")
                 p.protectedProfit = o.optDouble("protected")
                 p.status = o.optString("status", "OPEN")
+                p.trailingCloseRequested = o.optBoolean("trailingCloseRequested", p.status == "CLOSING BY TRAILING")
+                p.trailingCloseConfirmed = o.optBoolean("trailingCloseConfirmed", false)
+                p.trailingLockArmed = o.optBoolean("trailingLockArmed", false)
+                p.recoveryEligible = o.optBoolean("recoveryEligible", false)
+                p.recoveryUsed = o.optBoolean("recoveryUsed", false)
                 p.closedAt = o.optLong("closedAt", 0L)
+                if (p.recoveryEligible && !p.recoveryUsed) recoveryWaiting.add(p.localId)
                 positions[p.localId] = p
                 if (p.contractId > 0 && p.status != "CLOSED") subscribePosition(p.contractId)
             }
@@ -854,6 +1024,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             .setItems(modes) { _, which ->
                 executionMode = if (which == 1) "REAL" else "DEMO"
                 prefs.edit().putString("oauth_mode", executionMode).apply()
+                render()
                 beginDerivConnection()
             }
             .setNegativeButton("CANCEL", null)
@@ -874,7 +1045,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         oauthState = "android-" + UUID.randomUUID().toString()
         codeVerifier = generateCodeVerifier()
         prefs.edit()
-            .putString("oauth_state", oauthState)
+          .putString("oauth_state", oauthState)
             .putString("code_verifier", codeVerifier)
             .putString("oauth_mode", executionMode)
             .apply()
@@ -986,7 +1157,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         accountConnected = false
         accountLabel = "Connecting…"
         accountBalanceLabel = "Balance loading…"
-        renderIfHome()
+        render()
         service.client.connectWithAccessToken(token, executionMode)
     }
 
@@ -1003,7 +1174,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         render()
         toast("Deriv account disconnected.")
     }
-
     private fun generateCodeVerifier(): String {
         val bytes = ByteArray(32)
         SecureRandom().nextBytes(bytes)
@@ -1021,20 +1191,33 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     private fun render() {
+        pageScrollView?.let { oldScroll ->
+            if (renderedTab.isNotBlank()) scrollPositions[renderedTab] = oldScroll.scrollY
+        }
         priceViews.clear()
         indexStatusViews.clear()
         marketStatusViews.clear()
+        masterDecisionViews.clear()
         levelStatusViews.clear()
+        highLevelViews.clear()
+        lowLevelViews.clear()
         recoveryStatusViews.clear()
+        mssStatusViews.clear()
+        chochStatusViews.clear()
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(pageColor)
         }
+        val restoreScrollY = scrollPositions[selectedTab] ?: 0
         val scroll = ScrollView(this).apply {
             isFillViewport = true
             overScrollMode = View.OVER_SCROLL_NEVER
+            setOnScrollChangeListener { _, _, scrollY, _, _ ->
+                scrollPositions[selectedTab] = scrollY
+            }
         }
+        pageScrollView = scroll
         content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(16), dp(18), dp(22))
@@ -1043,6 +1226,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         root.addView(bottomNavigation())
         setContentView(root)
+        renderedTab = selectedTab
 
         content.addView(notificationBar())
         content.addView(space(12))
@@ -1053,6 +1237,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             "Accounts" -> showAccounts()
             "Settings" -> showSettings()
         }
+        scroll.post { scroll.scrollTo(0, restoreScrollY.coerceAtMost((content.height - scroll.height).coerceAtLeast(0))) }
     }
 
     private fun showHome() {
@@ -1068,15 +1253,15 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(10), 0, 0, 0)
         }
-        brandText.addView(text("VOLATILITIES", 19f, ink, true))
-        brandText.addView(text("INDICATOR", 19f, ink, true))
+        brandText.addView(text("VOLATILITIES", 19f, Color.rgb(0, 200, 83), true))
+        brandText.addView(text("INDICATOR", 19f, Color.rgb(0, 200, 83), true))
         brand.addView(brandText)
         content.addView(brand)
         content.addView(space(3))
-        content.addView(text("Market monitor", 13f, muted))
+        content.addView(text("Market monitor", 13f, Color.rgb(0, 200, 83)))
         content.addView(space(18))
         val status = horizontal()
-        status.addView(text("DERIV MARKET FEED", 12f, muted, true),
+        status.addView(text("DERIV MARKET FEED", 12f, Color.rgb(0, 200, 83), true),
             LinearLayout.LayoutParams(0, -2, 1f))
         val feedPill = pill(if (marketFeedConnected) "LIVE" else "CONNECTING", if (marketFeedConnected) green else amber)
         feedPillView = feedPill
@@ -1084,12 +1269,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         content.addView(status)
         content.addView(space(12))
         val account = card()
-        account.addView(text("TRADING ACCOUNT", 12f, muted, true))
+        account.addView(text("TRADING ACCOUNT", 12f, Color.rgb(0, 200, 83), true))
         account.addView(space(8))
-        val accountName = text(if (accountConnected) accountLabel else "Not connected", 17f, ink, true)
+        val accountName = text(if (accountConnected) accountLabel else "Not connected", 17f, whiteText, true)
         accountIdView = accountName
         account.addView(accountName)
-        val balanceText = text(accountBalanceLabel, 13f, muted)
+        account.addView(text("Account mode: $executionMode", 12f, if (executionMode == "REAL") Color.rgb(33, 150, 243) else red, true))
+        val balanceText = text(accountBalanceLabel, 13f, Color.rgb(33, 150, 243))
         accountBalanceView = balanceText
         account.addView(balanceText)
         val statusText = text(if (accountConnected) "CONNECTED" else "ACCOUNT NOT CONNECTED", 12f,
@@ -1103,14 +1289,14 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         content.addView(account)
         content.addView(space(18))
 
-        content.addView(text("INDEX MONITOR", 16f, ink, true))
-        content.addView(text("Live Deriv prices for all five synthetic indices.", 12f, muted))
+        content.addView(text("INDEX MONITOR", 16f, Color.rgb(0, 200, 83), true))
+        content.addView(text("Live Deriv prices for all five synthetic indices.", 12f, whiteText))
         content.addView(space(10))
 
         indexes.forEach { symbol ->
             val indexCard = card()
             val row = horizontal()
-            row.addView(text(displayIndexName(symbol), 15f, ink, true),
+            row.addView(text(displayIndexName(symbol), 15f, indexNameColor(symbol), true),
                 LinearLayout.LayoutParams(0, -2, 1f))
             val statusView = pill(
                 if (latestPrices.containsKey(symbol)) "LIVE" else "CONNECTING",
@@ -1122,29 +1308,50 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             indexCard.addView(space(10))
 
             val priceRow = horizontal()
-            priceRow.addView(text("LIVE PRICE", 11f, muted),
+            priceRow.addView(text("LIVE PRICE", 11f, whiteText),
                 LinearLayout.LayoutParams(0, -2, 1f))
-            val priceView = text(latestPrices[symbol]?.let { formatPrice(it) } ?: "--", 17f, ink, true)
+            val priceView = text(latestPrices[symbol]?.let { formatPrice(it) } ?: "--", 17f, Color.rgb(33, 150, 243), true)
             priceViews[symbol] = priceView
             priceRow.addView(priceView)
             indexCard.addView(priceRow)
             indexCard.addView(space(8))
             indexCard.addView(divider())
             indexCard.addView(space(8))
-            indexCard.addView(text("MASTER DECISION", 11f, muted, true))
-            indexCard.addView(text("WAITING", 12f, amber, true))
-            val levelsView = text(referenceLevelsText(symbol), 12f, ink, true)
-            levelStatusViews[symbol] = levelsView
-            indexCard.addView(levelsView)
+            indexCard.addView(text("MASTER DECISION", 11f, whiteText, true))
+            val decisionView = text(runningDirectionText(symbol) ?: "WAITING", 12f,
+                if (runningDirectionText(symbol) != null) green else amber, true)
+            masterDecisionViews[symbol] = decisionView
+            indexCard.addView(decisionView)
+            val currentLevels = dailyLevels[symbol]
+            val highView = text("PREVIOUS DAY HIGH: ${currentLevels?.first?.let { formatPrice(it) } ?: "--"}", 12f, green, true)
+            val lowView = text("PREVIOUS DAY LOW: ${currentLevels?.second?.let { formatPrice(it) } ?: "--"}", 12f, red, true)
+            highLevelViews[symbol] = highView
+            lowLevelViews[symbol] = lowView
+            indexCard.addView(highView)
+            indexCard.addView(lowView)
             indexCard.addView(space(6))
-            val feedDetail = text(masterDecisionText(symbol), 11f, muted)
+            val feedDetail = text(masterDecisionText(symbol), 11f, whiteText)
             marketStatusViews[symbol] = feedDetail
-            indexCard.addView(text("WAITING FOR", 10f, muted, true))
+            indexCard.addView(text("WAITING FOR", 10f, whiteText, true))
             indexCard.addView(feedDetail)
             indexCard.addView(space(8))
             indexCard.addView(divider())
             indexCard.addView(space(8))
-            indexCard.addView(text("RECOVERY STATUS", 11f, muted, true))
+            indexCard.addView(text("MSS QUALIFICATION", 10f, whiteText, true))
+            val mssView = text(signalQualificationText(recoveryMss[symbol]), 11f,
+                if (recoveryMss[symbol].isNullOrBlank()) amber else green, true)
+            mssStatusViews[symbol] = mssView
+            indexCard.addView(mssView)
+            indexCard.addView(space(5))
+            indexCard.addView(text("CHOCH QUALIFICATION", 10f, whiteText, true))
+            val chochView = text(signalQualificationText(recoveryChoch[symbol]), 11f,
+                if (recoveryChoch[symbol].isNullOrBlank()) amber else green, true)
+            chochStatusViews[symbol] = chochView
+            indexCard.addView(chochView)
+            indexCard.addView(space(8))
+            indexCard.addView(divider())
+            indexCard.addView(space(8))
+            indexCard.addView(text("RECOVERY STATUS", 11f, whiteText, true))
             val recoveryView = text(recoveryStatusText(symbol), 11f, muted)
             recoveryStatusViews[symbol] = recoveryView
             indexCard.addView(recoveryView)
@@ -1155,79 +1362,61 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     private fun showTrade() {
         pageHeading("RUNNING TRADES", "Original and recovery contracts.")
-
         val summary = card()
-        summary.addView(text("DAILY STARTING CAPITAL", 12f, amber, true))
-        summary.addView(space(5))
-        summary.addView(text(String.format(Locale.US, "%.2f %s", dailyCapital, accountCurrency), 21f, ink, true))
-        summary.addView(text("ACCOUNT MODE: $executionMode", 11f, muted, true))
-        summary.addView(text("Stake per original contract: 25%", 12f, muted))
+        summary.addView(text("DAILY STARTING CAPITAL", 12f, muted, true))
+        summary.addView(text(String.format(Locale.US, "%.2f %s", dailyCapital, accountCurrency), 18f, Color.rgb(33, 150, 243), true))
+        summary.addView(text("ACCOUNT MODE: $executionMode", 12f, if (executionMode == "REAL") Color.rgb(33, 150, 243) else red, true))
+        summary.addView(text("Stake per original contract: 25%", 12f, amber))
         content.addView(summary)
         content.addView(space(16))
 
-        content.addView(text("RUNNING TRADES", 16f, amber, true))
+        val activePositions = positions.values.filter { it.status != "CLOSED" }
+        val closedPositions = positions.values.filter { it.status == "CLOSED" }.sortedByDescending { it.closedAt }
+
+        content.addView(text("RUNNING TRADES", 17f, whiteText, true))
         content.addView(space(8))
-        val running = positions.values.filter {
-            it.status != "CLOSED" && it.status != "EXPIRED" && !it.status.startsWith("ERROR")
-        }
-        if (running.isEmpty()) {
+        if (activePositions.isEmpty()) {
             val empty = card()
             empty.addView(text("NO RUNNING TRADES", 15f, ink, true))
-            empty.addView(space(5))
-            empty.addView(text("No open contracts are currently recorded.", 13f, muted))
+            empty.addView(text("No trade is currently open.", 13f, muted))
             content.addView(empty)
         } else {
-            running.forEach { p ->
+            activePositions.forEach { p ->
                 val c = card()
-                c.addView(text("${displayIndexName(p.symbol)} · ${p.role}", 15f, amber, true))
-                c.addView(space(4))
-                c.addView(text("DIRECTION: ${p.direction}", 14f, if (p.direction.equals("RISE", true) || p.direction.equals("BUY", true)) green else red, true))
-                c.addView(text("Contract: ${if (p.contractId > 0) p.contractId else "Pending"}", 11f, muted))
-                c.addView(text("Stake: ${formatMoney(p.stake)}", 12f, ink))
-                c.addView(text("Status: ${p.status}", 12f, green, true))
-                c.addView(text("Profit / Loss: ${formatMoney(p.profit)}", 14f, if (p.profit >= 0) green else red, true))
-                c.addView(text("Trailing protection: ${formatMoney(p.protectedProfit)}", 11f, muted))
-                content.addView(c)
-                content.addView(space(9))
-            }
-        }
-
-        content.addView(space(8))
-        content.addView(divider())
-        content.addView(space(14))
-        content.addView(text("TRADE HISTORY", 16f, amber, true))
-        content.addView(text("Completed original and recovery contracts.", 12f, muted))
-        content.addView(space(8))
-
-        val history = positions.values.filter { it.status == "CLOSED" || it.status == "EXPIRED" }
-            .sortedByDescending { it.closedAt }
-        if (history.isEmpty()) {
-            val emptyHistory = card()
-            emptyHistory.addView(text("NO TRADE HISTORY", 14f, ink, true))
-            emptyHistory.addView(space(4))
-            emptyHistory.addView(text("Completed trades will appear here with their final results.", 12f, muted))
-            content.addView(emptyHistory)
-        } else {
-            history.forEach { p ->
-                val c = card()
-                c.addView(text("${displayIndexName(p.symbol)} · ${p.role}", 14f, amber, true))
-                c.addView(text("DIRECTION: ${p.direction}", 13f, if (p.direction.equals("RISE", true) || p.direction.equals("BUY", true)) green else red, true))
-                c.addView(text("Stake: ${formatMoney(p.stake)}", 12f, muted))
-                c.addView(text("FINAL P/L: ${formatMoney(p.profit)}", 14f, if (p.profit >= 0) green else red, true))
-                val closedText = if (p.closedAt > 0L) {
-                    java.text.DateFormat.getDateTimeInstance().format(java.util.Date(p.closedAt))
-                } else "Closing time unavailable"
-                c.addView(text("Closed: $closedText", 11f, muted))
+                c.addView(text("${displayIndexName(p.symbol)} · ${p.role}", 14f, indexNameColor(p.symbol), true))
+                c.addView(text("DIRECTION: ${p.direction}", 14f, if (p.direction == "RISE") green else red, true))
+                c.addView(text("Contract: ${if (p.contractId > 0L) p.contractId.toString() else "Pending"}", 12f, whiteText))
+                c.addView(text("Stake: ${formatMoney(p.stake)}", 13f, amber))
+                c.addView(text("Status: ${p.status}", 13f, if (p.status == "OPEN") green else amber, true))
+                c.addView(text("Profit / Loss: ${formatMoney(p.profit)}", 14f, if (p.profit >= 0.0) green else red, true))
+                c.addView(text("Trailing protection: ${formatMoney(p.protectedProfit)}", 12f, whiteText))
                 content.addView(c)
                 content.addView(space(8))
             }
         }
 
-        tradeStatusView = text(
-            if (accountConnected) "● EXECUTION CONNECTED" else "● CONNECT A DERIV ACCOUNT TO ENABLE EXECUTION",
-            12f, if (accountConnected) green else amber, true
-        )
+        content.addView(space(10))
+        content.addView(divider())
+        content.addView(space(14))
+        content.addView(text("TRADE HISTORY", 17f, whiteText, true))
+        content.addView(text("Completed original and recovery contracts.", 12f, whiteText))
         content.addView(space(8))
+        if (closedPositions.isEmpty()) {
+            content.addView(text("No completed trades yet.", 12f, muted))
+        } else {
+            closedPositions.forEach { p ->
+                val c = card()
+                c.addView(text("${displayIndexName(p.symbol)} · ${p.role}", 14f, indexNameColor(p.symbol), true))
+                c.addView(text("DIRECTION: ${p.direction}", 14f, if (p.direction == "RISE") green else red, true))
+                c.addView(text("Stake: ${formatMoney(p.stake)}", 13f, whiteText))
+                c.addView(text("FINAL P/L: ${formatMoney(p.profit)}", 14f, if (p.profit >= 0.0) green else red, true))
+                val closedText = if (p.closedAt > 0L) java.text.DateFormat.getDateTimeInstance().format(java.util.Date(p.closedAt * 1000L)) else "Time unavailable"
+                c.addView(text("Closed: $closedText", 11f, whiteText))
+                content.addView(c)
+                content.addView(space(8))
+            }
+        }
+        tradeStatusView = text(if (accountConnected) "EXECUTION CONNECTED" else "CONNECT A DERIV ACCOUNT TO ENABLE EXECUTION", 12f, if (accountConnected) green else amber, true)
         content.addView(tradeStatusView)
     }
 
@@ -1236,7 +1425,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val deriv = card()
         deriv.addView(text("DERIV ACCOUNT", 15f, ink, true))
         deriv.addView(space(6))
-        deriv.addView(text("Account mode: $executionMode", 13f, muted))
+        deriv.addView(text("Account mode: $executionMode", 13f, if (executionMode == "REAL") Color.rgb(33, 150, 243) else red, true))
         deriv.addView(text(if (accountConnected) accountLabel else "Connection: Disconnected", 13f, muted))
         deriv.addView(text(accountBalanceLabel, 13f, muted))
         deriv.addView(space(12))
@@ -1275,7 +1464,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val c = card()
         c.addView(text("APPLICATION", 15f, ink, true))
         c.addView(space(8))
-        c.addView(settingRow("Interface", "Original dark · green · gold"))
+        c.addView(settingRow("Interface", if (darkInterface) "Dark" else "Light") {
+            showInterfaceDialog()
+        })
         c.addView(divider())
         c.addView(settingRow("Market indexes", "VIX 10, VIX 25, VIX 50, VIX 75, VIX 100"))
         c.addView(divider())
@@ -1297,26 +1488,53 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     private fun pageHeading(title: String, subtitle: String) {
-        content.addView(text(title, 21f, amber, true))
+        content.addView(text(title, 21f, ink, true))
         content.addView(text(subtitle, 13f, muted))
         content.addView(space(18))
     }
 
-    private fun settingRow(label: String, value: String): View {
+    private fun settingRow(label: String, value: String, action: (() -> Unit)? = null): View {
         val row = horizontal()
         row.gravity = Gravity.CENTER_VERTICAL
         row.setPadding(0, dp(12), 0, dp(12))
         row.addView(text(label, 14f, ink, true),
             LinearLayout.LayoutParams(0, -2, 1f))
         row.addView(text(value, 13f, muted))
+        if (action != null) {
+            row.isClickable = true
+            row.setOnClickListener { action() }
+            val selectable = android.util.TypedValue()
+            theme.resolveAttribute(android.R.attr.selectableItemBackground, selectable, true)
+            if (selectable.resourceId != 0) {
+                row.setBackgroundResource(selectable.resourceId)
+            }
+        }
         return row
+    }
+
+    private fun showInterfaceDialog() {
+        val options = arrayOf("Light", "Dark")
+        AlertDialog.Builder(this)
+            .setTitle("Choose interface")
+            .setSingleChoiceItems(options, if (darkInterface) 1 else 0) { dialog, which ->
+                darkInterface = which == 1
+                settingsPrefs.edit().putBoolean("dark_interface", darkInterface).apply()
+                dialog.dismiss()
+                window.statusBarColor = pageColor
+                window.navigationBarColor = if (darkInterface) pageColor else Color.WHITE
+                window.decorView.systemUiVisibility = if (darkInterface) 0 else
+                    View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+                render()
+            }
+            .setNegativeButton("CANCEL", null)
+            .show()
     }
 
     private fun bottomNavigation(): View {
         val nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setBackgroundColor(Color.rgb(3, 8, 6))
+            setBackgroundColor(if (darkInterface) cardColor else Color.WHITE)
             setPadding(dp(6), dp(8), dp(6), dp(8))
             elevation = dp(8).toFloat()
         }
@@ -1326,7 +1544,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 textSize = 12f
                 gravity = Gravity.CENTER
                 setTypeface(null, if (selectedTab == tab) Typeface.BOLD else Typeface.NORMAL)
-                setTextColor(if (selectedTab == tab) green else amber)
+                setTextColor(if (selectedTab == tab) green else muted)
                 setPadding(dp(4), dp(8), dp(4), dp(8))
                 setOnClickListener { openTab(tab) }
             }
@@ -1354,9 +1572,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             text = label
             textSize = 12f
             isAllCaps = false
-            setTextColor(if (primary) Color.rgb(2, 12, 7) else amber)
-            background = rounded(if (primary) green else cardColor,
-                if (primary) green else lineColor, 10)
+            setTextColor(if (primary) Color.WHITE else green)
+            background = rounded(if (primary) green else if (darkInterface) Color.rgb(38, 66, 57) else Color.rgb(235, 247, 241),
+                if (primary) green else if (darkInterface) Color.rgb(57, 91, 78) else Color.rgb(210, 235, 222), 10)
             setPadding(dp(12), dp(8), dp(12), dp(8))
             setOnClickListener { action() }
         }
@@ -1369,7 +1587,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             setTypeface(null, Typeface.BOLD)
             setTextColor(color)
             setPadding(dp(9), dp(5), dp(9), dp(5))
-            background = rounded(cardColor, color, 20)
+            background = rounded(Color.WHITE, color, 20)
         }
     }
 
@@ -1402,6 +1620,16 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             setCornerRadius(dp(radius).toFloat())
             setStroke(dp(1), stroke)
         }
+    }
+
+
+    private fun indexNameColor(symbol: String): Int = when (symbol) {
+        "R_10" -> Color.rgb(33, 150, 243)
+        "R_25" -> Color.rgb(0, 200, 83)
+        "R_50" -> Color.rgb(255, 214, 0)
+        "R_75" -> Color.rgb(244, 67, 54)
+        "R_100" -> Color.rgb(156, 39, 176)
+        else -> ink
     }
 
     private fun displayIndexName(symbol: String): String {
