@@ -66,6 +66,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val priceViews = mutableMapOf<String, TextView>()
     private val indexStatusViews = mutableMapOf<String, TextView>()
     private val marketStatusViews = mutableMapOf<String, TextView>()
+    private val masterDecisionViews = mutableMapOf<String, TextView>()
     private val levelStatusViews = mutableMapOf<String, TextView>()
     private val recoveryStatusViews = mutableMapOf<String, TextView>()
 
@@ -112,7 +113,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private data class Position(
         val localId: String,
         val symbol: String,
-        val direction: String,
+        var direction: String,
         val role: String,
         val stake: Double,
         val originalId: String = "",
@@ -382,7 +383,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 savePositions()
                 addNotification("Trade", "${displayIndexName(position.symbol)} ${position.role.lowercase(Locale.US)} opened", "${position.direction} contract opened. Stake: ${formatMoney(position.stake)}.")
                 subscribePosition(position.contractId)
-                runOnUiThread { if (selectedTab == "Trade") render() }
+                runOnUiThread {
+                    updateMasterDecisionViews(position.symbol)
+                    if (selectedTab == "Trade") render()
+                }
             }
             "proposal_open_contract" -> handleOpenContract(json.optJSONObject("proposal_open_contract") ?: return)
             "portfolio" -> {
@@ -594,7 +598,19 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         return "PREVIOUS DAY HIGH: ${formatPrice(levels.first)}\nPREVIOUS DAY LOW: ${formatPrice(levels.second)}"
     }
 
+    private fun runningDirectionText(symbol: String): String? {
+        val running = positions.values.filter {
+            it.symbol == symbol && it.contractId > 0L &&
+                it.status !in setOf("CLOSED") && !it.status.startsWith("ERROR") &&
+                it.status !in setOf("BUY FAILED", "PROPOSAL FAILED")
+        }
+        if (running.isEmpty()) return null
+        val directions = running.map { it.direction }.distinct()
+        return "TRADE RUNNING · " + directions.joinToString(" + ")
+    }
+
     private fun masterDecisionText(symbol: String): String {
+        runningDirectionText(symbol)?.let { return "$it. Contract is active on Deriv." }
         if (!marketFeedConnected || latestPrices[symbol] == null) {
             return "Waiting for live market price data."
         }
@@ -638,6 +654,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     private fun updateMasterDecisionViews(symbol: String) {
         levelStatusViews[symbol]?.text = referenceLevelsText(symbol)
+        val running = runningDirectionText(symbol)
+        masterDecisionViews[symbol]?.apply {
+            text = running ?: "WAITING"
+            setTextColor(if (running != null) green else amber)
+        }
         marketStatusViews[symbol]?.text = masterDecisionText(symbol)
     }
 
@@ -705,7 +726,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         positions[localId] = p
         val req = nextRequestId()
         pendingRequests[req] = localId
-        val contractType = if (direction == "RISE") "PUT" else "CALL"
+        // Deriv contract types: CALL = Rise, PUT = Fall.
+        val contractType = if (direction == "RISE") "CALL" else "PUT"
         val proposal = JSONObject()
             .put("proposal", 1)
             .put("amount", roundStake(roundedStake))
@@ -734,6 +756,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val contractId = contract.optLong("contract_id", 0L)
         val p = positions.values.firstOrNull { it.contractId == contractId } ?: return
         val wasAlreadyClosed = p.status == "CLOSED"
+        // Reconcile the app label with Deriv's actual contract type.
+        when (contract.optString("contract_type").uppercase(Locale.US)) {
+            "CALL" -> p.direction = "RISE"
+            "PUT" -> p.direction = "FALL"
+        }
         p.profit = contract.optDouble("profit", p.profit)
         if (p.profit > p.peakProfit) p.peakProfit = p.profit
         val percent = if (p.stake > 0.0) (p.peakProfit / p.stake) * 100.0 else 0.0
@@ -763,7 +790,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             p.status = "OPEN"
         }
         savePositions()
-        runOnUiThread { if (selectedTab == "Trade") render() }
+        runOnUiThread {
+            updateMasterDecisionViews(p.symbol)
+            if (selectedTab == "Trade") render()
+        }
     }
 
     private fun evaluateRecoverySignals(symbol: String, candles: List<DerivApiClient.Candle>) {
@@ -1000,7 +1030,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         render()
         toast("Deriv account disconnected.")
     }
-
     private fun generateCodeVerifier(): String {
         val bytes = ByteArray(32)
         SecureRandom().nextBytes(bytes)
@@ -1021,6 +1050,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         priceViews.clear()
         indexStatusViews.clear()
         marketStatusViews.clear()
+        masterDecisionViews.clear()
         levelStatusViews.clear()
         recoveryStatusViews.clear()
 
@@ -1129,7 +1159,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             indexCard.addView(divider())
             indexCard.addView(space(8))
             indexCard.addView(text("MASTER DECISION", 11f, muted, true))
-            indexCard.addView(text("WAITING", 12f, amber, true))
+            val decisionView = text(runningDirectionText(symbol) ?: "WAITING", 12f,
+                if (runningDirectionText(symbol) != null) green else amber, true)
+            masterDecisionViews[symbol] = decisionView
+            indexCard.addView(decisionView)
             val levelsView = text(referenceLevelsText(symbol), 12f, ink, true)
             levelStatusViews[symbol] = levelsView
             indexCard.addView(levelsView)
