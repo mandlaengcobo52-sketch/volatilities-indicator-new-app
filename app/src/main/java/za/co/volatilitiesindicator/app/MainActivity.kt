@@ -571,7 +571,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             cornerRadius = dp(14).toFloat()
             setStroke(dp(1), lineColor)
         })
-        dialog.findViewById<TextView>(android.R.id.alertTitle)?.setTextColor(amber)
+        dialog.findViewById<TextView>(resources.getIdentifier("alertTitle", "id", "android"))?.setTextColor(amber)
         dialog.findViewById<TextView>(android.R.id.message)?.setTextColor(amber)
         dialog.listView?.setBackgroundColor(cardColor)
         dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setTextColor(green)
