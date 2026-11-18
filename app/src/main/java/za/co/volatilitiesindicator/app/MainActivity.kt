@@ -17,6 +17,8 @@ import java.io.IOException
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.UUID
+import java.math.BigDecimal
+import java.math.RoundingMode
 import android.content.ServiceConnection
 import android.os.Build
 import android.os.Bundle
@@ -330,14 +332,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 position.status = "BUYING"
                 val buyReq = nextRequestId()
                 pendingRequests[buyReq] = localId
-                val buy = JSONObject().put("buy", proposalId).put("price", position.stake).put("req_id", buyReq)
+                val buy = JSONObject().put("buy", proposalId).put("price", roundStake(position.stake)).put("req_id", buyReq)
                 derivService?.client?.send(buy)
             }
             "buy" -> {
                 if (localId == null) return
                 pendingRequests.remove(reqId)
-                val buyPrice = BigDecimal.valueOf(position.stake).setScale(2, RoundingMode.HALF_UP)
-val buy = JSONObject().put("buy", proposalId).put("price", buyPrice).put("req_id", buyReq)
+                val buy = json.optJSONObject("buy") ?: return
                 val position = positions[localId] ?: return
                 position.contractId = buy.optLong("contract_id", 0L)
                 if (position.contractId <= 0L) { position.status = "BUY FAILED"; return }
@@ -406,17 +407,21 @@ val buy = JSONObject().put("buy", proposalId).put("price", buyPrice).put("req_id
         tradePrefs.edit().putStringSet("triggered_$today", originalTriggered.toSet()).apply()
     }
 
+    private fun roundStake(value: Double): Double =
+        BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP).toDouble()
+
     private fun openPosition(symbol: String, direction: String, role: String, stake: Double, originalId: String = "") {
-        if (!accountConnected || stake <= 0.0) return
+        val roundedStake = roundStake(stake)
+        if (!accountConnected || !roundedStake.isFinite() || roundedStake <= 0.0) return
         val localId = UUID.randomUUID().toString()
-        val p = Position(localId, symbol, direction, role, stake, originalId)
+        val p = Position(localId, symbol, direction, role, roundedStake, originalId)
         positions[localId] = p
         val req = nextRequestId()
         pendingRequests[req] = localId
         val contractType = if (direction == "RISE") "PUT" else "CALL"
         val proposal = JSONObject()
             .put("proposal", 1)
-            .put("amount", BigDecimal.valueOf(roundedStake).setScale(2, RoundingMode.HALF_UP))
+            .put("amount", roundStake(roundedStake))
             .put("basis", "stake")
             .put("contract_type", contractType)
             .put("currency", accountCurrency)
@@ -468,7 +473,7 @@ val buy = JSONObject().put("buy", proposalId).put("price", buyPrice).put("req_id
         if (!accountConnected || candles.size < 5) return
         val closed = candles.sortedBy { it.epoch }.dropLast(1)
         if (closed.size < 4) return
-        val last = closed.last()
+       val last = closed.last()
         val prior = closed.dropLast(1)
         val swingHighs = mutableListOf<Double>()
         val swingLows = mutableListOf<Double>()
