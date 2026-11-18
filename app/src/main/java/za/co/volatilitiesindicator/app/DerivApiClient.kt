@@ -55,10 +55,6 @@ class DerivApiClient(
             // Optional callback for public market-data errors.
         }
 
-        fun onMarketDataStatus(message: String) {
-            // Optional callback for public market-data connection status.
-        }
-
         fun onError(message: String)
         
                 fun onTradeData(json: JSONObject) {
@@ -233,7 +229,6 @@ class DerivApiClient(
     private var lastAuthenticatedMessageAt: Long = 0L
 
     private var marketDataSocket: WebSocket? = null
-    @Volatile private var livePricesOnly = false
     private var marketDataEndpointIndex = 0
     private var marketDataAttempt = 0
     private var marketDataTimeout: java.util.concurrent.ScheduledFuture<*>? = null
@@ -325,8 +320,8 @@ private val candleIndexes = listOf(
         manuallyDisconnected =
             false
 
-        marketDataReconnectFuture?.cancel(false)
-        marketDataReconnectFuture = null
+        // Cancel only authenticated-account reconnect work.
+        // The public market-data socket must remain alive while accounts switch.
         cancelReconnect()
 
         stopHeartbeat()
@@ -813,7 +808,8 @@ private val candleIndexes = listOf(
             if (
                 url.isNotEmpty()
             ) {
-              return url
+
+                return url
             }
 
             val websocketUrl =
@@ -942,9 +938,8 @@ private val candleIndexes = listOf(
                                 socket
                             )
 
-                            // connectWithAccessToken() closes both sockets before reconnecting.
-                            // Restore the separate public market-data socket after the
-                            // authenticated session is back, so live prices/candles resume too.
+                            // Keep public index subscriptions active independently
+                            // from the authenticated trading-account connection.
                             requestHistoricalCandles()
 
                             /*
@@ -1113,6 +1108,7 @@ private val liveIndexes = listOf(
 )
 
 fun subscribeToLiveTicks() {
+
     if (!connected) {
         callback.onError(
             "Cannot subscribe to prices: Deriv is not connected."
@@ -1133,36 +1129,10 @@ fun subscribeToLiveTicks() {
 // HISTORICAL CANDLE CONNECTION
 // =============================================================
 
-/**
- * Start the public live-price feed without authenticating a Deriv account.
- * The market-data WebSocket subscribes to all five index symbols on open.
- */
-fun startPublicLivePriceFeed() {
-    manuallyDisconnected = false
-    livePricesOnly = false
-    marketDataReconnectFuture?.cancel(false)
-    marketDataReconnectFuture = null
-    marketDataEndpointIndex = 0
-    marketDataAttempt = 0
-
-    callback.onMarketDataStatus("Connecting to Deriv live prices...")
-    connectMarketDataEndpoint()
-}
-
-
 fun requestHistoricalCandles() {
-    livePricesOnly = false
-
-    val socket = marketDataSocket
-
-    if (socket != null) {
-        refreshHistoricalCandles()
-        return
-    }
-
+    if (marketDataSocket != null) return
     connectMarketDataEndpoint()
 }
-
 
 private fun connectMarketDataEndpoint() {
     if (marketDataSocket != null) return
@@ -1187,23 +1157,19 @@ private fun connectMarketDataEndpoint() {
                 }
             }, 20, java.util.concurrent.TimeUnit.SECONDS)
 
-            if (!livePricesOnly) {
-                for (symbol in candleIndexes) {
-                    val requestId = marketDataRequestId++
-                    candleRequestSymbols[requestId] = symbol
-                    val message = JSONObject().apply {
-                        put("ticks_history", symbol)
-                        put("count", 1440)
-                        put("end", "latest")
-                        put("style", "candles")
-                        put("granularity", 60)
-                        put("req_id", requestId)
-                    }
-                    webSocket.send(message.toString())
+            for (symbol in candleIndexes) {
+                val requestId = marketDataRequestId++
+                candleRequestSymbols[requestId] = symbol
+                val message = JSONObject().apply {
+                    put("ticks_history", symbol)
+                    put("count", 1000)
+                    put("end", "latest")
+                    put("style", "candles")
+                    put("granularity", 3600)
+                    put("req_id", requestId)
                 }
+                webSocket.send(message.toString())
             }
-
-            // Subscribe to live quotes for all five synthetic indices.
             for (symbol in candleIndexes) {
                 val tickRequest = JSONObject().apply {
                     put("ticks", symbol)
@@ -1212,7 +1178,6 @@ private fun connectMarketDataEndpoint() {
                 }
                 webSocket.send(tickRequest.toString())
             }
-            callback.onMarketDataStatus("Deriv live-price connection established.")
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
@@ -1250,7 +1215,7 @@ private fun connectMarketDataEndpoint() {
 
                 val candlesJson = json.optJSONArray("candles") ?: json.optJSONObject("history")?.optJSONArray("candles")
                 if (candlesJson == null) {
-                    callback.onMarketDataError(symbol, "Deriv returned no M1 candles for $symbol.")
+                    callback.onMarketDataError(symbol, "Deriv returned no H1 candles for $symbol.")
                     return
                 }
                 val candles = mutableListOf<Candle>()
@@ -1294,7 +1259,6 @@ private fun connectMarketDataEndpoint() {
                 marketDataEndpointIndex = (marketDataEndpointIndex + 1) % marketDataEndpoints.size
                 scheduleMarketDataReconnect(700L)
             } else {
-                callback.onMarketDataStatus("Market-data connection failed; retrying...")
                 for (symbol in candleIndexes) {
                     callback.onMarketDataError(symbol, "Market-data connection failed; retrying automatically. Last HTTP=${response?.code ?: "unknown"}; ${t.message ?: "network error"}")
                 }
@@ -1357,10 +1321,10 @@ fun refreshHistoricalCandles() {
 
         val message = JSONObject().apply {
             put("ticks_history", symbol)
-            put("count", 1440)
+            put("count", 1000)
             put("end", "latest")
             put("style", "candles")
-            put("granularity", 60)
+            put("granularity", 3600)
             put("req_id", requestId)
         }
 
@@ -1417,7 +1381,7 @@ if (tick != null) {
         )
     }
 }
-val tradeMessageType = json.optString("msg_type", "")
+            val tradeMessageType = json.optString("msg_type", "")
 
             /*
              * Forward every response needed by the trade execution state machine.
@@ -1555,7 +1519,6 @@ val tradeMessageType = json.optString("msg_type", "")
         if (
             !directBalance.isNaN()
         ) {
-
             val currency =
                 json.optString(
                     "currency",
@@ -1721,6 +1684,7 @@ val tradeMessageType = json.optString("msg_type", "")
         statusCode: Int,
         body: String
     ): String {
+
         if (
             body.isBlank()
         ) {
@@ -1853,7 +1817,6 @@ val tradeMessageType = json.optString("msg_type", "")
             "HTTP $statusCode"
         }
     }
-
     /*
      * Schedule an automatic reconnect.
      *
@@ -1935,10 +1898,9 @@ val tradeMessageType = json.optString("msg_type", "")
         webSocket =
             null
 
-        try { marketDataSocket?.close(1000, "Client disconnected") } catch (_: Exception) {}
-        marketDataSocket = null
-        marketDataTimeout?.cancel(false)
-        marketDataTimeout = null
+        // Do not close marketDataSocket here. It is a separate public
+        // connection and must continue supplying index ticks during
+        // DEMO/REAL account changes and authenticated reconnects.
 
         connected =
             false
@@ -1999,6 +1961,30 @@ candleRequestSymbols.clear()
 
         accountId =
             null
+
+        callback.onDisconnected()
+    }
+
+    /*
+     * Disconnect only the authenticated trading account.
+     * The public market-data socket and its reconnect loop remain active.
+     */
+    fun disconnectAccount() {
+        manuallyDisconnected = true
+        cancelReconnect()
+        stopHeartbeat()
+
+        try {
+            webSocket?.close(1000, "Trading account disconnected")
+        } catch (_: Exception) {
+        }
+        webSocket = null
+
+        connected = false
+        connecting = false
+        lastAuthenticatedMessageAt = 0L
+        accountId = null
+        accessToken = null
 
         callback.onDisconnected()
     }
@@ -2146,7 +2132,6 @@ candleRequestSymbols.clear()
         if (
             !connected
         ) {
-
             callback.onError(
                 "Deriv is not connected."
             )
