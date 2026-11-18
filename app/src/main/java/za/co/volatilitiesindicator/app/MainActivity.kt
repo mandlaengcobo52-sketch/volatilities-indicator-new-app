@@ -917,6 +917,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             p.trailingLockArmed = true
         }
         }
+        val minimumProtected = p.stake * (30.0 / 100.0)
         val isSold = contract.optInt("is_sold", 0) == 1 || contract.optInt("is_expired", 0) == 1
         val hasMinimumPeak = p.peakProfit >= minimumProtected
         val trailingExitReached = p.trailingLockArmed && p.protectedProfit >= minimumProtected &&
