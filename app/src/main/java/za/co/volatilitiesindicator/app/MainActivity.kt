@@ -503,7 +503,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         indexes.forEach { symbol ->
             val indexCard = card()
             val row = horizontal()
-            row.addView(text(symbol, 15f, ink, true),
+            row.addView(text(displayIndexName(symbol), 15f, ink, true),
                 LinearLayout.LayoutParams(0, -2, 1f))
             val statusView = pill(
                 if (latestPrices.containsKey(symbol)) "LIVE" else "CONNECTING",
@@ -589,7 +589,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         c.addView(space(8))
         c.addView(settingRow("Interface", "Light"))
         c.addView(divider())
-        c.addView(settingRow("Market indexes", "R_10, R_25, R_50, R_75, R_100"))
+        c.addView(settingRow("Market indexes", "VIX 10, VIX 25, VIX 50, VIX 75, VIX 100"))
         c.addView(divider())
         c.addView(settingRow("Market feed", if (marketFeedConnected) "Connected" else "Connecting"))
         c.addView(divider())
@@ -713,6 +713,17 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             setColor(fill)
             setCornerRadius(dp(radius).toFloat())
             setStroke(dp(1), stroke)
+        }
+    }
+
+    private fun displayIndexName(symbol: String): String {
+        return when (symbol) {
+            "R_10" -> "VIX 10"
+            "R_25" -> "VIX 25"
+            "R_50" -> "VIX 50"
+            "R_75" -> "VIX 75"
+            "R_100" -> "VIX 100"
+            else -> symbol
         }
     }
 
