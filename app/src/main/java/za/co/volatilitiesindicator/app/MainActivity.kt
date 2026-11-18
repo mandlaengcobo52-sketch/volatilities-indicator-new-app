@@ -336,7 +336,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             "buy" -> {
                 if (localId == null) return
                 pendingRequests.remove(reqId)
-                val buy = json.optJSONObject("buy") ?: return
+                val buyPrice = BigDecimal.valueOf(position.stake).setScale(2, RoundingMode.HALF_UP)
+val buy = JSONObject().put("buy", proposalId).put("price", buyPrice).put("req_id", buyReq)
                 val position = positions[localId] ?: return
                 position.contractId = buy.optLong("contract_id", 0L)
                 if (position.contractId <= 0L) { position.status = "BUY FAILED"; return }
@@ -415,7 +416,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val contractType = if (direction == "RISE") "PUT" else "CALL"
         val proposal = JSONObject()
             .put("proposal", 1)
-            .put("amount", stake)
+            .put("amount", BigDecimal.valueOf(roundedStake).setScale(2, RoundingMode.HALF_UP))
             .put("basis", "stake")
             .put("contract_type", contractType)
             .put("currency", accountCurrency)
