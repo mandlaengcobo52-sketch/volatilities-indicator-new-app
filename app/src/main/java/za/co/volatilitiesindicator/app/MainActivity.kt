@@ -79,6 +79,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             service.attachActivity(this@MainActivity)
             // Public market feed: does not require signing in to a Deriv account.
             service.client.requestHistoricalCandles()
+            executionMode = if (prefs.getString("oauth_mode", executionMode).equals("REAL", true)) "REAL" else "DEMO"
             val tokenKey = if (executionMode == "REAL") "real_token" else "demo_token"
             val savedToken = prefs.getString(tokenKey, "").orEmpty()
             if (savedToken.isNotBlank()) {
@@ -116,6 +117,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     override fun onResume() {
         super.onResume()
+        executionMode = if (prefs.getString("oauth_mode", executionMode).equals("REAL", true)) "REAL" else "DEMO"
         val tokenKey = if (executionMode == "REAL") "real_token" else "demo_token"
         val savedToken = prefs.getString(tokenKey, "").orEmpty()
         if (savedToken.isNotBlank() && derivService != null &&
@@ -226,7 +228,16 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     override fun onError(message: String) {
-        runOnUiThread { updateConnectionLabels(message) }
+        runOnUiThread {
+            accountConnected = false
+            accountLabel = "Connection failed"
+            accountBalanceLabel = message
+            accountStatusView?.text = "CONNECTION FAILED"
+            accountStatusView?.setTextColor(red)
+            accountIdView?.text = accountLabel
+            accountBalanceView?.text = message
+            if (selectedTab == "Accounts") render()
+        }
     }
 
     override fun onTradeData(json: JSONObject) {
@@ -251,6 +262,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             .setTitle("Connect Deriv account")
             .setItems(modes) { _, which ->
                 executionMode = if (which == 1) "REAL" else "DEMO"
+                prefs.edit().putString("oauth_mode", executionMode).apply()
                 beginDerivConnection()
             }
             .setNegativeButton("CANCEL", null)
@@ -384,15 +396,15 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         accountLabel = "Connecting…"
         accountBalanceLabel = "Balance loading…"
         renderIfHome()
-        service.client.ensureConnectedOnResume(token, executionMode)
+        service.client.connectWithAccessToken(token, executionMode)
     }
 
     private fun disconnectDerivAccount() {
+        val tokenKey = if (executionMode == "REAL") "real_token" else "demo_token"
         prefs.edit()
-            .remove("demo_token")
-            .remove("real_token")
+            .remove(tokenKey)
             .apply()
-        try { derivService?.client?.disconnect() } catch (_: Exception) {}
+        try { derivService?.client?.disconnectAccount() } catch (_: Exception) {}
         accountConnected = false
         accountLabel = "Not connected"
         accountBalanceLabel = "Balance unavailable"
