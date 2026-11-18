@@ -1609,22 +1609,52 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             empty.addView(text("No trade is currently open.", 13f, muted))
             content.addView(empty)
         } else {
-            activePositions.forEach { p ->
-                val c = card(indexNameColor(p.symbol))
-                c.addView(text("${displayIndexName(p.symbol)} · ${p.role}", 14f, indexNameColor(p.symbol), true))
-                c.addView(text("DIRECTION: ${p.direction}", 14f, if (p.direction == "RISE") green else red, true))
-                c.addView(text("Contract: ${if (p.contractId > 0L) p.contractId.toString() else "Pending"}", 12f, Color.WHITE))
-                c.addView(text("Stake: ${formatMoney(p.stake)}", 13f, gold))
-                val statusView = text("Status: ${p.status}", 13f, if (p.status == "OPEN") green else amber, true)
-                tradeStatusViews[p.localId] = statusView
-                c.addView(statusView)
-                val profitView = text("Profit / Loss: ${formatMoney(p.profit)}", 14f, if (p.profit >= 0.0) green else red, true)
-                tradeProfitViews[p.localId] = profitView
-                c.addView(profitView)
-                if (p.contractId > 0L && p.status == "OPEN") {
-                    c.addView(space(8))
-                    c.addView(actionButton("CLOSE RUNNING TRADE", primary = false) { closeRunningPosition(p) })
+            // Keep one card per index, with each running contract displayed
+            // independently inside that card.
+            activePositions.groupBy { it.symbol }.forEach { (symbol, indexPositions) ->
+                val c = card(indexNameColor(symbol))
+                c.addView(text("${displayIndexName(symbol)} · RUNNING POSITIONS", 14f,
+                    indexNameColor(symbol), true))
+                c.addView(space(8))
+
+                indexPositions.forEachIndexed { index, p ->
+                    if (index > 0) {
+                        c.addView(space(8))
+                        c.addView(divider())
+                        c.addView(space(8))
+                    }
+
+                    c.addView(text("${p.role} · ${p.direction}", 14f,
+                        if (p.direction == "RISE") green else red, true))
+                    c.addView(text("Contract: ${if (p.contractId > 0L) p.contractId.toString() else "Pending"}",
+                        12f, Color.WHITE))
+                    c.addView(text("Stake: ${formatMoney(p.stake)}", 13f, gold))
+
+                    val statusView = text("Status: ${p.status}", 13f,
+                        if (p.status == "OPEN") green else amber, true)
+                    tradeStatusViews[p.localId] = statusView
+                    c.addView(statusView)
+
+                    val profitView = text("Profit / Loss: ${formatMoney(p.profit)}", 14f,
+                        if (p.profit >= 0.0) green else red, true)
+                    tradeProfitViews[p.localId] = profitView
+                    c.addView(profitView)
+
+                    if (p.contractId > 0L && p.status == "OPEN") {
+                        c.addView(space(6))
+                        c.addView(actionButton("CLOSE THIS ${p.direction} TRADE", primary = false) {
+                            closeRunningPosition(p)
+                        })
+                    }
                 }
+
+                val combinedProfit = indexPositions.sumOf { it.profit }
+                c.addView(space(8))
+                c.addView(divider())
+                c.addView(space(8))
+                c.addView(text("INDEX COMBINED P/L: ${formatMoney(combinedProfit)}", 13f,
+                    if (combinedProfit >= 0.0) green else red, true))
+
                 content.addView(c)
                 content.addView(space(8))
             }
