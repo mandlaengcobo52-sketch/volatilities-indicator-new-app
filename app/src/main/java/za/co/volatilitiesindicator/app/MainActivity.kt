@@ -143,11 +143,19 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var canSell: Boolean = false,
         var recoveryEligible: Boolean = false,
         var recoveryUsed: Boolean = false,
-        var closedAt: Long = 0L
+        var closedAt: Long = 0L,
+        var proposalId: String = "",
+        var proposalAskPrice: Double = 0.0
     )
+
+    private data class PairReservation(val amount: Double)
 
     private val positions = linkedMapOf<String, Position>()
     private val pendingRequests = mutableMapOf<Int, String>()
+    // Reserve the combined cost as soon as an index pair is qualified. This
+    // prevents several indexes from spending the same stale balance snapshot.
+    private val pairReservations = mutableMapOf<String, PairReservation>()
+    private val pairBuyStarted = mutableSetOf<String>()
     private val dailyLevels = mutableMapOf<String, Pair<Double, Double>>() // high, low
     private val candlesByIndex = mutableMapOf<String, List<DerivApiClient.Candle>>()
     private val originalTriggered = mutableSetOf<String>()
@@ -409,8 +417,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 pendingRequests.remove(reqId)
                 val failedPosition = positions[localId]
                 if (failedPosition != null) {
-                    failedPosition.status = if (failedPosition.contractId > 0L) "OPEN" else "ERROR: ${error.optString("message", "Deriv request failed")}"
-                    addNotification("Trade", "${displayIndexName(failedPosition.symbol)} trade request failed", error.optString("message", "Deriv request failed"))
+                    val message = error.optString("message", "Deriv request failed")
+                    if (failedPosition.role == "ORIGINAL" && failedPosition.originalId.startsWith("PAIR-")) {
+                        failOriginalPair(failedPosition.originalId, message)
+                    } else {
+                        failedPosition.status = if (failedPosition.contractId > 0L) "OPEN" else "ERROR: $message"
+                        addNotification("Trade", "${displayIndexName(failedPosition.symbol)} trade request failed", message)
+                    }
                 }
                 savePositions()
                 runOnUiThread { if (selectedTab == "Trade") render() }
@@ -424,12 +437,23 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 val proposal = json.optJSONObject("proposal") ?: return
                 val proposalId = proposal.optString("id", "")
                 val position = positions[localId] ?: return
-                if (proposalId.isBlank()) { position.status = "PROPOSAL FAILED"; return }
-                position.status = "BUYING"
-                val buyReq = nextRequestId()
-                pendingRequests[buyReq] = localId
-                val buy = JSONObject().put("buy", proposalId).put("price", roundStake(position.stake)).put("req_id", buyReq)
-                derivService?.client?.send(buy)
+                if (proposalId.isBlank()) {
+                    if (position.role == "ORIGINAL" && position.originalId.startsWith("PAIR-")) failOriginalPair(position.originalId, "Deriv did not return a valid proposal.")
+                    else position.status = "PROPOSAL FAILED"
+                    return
+                }
+                position.proposalId = proposalId
+                position.proposalAskPrice = proposal.optDouble("ask_price", position.stake)
+                if (position.role == "ORIGINAL" && position.originalId.startsWith("PAIR-")) {
+                    position.status = "PROPOSAL READY"
+                    tryBuyOriginalPair(position.originalId)
+                } else {
+                    position.status = "BUYING"
+                    val buyReq = nextRequestId()
+                    pendingRequests[buyReq] = localId
+                    val buy = JSONObject().put("buy", proposalId).put("price", position.proposalAskPrice).put("req_id", buyReq)
+                    derivService?.client?.send(buy)
+                }
             }
             "buy" -> {
                 if (localId == null) return
@@ -439,6 +463,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 position.contractId = buy.optLong("contract_id", 0L)
                 if (position.contractId <= 0L) { position.status = "BUY FAILED"; return }
                 position.status = "OPEN"
+                if (position.role == "ORIGINAL" && position.originalId.startsWith("PAIR-")) {
+                    val pairLegs = positions.values.filter { it.originalId == position.originalId && it.role == "ORIGINAL" }
+                    if (pairLegs.size == 2 && pairLegs.all { it.contractId > 0L && it.status == "OPEN" }) {
+                        pairReservations.remove(position.originalId)
+                        pairBuyStarted.remove(position.originalId)
+                    }
+                }
                 savePositions()
                 addNotification("Trade", "${displayIndexName(position.symbol)} ${position.role.lowercase(Locale.US)} opened", "${position.direction} contract opened. Stake: ${formatMoney(position.stake)}.")
                 subscribePosition(position.contractId)
@@ -824,13 +855,16 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         val stake = roundStake(dailyCapital * 0.25)
         val requiredForPair = roundStake(stake * 2.0)
-        if (availableBalance + 0.000001 < requiredForPair) {
+        val alreadyReserved = pairReservations.values.sumOf { it.amount }
+        val spendableBalance = availableBalance - alreadyReserved
+        if (spendableBalance + 0.000001 < requiredForPair) {
             if (insufficientFundsNotified.add(pairKey)) {
-                addNotification("Trade", "${displayIndexName(symbol)} pair not executed", "Available balance ${formatMoney(availableBalance)} is below the combined RISE and FALL stake ${formatMoney(requiredForPair)}. Neither contract was submitted.")
+                addNotification("Trade", "${displayIndexName(symbol)} pair not executed", "Daily stake remains based on starting capital (${formatMoney(stake)} per leg), but available funds after other pending pair reservations are ${formatMoney(spendableBalance)}. The combined RISE/FALL requirement is ${formatMoney(requiredForPair)}. Neither contract was submitted.")
             }
             return
         }
         val pairId = "PAIR-${today}-${symbol}-${UUID.randomUUID()}"
+        pairReservations[pairId] = PairReservation(requiredForPair)
         originalTriggered.add(pairKey)
         originalTriggered.add(legacyRiseKey)
         originalTriggered.add(legacyFallKey)
@@ -838,6 +872,53 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         openPosition(symbol, "RISE", "ORIGINAL", stake, pairId)
         openPosition(symbol, "FALL", "ORIGINAL", stake, pairId)
         addNotification("Trade", "${displayIndexName(symbol)} original pair opened", "RISE and FALL opened together with the same stake of ${formatMoney(stake)} each.")
+    }
+
+    private fun tryBuyOriginalPair(pairId: String) {
+        if (pairId in pairBuyStarted) return
+        val legs = positions.values.filter { it.originalId == pairId && it.role == "ORIGINAL" }
+        if (legs.size != 2 || legs.any { it.proposalId.isBlank() || it.proposalAskPrice <= 0.0 }) return
+        val totalAsk = roundStake(legs.sumOf { it.proposalAskPrice })
+        val reserved = pairReservations[pairId]?.amount ?: 0.0
+        val otherReserved = pairReservations.filterKeys { it != pairId }.values.sumOf { it.amount }
+        val spendable = availableBalance - otherReserved
+        if (spendable + 0.000001 < totalAsk) {
+            failOriginalPair(pairId, "Combined RISE and FALL proposal cost ${formatMoney(totalAsk)} exceeds available balance ${formatMoney(spendable)}. Neither contract was purchased.")
+            return
+        }
+        // Replace the estimated reservation with Deriv's actual combined ask price.
+        pairReservations[pairId] = PairReservation(totalAsk)
+        pairBuyStarted.add(pairId)
+        legs.forEach { leg ->
+            leg.status = "BUYING"
+            val req = nextRequestId()
+            pendingRequests[req] = leg.localId
+            val sent = derivService?.client?.send(
+                JSONObject().put("buy", leg.proposalId).put("price", leg.proposalAskPrice).put("req_id", req)
+            ) == true
+            if (!sent) {
+                pendingRequests.remove(req)
+                failOriginalPair(pairId, "Deriv connection could not submit both contracts. No further pair purchases will be sent.")
+                return
+            }
+        }
+    }
+
+    private fun failOriginalPair(pairId: String, reason: String) {
+        pairReservations.remove(pairId)
+        pairBuyStarted.remove(pairId)
+        val legs = positions.values.filter { it.originalId == pairId && it.role == "ORIGINAL" }
+        legs.forEach { leg ->
+            if (leg.contractId <= 0L) leg.status = "PAIR NOT EXECUTED"
+        }
+        legs.forEach { leg ->
+            pendingRequests.entries.removeAll { it.value == leg.localId }
+        }
+        if (legs.isNotEmpty()) {
+            addNotification("Trade", "${displayIndexName(legs.first().symbol)} pair not completed", reason)
+        }
+        savePositions()
+        runOnUiThread { if (selectedTab == "Trade") render() }
     }
 
     private fun roundStake(value: Double): Double =
@@ -916,6 +997,15 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     private fun closeRunningPosition(position: Position) {
+        AlertDialog.Builder(this)
+            .setTitle("Confirm trade closure")
+            .setMessage("Close ${displayIndexName(position.symbol)} ${position.direction} contract ${position.contractId}? This will close only this contract; its opposing pair remains open.")
+            .setNegativeButton("CANCEL", null)
+            .setPositiveButton("CONFIRM CLOSE") { _, _ -> submitCloseRunningPosition(position) }
+            .show()
+    }
+
+    private fun submitCloseRunningPosition(position: Position) {
         if (!accountConnected) {
             toast("Connect the Deriv trading account before closing this contract.")
             return
@@ -1845,4 +1935,3 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show()
     }
 }
-
