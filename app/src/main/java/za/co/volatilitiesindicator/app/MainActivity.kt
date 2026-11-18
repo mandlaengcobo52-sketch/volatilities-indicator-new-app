@@ -631,7 +631,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             mss.isNullOrBlank() && choch.isNullOrBlank() -> "Original trade closed. Waiting for confirmed candle-close MSS and CHOCH."
             !mss.isNullOrBlank() && choch.isNullOrBlank() -> "MSS confirmed ${mss.lowercase(Locale.US)}. Waiting for CHOCH confirmation."
             mss.isNullOrBlank() && !choch.isNullOrBlank() -> "CHOCH confirmed ${choch.lowercase(Locale.US)}. Waiting for MSS confirmation."
-            mss == choch -> "MSS and CHOCH agree (${mss.lowercase(Locale.US)}). Recovery conditions are aligned."
+            mss == choch -> "MSS and CHOCH agree (${mss.orEmpty().lowercase(Locale.US)}). Recovery conditions are aligned."
             else -> "MSS and CHOCH disagree. Waiting for matching confirmation."
         }
     }
