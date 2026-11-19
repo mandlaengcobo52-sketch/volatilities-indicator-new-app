@@ -115,6 +115,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private var accountIdView: TextView? = null
     private val prefs by lazy { getSharedPreferences("deriv_oauth", MODE_PRIVATE) }
     private val httpClient = OkHttpClient()
+    private val platformPrefs by lazy { getSharedPreferences("vi_platform_auth", MODE_PRIVATE) }
+    private val platformAuthUrl = "https://www.volatilitiesindicator.org.za/mobile-auth.php"
+    private var platformAuthToken = ""
+    private var platformAuthenticated = false
+    private var platformAuthBusy = false
+    private var platformUserName = ""
     private var oauthState = ""
     private var codeVerifier = ""
     private var feedPillView: TextView? = null
@@ -245,9 +251,155 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         createNotificationChannel()
         requestNotificationPermissionIfNeeded()
         handleNotificationIntent(intent, false)
-        render()
-        startMarketFeedService()
+        platformAuthToken = platformPrefs.getString("token", "").orEmpty()
+        if (platformAuthToken.isNotBlank()) {
+            verifyPlatformSession()
+        } else {
+            showPlatformAuthScreen(false)
+        }
         handleOAuthCallback(intent)
+    }
+
+    private fun verifyPlatformSession() {
+        platformAuthBusy = true
+        val request = Request.Builder()
+            .url(platformAuthUrl)
+            .header("Authorization", "Bearer $platformAuthToken")
+            .post(FormBody.Builder().add("action", "profile").build())
+            .build()
+        httpClient.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                runOnUiThread {
+                    platformAuthBusy = false
+                    showPlatformAuthScreen(false, "Unable to verify your account. Check your internet connection and try again.")
+                }
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val raw = response.body?.string().orEmpty()
+                val json = try { JSONObject(raw) } catch (_: Exception) { JSONObject() }
+                runOnUiThread {
+                    platformAuthBusy = false
+                    if (response.isSuccessful && json.optBoolean("ok")) {
+                        platformAuthenticated = true
+                        platformUserName = json.optJSONObject("user")?.optString("full_name").orEmpty()
+                        showDerivRequiredScreen()
+                    } else {
+                        platformPrefs.edit().remove("token").apply()
+                        platformAuthToken = ""
+                        platformAuthenticated = false
+                        showPlatformAuthScreen(false, json.optString("message", "Please sign in again."))
+                    }
+                    response.close()
+                }
+            }
+        })
+    }
+
+    private fun submitPlatformAuth(isRegister: Boolean, fields: List<EditText>, status: TextView, submit: Button) {
+        if (platformAuthBusy) return
+        val values = fields.map { it.text.toString().trim() }
+        val body = FormBody.Builder().add("action", if (isRegister) "register" else "login")
+        if (isRegister) {
+            if (values.size != 6 || values.any { it.isBlank() }) { status.text = "Please complete every field."; return }
+            body.add("first_name", values[0]).add("surname", values[1]).add("email", values[2])
+                .add("phone", values[3]).add("password", values[4]).add("password_confirm", values[5])
+        } else {
+            if (values.size != 2 || values.any { it.isBlank() }) { status.text = "Enter your email and password."; return }
+            body.add("email", values[0]).add("password", values[1])
+        }
+        platformAuthBusy = true
+        submit.isEnabled = false
+        status.text = if (isRegister) "Submitting registration…" else "Signing in…"
+        val request = Request.Builder().url(platformAuthUrl).post(body.build()).build()
+        httpClient.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                runOnUiThread { platformAuthBusy = false; submit.isEnabled = true; status.text = "Connection failed. Please try again." }
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val raw = response.body?.string().orEmpty()
+                val json = try { JSONObject(raw) } catch (_: Exception) { JSONObject() }
+                runOnUiThread {
+                    platformAuthBusy = false
+                    submit.isEnabled = true
+                    val message = json.optString("message", "The request could not be completed.")
+                    if (response.isSuccessful && json.optBoolean("ok")) {
+                        if (isRegister) {
+                            status.text = message
+                            fields.forEach { it.text.clear() }
+                        } else {
+                            platformAuthToken = json.optString("token")
+                            platformPrefs.edit().putString("token", platformAuthToken).apply()
+                            platformAuthenticated = platformAuthToken.isNotBlank()
+                            platformUserName = json.optJSONObject("user")?.optString("full_name").orEmpty()
+                            if (platformAuthenticated) showDerivRequiredScreen() else status.text = "Login did not return a valid session."
+                        }
+                    } else status.text = message
+                    response.close()
+                }
+            }
+        })
+    }
+
+    private fun showPlatformAuthScreen(register: Boolean, message: String = "") {
+        platformAuthenticated = false
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(24), dp(24), dp(24), dp(24))
+            setBackgroundColor(pageColor)
+        }
+        val scroll = ScrollView(this)
+        val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(22), dp(18), dp(22)); background = GradientDrawable().apply { setColor(cardColor); setCornerRadius(dp(16).toFloat()); setStroke(dp(1), lineColor) } }
+        val heading = TextView(this).apply { text = "VOLATILITIES INDICATOR"; textSize = 22f; setTextColor(ink); typeface = Typeface.DEFAULT_BOLD; gravity = Gravity.CENTER }
+        panel.addView(heading)
+        panel.addView(TextView(this).apply { text = if (register) "Create your account" else "Account login"; textSize = 17f; setTextColor(ink); setPadding(0, dp(18), 0, dp(4)) })
+        val status = TextView(this).apply { text = message; textSize = 13f; setTextColor(amber); setPadding(0, dp(10), 0, dp(10)) }
+        panel.addView(status)
+        fun field(hint: String, password: Boolean = false): EditText = EditText(this).apply {
+            this.hint = hint; textSize = 15f; setTextColor(ink); setHintTextColor(muted); setSingleLine(true)
+            if (password) inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            backgroundTintList = android.content.res.ColorStateList.valueOf(green)
+            panel.addView(this, LinearLayout.LayoutParams(-1, dp(52)))
+        }
+        val fields = if (register) listOf(field("First name"), field("Surname"), field("Email address", false).apply { inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS }, field("Contact number", false).apply { inputType = android.text.InputType.TYPE_CLASS_PHONE }, field("Password", true), field("Confirm password", true))
+            else listOf(field("Email address").apply { inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS }, field("Password", true))
+        val submit = Button(this).apply { text = if (register) "REGISTER" else "LOGIN"; setOnClickListener { submitPlatformAuth(register, fields, status, this) } }
+        panel.addView(submit, LinearLayout.LayoutParams(-1, dp(50)))
+        val switch = TextView(this).apply {
+            text = if (register) "Already registered? Login" else "New user? Register here"
+            gravity = Gravity.CENTER; setTextColor(green); setPadding(0, dp(18), 0, dp(8)); textSize = 14f
+            setOnClickListener { showPlatformAuthScreen(!register) }
+        }
+        panel.addView(switch)
+        scroll.addView(panel)
+        root.addView(scroll, LinearLayout.LayoutParams(-1, -2))
+        setContentView(root)
+    }
+
+    private fun showDerivRequiredScreen() {
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(dp(24), dp(24), dp(24), dp(24)); setBackgroundColor(pageColor) }
+        val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(24), dp(20), dp(24)); background = GradientDrawable().apply { setColor(cardColor); setCornerRadius(dp(16).toFloat()); setStroke(dp(1), lineColor) } }
+        panel.addView(TextView(this).apply { text = "PLATFORM ACCOUNT APPROVED"; textSize = 19f; typeface = Typeface.DEFAULT_BOLD; gravity = Gravity.CENTER; setTextColor(green) })
+        panel.addView(TextView(this).apply { text = "Welcome${if (platformUserName.isNotBlank()) ", $platformUserName" else ""}. Connect your Deriv account to unlock the application."; textSize = 14f; gravity = Gravity.CENTER; setTextColor(ink); setPadding(0, dp(16), 0, dp(16)) })
+        panel.addView(Button(this).apply { text = "CONNECT DERIV ACCOUNT"; setOnClickListener { startMarketFeedService(); showAccountModeDialog() } }, LinearLayout.LayoutParams(-1, dp(52)))
+        panel.addView(TextView(this).apply { text = "Sign out"; gravity = Gravity.CENTER; setTextColor(red); setPadding(0, dp(18), 0, dp(8)); setOnClickListener { signOutPlatform() } })
+        root.addView(panel, LinearLayout.LayoutParams(-1, -2))
+        setContentView(root)
+    }
+
+    private fun signOutPlatform() {
+        val request = Request.Builder().url(platformAuthUrl).header("Authorization", "Bearer $platformAuthToken")
+            .post(FormBody.Builder().add("action", "logout").build()).build()
+        httpClient.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) { }
+            override fun onResponse(call: Call, response: Response) { response.close() }
+        })
+        platformPrefs.edit().clear().apply()
+        platformAuthToken = ""; platformAuthenticated = false
+        derivService?.client?.disconnectAccount()
+        accountConnected = false
+        prefs.edit().remove("demo_token").remove("real_token").apply()
+        showPlatformAuthScreen(false, "You have signed out.")
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -267,9 +419,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     override fun onResume() {
         super.onResume()
+        if (!platformAuthenticated) return
         val previousMode = executionMode
         executionMode = if (prefs.getString("oauth_mode", executionMode).equals("REAL", true)) "REAL" else "DEMO"
-        if (previousMode != executionMode && ::content.isInitialized) render()
+        if (previousMode != executionMode && ::content.isInitialized && accountConnected) render()
         val tokenKey = if (executionMode == "REAL") "real_token" else "demo_token"
         val savedToken = prefs.getString(tokenKey, "").orEmpty()
         if (savedToken.isNotBlank() && derivService != null &&
@@ -316,6 +469,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     override fun onConnected(accountId: String, accountType: String) {
+        if (!platformAuthenticated) {
+            derivService?.client?.disconnect()
+            accountConnected = false
+            runOnUiThread { showPlatformAuthScreen(false, "Please sign in to your Volatilities Indicator account first.") }
+            return
+        }
         accountConnected = true
         executionMode = if (accountType.equals("REAL", true)) "REAL" else "DEMO"
         accountLabel = "$accountId ($accountType)"
