@@ -342,37 +342,152 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     private fun showPlatformAuthScreen(register: Boolean, message: String = "") {
         platformAuthenticated = false
+
+        // Keep authentication screens consistent with the Volatilities Indicator website.
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            setPadding(dp(20), dp(18), dp(20), dp(20))
+            setBackgroundColor(Color.rgb(0, 7, 5))
+        }
+        val scroll = ScrollView(this).apply { isFillViewport = true }
+        val page = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        }
+
+        val logoId = resources.getIdentifier("volatilities_logo", "drawable", packageName)
+        if (logoId != 0) {
+            page.addView(ImageView(this).apply {
+                setImageResource(logoId)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                adjustViewBounds = true
+            }, LinearLayout.LayoutParams(dp(154), dp(154)).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                bottomMargin = dp(8)
+            })
+        }
+
+        page.addView(TextView(this).apply {
+            text = "VOLATILITIES INDICATOR"
+            textSize = 25f
+            setTextColor(Color.rgb(0, 230, 118))
+            typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
-            setPadding(dp(24), dp(24), dp(24), dp(24))
-            setBackgroundColor(pageColor)
+            setPadding(0, dp(4), 0, dp(22))
+        })
+
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(22), dp(20), dp(22))
+            background = GradientDrawable().apply {
+                setColor(Color.rgb(3, 22, 14))
+                setCornerRadius(dp(22).toFloat())
+                setStroke(dp(2), Color.rgb(0, 230, 118))
+            }
         }
-        val scroll = ScrollView(this)
-        val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(22), dp(18), dp(22)); background = GradientDrawable().apply { setColor(cardColor); setCornerRadius(dp(16).toFloat()); setStroke(dp(1), lineColor) } }
-        val heading = TextView(this).apply { text = "VOLATILITIES INDICATOR"; textSize = 22f; setTextColor(ink); typeface = Typeface.DEFAULT_BOLD; gravity = Gravity.CENTER }
-        panel.addView(heading)
-        panel.addView(TextView(this).apply { text = if (register) "Create your account" else "Account login"; textSize = 17f; setTextColor(ink); setPadding(0, dp(18), 0, dp(4)) })
-        val status = TextView(this).apply { text = message; textSize = 13f; setTextColor(amber); setPadding(0, dp(10), 0, dp(10)) }
+        panel.addView(TextView(this).apply {
+            text = if (register) "CREATE ACCOUNT" else "ACCOUNT LOGIN"
+            textSize = 21f
+            setTextColor(Color.rgb(0, 230, 118))
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, dp(12))
+        })
+        val status = TextView(this).apply {
+            text = message
+            textSize = 13f
+            setTextColor(amber)
+            setPadding(0, dp(4), 0, dp(10))
+        }
         panel.addView(status)
-        fun field(hint: String, password: Boolean = false): EditText = EditText(this).apply {
-            this.hint = hint; textSize = 15f; setTextColor(ink); setHintTextColor(muted); setSingleLine(true)
-            if (password) inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
-            backgroundTintList = android.content.res.ColorStateList.valueOf(green)
-            panel.addView(this, LinearLayout.LayoutParams(-1, dp(52)))
+
+        fun field(hint: String, password: Boolean = false): EditText {
+            val edit = EditText(this).apply {
+                this.hint = hint
+                textSize = 16f
+                setTextColor(Color.WHITE)
+                setHintTextColor(Color.rgb(170, 190, 180))
+                setSingleLine(true)
+                if (password) {
+                    inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                        android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+                }
+                backgroundTintList = android.content.res.ColorStateList.valueOf(Color.rgb(0, 230, 118))
+            }
+            val fieldParams = LinearLayout.LayoutParams(-1, dp(58)).apply {
+                bottomMargin = dp(7)
+            }
+            if (password) {
+                val passwordRow = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                }
+                passwordRow.addView(edit, LinearLayout.LayoutParams(0, dp(58), 1f))
+                val eye = TextView(this).apply {
+                    text = "SHOW"
+                    textSize = 12f
+                    typeface = Typeface.DEFAULT_BOLD
+                    gravity = Gravity.CENTER
+                    setTextColor(Color.rgb(0, 230, 118))
+                    setPadding(dp(10), 0, dp(4), 0)
+                    contentDescription = "Show password"
+                    setOnClickListener {
+                        val selection = edit.selectionStart.coerceAtLeast(0)
+                        val showing = (edit.inputType and android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD) != 0
+                        edit.inputType = android.text.InputType.TYPE_CLASS_TEXT or (
+                            if (showing) android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+                            else android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+                        )
+                        edit.setSelection(selection.coerceAtMost(edit.text.length))
+                        text = if (showing) "SHOW" else "HIDE"
+                        contentDescription = if (showing) "Show password" else "Hide password"
+                    }
+                }
+                passwordRow.addView(eye, LinearLayout.LayoutParams(dp(58), dp(58)))
+                panel.addView(passwordRow, fieldParams)
+            } else {
+                panel.addView(edit, fieldParams)
+            }
+            return edit
         }
-        val fields = if (register) listOf(field("First name"), field("Surname"), field("Email address", false).apply { inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS }, field("Contact number", false).apply { inputType = android.text.InputType.TYPE_CLASS_PHONE }, field("Password", true), field("Confirm password", true))
-            else listOf(field("Email address").apply { inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS }, field("Password", true))
-        val submit = Button(this).apply { text = if (register) "REGISTER" else "LOGIN"; setOnClickListener { submitPlatformAuth(register, fields, status, this) } }
-        panel.addView(submit, LinearLayout.LayoutParams(-1, dp(50)))
-        val switch = TextView(this).apply {
+
+        val fields = if (register) listOf(
+            field("First name"),
+            field("Surname"),
+            field("Email address").apply { inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS },
+            field("Contact number").apply { inputType = android.text.InputType.TYPE_CLASS_PHONE },
+            field("Password", true),
+            field("Confirm password", true)
+        ) else listOf(
+            field("Email address").apply { inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS },
+            field("Password", true)
+        )
+
+        val submit = Button(this).apply {
+            text = if (register) "CREATE ACCOUNT" else "LOGIN"
+            textSize = 16f
+            isAllCaps = false
+            setTextColor(Color.BLACK)
+            background = rounded(Color.rgb(0, 230, 118), Color.rgb(0, 230, 118), 10)
+            setOnClickListener { submitPlatformAuth(register, fields, status, this) }
+        }
+        panel.addView(submit, LinearLayout.LayoutParams(-1, dp(54)).apply {
+            topMargin = dp(10)
+        })
+
+        panel.addView(TextView(this).apply {
             text = if (register) "Already registered? Login" else "New user? Register here"
-            gravity = Gravity.CENTER; setTextColor(green); setPadding(0, dp(18), 0, dp(8)); textSize = 14f
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(0, 230, 118))
+            setPadding(0, dp(20), 0, dp(8))
+            textSize = 16f
             setOnClickListener { showPlatformAuthScreen(!register) }
-        }
-        panel.addView(switch)
-        scroll.addView(panel)
-        root.addView(scroll, LinearLayout.LayoutParams(-1, -2))
+        })
+
+        page.addView(panel, LinearLayout.LayoutParams(-1, -2))
+        scroll.addView(page)
+        root.addView(scroll, LinearLayout.LayoutParams(-1, -1))
         setContentView(root)
     }
 
