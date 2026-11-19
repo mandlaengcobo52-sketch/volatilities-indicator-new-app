@@ -1884,7 +1884,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private fun showHome() {
         val brand = horizontal()
         val logo = ImageView(this).apply {
-            setImageResource(R.drawable.volatilities_indicator_logo)
+            setImageResource(R.drawable.volatilities_logo)
             scaleType = ImageView.ScaleType.FIT_CENTER
             contentDescription = "Volatilities Indicator logo"
         }
