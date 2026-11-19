@@ -356,17 +356,16 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
         }
 
-        val logoId = resources.getIdentifier("volatilities_logo", "drawable", packageName)
-        if (logoId != 0) {
-            page.addView(ImageView(this).apply {
-                setImageResource(logoId)
-                scaleType = ImageView.ScaleType.FIT_CENTER
-                adjustViewBounds = true
-            }, LinearLayout.LayoutParams(dp(154), dp(154)).apply {
-                gravity = Gravity.CENTER_HORIZONTAL
-                bottomMargin = dp(8)
-            })
-        }
+        // Required branded logo resource: app/src/main/res/drawable/volatilities_logo.png
+        page.addView(ImageView(this).apply {
+            setImageResource(R.drawable.volatilities_logo)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            adjustViewBounds = true
+            contentDescription = "Volatilities Indicator logo"
+        }, LinearLayout.LayoutParams(dp(154), dp(154)).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            bottomMargin = dp(8)
+        })
 
         page.addView(TextView(this).apply {
             text = "VOLATILITIES INDICATOR"
@@ -410,8 +409,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 setHintTextColor(Color.rgb(170, 190, 180))
                 setSingleLine(true)
                 if (password) {
-                    inputType = android.text.InputType.TYPE_CLASS_TEXT or
-                        android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+                    inputType = android.text.InputType.TYPE_CLASS_TEXT
+                    transformationMethod = android.text.method.PasswordTransformationMethod.getInstance()
                 }
                 backgroundTintList = android.content.res.ColorStateList.valueOf(Color.rgb(0, 230, 118))
             }
@@ -424,6 +423,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     gravity = Gravity.CENTER_VERTICAL
                 }
                 passwordRow.addView(edit, LinearLayout.LayoutParams(0, dp(58), 1f))
+                var passwordVisible = false
                 val eye = TextView(this).apply {
                     text = "SHOW"
                     textSize = 12f
@@ -432,16 +432,19 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     setTextColor(Color.rgb(0, 230, 118))
                     setPadding(dp(10), 0, dp(4), 0)
                     contentDescription = "Show password"
+                    isClickable = true
+                    isFocusable = true
                     setOnClickListener {
                         val selection = edit.selectionStart.coerceAtLeast(0)
-                        val showing = (edit.inputType and android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD) != 0
-                        edit.inputType = android.text.InputType.TYPE_CLASS_TEXT or (
-                            if (showing) android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
-                            else android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
-                        )
+                        passwordVisible = !passwordVisible
+                        edit.transformationMethod = if (passwordVisible) {
+                            android.text.method.HideReturnsTransformationMethod.getInstance()
+                        } else {
+                            android.text.method.PasswordTransformationMethod.getInstance()
+                        }
                         edit.setSelection(selection.coerceAtMost(edit.text.length))
-                        text = if (showing) "SHOW" else "HIDE"
-                        contentDescription = if (showing) "Show password" else "Hide password"
+                        text = if (passwordVisible) "HIDE" else "SHOW"
+                        contentDescription = if (passwordVisible) "Hide password" else "Show password"
                     }
                 }
                 passwordRow.addView(eye, LinearLayout.LayoutParams(dp(58), dp(58)))
