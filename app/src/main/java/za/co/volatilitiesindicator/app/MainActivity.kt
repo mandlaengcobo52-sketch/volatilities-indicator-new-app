@@ -1023,6 +1023,27 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         } else if (position.status != "CLOSING") {
             position.status = "OPEN"
         }
+                // AUTOMATIC PROFIT CLOSING: 30% OF ORIGINAL STAKE
+        if (
+            !isSold &&
+            position.status == "OPEN" &&
+            position.contractId > 0L &&
+            position.canSell &&
+            position.profit >= roundStake(position.stake * 0.30)
+        ) {
+            runOnUiThread {
+                val currentPosition = positions[position.localId]
+
+                if (
+                    currentPosition != null &&
+                    currentPosition.status == "OPEN" &&
+                    currentPosition.canSell &&
+                    currentPosition.profit >= roundStake(currentPosition.stake * 0.30)
+                ) {
+                    closeRunningPosition(currentPosition)
+                }
+            }
+        }
 
         savePositions()
         runOnUiThread {
