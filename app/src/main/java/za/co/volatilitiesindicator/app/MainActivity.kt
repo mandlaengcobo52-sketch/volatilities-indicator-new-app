@@ -240,6 +240,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     override fun onPause() {
         pageScrollView?.let { scrollPositions[selectedTab] = it.scrollY }
+        // Flush the complete trade ledger whenever the activity leaves the foreground.
+        savePositions()
+        saveNotifications()
         super.onPause()
     }
 
@@ -553,8 +556,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             selectedTab = page
         }
         if (notificationId > 0L) {
-            appNotifications.firstOrNull { it.id == notificationId }?.read = true
+            appNotifications.firstOrNull { it.id == notificationId }?.let { item ->
+                item.read = true
+                cancelAndroidNotification(item)
+            }
             saveNotifications()
+            updateNotificationBadge()
         }
         intent.removeExtra("notification_page")
         intent.removeExtra("notification_id")
@@ -598,7 +605,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             while (appNotifications.size > 250) appNotifications.removeAt(appNotifications.lastIndex)
             saveNotifications()
             showAndroidNotification(item)
-            if (selectedTab == page) updateNotificationBadge()
+            updateNotificationBadge()
         }
     }
 
@@ -646,10 +653,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 .put("timestamp", item.timestamp)
                 .put("read", item.read))
         }
-        notificationPrefs.edit().putString("items", array.toString()).apply()
+        notificationPrefs.edit().putString("items", array.toString()).commit()
     }
 
     private fun loadNotifications() {
+        appNotifications.clear()
         val raw = notificationPrefs.getString("items", "") ?: return
         try {
             val array = JSONArray(raw)
@@ -673,15 +681,15 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val row = horizontal()
         row.addView(text(selectedTab.uppercase(Locale.US), 13f, gold, true),
             LinearLayout.LayoutParams(0, -2, 1f))
-        val unread = appNotifications.count { it.page == selectedTab && !it.read }
+        val unread = appNotifications.count { !it.read }
         val bell = TextView(this).apply {
             text = if (unread > 0) "🔔 $unread" else "🔔"
             textSize = 16f
             gravity = Gravity.CENTER
-            setTextColor(if (unread > 0) red else gold)
+            setTextColor(gold)
             setPadding(dp(13), dp(8), dp(13), dp(8))
-            background = rounded(Color.WHITE, lineColor, 22)
-            contentDescription = "$unread unread $selectedTab notifications"
+            background = rounded(Color.BLACK, lineColor, 22)
+            contentDescription = "$unread unread notifications"
             setOnClickListener { showNotificationsDialog() }
         }
         notificationBellView = bell
@@ -690,45 +698,77 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     private fun updateNotificationBadge() {
-        val unread = appNotifications.count { it.page == selectedTab && !it.read }
+        val unread = appNotifications.count { !it.read }
         notificationBellView?.text = if (unread > 0) "🔔 $unread" else "🔔"
-        notificationBellView?.setTextColor(if (unread > 0) red else gold)
+        notificationBellView?.setTextColor(gold)
+        notificationBellView?.contentDescription = "$unread unread notifications"
     }
 
     private fun showNotificationsDialog() {
-        val pageItems = appNotifications.filter { it.page == selectedTab }
-        if (pageItems.isEmpty()) {
+        if (appNotifications.isEmpty()) {
             AlertDialog.Builder(this)
-                .setTitle("$selectedTab notifications")
-                .setMessage("There are no notifications for this page.")
+                .setTitle("ALL NOTIFICATIONS")
+                .setMessage("There are no notifications.")
                 .setPositiveButton("CLOSE", null)
                 .show()
             return
         }
-        val labels = pageItems.map { item ->
-            val state = if (item.read) "READ" else "UNREAD"
-            val time = java.text.DateFormat.getDateTimeInstance().format(java.util.Date(item.timestamp))
-            "$state · ${item.title}\n${item.message}\n$time"
-        }.toTypedArray()
-        AlertDialog.Builder(this)
-            .setTitle("$selectedTab notifications (${pageItems.count { !it.read }} unread)")
-            .setItems(labels) { _, which ->
-                val item = pageItems[which]
-                item.read = true
-                saveNotifications()
-                AlertDialog.Builder(this)
-                    .setTitle(item.title)
-                    .setMessage(item.message)
-                    .setPositiveButton("CLOSE") { _, _ -> render() }
-                    .show()
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(10), dp(16), dp(10))
+            setBackgroundColor(Color.BLACK)
+        }
+        val scroll = ScrollView(this)
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.BLACK)
+        }
+        appNotifications.forEach { item ->
+            val entry = TextView(this).apply {
+                val state = if (item.read) "READ" else "UNREAD"
+                val time = java.text.DateFormat.getDateTimeInstance().format(java.util.Date(item.timestamp))
+                text = "$state · ${item.page.uppercase(Locale.US)} · ${item.title}\n${item.message}\n$time"
+                textSize = 14f
+                setTextColor(gold)
+                setPadding(dp(8), dp(12), dp(8), dp(12))
+                setBackgroundColor(Color.BLACK)
+                setOnClickListener {
+                    item.read = true
+                    cancelAndroidNotification(item)
+                    saveNotifications()
+                    updateNotificationBadge()
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle(item.title)
+                        .setMessage("${item.page}\n\n${item.message}")
+                        .setPositiveButton("CLOSE", null)
+                        .show()
+                }
             }
+            list.addView(entry)
+            val separator = View(this).apply { setBackgroundColor(lineColor) }
+            list.addView(separator, LinearLayout.LayoutParams(-1, dp(1)))
+        }
+        scroll.addView(list)
+        panel.addView(scroll, LinearLayout.LayoutParams(-1, dp(360)))
+        val unread = appNotifications.count { !it.read }
+        AlertDialog.Builder(this)
+            .setTitle("ALL NOTIFICATIONS ($unread UNREAD)")
+            .setView(panel)
             .setNeutralButton("MARK ALL READ") { _, _ ->
-                pageItems.forEach { it.read = true }
+                appNotifications.forEach {
+                    it.read = true
+                    cancelAndroidNotification(it)
+                }
                 saveNotifications()
-                render()
+                updateNotificationBadge()
             }
             .setNegativeButton("CLOSE", null)
             .show()
+    }
+
+    private fun cancelAndroidNotification(item: AppNotification) {
+        val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        manager.cancel(item.id.hashCode())
     }
 
     private fun referenceLevelsText(symbol: String): String {
@@ -1283,7 +1323,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 .put("recoveryUsed", p.recoveryUsed)
                 .put("closedAt", p.closedAt))
         }
-        tradePrefs.edit().putString("positions", array.toString()).apply()
+        // commit() makes completed trade records durable before activity teardown/update.
+        tradePrefs.edit().putString("positions", array.toString()).commit()
     }
 
     private fun loadPositions() {
@@ -1303,6 +1344,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 positions[p.localId] = p
                 if (p.contractId > 0 && p.status != "CLOSED") subscribePosition(p.contractId)
             }
+            savePositions()
         } catch (_: Exception) { }
     }
 
@@ -1501,6 +1543,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             setBackgroundColor(pageColor)
         }
         val restoreScrollY = scrollPositions[selectedTab] ?: 0
+        // Keep the tab heading and notification bell outside the scrolling content.
+        root.addView(notificationBar())
+        root.addView(space(8))
         val tabForThisScrollView = selectedTab
         val scroll = ScrollView(this).apply {
             isFillViewport = true
@@ -1520,8 +1565,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         setContentView(root)
         renderedTab = selectedTab
 
-        content.addView(notificationBar())
-        content.addView(space(12))
+        content.addView(space(8))
 
         when (selectedTab) {
             "Home" -> showHome()
@@ -1727,7 +1771,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     if (p.contractId > 0L && p.status == "OPEN") {
                         c.addView(space(6))
                         c.addView(actionButton("CLOSE THIS ${p.direction} TRADE", primary = false) {
-                            closeRunningPosition(p)
+                            AlertDialog.Builder(this)
+                                .setTitle("CONFIRM TRADE CLOSURE")
+                                .setMessage("Are you sure you want to close this ${p.direction} contract on ${displayIndexName(p.symbol)}?")
+                                .setNegativeButton("CANCEL", null)
+                                .setPositiveButton("CONFIRM CLOSE") { _, _ -> closeRunningPosition(p) }
+                                .show()
                         })
                     }
                 }
