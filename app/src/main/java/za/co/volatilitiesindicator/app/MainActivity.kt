@@ -121,6 +121,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private var platformAuthenticated = false
     private var platformAuthBusy = false
     private var platformUserName = ""
+    private var platformUserRole = "user"
+    private var platformUser = JSONObject()
     private var oauthState = ""
     private var codeVerifier = ""
     private var feedPillView: TextView? = null
@@ -281,7 +283,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     platformAuthBusy = false
                     if (response.isSuccessful && json.optBoolean("ok")) {
                         platformAuthenticated = true
-                        platformUserName = json.optJSONObject("user")?.optString("full_name").orEmpty()
+                        platformUser = json.optJSONObject("user") ?: JSONObject()
+                        platformUserName = platformUser.optString("full_name")
+                        platformUserRole = platformUser.optString("role", "user").lowercase(Locale.US)
                         showDerivRequiredScreen()
                     } else {
                         platformPrefs.edit().remove("token").apply()
@@ -330,7 +334,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                             platformAuthToken = json.optString("token")
                             platformPrefs.edit().putString("token", platformAuthToken).apply()
                             platformAuthenticated = platformAuthToken.isNotBlank()
-                            platformUserName = json.optJSONObject("user")?.optString("full_name").orEmpty()
+                            platformUser = json.optJSONObject("user") ?: JSONObject()
+                            platformUserName = platformUser.optString("full_name")
+                            platformUserRole = platformUser.optString("role", "user").lowercase(Locale.US)
                             if (platformAuthenticated) showDerivRequiredScreen() else status.text = "Login did not return a valid session."
                         }
                     } else status.text = message
@@ -514,6 +520,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         })
         platformPrefs.edit().clear().apply()
         platformAuthToken = ""; platformAuthenticated = false
+        platformUser = JSONObject(); platformUserName = ""; platformUserRole = "user"
         derivService?.client?.disconnectAccount()
         accountConnected = false
         prefs.edit().remove("demo_token").remove("real_token").apply()
@@ -2153,22 +2160,221 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         val users = card()
         users.addView(text("USER ACCOUNT", 15f, green, true))
-        users.addView(text("Sign-in and registration interface will be added here.", 13f, muted))
+        users.addView(text(if (platformAuthenticated) platformUserName.ifBlank { "Signed-in account" } else "Sign in to view your profile", 13f, muted))
         users.addView(space(10))
-        users.addView(actionButton("USER ACCOUNT", false) {
-            toast("User account screen is not connected yet.")
-        })
+        users.addView(actionButton("USER ACCOUNT", false) { openUserProfile() })
         content.addView(users)
         content.addView(space(12))
 
         val admin = card()
         admin.addView(text("ADMIN ACCOUNT", 15f, green, true))
-        admin.addView(text("Administrator access and user management.", 13f, muted))
+        admin.addView(text(if (platformUserRole == "admin") "Administrator dashboard and registered-user management." else "Administrator access only.", 13f, muted))
         admin.addView(space(10))
-        admin.addView(actionButton("ADMIN ACCOUNT", false) {
-            toast("Admin account screen is not connected yet.")
-        })
+        admin.addView(actionButton("ADMIN ACCOUNT", false) { openAdminDashboard() })
         content.addView(admin)
+    }
+
+    // All account-management requests use the existing authenticated mobile-auth.php session.
+    private fun platformRequest(action: String, values: Map<String, String> = emptyMap(), onResult: (JSONObject) -> Unit) {
+        if (!platformAuthenticated || platformAuthToken.isBlank()) {
+            toast("Please sign in to your Volatilities Indicator account first.")
+            showPlatformAuthScreen(false, "Please sign in to continue.")
+            return
+        }
+        val form = FormBody.Builder().add("action", action)
+        values.forEach { (key, value) -> form.add(key, value) }
+        val request = Request.Builder().url(platformAuthUrl)
+            .header("Authorization", "Bearer $platformAuthToken")
+            .post(form.build()).build()
+        httpClient.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                runOnUiThread { toast("Unable to contact the account server. Check your connection.") }
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val raw = response.body?.string().orEmpty()
+                val result = try { JSONObject(raw) } catch (_: Exception) { JSONObject() }
+                response.close()
+                runOnUiThread {
+                    if (!result.optBoolean("ok")) {
+                        val message = result.optString("message", "The account request could not be completed.")
+                        toast(message)
+                        if (response.code == 401) signOutPlatform()
+                    } else onResult(result)
+                }
+            }
+        })
+    }
+
+    private fun accountSubPage(title: String, subtitle: String): LinearLayout {
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(pageColor) }
+        val heading = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(16), dp(18), dp(12)) }
+        heading.addView(text(title, 21f, gold, true))
+        heading.addView(text(subtitle, 13f, Color.WHITE))
+        val scroll = ScrollView(this).apply { isFillViewport = true }
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(12), dp(18), dp(20)) }
+        scroll.addView(body)
+        root.addView(heading)
+        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(actionButton("BACK TO ACCOUNTS", false) { selectedTab = "Accounts"; render() },
+            LinearLayout.LayoutParams(-1, dp(52)).apply { setMargins(dp(18), dp(8), dp(18), dp(12)) })
+        setContentView(root)
+        return body
+    }
+
+    private fun addProfileField(target: LinearLayout, label: String, value: String) {
+        val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(9), 0, dp(9)) }
+        row.addView(text(label.uppercase(Locale.US), 11f, green, true))
+        row.addView(text(value.ifBlank { "Not provided" }, 15f, ink))
+        target.addView(row)
+        target.addView(divider())
+    }
+
+    private fun openUserProfile() {
+        if (!platformAuthenticated) {
+            showPlatformAuthScreen(false, "Sign in to view your user profile.")
+            return
+        }
+        platformRequest("profile") { result ->
+            platformUser = result.optJSONObject("user") ?: platformUser
+            platformUserName = platformUser.optString("full_name", platformUserName)
+            platformUserRole = platformUser.optString("role", platformUserRole).lowercase(Locale.US)
+            showUserProfile(platformUser)
+        }
+    }
+
+    private fun showUserProfile(user: JSONObject) {
+        val body = accountSubPage("USER PROFILE", "Your personal Volatilities Indicator account.")
+        val panel = card()
+        panel.addView(text(user.optString("full_name", platformUserName), 18f, green, true))
+        panel.addView(space(8))
+        addProfileField(panel, "Account role", user.optString("role", "user").uppercase(Locale.US))
+        addProfileField(panel, "Account status", user.optString("status", "unknown").uppercase(Locale.US))
+        addProfileField(panel, "Email address", user.optString("email"))
+        addProfileField(panel, "Contact number", user.optString("phone"))
+        addProfileField(panel, "Registration date", user.optString("created_at"))
+        body.addView(panel)
+        body.addView(space(12))
+        body.addView(actionButton("SIGN OUT", false) { signOutPlatform() })
+    }
+
+    private fun openAdminDashboard() {
+        if (!platformAuthenticated) {
+            showPlatformAuthScreen(false, "Sign in with an administrator account to continue.")
+            return
+        }
+        if (platformUserRole != "admin") {
+            toast("Administrator access is required.")
+            return
+        }
+        platformRequest("admin_users") { result -> showAdminDashboard(result.optJSONArray("users") ?: JSONArray()) }
+    }
+
+    private fun showAdminDashboard(users: JSONArray) {
+        val body = accountSubPage("ADMIN DASHBOARD", "Administrator profile and registered-user management.")
+        val adminCard = card()
+        adminCard.addView(text("ADMINISTRATOR PROFILE", 15f, green, true))
+        adminCard.addView(space(6))
+        addProfileField(adminCard, "Name", platformUser.optString("full_name", platformUserName))
+        addProfileField(adminCard, "Email", platformUser.optString("email"))
+        addProfileField(adminCard, "Role", "ADMIN")
+        body.addView(adminCard)
+        body.addView(space(14))
+        val heading = horizontal()
+        val registeredUserCount = (0 until users.length()).count { index ->
+            users.optJSONObject(index)?.optString("role", "user")?.equals("admin", true) != true
+        }
+        heading.addView(text("REGISTERED USERS", 17f, gold, true), LinearLayout.LayoutParams(0, -2, 1f))
+        heading.addView(text("$registeredUserCount total", 12f, ink))
+        body.addView(heading)
+        body.addView(space(8))
+        if (registeredUserCount == 0) {
+            body.addView(text("No registered users were returned by the server.", 14f, muted))
+        }
+        for (i in 0 until users.length()) {
+            val user = users.optJSONObject(i) ?: continue
+            if (user.optString("role", "user").equals("admin", true)) continue
+            val item = card()
+            item.addView(text(user.optString("full_name", "Unnamed user"), 15f, green, true))
+            item.addView(text(user.optString("email"), 13f, ink))
+            item.addView(space(4))
+            val statusRow = horizontal()
+            statusRow.addView(text("Status: ${user.optString("status", "unknown").uppercase(Locale.US)}", 12f,
+                if (user.optString("status") == "approved") green else amber, true), LinearLayout.LayoutParams(0, -2, 1f))
+            statusRow.addView(text("${user.optString("role", "user").uppercase(Locale.US)}", 11f, muted))
+            item.addView(statusRow)
+            item.addView(space(8))
+            item.addView(actionButton("OPEN USER PROFILE", false) { showAdminUserProfile(user) })
+            body.addView(item)
+            body.addView(space(9))
+        }
+        body.addView(actionButton("REFRESH REGISTERED USERS", true) { openAdminDashboard() })
+    }
+
+    private fun showAdminUserProfile(user: JSONObject) {
+        val userId = user.optString("id")
+        val body = accountSubPage("USER PROFILE", "Administrator controls for this registered user.")
+        val panel = card()
+        panel.addView(text(user.optString("full_name"), 17f, green, true))
+        panel.addView(space(8))
+        addProfileField(panel, "Email", user.optString("email"))
+        addProfileField(panel, "Contact number", user.optString("phone"))
+        addProfileField(panel, "Role", user.optString("role", "user").uppercase(Locale.US))
+        addProfileField(panel, "Status", user.optString("status", "unknown").uppercase(Locale.US))
+        addProfileField(panel, "Registered", user.optString("created_at"))
+        body.addView(panel)
+        body.addView(space(12))
+        body.addView(actionButton("EDIT USER PROFILE", true) { showEditUserDialog(user) })
+        body.addView(space(8))
+        when (user.optString("status", "pending").lowercase(Locale.US)) {
+            "pending" -> body.addView(actionButton("APPROVE USER", true) { adminUserAction("admin_approve_user", userId) })
+            "suspended" -> body.addView(actionButton("REACTIVATE USER", true) { adminUserAction("admin_reactivate_user", userId) })
+            else -> body.addView(actionButton("SUSPEND USER", false) {
+                AlertDialog.Builder(this).setTitle("Suspend user?")
+                    .setMessage("This user will no longer be able to sign in.")
+                    .setNegativeButton("CANCEL", null)
+                    .setPositiveButton("SUSPEND") { _, _ -> adminUserAction("admin_suspend_user", userId) }.show()
+            })
+        }
+        body.addView(space(8))
+        body.addView(actionButton("DELETE USER", false) {
+            AlertDialog.Builder(this).setTitle("Delete user?")
+                .setMessage("This permanently deletes this user account. This action cannot be undone.")
+                .setNegativeButton("CANCEL", null)
+                .setPositiveButton("DELETE") { _, _ -> adminUserAction("admin_delete_user", userId) }.show()
+        })
+    }
+
+    private fun adminUserAction(action: String, userId: String) {
+        platformRequest(action, mapOf("user_id" to userId)) {
+            toast(it.optString("message", "User account updated."))
+            openAdminDashboard()
+        }
+    }
+
+    private fun showEditUserDialog(user: JSONObject) {
+        val fields = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0) }
+        fun edit(hint: String, value: String): EditText = EditText(this).apply {
+            this.hint = hint; setText(value); setTextColor(ink); setSingleLine(true)
+        }.also { fields.addView(it) }
+        val first = edit("First name", user.optString("first_name"))
+        val surname = edit("Surname", user.optString("surname"))
+        val email = edit("Email address", user.optString("email"))
+        val phone = edit("Contact number", user.optString("phone"))
+        val password = edit("New password (leave blank to keep current)", "")
+        password.inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        AlertDialog.Builder(this).setTitle("Edit user profile").setView(fields)
+            .setNegativeButton("CANCEL", null)
+            .setPositiveButton("SAVE") { _, _ ->
+                val values = mapOf(
+                    "user_id" to user.optString("id"), "first_name" to first.text.toString().trim(),
+                    "surname" to surname.text.toString().trim(), "email" to email.text.toString().trim(),
+                    "phone" to phone.text.toString().trim(), "password" to password.text.toString()
+                )
+                platformRequest("admin_edit_user", values) {
+                    toast(it.optString("message", "User details updated."))
+                    openAdminDashboard()
+                }
+            }.show()
     }
 
     private fun autoTradingButton(): View {
