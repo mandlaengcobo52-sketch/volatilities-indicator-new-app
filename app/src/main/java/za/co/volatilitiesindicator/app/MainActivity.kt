@@ -152,7 +152,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var canSell: Boolean = false,
         var recoveryEligible: Boolean = false,
         var recoveryUsed: Boolean = false,
-        var closedAt: Long = 0L
+        var closedAt: Long = 0L,
+        var peakProfit: Double = 0.0,
+        var lockedProfitPercent: Int = 0,
+        var pairExitTriggered: Boolean = false,
+        var recoveryAfterEpoch: Long = 0L,
+        var pairedLoss: Double = 0.0
     )
 
     private val positions = linkedMapOf<String, Position>()
@@ -1123,7 +1128,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     !it.status.startsWith("ERROR")
             }
             return if (originalRunning) {
-                "MSS and CHOCH qualifications are monitored independently. Recovery waits for one original contract to close with positive realised profit; the opposing leg remains open."
+                "MSS and CHOCH are monitored for a fresh reversal. Recovery waits until the winning original leg's trailing stop has closed both legs of the pair."
             } else {
                 "No qualifying winning original closure. Recovery is not eligible."
             }
@@ -1131,12 +1136,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val pairOriginals = positions.values.filter {
             it.symbol == symbol && it.role == "ORIGINAL" && it.originalId == eligibleWinner.originalId
         }
-        val oppositeOriginal = pairOriginals.firstOrNull { it.localId != eligibleWinner.localId }
-        val oppositeActive = oppositeOriginal != null && oppositeOriginal.status !in
-            setOf("CLOSED", "ERROR", "BUY FAILED", "PROPOSAL FAILED") &&
-            !oppositeOriginal.status.startsWith("ERROR")
-        if (!oppositeActive) {
-            return "Winning leg qualified, but the opposing original leg is not running. Recovery is held; the app will not close or replace that leg."
+        if (pairOriginals.size != 2 || pairOriginals.any { it.status != "CLOSED" }) {
+            return "Recovery is held until both original legs are confirmed closed."
         }
         val mss = recoveryMss[symbol]
         val choch = recoveryChoch[symbol]
@@ -1144,11 +1145,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             return "MSS and CHOCH qualify ${mss.lowercase(Locale.US)}. Recovery is waiting because Auto Trading is OFF."
         }
         return when {
-            mss.isNullOrBlank() && choch.isNullOrBlank() -> "A profitable original contract closed. Waiting for MSS and CHOCH."
-            !mss.isNullOrBlank() && choch.isNullOrBlank() -> "Profitable original closed. MSS confirmed ${mss.lowercase(Locale.US)}. Waiting for CHOCH."
-            mss.isNullOrBlank() && !choch.isNullOrBlank() -> "Profitable original closed. CHOCH confirmed ${choch.lowercase(Locale.US)}. Waiting for MSS."
-            mss == choch -> "Profitable original closed. MSS and CHOCH agree (${mss.orEmpty().lowercase(Locale.US)}). Recovery is eligible."
-            else -> "Profitable original closed, but MSS and CHOCH disagree. Waiting for matching confirmation."
+            mss.isNullOrBlank() && choch.isNullOrBlank() -> "Both original legs closed. Waiting for fresh opposite-direction MSS and CHOCH."
+            !mss.isNullOrBlank() && choch.isNullOrBlank() -> "Fresh MSS confirmed ${mss.lowercase(Locale.US)}. Waiting for CHOCH."
+            mss.isNullOrBlank() && !choch.isNullOrBlank() -> "Fresh CHOCH confirmed ${choch.lowercase(Locale.US)}. Waiting for MSS."
+            mss == choch -> "Fresh MSS and CHOCH agree (${mss.orEmpty().lowercase(Locale.US)}). Recovery is eligible."
+            else -> "MSS and CHOCH disagree. Waiting for matching opposite-direction confirmation."
         }
     }
 
@@ -1233,8 +1234,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             .toSet()
     }
 
-    // A profitable closed original leg reserves its stake plus realised profit
-    // while its paired original leg remains active and recovery is still unused.
+    // Reserve the full recovery amount after both original legs have closed.
     private fun reservedRecoveryCapital(): Double {
         return positions.values
             .filter {
@@ -1245,15 +1245,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 val pair = positions.values.filter {
                     it.role == "ORIGINAL" && it.originalId == winner.originalId
                 }
-                val opposite = pair.firstOrNull { it.localId != winner.localId }
-                opposite != null && isActiveTradePosition(opposite)
+                pair.size == 2 && pair.all { it.status == "CLOSED" } &&
+                    positions.values.none { it.role == "RECOVERY" && it.originalId == winner.localId }
             }
-            .filterNot { winner ->
-                positions.values.any {
-                    it.role == "RECOVERY" && it.originalId == winner.localId
-                }
-            }
-            .sumOf { roundStake(it.stake + it.profit) }
+            .sumOf { winner -> roundStake(winner.stake + winner.profit + winner.pairedLoss) }
     }
 
     private fun evaluateOriginalEntries(symbol: String, quote: Double) {
@@ -1265,8 +1260,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val legacyFallKey = "$today|$symbol|FALL"
         if (pairKey in originalTriggered || legacyRiseKey in originalTriggered || legacyFallKey in originalTriggered) return
         // Never start another original pair on an index while any leg or recovery on
-        // that same index is still active. The opposite original leg may remain open
-        // while its paired recovery runs; both must finish before a fresh pair can start.
+        // that same index is still active. Both original legs must close before recovery;
+        // the recovery then remains in the same execution group.
         val indexAlreadyActive = positions.values.any {
             it.symbol == symbol && it.status != "CLOSED" &&
                 !it.status.startsWith("ERROR") && it.status !in setOf("BUY FAILED", "PROPOSAL FAILED")
@@ -1421,33 +1416,48 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             position.closedAt = contract.optLong("sell_time", 0L).takeIf { it > 0L }
                 ?: contract.optLong("date_expiry", 0L).takeIf { it > 0L }
                 ?: System.currentTimeMillis() / 1000L
-            position.recoveryEligible = position.role == "ORIGINAL" && position.profit > 0.0
-            if (position.recoveryEligible && !position.recoveryUsed) recoveryWaiting.add(position.localId)
+            if (position.role == "ORIGINAL") {
+                val pair = positions.values.filter {
+                    it.role == "ORIGINAL" && it.originalId == position.originalId
+                }
+                if (pair.size == 2 && pair.all { it.status == "CLOSED" }) {
+                    val winner = pair.filter { it.profit > 0.0 }.maxByOrNull { it.profit }
+                    val loser = pair.firstOrNull { it.localId != winner?.localId }
+                    if (winner != null && loser != null) {
+                        winner.recoveryEligible = true
+                        winner.recoveryAfterEpoch = maxOf(winner.closedAt, loser.closedAt)
+                        winner.pairedLoss = (-loser.profit).coerceAtLeast(0.0)
+                        recoveryWaiting.add(winner.localId)
+                    }
+                }
+            }
             if (!wasAlreadyClosed) {
-                addNotification("Trade", "${displayIndexName(position.symbol)} trade closed", "${position.role} ${position.direction} final P/L: ${formatMoney(position.profit)}. ${if (position.recoveryEligible) "Recovery may proceed after matching MSS and CHOCH." else "No recovery qualification from this closure."}")
+                addNotification("Trade", "${displayIndexName(position.symbol)} trade closed", "${position.role} ${position.direction} final P/L: ${formatMoney(position.profit)}.")
             }
         } else if (position.status != "CLOSING") {
             position.status = "OPEN"
         }
-                // AUTOMATIC PROFIT CLOSING: 30% OF ORIGINAL STAKE
-        if (
-            !isSold &&
-            position.status == "OPEN" &&
-            position.contractId > 0L &&
-            position.canSell &&
-            position.profit >= roundStake(position.stake * 0.30)
-        ) {
-            runOnUiThread {
-                val currentPosition = positions[position.localId]
-
-                if (
-                    currentPosition != null &&
-                    currentPosition.status == "OPEN" &&
-                    currentPosition.canSell &&
-                    currentPosition.profit >= roundStake(currentPosition.stake * 0.30)
-                ) {
-                    closeRunningPosition(currentPosition)
+        // Step trailing protection: 40%, 50%, 60%, ... of stake.
+        // The protected level only rises and closes on a reversal back to that level.
+        if (!isSold && position.status == "OPEN" && position.role != "EXISTING") {
+            if (position.profit > position.peakProfit) position.peakProfit = position.profit
+            val peakPercent = if (position.stake > 0.0) (position.peakProfit / position.stake * 100.0).toInt() else 0
+            val newLock = if (peakPercent >= 40) (peakPercent / 10) * 10 else 0
+            if (newLock > position.lockedProfitPercent) position.lockedProfitPercent = newLock
+            val lockedAmount = roundStake(position.stake * position.lockedProfitPercent / 100.0)
+            val reversedToLock = position.lockedProfitPercent >= 40 &&
+                position.profit < position.peakProfit && position.profit <= lockedAmount
+            if (reversedToLock) {
+                if (position.role == "ORIGINAL" && !position.pairExitTriggered) {
+                    closeOriginalPairAfterTrailing(position)
+                } else if (position.role == "RECOVERY" && position.status == "OPEN" &&
+                    position.canSell && position.contractId > 0L) {
+                    closeRunningPosition(position)
                 }
+            } else if (position.role == "ORIGINAL" && position.pairExitTriggered &&
+                position.status == "OPEN" && position.canSell && position.contractId > 0L) {
+                // Retry a paired close if this leg became sellable after the other leg triggered it.
+                closeRunningPosition(position)
             }
         }
 
@@ -1464,6 +1474,26 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         if (position.recoveryEligible && !position.recoveryUsed) {
             candlesByIndex[position.symbol]?.let { evaluateRecoverySignals(position.symbol, it) }
+        }
+    }
+
+    private fun closeOriginalPairAfterTrailing(winningPosition: Position) {
+        if (winningPosition.role != "ORIGINAL" || winningPosition.pairExitTriggered) return
+        val pair = positions.values.filter {
+            it.role == "ORIGINAL" && it.originalId == winningPosition.originalId
+        }
+        if (pair.size != 2) return
+        pair.forEach { it.pairExitTriggered = true }
+        savePositions()
+        addNotification(
+            "Trade",
+            "${displayIndexName(winningPosition.symbol)} pair trailing stop",
+            "Profit reversed to the ${winningPosition.lockedProfitPercent}% protected level. Closing both RISE and FALL contracts."
+        )
+        pair.forEach { leg ->
+            if (leg.status == "OPEN" && leg.canSell && leg.contractId > 0L) {
+                closeRunningPosition(leg)
+            }
         }
     }
 
@@ -1585,28 +1615,25 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val winningOriginal = positions.values.firstOrNull { candidate ->
             candidate.symbol == symbol && candidate.role == "ORIGINAL" && candidate.status == "CLOSED" &&
                 candidate.recoveryEligible && !candidate.recoveryUsed && candidate.profit > 0.0 &&
-                // MSS + CHOCH must confirm the reversal away from the stopped winning leg.
-                candidate.direction != mss
+                candidate.direction != mss &&
+                (recoveryMssEpoch[symbol] ?: 0L) > candidate.recoveryAfterEpoch &&
+                (recoveryChochEpoch[symbol] ?: 0L) > candidate.recoveryAfterEpoch
         } ?: return
 
         val pairOriginals = positions.values.filter {
             it.symbol == symbol && it.role == "ORIGINAL" && it.originalId == winningOriginal.originalId
         }
         if (pairOriginals.size != 2) return
-        val oppositeOriginal = pairOriginals.firstOrNull { it.localId != winningOriginal.localId } ?: return
-        val oppositeStillRunning = oppositeOriginal.status !in setOf(
-            "CLOSED", "ERROR", "BUY FAILED", "PROPOSAL FAILED"
-        ) && !oppositeOriginal.status.startsWith("ERROR")
-        // The losing/opposing original leg must remain open. Never close it here and
-        // never start recovery if that leg is already closed or failed.
-        if (!oppositeStillRunning) return
+        if (pairOriginals.any { it.status != "CLOSED" }) return
 
         val pairAlreadyRecovered = pairOriginals.any { it.recoveryUsed } || positions.values.any { recovery ->
             recovery.role == "RECOVERY" && recovery.originalId in pairOriginals.map { it.localId }
         }
         if (pairAlreadyRecovered) return
 
-        val recoveryStake = roundStake(winningOriginal.stake + winningOriginal.profit)
+        val recoveryStake = roundStake(
+            winningOriginal.stake + winningOriginal.profit + winningOriginal.pairedLoss
+        )
         if (recoveryStake <= 0.0) return
         // Recovery can only be submitted when its reserved funds are actually
         // available in the Deriv account. Do not consume the qualification early.
@@ -1614,7 +1641,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         pairOriginals.forEach { it.recoveryUsed = true }
         recoveryWaiting.remove(winningOriginal.localId)
         savePositions()
-        addNotification("Trade", "${displayIndexName(symbol)} recovery confirmed", "MSS and CHOCH qualify the new ${mss.lowercase(Locale.US)} direction. Recovery stake: ${formatMoney(recoveryStake)}. The opposing original leg remains open.")
+        addNotification("Trade", "${displayIndexName(symbol)} recovery confirmed", "Fresh opposite-direction MSS and CHOCH agree on ${mss.lowercase(Locale.US)}. Recovery stake (winning stake + winning profit + paired loss): ${formatMoney(recoveryStake)}.")
         openPosition(symbol, mss, "RECOVERY", recoveryStake, winningOriginal.localId)
         runOnUiThread { updateRecoveryStatusView(symbol) }
     }
@@ -1627,7 +1654,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 .put("contract", p.contractId).put("profit", p.profit).put("status", p.status)
                 .put("recoveryEligible", p.recoveryEligible)
                 .put("recoveryUsed", p.recoveryUsed)
-                .put("closedAt", p.closedAt))
+                .put("closedAt", p.closedAt)
+                .put("peakProfit", p.peakProfit)
+                .put("lockedProfitPercent", p.lockedProfitPercent)
+                .put("pairExitTriggered", p.pairExitTriggered)
+                .put("recoveryAfterEpoch", p.recoveryAfterEpoch)
+                .put("pairedLoss", p.pairedLoss))
         }
         // commit() makes completed trade records durable before activity teardown/update.
         tradePrefs.edit().putString("positions", array.toString()).commit()
@@ -1646,6 +1678,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 p.recoveryEligible = o.optBoolean("recoveryEligible", false)
                 p.recoveryUsed = o.optBoolean("recoveryUsed", false)
                 p.closedAt = o.optLong("closedAt", 0L)
+                p.peakProfit = o.optDouble("peakProfit", p.profit)
+                p.lockedProfitPercent = o.optInt("lockedProfitPercent", 0)
+                p.pairExitTriggered = o.optBoolean("pairExitTriggered", false)
+                p.recoveryAfterEpoch = o.optLong("recoveryAfterEpoch", p.closedAt)
+                p.pairedLoss = o.optDouble("pairedLoss", 0.0)
                 if (p.recoveryEligible && !p.recoveryUsed) recoveryWaiting.add(p.localId)
                 positions[p.localId] = p
                 if (p.contractId > 0 && p.status != "CLOSED") subscribePosition(p.contractId)
