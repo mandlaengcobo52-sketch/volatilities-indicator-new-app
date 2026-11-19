@@ -865,6 +865,51 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
     }
 
+    // A RISE/FALL pair is one global execution slot. A recovery remains in
+    // the same slot as the original pair that qualified it.
+    private fun tradeGroupId(position: Position): String {
+        if (position.role == "RECOVERY") {
+            val parent = positions[position.originalId]
+            return parent?.originalId?.takeIf { it.isNotBlank() } ?: position.originalId
+        }
+        return position.originalId.ifBlank { position.localId }
+    }
+
+    private fun isActiveTradePosition(position: Position): Boolean {
+        return position.status !in setOf("CLOSED", "ERROR", "BUY FAILED", "PROPOSAL FAILED") &&
+            !position.status.startsWith("ERROR")
+    }
+
+    private fun activeTradeGroupIds(): Set<String> {
+        return positions.values
+            .filter { isActiveTradePosition(it) }
+            .map { tradeGroupId(it) }
+            .toSet()
+    }
+
+    // A profitable closed original leg reserves its stake plus realised profit
+    // while its paired original leg remains active and recovery is still unused.
+    private fun reservedRecoveryCapital(): Double {
+        return positions.values
+            .filter {
+                it.role == "ORIGINAL" && it.status == "CLOSED" &&
+                    it.recoveryEligible && !it.recoveryUsed && it.profit > 0.0
+            }
+            .filter { winner ->
+                val pair = positions.values.filter {
+                    it.role == "ORIGINAL" && it.originalId == winner.originalId
+                }
+                val opposite = pair.firstOrNull { it.localId != winner.localId }
+                opposite != null && isActiveTradePosition(opposite)
+            }
+            .filterNot { winner ->
+                positions.values.any {
+                    it.role == "RECOVERY" && it.originalId == winner.localId
+                }
+            }
+            .sumOf { roundStake(it.stake + it.profit) }
+    }
+
     private fun evaluateOriginalEntries(symbol: String, quote: Double) {
         if (!autoTradingEnabled || !accountConnected || dailyCapital <= 0.0 || !quote.isFinite()) return
         val levels = dailyLevels[symbol] ?: return
@@ -881,6 +926,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 !it.status.startsWith("ERROR") && it.status !in setOf("BUY FAILED", "PROPOSAL FAILED")
         }
         if (indexAlreadyActive) return
+        // Global limit: at most two active trade groups across every index.
+        if (activeTradeGroupIds().size >= 2) return
 
         // A single qualifying boundary starts the agreed simultaneous RISE/FALL pair.
         val boundaryReached = quote <= levels.second || quote >= levels.first
@@ -888,9 +935,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         val stake = roundStake(dailyCapital * 0.25)
         val requiredForPair = roundStake(stake * 2.0)
-        if (availableBalance + 0.000001 < requiredForPair) {
+        val unreservedBalance = (availableBalance - reservedRecoveryCapital()).coerceAtLeast(0.0)
+        if (unreservedBalance + 0.000001 < requiredForPair) {
             if (insufficientFundsNotified.add(pairKey)) {
-                addNotification("Trade", "${displayIndexName(symbol)} pair not executed", "Available balance ${formatMoney(availableBalance)} is below the combined RISE and FALL stake ${formatMoney(requiredForPair)}. Neither contract was submitted.")
+                addNotification("Trade", "${displayIndexName(symbol)} pair not executed", "Available balance after recovery reservations ${formatMoney(unreservedBalance)} is below the combined RISE and FALL stake ${formatMoney(requiredForPair)}. Neither contract was submitted.")
             }
             return
         }
@@ -911,6 +959,18 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val roundedStake = roundStake(stake)
         if (!accountConnected || !roundedStake.isFinite() || roundedStake <= 0.0) return
         val localId = UUID.randomUUID().toString()
+        val requestedGroupId = if (role == "RECOVERY") {
+            positions[originalId]?.originalId?.takeIf { it.isNotBlank() } ?: originalId
+        } else {
+            originalId.ifBlank { localId }
+        }
+        // Existing pair legs and their recovery share a slot; a new pair cannot
+        // enter when two other groups already occupy the global capacity.
+        val activeGroups = activeTradeGroupIds()
+        if (requestedGroupId !in activeGroups && activeGroups.size >= 2) {
+            addNotification("Trade", "${displayIndexName(symbol)} execution held", "The global limit of two running trade pairs has been reached. This execution must wait.")
+            return
+        }
         val p = Position(localId, symbol, direction, role, roundedStake, originalId)
         positions[localId] = p
         val req = nextRequestId()
@@ -1202,6 +1262,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         val recoveryStake = roundStake(winningOriginal.stake + winningOriginal.profit)
         if (recoveryStake <= 0.0) return
+        // Recovery can only be submitted when its reserved funds are actually
+        // available in the Deriv account. Do not consume the qualification early.
+        if (availableBalance + 0.000001 < recoveryStake) return
         pairOriginals.forEach { it.recoveryUsed = true }
         recoveryWaiting.remove(winningOriginal.localId)
         savePositions()
