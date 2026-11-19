@@ -287,7 +287,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                         platformUser = json.optJSONObject("user") ?: JSONObject()
                         platformUserName = platformUser.optString("full_name")
                         platformUserRole = platformUser.optString("role", "user").lowercase(Locale.US)
-                        showDerivRequiredScreen()
+                        if (platformUserRole == "admin") showDerivRequiredScreen() else openUserProfile()
                     } else {
                         platformPrefs.edit().remove("token").apply()
                         platformAuthToken = ""
@@ -338,7 +338,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                             platformUser = json.optJSONObject("user") ?: JSONObject()
                             platformUserName = platformUser.optString("full_name")
                             platformUserRole = platformUser.optString("role", "user").lowercase(Locale.US)
-                            if (platformAuthenticated) showDerivRequiredScreen() else status.text = "Login did not return a valid session."
+                            if (platformAuthenticated) {
+                                if (platformUserRole == "admin") showDerivRequiredScreen() else openUserProfile()
+                            } else status.text = "Login did not return a valid session."
                         }
                     } else status.text = message
                     response.close()
@@ -1865,7 +1867,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
         scroll.addView(content)
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
-        root.addView(bottomNavigation())
+        if (platformUserRole == "admin") root.addView(bottomNavigation())
         setContentView(root)
         renderedTab = selectedTab
 
@@ -2284,6 +2286,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         addProfileField(adminCard, "Role", "ADMIN")
         body.addView(adminCard)
         body.addView(space(14))
+        body.addView(text("INVESTMENT ADMINISTRATION", 17f, gold, true))
+        body.addView(space(8))
+        body.addView(actionButton("MANAGE INVESTMENT PLANS", true) { loadInvestmentPlans(true) })
+        body.addView(space(8))
+        body.addView(actionButton("VIEW INVESTMENT REQUESTS", false) { loadAdminInvestments() })
+        body.addView(space(18))
         val heading = horizontal()
         val registeredUserCount = (0 until users.length()).count { index ->
             users.optJSONObject(index)?.optString("role", "user")?.equals("admin", true) != true
@@ -2313,12 +2321,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             body.addView(space(9))
         }
         body.addView(actionButton("REFRESH REGISTERED USERS", true) { openAdminDashboard() })
-        body.addView(space(14))
-        body.addView(text("INVESTMENT ADMINISTRATION", 17f, gold, true))
-        body.addView(space(8))
-        body.addView(actionButton("MANAGE INVESTMENT PLANS", true) { loadInvestmentPlans(true) })
-        body.addView(space(8))
-        body.addView(actionButton("VIEW INVESTMENT REQUESTS", false) { loadAdminInvestments() })
     }
 
     // Investment-plan screens are additive: the existing trading engine and account dashboard remain unchanged.
