@@ -182,7 +182,26 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             executionMode = if (prefs.getString("oauth_mode", executionMode).equals("REAL", true)) "REAL" else "DEMO"
             val tokenKey = if (executionMode == "REAL") "real_token" else "demo_token"
             val savedToken = prefs.getString(tokenKey, "").orEmpty()
-            if (savedToken.isNotBlank()) {
+
+            // The foreground service owns the Deriv client, so an Activity recreation
+            // (including device rotation) must restore the UI from the existing socket
+            // instead of treating the account as disconnected.
+            if (service.client.isConnected()) {
+                val activeAccountId = service.client.getAccountId()
+                if (!activeAccountId.isNullOrBlank()) {
+                    accountConnected = true
+                    executionMode = service.client.getAccountType()
+                    accountLabel = "$activeAccountId ($executionMode)"
+                    service.client.requestBalance()
+                    service.client.requestOpenTrades()
+                    runOnUiThread {
+                        accountStatusView?.text = "CONNECTED"
+                        accountStatusView?.setTextColor(green)
+                        accountIdView?.text = accountLabel
+                        render()
+                    }
+                }
+            } else if (savedToken.isNotBlank()) {
                 service.client.ensureConnectedOnResume(savedToken, executionMode)
             }
             runOnUiThread { updateConnectionLabels("Connecting to live market feed…") }
