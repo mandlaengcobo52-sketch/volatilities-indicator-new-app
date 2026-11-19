@@ -504,7 +504,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     private fun enterApplication() {
-        selectedTab = "Home"
+        selectedTab = if (platformUserRole == "admin") "Home" else "Profile"
         if (platformUserRole == "admin") {
             startMarketFeedService()
         }
@@ -588,14 +588,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         account.addView(text("USER ACCOUNT", 15f, green, true))
         account.addView(text(platformUserName.ifBlank { "Registered user" }, 16f, ink, true))
         account.addView(text("Access: APPROVED", 13f, green, true))
-        account.addView(text("Deriv account connection is not required for ordinary users.", 12f, muted))
         account.addView(actionButton("SIGN OUT", false) { signOutPlatform() })
         content.addView(account)
         content.addView(space(12))
 
         val plansCard = card()
         plansCard.addView(text("AVAILABLE INVESTMENT PLANS", 15f, gold, true))
-        plansCard.addView(text("Simulation only. Figures are projections, not guaranteed or withdrawable funds.", 12f, amber))
         if (investmentPlans.length() == 0) {
             plansCard.addView(text("Loading available plans…", 13f, muted))
         } else {
@@ -619,7 +617,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 val inv = userInvestments.optJSONObject(i) ?: continue
                 investmentsCard.addView(divider())
                 investmentsCard.addView(text(inv.optString("plan_name"), 15f, gold, true))
-                investmentsCard.addView(text("Status: ${inv.optString("status").replace('_', ' ')}", 13f, amber, true))
+                investmentsCard.addView(text("Status: ${inv.optString("status").replace("demo_", "").replace('_', ' ')}", 13f, amber, true))
                 investmentsCard.addView(text("Invested amount: R${moneyText(inv.optDouble("invested_amount"))}", 13f, ink))
                 investmentsCard.addView(text("Investment date: ${inv.optString("investment_date", "Pending approval")}", 13f, muted))
                 investmentsCard.addView(text("Expiry date: ${inv.optString("expiry_date", "Pending approval")}", 13f, muted))
@@ -2305,7 +2303,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         users.addView(text("Sign-in and registration interface will be added here.", 13f, muted))
         users.addView(space(10))
         users.addView(actionButton("USER ACCOUNT", false) {
-            toast("User account screen is not connected yet.")
+            openTab("Profile")
         })
         content.addView(users)
         content.addView(space(12))
@@ -2315,7 +2313,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         admin.addView(text("Administrator access and user management.", 13f, muted))
         admin.addView(space(10))
         admin.addView(actionButton("ADMIN ACCOUNT", false) {
-            toast("Admin account screen is not connected yet.")
+            openTab("Profile")
         })
         content.addView(admin)
     }
@@ -2456,7 +2454,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             setPadding(dp(6), dp(8), dp(6), dp(8))
             elevation = dp(8).toFloat()
         }
-        listOf("Home", "Trade", "Accounts", "Settings", "Profile").forEach { tab ->
+        val visibleTabs = if (platformUserRole == "admin") {
+            listOf("Home", "Trade", "Accounts", "Settings", "Profile")
+        } else {
+            listOf("Home", "Profile")
+        }
+        visibleTabs.forEach { tab ->
             val item = TextView(this).apply {
                 text = tab
                 textSize = 12f
@@ -2472,7 +2475,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     private fun openTab(tab: String) {
-        if (tab == "Accounts" && platformUserRole != "admin") return
+        if (platformUserRole != "admin" && tab in listOf("Trade", "Accounts", "Settings")) return
         selectedTab = tab
         render()
         if (tab == "Profile") {
