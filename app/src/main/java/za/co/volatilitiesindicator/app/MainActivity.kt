@@ -126,6 +126,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private var investmentPlans = JSONArray()
     private var userInvestments = JSONArray()
     private var investmentBusy = false
+    private var adminUsers = JSONArray()
+    private var adminInvestments = JSONArray()
     private var oauthState = ""
     private var codeVerifier = ""
     private var feedPillView: TextView? = null
@@ -617,18 +619,17 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 val inv = userInvestments.optJSONObject(i) ?: continue
                 investmentsCard.addView(divider())
                 investmentsCard.addView(text(inv.optString("plan_name"), 15f, gold, true))
-                investmentsCard.addView(text("Status: ${inv.optString("status").replace("demo_", "").replace('_', ' ')}", 13f, amber, true))
+                investmentsCard.addView(text("Status: ${inv.optString("status").replace("PENDING_DEMO_DEPOSIT", "PENDING DEPOSIT").replace("DEMO_APPROVED", "APPROVED").replace("demo_", "").replace('_', ' ')}", 13f, amber, true))
                 investmentsCard.addView(text("Invested amount: R${moneyText(inv.optDouble("invested_amount"))}", 13f, ink))
                 investmentsCard.addView(text("Investment date: ${inv.optString("investment_date", "Pending approval")}", 13f, muted))
                 investmentsCard.addView(text("Expiry date: ${inv.optString("expiry_date", "Pending approval")}", 13f, muted))
                 investmentsCard.addView(text("Daily projected growth: R${moneyText(inv.optDouble("daily_growth_amount"))}", 13f, green))
                 investmentsCard.addView(text("Accumulated projected growth: R${moneyText(inv.optDouble("accrued_projected_growth"))}", 13f, green))
                 investmentsCard.addView(text("Potential return: R${moneyText(inv.optDouble("potential_return"))}", 13f, ink, true))
-                investmentsCard.addView(text(inv.optString("calculation_notice"), 11f, amber))
                 if (inv.optBoolean("withdrawal_available") && inv.optString("withdrawal_status").isBlank()) {
-                    investmentsCard.addView(actionButton("REQUEST DEMO WITHDRAWAL") {
+                    investmentsCard.addView(actionButton("REQUEST WITHDRAWAL") {
                         val amountInput = EditText(this).apply { inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL; hint = "Amount" }
-                        AlertDialog.Builder(this).setTitle("DEMO WITHDRAWAL REQUEST").setMessage("No money will be transferred.").setView(amountInput)
+                        AlertDialog.Builder(this).setTitle("WITHDRAWAL REQUEST").setMessage("No money will be transferred.").setView(amountInput)
                             .setPositiveButton("SUBMIT") { _, _ ->
                                 val amount = amountInput.text.toString().toDoubleOrNull()
                                 if (amount == null) toast("Enter a valid amount.") else investmentRequest("request_demo_withdrawal", mapOf("investment_id" to inv.optString("investment_id"), "amount" to amount.toString())) { result -> toast(result.optString("message")); loadInvestmentProfile() }
@@ -2298,24 +2299,163 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         content.addView(deriv)
         content.addView(space(12))
 
-        val users = card()
-        users.addView(text("USER ACCOUNT", 15f, green, true))
-        users.addView(text("Sign-in and registration interface will be added here.", 13f, muted))
-        users.addView(space(10))
-        users.addView(actionButton("USER ACCOUNT", false) {
-            openTab("Profile")
-        })
-        content.addView(users)
-        content.addView(space(12))
-
         val admin = card()
-        admin.addView(text("ADMIN ACCOUNT", 15f, green, true))
-        admin.addView(text("Administrator access and user management.", 13f, muted))
+        admin.addView(text("ADMINISTRATOR CONTROL", 15f, green, true))
+        admin.addView(text("Manage registrations, user accounts and investment approvals.", 13f, muted))
         admin.addView(space(10))
-        admin.addView(actionButton("ADMIN ACCOUNT", false) {
-            openTab("Profile")
-        })
+        admin.addView(actionButton("USER MANAGEMENT") { loadAdminUsers() })
+        admin.addView(space(8))
+        admin.addView(actionButton("INVESTMENT MANAGEMENT") { loadAdminInvestments() })
+        admin.addView(space(8))
+        admin.addView(actionButton("MANAGE INVESTMENT PLANS") { loadAdminPlans() })
         content.addView(admin)
+    }
+
+    private fun adminAuthRequest(action: String, fields: Map<String, String> = emptyMap(), onResult: (JSONObject) -> Unit) {
+        if (!platformAuthenticated || platformUserRole != "admin") { toast("Administrator access required."); return }
+        val body = FormBody.Builder().add("action", action)
+        fields.forEach { (key, value) -> body.add(key, value) }
+        val request = Request.Builder().url(platformAuthUrl).header("Authorization", "Bearer $platformAuthToken").post(body.build()).build()
+        httpClient.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) { runOnUiThread { toast("Unable to connect to user management.") } }
+            override fun onResponse(call: Call, response: Response) {
+                val raw = response.body?.string().orEmpty()
+                val json = try { JSONObject(raw) } catch (_: Exception) { JSONObject() }
+                runOnUiThread {
+                    if (response.isSuccessful && json.optBoolean("ok")) onResult(json)
+                    else toast(json.optString("message", "Administrator request failed."))
+                    response.close()
+                }
+            }
+        })
+    }
+
+    private fun loadAdminUsers() {
+        adminAuthRequest("admin_users") { json ->
+            adminUsers = json.optJSONArray("users") ?: JSONArray()
+            showAdminUsers()
+        }
+    }
+
+    private fun showAdminUsers() {
+        val labels = ArrayList<String>()
+        val userIndexes = ArrayList<Int>()
+        for (i in 0 until adminUsers.length()) {
+            val u = adminUsers.optJSONObject(i) ?: continue
+            labels.add("${u.optString("full_name", "User")} · ${u.optString("status").uppercase(Locale.US)} · ${u.optString("email")}")
+            userIndexes.add(i)
+        }
+        val actions = arrayOf("APPROVE PENDING REGISTRATION", "EDIT USER", "SUSPEND USER", "REACTIVATE USER", "DELETE USER", "ADD USER")
+        AlertDialog.Builder(this).setTitle("USER MANAGEMENT (${labels.size})")
+            .setItems(labels.toTypedArray()) { _, which ->
+                val u = adminUsers.optJSONObject(userIndexes[which]) ?: return@setItems
+                showAdminUserActions(u)
+            }
+            .setPositiveButton("ADD USER") { _, _ -> showAdminAddUser() }
+            .setNeutralButton("REFRESH") { _, _ -> loadAdminUsers() }
+            .show()
+    }
+
+    private fun showAdminUserActions(user: JSONObject) {
+        val id = user.optString("id")
+        val status = user.optString("status").lowercase(Locale.US)
+        val options = mutableListOf("VIEW PROFILE", "EDIT DETAILS")
+        if (status == "pending") options.add("APPROVE REGISTRATION")
+        if (status == "suspended") options.add("REACTIVATE ACCOUNT") else if (status == "approved") options.add("SUSPEND ACCOUNT")
+        if (user.optString("role") != "admin") options.add("DELETE ACCOUNT")
+        AlertDialog.Builder(this).setTitle(user.optString("full_name"))
+            .setItems(options.toTypedArray()) { _, which ->
+                when (options[which]) {
+                    "VIEW PROFILE" -> AlertDialog.Builder(this).setTitle("USER PROFILE").setMessage(
+                        "Name: ${user.optString("full_name")}\nEmail: ${user.optString("email")}\nPhone: ${user.optString("phone")}\nRole: ${user.optString("role")}\nStatus: ${user.optString("status")}\nRisk plan: ${user.optString("risk_profile", "Not assigned")}\nCreated: ${user.optString("created_at")}")
+                        .setPositiveButton("CLOSE", null).show()
+                    "EDIT DETAILS" -> showAdminEditUser(user)
+                    "APPROVE REGISTRATION" -> confirmAdminUserAction("Approve this registration?", "admin_approve_user", id)
+                    "SUSPEND ACCOUNT" -> confirmAdminUserAction("Suspend this account?", "admin_suspend_user", id)
+                    "REACTIVATE ACCOUNT" -> confirmAdminUserAction("Reactivate this account?", "admin_reactivate_user", id)
+                    "DELETE ACCOUNT" -> confirmAdminUserAction("Permanently delete this user account?", "admin_delete_user", id)
+                }
+            }.show()
+    }
+
+    private fun confirmAdminUserAction(message: String, action: String, userId: String) {
+        AlertDialog.Builder(this).setMessage(message).setNegativeButton("CANCEL", null)
+            .setPositiveButton("CONFIRM") { _, _ -> adminAuthRequest(action, mapOf("user_id" to userId)) { result -> toast(result.optString("message")); loadAdminUsers() } }.show()
+    }
+
+    private fun showAdminAddUser() {
+        val fields = listOf("First name", "Surname", "Email", "Phone", "Password (min. 8 characters)").map { hint -> EditText(this).apply { this.hint = hint; if (hint.startsWith("Password")) inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD } }
+        val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0); fields.forEach { addView(it) } }
+        AlertDialog.Builder(this).setTitle("ADD USER ACCOUNT").setView(panel)
+            .setNegativeButton("CANCEL", null).setPositiveButton("CREATE") { _, _ ->
+                val values = fields.map { it.text.toString().trim() }
+                if (values.any { it.isBlank() }) { toast("Complete all user details."); return@setPositiveButton }
+                adminAuthRequest("admin_add_user", mapOf("first_name" to values[0], "surname" to values[1], "email" to values[2], "phone" to values[3], "password" to values[4], "role" to "user", "status" to "approved")) { result -> toast(result.optString("message")); loadAdminUsers() }
+            }.show()
+    }
+
+    private fun showAdminEditUser(user: JSONObject) {
+        val fields = listOf(
+            EditText(this).apply { hint = "First name"; setText(user.optString("first_name")) },
+            EditText(this).apply { hint = "Surname"; setText(user.optString("surname")) },
+            EditText(this).apply { hint = "Email"; setText(user.optString("email")) },
+            EditText(this).apply { hint = "Phone"; setText(user.optString("phone")) },
+            EditText(this).apply { hint = "New password (leave blank to keep current)"; inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD }
+        )
+        val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0); fields.forEach { addView(it) } }
+        AlertDialog.Builder(this).setTitle("EDIT USER").setView(panel).setNegativeButton("CANCEL", null)
+            .setPositiveButton("SAVE") { _, _ ->
+                val v = fields.map { it.text.toString().trim() }
+                adminAuthRequest("admin_edit_user", mapOf("user_id" to user.optString("id"), "first_name" to v[0], "surname" to v[1], "email" to v[2], "phone" to v[3], "password" to v[4])) { result -> toast(result.optString("message")); loadAdminUsers() }
+            }.show()
+    }
+
+    private fun loadAdminInvestments() {
+        investmentRequest("admin_investments") { json ->
+            adminInvestments = json.optJSONArray("investments") ?: JSONArray()
+            val lines = ArrayList<String>()
+            val ids = ArrayList<String>()
+            for (i in 0 until adminInvestments.length()) {
+                val inv = adminInvestments.optJSONObject(i) ?: continue
+                val state = inv.optString("status").replace("PENDING_DEMO_DEPOSIT", "PENDING DEPOSIT REVIEW").replace("DEMO_APPROVED", "APPROVED").replace('_', ' ')
+                lines.add("${inv.optString("user_email")} · ${inv.optString("plan_name")} · R${moneyText(inv.optDouble("invested_amount"))} · $state")
+                ids.add(inv.optString("investment_id"))
+            }
+            AlertDialog.Builder(this).setTitle("INVESTMENT REQUESTS")
+                .setItems(lines.toTypedArray()) { _, which ->
+                    val inv = adminInvestments.optJSONObject(which) ?: return@setItems
+                    if (inv.optString("status") == "PENDING_DEMO_DEPOSIT") {
+                        AlertDialog.Builder(this).setTitle("APPROVE DEPOSIT").setMessage(lines[which]).setNegativeButton("CANCEL", null)
+                            .setPositiveButton("APPROVE") { _, _ -> investmentRequest("admin_demo_approve_deposit", mapOf("investment_id" to ids[which])) { r -> toast(r.optString("message")); loadAdminInvestments() } }.show()
+                    } else toast(lines[which])
+                }.setPositiveButton("REFRESH") { _, _ -> loadAdminInvestments() }.show()
+        }
+    }
+
+    private fun loadAdminPlans() {
+        investmentRequest("admin_plans") { json ->
+            val plans = json.optJSONArray("plans") ?: JSONArray()
+            val labels = Array(plans.length()) { i -> val p = plans.optJSONObject(i) ?: JSONObject(); "${p.optString("name")} · ${p.optInt("duration_days")} days · ${p.optDouble("total_growth_percent").toInt()}% · ${if (p.optBoolean("enabled")) "ENABLED" else "DISABLED"}" }
+            AlertDialog.Builder(this).setTitle("INVESTMENT PLANS").setItems(labels) { _, which -> showAdminPlanEditor(plans.optJSONObject(which) ?: JSONObject()) }
+                .setPositiveButton("ADD PLAN") { _, _ -> showAdminPlanEditor(JSONObject().put("plan_id", "plan_${System.currentTimeMillis()}")) }.show()
+        }
+    }
+
+    private fun showAdminPlanEditor(plan: JSONObject) {
+        val fields = listOf(
+            EditText(this).apply { hint = "Plan name"; setText(plan.optString("name")) },
+            EditText(this).apply { hint = "Duration in days"; inputType = 2; setText(if (plan.has("duration_days")) plan.optString("duration_days") else "15") },
+            EditText(this).apply { hint = "Total growth %"; inputType = 8194; setText(if (plan.has("total_growth_percent")) plan.optString("total_growth_percent") else "50") },
+            EditText(this).apply { hint = "Minimum amount"; inputType = 8194; setText(if (plan.has("min_amount")) plan.optString("min_amount") else "1000") },
+            EditText(this).apply { hint = "Maximum amount"; inputType = 8194; setText(if (plan.has("max_amount")) plan.optString("max_amount") else "5000") }
+        )
+        val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0); fields.forEach { addView(it) } }
+        AlertDialog.Builder(this).setTitle("SAVE INVESTMENT PLAN").setView(panel).setNegativeButton("CANCEL", null)
+            .setPositiveButton("SAVE") { _, _ ->
+                val v = fields.map { it.text.toString().trim() }
+                if (v.any { it.isBlank() }) { toast("Complete all plan fields."); return@setPositiveButton }
+                investmentRequest("admin_save_plan", mapOf("plan_id" to plan.optString("plan_id"), "name" to v[0], "duration_days" to v[1], "total_growth_percent" to v[2], "min_amount" to v[3], "max_amount" to v[4], "enabled" to "1")) { r -> toast(r.optString("message")); loadAdminPlans() }
+            }.show()
     }
 
     private fun autoTradingButton(): View {
