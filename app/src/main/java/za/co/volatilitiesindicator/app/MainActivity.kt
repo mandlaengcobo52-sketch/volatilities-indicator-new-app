@@ -117,6 +117,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val httpClient = OkHttpClient()
     private val platformPrefs by lazy { getSharedPreferences("vi_platform_auth", MODE_PRIVATE) }
     private val platformAuthUrl = "https://www.volatilitiesindicator.org.za/mobile-auth.php"
+    private val investmentApiUrl = "https://www.volatilitiesindicator.org.za/investment-api.php"
     private var platformAuthToken = ""
     private var platformAuthenticated = false
     private var platformAuthBusy = false
@@ -2254,6 +2255,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         addProfileField(panel, "Registration date", user.optString("created_at"))
         body.addView(panel)
         body.addView(space(12))
+        body.addView(actionButton("VIEW INVESTMENT PLANS", true) { loadInvestmentPlans(false) })
+        body.addView(space(8))
+        body.addView(actionButton("MY INVESTMENT PROFILE", false) { loadMyInvestments() })
+        body.addView(space(8))
         body.addView(actionButton("SIGN OUT", false) { signOutPlatform() })
     }
 
@@ -2308,6 +2313,197 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             body.addView(space(9))
         }
         body.addView(actionButton("REFRESH REGISTERED USERS", true) { openAdminDashboard() })
+        body.addView(space(14))
+        body.addView(text("INVESTMENT ADMINISTRATION", 17f, gold, true))
+        body.addView(space(8))
+        body.addView(actionButton("MANAGE INVESTMENT PLANS", true) { loadInvestmentPlans(true) })
+        body.addView(space(8))
+        body.addView(actionButton("VIEW INVESTMENT REQUESTS", false) { loadAdminInvestments() })
+    }
+
+    // Investment-plan screens are additive: the existing trading engine and account dashboard remain unchanged.
+    private fun investmentRequest(action: String, values: Map<String, String> = emptyMap(), onResult: (JSONObject) -> Unit) {
+        if (!platformAuthenticated || platformAuthToken.isBlank()) {
+            toast("Please sign in to your Volatilities Indicator account first.")
+            showPlatformAuthScreen(false, "Please sign in to continue.")
+            return
+        }
+        val form = FormBody.Builder().add("action", action)
+        values.forEach { (key, value) -> form.add(key, value) }
+        val request = Request.Builder().url(investmentApiUrl)
+            .header("Authorization", "Bearer $platformAuthToken")
+            .post(form.build()).build()
+        httpClient.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                runOnUiThread { toast("Unable to contact the investment server. Check your connection.") }
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val statusCode = response.code
+                val raw = response.body?.string().orEmpty()
+                val result = try { JSONObject(raw) } catch (_: Exception) { JSONObject() }
+                response.close()
+                runOnUiThread {
+                    if (!result.optBoolean("ok")) {
+                        toast(result.optString("message", "Investment request could not be completed."))
+                        if (statusCode == 401) signOutPlatform()
+                    } else onResult(result)
+                }
+            }
+        })
+    }
+
+    private fun loadInvestmentPlans(admin: Boolean) {
+        investmentRequest(if (admin) "admin_plans" else "plans") { result ->
+            showInvestmentPlans(result.optJSONArray("plans") ?: JSONArray(), admin)
+        }
+    }
+
+    private fun showInvestmentPlans(plans: JSONArray, admin: Boolean) {
+        val body = accountSubPage(if (admin) "MANAGE INVESTMENT PLANS" else "INVESTMENT PLANS",
+            if (admin) "Administrator controls for plan terms and availability." else "Choose an available plan and enter an amount between R1,000 and R5,000.")
+        if (plans.length() == 0) body.addView(text("No plans are currently available.", 14f, muted))
+        for (i in 0 until plans.length()) {
+            val plan = plans.optJSONObject(i) ?: continue
+            val item = card()
+            item.addView(text(plan.optString("name"), 17f, green, true))
+            item.addView(space(6))
+            addProfileField(item, "Plan duration", "${plan.optInt("duration_days")} days")
+            addProfileField(item, "Total projected growth", "${plan.optDouble("total_growth_percent").toInt()}% simple growth")
+            addProfileField(item, "Investment range", "R${moneyText(plan.optDouble("min_amount"))} – R${moneyText(plan.optDouble("max_amount"))}")
+            if (admin) {
+                addProfileField(item, "Availability", if (plan.optBoolean("enabled", true)) "ENABLED" else "DISABLED")
+                item.addView(actionButton("EDIT PLAN", true) { showEditInvestmentPlanDialog(plan) })
+            } else {
+                item.addView(actionButton("SELECT PLAN", true) { showSelectInvestmentPlanDialog(plan) })
+            }
+            body.addView(item)
+            body.addView(space(10))
+        }
+        if (admin) body.addView(actionButton("ADD NEW PLAN", false) { showEditInvestmentPlanDialog(JSONObject()) })
+    }
+
+    private fun moneyText(value: Double): String = String.format(Locale.US, "%,.2f", value)
+
+    private fun showSelectInvestmentPlanDialog(plan: JSONObject) {
+        val amountInput = EditText(this).apply {
+            hint = "Investment amount (R1,000 – R5,000)"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            setTextColor(ink)
+        }
+        val wrap = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(22), dp(8), dp(22), 0) }
+        wrap.addView(text("${plan.optString("name")} · ${plan.optInt("duration_days")} days", 14f, green, true))
+        wrap.addView(space(8)); wrap.addView(amountInput)
+        AlertDialog.Builder(this).setTitle("Select investment plan").setView(wrap)
+            .setNegativeButton("CANCEL", null)
+            .setPositiveButton("CONTINUE") { _, _ ->
+                val amount = amountInput.text.toString().trim().toDoubleOrNull()
+                if (amount == null) { toast("Enter a valid investment amount."); return@setPositiveButton }
+                investmentRequest("select_plan", mapOf("plan_id" to plan.optString("plan_id"), "amount" to amount.toString())) {
+                    toast(it.optString("message", "Plan selected.")); loadMyInvestments()
+                }
+            }.show()
+    }
+
+    private fun loadMyInvestments() {
+        investmentRequest("profile") { result -> showMyInvestments(result.optJSONArray("investments") ?: JSONArray()) }
+    }
+
+    private fun showMyInvestments(investments: JSONArray) {
+        val body = accountSubPage("MY INVESTMENTS", "Your selected plans and projected progress.")
+        if (investments.length() == 0) body.addView(text("You have not selected an investment plan yet.", 14f, muted))
+        for (i in 0 until investments.length()) {
+            val inv = investments.optJSONObject(i) ?: continue
+            val item = card()
+            item.addView(text(inv.optString("plan_name"), 17f, green, true))
+            addProfileField(item, "Status", friendlyInvestmentStatus(inv.optString("status")))
+            addProfileField(item, "Invested amount", "R${moneyText(inv.optDouble("invested_amount"))}")
+            addProfileField(item, "Plan duration", "${inv.optInt("duration_days")} days")
+            addProfileField(item, "Investment date", inv.optString("investment_date", "Pending approval"))
+            addProfileField(item, "Expiry date", inv.optString("expiry_date", "Pending approval"))
+            addProfileField(item, "Daily projected growth", "R${moneyText(inv.optDouble("daily_growth_amount"))}")
+            addProfileField(item, "Projected growth to date", "R${moneyText(inv.optDouble("accrued_projected_growth"))}")
+            addProfileField(item, "Potential projected return", "R${moneyText(inv.optDouble("potential_return"))}")
+            if (inv.optBoolean("withdrawal_available") && inv.optString("withdrawal_status").isBlank()) {
+                item.addView(actionButton("REQUEST WITHDRAWAL REVIEW", false) { showWithdrawalRequestDialog(inv) })
+            }
+            body.addView(item); body.addView(space(10))
+        }
+    }
+
+    private fun friendlyInvestmentStatus(status: String): String = when (status.uppercase(Locale.US)) {
+        "PENDING_DEMO_DEPOSIT" -> "PENDING DEPOSIT REVIEW"
+        "DEMO_APPROVED" -> "APPROVED · GROWTH ACTIVE"
+        "PENDING_DEMO_REVIEW" -> "PENDING WITHDRAWAL REVIEW"
+        "DEMO_APPROVED_NOT_PAID" -> "WITHDRAWAL REVIEW APPROVED"
+        "DEMO_REJECTED" -> "WITHDRAWAL REVIEW REJECTED"
+        else -> status.replace('_', ' ').uppercase(Locale.US)
+    }
+
+    private fun showWithdrawalRequestDialog(inv: JSONObject) {
+        val amount = EditText(this).apply { hint = "Requested amount"; inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL; setTextColor(ink) }
+        AlertDialog.Builder(this).setTitle("Request withdrawal review").setMessage("This submits a request for administrator review; it does not transfer money.")
+            .setView(amount).setNegativeButton("CANCEL", null).setPositiveButton("SUBMIT") { _, _ ->
+                val value = amount.text.toString().trim().toDoubleOrNull()
+                if (value == null || value <= 0) { toast("Enter a valid amount."); return@setPositiveButton }
+                investmentRequest("request_demo_withdrawal", mapOf("investment_id" to inv.optString("investment_id"), "amount" to value.toString())) {
+                    toast(it.optString("message", "Request submitted.")); loadMyInvestments()
+                }
+            }.show()
+    }
+
+    private fun showEditInvestmentPlanDialog(plan: JSONObject) {
+        val fields = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0) }
+        fun field(hint: String, value: String): EditText = EditText(this).apply { this.hint = hint; setText(value); setTextColor(ink); setSingleLine(true) }.also { fields.addView(it) }
+        val id = field("Plan ID", plan.optString("plan_id"))
+        val name = field("Plan name", plan.optString("name"))
+        val days = field("Duration in days", plan.optString("duration_days"))
+        val growth = field("Total projected growth (%)", plan.optString("total_growth_percent"))
+        val min = field("Minimum amount", plan.optString("min_amount", "1000"))
+        val max = field("Maximum amount", plan.optString("max_amount", "5000"))
+        val enabled = android.widget.CheckBox(this).apply { text = "Plan enabled"; setTextColor(ink); isChecked = plan.optBoolean("enabled", true) }
+        fields.addView(enabled)
+        AlertDialog.Builder(this).setTitle(if (plan.optString("plan_id").isBlank()) "Add investment plan" else "Edit investment plan")
+            .setView(fields).setNegativeButton("CANCEL", null).setPositiveButton("SAVE") { _, _ ->
+                val values = mapOf("plan_id" to id.text.toString().trim(), "name" to name.text.toString().trim(),
+                    "duration_days" to days.text.toString().trim(), "total_growth_percent" to growth.text.toString().trim(),
+                    "min_amount" to min.text.toString().trim(), "max_amount" to max.text.toString().trim(), "enabled" to if (enabled.isChecked) "1" else "0")
+                investmentRequest("admin_save_plan", values) { toast(it.optString("message", "Plan saved.")); loadInvestmentPlans(true) }
+            }.show()
+    }
+
+    private fun loadAdminInvestments() {
+        investmentRequest("admin_investments") { result -> showAdminInvestments(result.optJSONArray("investments") ?: JSONArray()) }
+    }
+
+    private fun showAdminInvestments(investments: JSONArray) {
+        val body = accountSubPage("INVESTMENT REQUESTS", "Administrator review of selected plans and requests.")
+        if (investments.length() == 0) body.addView(text("No investment requests found.", 14f, muted))
+        for (i in 0 until investments.length()) {
+            val inv = investments.optJSONObject(i) ?: continue
+            val item = card()
+            item.addView(text(inv.optString("plan_name"), 17f, green, true))
+            addProfileField(item, "User", inv.optString("user_email"))
+            addProfileField(item, "Amount", "R${moneyText(inv.optDouble("invested_amount"))}")
+            addProfileField(item, "Status", friendlyInvestmentStatus(inv.optString("status")))
+            if (inv.optString("status") == "PENDING_DEMO_DEPOSIT") {
+                item.addView(actionButton("APPROVE DEPOSIT", true) {
+                    investmentRequest("admin_demo_approve_deposit", mapOf("investment_id" to inv.optString("investment_id"))) {
+                        toast(it.optString("message", "Deposit review updated.")); loadAdminInvestments()
+                    }
+                })
+            }
+            if (inv.optString("withdrawal_status") == "PENDING_DEMO_REVIEW") {
+                item.addView(actionButton("APPROVE WITHDRAWAL REVIEW", true) { decideInvestmentWithdrawal(inv, "approve") })
+                item.addView(actionButton("REJECT WITHDRAWAL REVIEW", false) { decideInvestmentWithdrawal(inv, "reject") })
+            }
+            body.addView(item); body.addView(space(10))
+        }
+    }
+
+    private fun decideInvestmentWithdrawal(inv: JSONObject, decision: String) {
+        investmentRequest("admin_demo_withdrawal_decision", mapOf("investment_id" to inv.optString("investment_id"), "decision" to decision)) {
+            toast(it.optString("message", "Withdrawal review updated.")); loadAdminInvestments()
+        }
     }
 
     private fun showAdminUserProfile(user: JSONObject) {
