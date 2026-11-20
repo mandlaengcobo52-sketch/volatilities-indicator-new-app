@@ -1401,19 +1401,25 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             return
         }
         val pairId = "PAIR-${today}-${symbol}-${UUID.randomUUID()}"
+        // Queue both legs first. Do not consume today's signal if a synchronous
+        // execution gate rejects either request before it reaches Deriv.
+        val riseQueued = openPosition(symbol, "RISE", "ORIGINAL", stake, pairId)
+        val fallQueued = riseQueued && openPosition(symbol, "FALL", "ORIGINAL", stake, pairId)
+        if (!riseQueued || !fallQueued) {
+            addNotification("Trade", "${displayIndexName(symbol)} pair not submitted", "The original RISE/FALL pair was blocked before both requests could be sent. The signal remains available for retry.")
+            return
+        }
         originalTriggered.add(pairKey)
         originalTriggered.add(legacyRiseKey)
         originalTriggered.add(legacyFallKey)
         tradePrefs.edit().putStringSet("triggered_$today", originalTriggered.toSet()).apply()
-        openPosition(symbol, "RISE", "ORIGINAL", stake, pairId)
-        openPosition(symbol, "FALL", "ORIGINAL", stake, pairId)
-        addNotification("Trade", "${displayIndexName(symbol)} original pair opened", "RISE and FALL opened together with the same stake of ${formatMoney(stake)} each.")
+        addNotification("Trade", "${displayIndexName(symbol)} original pair submitted", "Both RISE and FALL proposal requests were sent to Deriv with the same stake of ${formatMoney(stake)} each. Waiting for Deriv acceptance.")
     }
 
     private fun roundStake(value: Double): Double =
         BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP).toDouble()
 
-    private fun openPosition(symbol: String, direction: String, role: String, stake: Double, originalId: String = "") {
+    private fun openPosition(symbol: String, direction: String, role: String, stake: Double, originalId: String = ""): Boolean {
         if (platformAuthenticated && platformUserRole == "investor") {
             val today = java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US).format(java.util.Date())
             val subscriptionActive = platformUser.optString("subscription_status") == "approved" &&
@@ -1423,11 +1429,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             if (!subscriptionActive || !planActive) {
                 addNotification("Account", "Investor execution blocked", "An active approved subscription and an approved, unexpired Investor plan are required before trading.")
                 runOnUiThread { toast("Trading requires an approved active subscription and Investor plan.") }
-                return
+                return false
             }
         }
         val roundedStake = roundStake(stake)
-        if (!accountConnected || !roundedStake.isFinite() || roundedStake <= 0.0) return
+        if (!accountConnected || !roundedStake.isFinite() || roundedStake <= 0.0) return false
         val localId = UUID.randomUUID().toString()
         val requestedGroupId = if (role == "RECOVERY") {
             positions[originalId]?.originalId?.takeIf { it.isNotBlank() } ?: originalId
@@ -1439,7 +1445,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val activeGroups = activeTradeGroupIds()
         if (requestedGroupId !in activeGroups && activeGroups.size >= 2) {
             addNotification("Trade", "${displayIndexName(symbol)} execution held", "The global limit of two running trade pairs has been reached. This execution must wait.")
-            return
+            return false
         }
         val p = Position(localId, symbol, direction, role, roundedStake, originalId)
         positions[localId] = p
@@ -1466,8 +1472,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         derivService?.client?.send(proposal)
         savePositions()
         runOnUiThread { if (selectedTab == "Trade") render() }
+            return true
     }
-
     private fun subscribePosition(contractId: Long) {
         val req = JSONObject().put("proposal_open_contract", 1).put("contract_id", contractId).put("subscribe", 1)
         derivService?.client?.send(req)
