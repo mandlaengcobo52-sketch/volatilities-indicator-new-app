@@ -2502,7 +2502,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     private fun showInvestorPlanSelection() {
         val current = platformUser.optString("investor_plan")
-        val options = arrayOf("Plan A — 50% overall target · 15 days · 5-day contracts · 25% stake per leg · 40% leg target", "Plan B — 100% overall target · 30 days · 7-day contracts · 25% stake per leg · 40% leg target")
+        val options = arrayOf("Plan A — 50% in 15 days", "Plan B — 100% in 30 days")
         val selected = if (current == "B") 1 else 0
         AlertDialog.Builder(this).setTitle("Choose Investor Trading Plan")
             .setSingleChoiceItems(options, selected, null)
@@ -2588,7 +2588,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                         toast(result.optString("message", "Proof of payment uploaded successfully."))
                         if (platformUserRole == "investor") showInvestorProfile() else openUserProfile()
                     } else {
-                        val message = result.optString("message").ifBlank { "Upload failed (HTTP $code). Check server upload limits and mobile-auth.php response." }
+                        val message = result.optString("message").ifBlank {
+                            when (code) {
+                                413 -> "The selected proof is larger than the server upload limit."
+                                500 -> "The server could not save the proof. Check the payment-proofs folder permissions and PHP error log."
+                                else -> "Upload failed (HTTP $code). Check the mobile-auth.php server response."
+                            }
+                        }
                         toast(message)
                         if (code == 401) signOutPlatform()
                     }
