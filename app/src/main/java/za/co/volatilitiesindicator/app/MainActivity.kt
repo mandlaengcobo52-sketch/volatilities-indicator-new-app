@@ -2451,7 +2451,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         addProfileField(panel, "Proof of payment", if (user.optString("payment_proof_name").isNotBlank()) "Uploaded: ${user.optString("payment_proof_name")}" else "Not uploaded")
         body.addView(panel)
         body.addView(space(12))
-        body.addView(actionButton("UPLOAD PROOF OF PAYMENT", true) { openPaymentProofPicker() })
+        body.addView(actionButton("UPLOAD SUBSCRIPTION PROOF OF PAYMENT", true) { openPaymentProofPicker("subscription") })
+        body.addView(space(8))
+        body.addView(actionButton("UPLOAD INVESTMENT PROOF OF PAYMENT", false) { openPaymentProofPicker("investment") })
         body.addView(space(8))
         body.addView(actionButton("VIEW INVESTMENT PLANS", true) { loadInvestmentPlans(false) })
         body.addView(space(8))
@@ -2484,7 +2486,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             addProfileField(panel, "Email address", user.optString("email"))
             addProfileField(panel, "Contact number", user.optString("phone"))
             addProfileField(panel, "Registration date", user.optString("created_at"))
-            addProfileField(panel, "Proof of payment", if (user.optString("payment_proof_name").isNotBlank()) "Uploaded: ${user.optString("payment_proof_name")}" else "Not uploaded")
+            addProfileField(panel, "Subscription proof", if (user.optString("subscription_proof_name", user.optString("payment_proof_name")).isNotBlank()) "Uploaded" else "Not uploaded")
+            addProfileField(panel, "Investment proof", if (user.optString("investment_proof_name").isNotBlank()) "Uploaded" else "Not uploaded")
             addProfileField(panel, "Subscription", "R500 · ${user.optString("subscription_status", "pending").uppercase(Locale.US)}")
             addProfileField(panel, "Subscription inception", user.optString("subscription_inception_date", "Not approved"))
             addProfileField(panel, "Subscription expiry", user.optString("subscription_expiry_date", "Not approved"))
@@ -2492,7 +2495,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             addProfileField(panel, "Plan approval", user.optString("investor_plan_status", "not_selected").replace('_',' ').uppercase(Locale.US))
             body.addView(panel)
             body.addView(space(12))
-            body.addView(actionButton("UPLOAD PROOF OF PAYMENT", true) { openPaymentProofPicker() })
+            body.addView(actionButton("UPLOAD SUBSCRIPTION PROOF OF PAYMENT", true) { openPaymentProofPicker("subscription") })
+            body.addView(space(8))
+            body.addView(actionButton("UPLOAD INVESTMENT PROOF OF PAYMENT", false) { openPaymentProofPicker("investment") })
             body.addView(space(8))
             body.addView(actionButton("SELECT INVESTOR TRADING PLAN", true) { showInvestorPlanSelection() })
             body.addView(space(8))
@@ -2517,7 +2522,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             }.show()
     }
 
-    private fun openPaymentProofPicker() {
+    private var selectedProofType: String = "subscription"
+
+    private fun openPaymentProofPicker(proofType: String) {
+        selectedProofType = if (proofType == "investment") "investment" else "subscription"
         if (!platformAuthenticated || platformAuthToken.isBlank()) {
             toast("Please sign in before uploading proof of payment.")
             return
@@ -2554,13 +2562,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 "image/jpeg" -> "jpg"
                 else -> "png"
             }
-            uploadPaymentProof(bytes, mimeType, "proof_of_payment.$extension")
+            uploadPaymentProof(bytes, mimeType, "proof_of_payment.$extension", selectedProofType)
         } catch (_: Exception) {
             toast("Unable to read the selected proof of payment.")
         }
     }
 
-    private fun uploadPaymentProof(bytes: ByteArray, mimeType: String, fileName: String) {
+    private fun uploadPaymentProof(bytes: ByteArray, mimeType: String, fileName: String, proofType: String) {
         if (!platformAuthenticated || platformAuthToken.isBlank()) {
             toast("Please sign in before uploading proof of payment.")
             return
@@ -2568,6 +2576,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val body = okhttp3.MultipartBody.Builder()
             .setType(okhttp3.MultipartBody.FORM)
             .addFormDataPart("action", "upload_payment_proof")
+            .addFormDataPart("proof_type", proofType)
             .addFormDataPart("proof", fileName,
                 bytes.toRequestBody(mimeType.toMediaType()))
             .build()
@@ -2588,13 +2597,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                         toast(result.optString("message", "Proof of payment uploaded successfully."))
                         if (platformUserRole == "investor") showInvestorProfile() else openUserProfile()
                     } else {
-                        val message = result.optString("message").ifBlank {
-                            when (code) {
-                                413 -> "The selected proof is larger than the server upload limit."
-                                500 -> "The server could not save the proof. Check the payment-proofs folder permissions and PHP error log."
-                                else -> "Upload failed (HTTP $code). Check the mobile-auth.php server response."
-                            }
-                        }
+                        val message = result.optString("message").ifBlank { "Upload failed (HTTP $code). Check server upload limits and mobile-auth.php response." }
                         toast(message)
                         if (code == 401) signOutPlatform()
                     }
@@ -2624,6 +2627,41 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         addProfileField(adminCard, "Email", platformUser.optString("email"))
         addProfileField(adminCard, "Role", "ADMIN")
         body.addView(adminCard)
+        body.addView(space(14))
+        body.addView(text("PENDING APPROVALS", 17f, gold, true))
+        body.addView(space(8))
+        var pendingCount = 0
+        for (i in 0 until users.length()) {
+            val pendingUser = users.optJSONObject(i) ?: continue
+            val uid = pendingUser.optString("id")
+            val name = pendingUser.optString("full_name", "User")
+            val subProof = pendingUser.optString("subscription_proof_name", pendingUser.optString("payment_proof_name"))
+            val invProof = pendingUser.optString("investment_proof_name")
+            if (subProof.isNotBlank() && pendingUser.optString("subscription_status", "pending") != "approved") {
+                pendingCount++
+                body.addView(text("$name · SUBSCRIPTION PAYMENT", 14f, ink, true))
+                body.addView(actionButton("VIEW SUBSCRIPTION PROOF", false) { adminViewPaymentProof(uid, "subscription") })
+                body.addView(actionButton("APPROVE SUBSCRIPTION", true) { adminDecision("admin_subscription_decision", uid, "approve") })
+                body.addView(actionButton("REJECT SUBSCRIPTION", false) { adminDecision("admin_subscription_decision", uid, "reject") })
+                body.addView(space(8))
+            }
+            if (invProof.isNotBlank() && pendingUser.optString("investment_payment_status", "pending") == "pending") {
+                pendingCount++
+                body.addView(text("$name · INVESTMENT PAYMENT", 14f, ink, true))
+                body.addView(actionButton("VIEW INVESTMENT PROOF", false) { adminViewPaymentProof(uid, "investment") })
+                body.addView(actionButton("APPROVE INVESTMENT PAYMENT", true) { adminDecision("admin_investment_payment_decision", uid, "approve") })
+                body.addView(actionButton("REJECT INVESTMENT PAYMENT", false) { adminDecision("admin_investment_payment_decision", uid, "reject") })
+                body.addView(space(8))
+            }
+            if (pendingUser.optString("role").equals("investor", true) && pendingUser.optString("investor_plan_status") == "pending" && pendingUser.optString("investor_plan").isNotBlank()) {
+                pendingCount++
+                body.addView(text("$name · INVESTOR PLAN ${pendingUser.optString("investor_plan")}", 14f, ink, true))
+                body.addView(actionButton("APPROVE INVESTOR PLAN", true) { adminDecision("admin_investor_plan_decision", uid, "approve") })
+                body.addView(actionButton("REJECT INVESTOR PLAN", false) { adminDecision("admin_investor_plan_decision", uid, "reject") })
+                body.addView(space(8))
+            }
+        }
+        if (pendingCount == 0) body.addView(text("No pending subscription, investment payment or investor plan approvals.", 13f, muted))
         body.addView(space(14))
         body.addView(text("INVESTMENT ADMINISTRATION", 17f, gold, true))
         body.addView(space(8))
@@ -2858,19 +2896,23 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         addProfileField(panel, "Role", user.optString("role", "user").uppercase(Locale.US))
         addProfileField(panel, "Status", user.optString("status", "unknown").uppercase(Locale.US))
         addProfileField(panel, "Registered", user.optString("created_at"))
-        addProfileField(panel, "Proof of payment", if (user.optString("payment_proof_name").isNotBlank()) user.optString("payment_proof_name") else "Not uploaded")
-        addProfileField(panel, "Proof uploaded", user.optString("payment_proof_uploaded_at", "Not uploaded"))
+        addProfileField(panel, "Subscription proof", if (user.optString("subscription_proof_name", user.optString("payment_proof_name")).isNotBlank()) "Uploaded" else "Not uploaded")
+        addProfileField(panel, "Investment proof", if (user.optString("investment_proof_name").isNotBlank()) "Uploaded" else "Not uploaded")
+        addProfileField(panel, "Investment payment", user.optString("investment_payment_status", "pending").uppercase(Locale.US))
         addProfileField(panel, "Subscription", user.optString("subscription_status", "pending").uppercase(Locale.US))
         addProfileField(panel, "Subscription expiry", user.optString("subscription_expiry_date", "Not approved"))
         addProfileField(panel, "Investor plan", when(user.optString("investor_plan")) { "A" -> "Plan A · 15 days"; "B" -> "Plan B · 30 days"; else -> "Not selected" })
         addProfileField(panel, "Investor plan status", user.optString("investor_plan_status", "not_selected").replace('_',' ').uppercase(Locale.US))
         body.addView(panel)
-        if (user.optString("payment_proof_name").isNotBlank()) {
-            body.addView(actionButton("VIEW PROOF OF PAYMENT", true) { adminViewPaymentProof(userId) })
-            body.addView(space(6))
+        if (user.optString("subscription_proof_name", user.optString("payment_proof_name")).isNotBlank()) {
+            body.addView(actionButton("VIEW SUBSCRIPTION PROOF", true) { adminViewPaymentProof(userId, "subscription") })
             body.addView(actionButton("APPROVE SUBSCRIPTION", true) { adminDecision("admin_subscription_decision", userId, "approve") })
-            body.addView(space(6))
             body.addView(actionButton("REJECT SUBSCRIPTION", false) { adminDecision("admin_subscription_decision", userId, "reject") })
+        }
+        if (user.optString("investment_proof_name").isNotBlank()) {
+            body.addView(actionButton("VIEW INVESTMENT PROOF", true) { adminViewPaymentProof(userId, "investment") })
+            body.addView(actionButton("APPROVE INVESTMENT PAYMENT", true) { adminDecision("admin_investment_payment_decision", userId, "approve") })
+            body.addView(actionButton("REJECT INVESTMENT PAYMENT", false) { adminDecision("admin_investment_payment_decision", userId, "reject") })
         }
         if (user.optString("role").equals("investor", true) && user.optString("investor_plan_status") == "pending") {
             body.addView(space(8))
@@ -2923,8 +2965,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
     }
 
-    private fun adminViewPaymentProof(userId: String) {
-        platformRequest("admin_get_payment_proof", mapOf("user_id" to userId)) { result ->
+    private fun adminViewPaymentProof(userId: String, proofType: String) {
+        platformRequest("admin_get_payment_proof", mapOf("user_id" to userId, "proof_type" to proofType)) { result ->
             try {
                 val bytes = android.util.Base64.decode(result.optString("content"), android.util.Base64.DEFAULT)
                 val mime = result.optString("mime", "application/octet-stream")
