@@ -1991,7 +1991,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     private fun render() {
-        if (platformUserRole == "investor" && selectedTab !in listOf("Trade", "Accounts")) selectedTab = "Trade"
+        if (platformUserRole == "investor" && selectedTab !in listOf("Trade", "Accounts", "Profile")) selectedTab = "Trade"
         pageScrollView?.let { oldScroll ->
             if (renderedTab.isNotBlank()) scrollPositions[renderedTab] = oldScroll.scrollY
         }
@@ -2041,6 +2041,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             "Home" -> showHome()
             "Trade" -> showTrade()
             "Accounts" -> showAccounts()
+            "Profile" -> showInvestorProfile()
             "Settings" -> showSettings()
         }
         val restoreListener = object : android.view.ViewTreeObserver.OnGlobalLayoutListener {
@@ -2430,6 +2431,36 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         body.addView(actionButton("SIGN OUT", false) { signOutPlatform() })
     }
 
+    private fun showInvestorProfile() {
+        if (!platformAuthenticated) {
+            showPlatformAuthScreen(false, "Sign in to view your investor profile.")
+            return
+        }
+        platformRequest("profile") { result ->
+            val user = result.optJSONObject("user") ?: platformUser
+            platformUser = user
+            platformUserName = user.optString("full_name", platformUserName)
+            platformUserRole = user.optString("role", platformUserRole).lowercase(Locale.US)
+            if (platformUserRole != "investor") {
+                selectedTab = "Trade"
+                render()
+                return@platformRequest
+            }
+            val body = accountSubPage("INVESTOR PROFILE", "Your Volatilities Indicator investor account.")
+            val panel = card()
+            panel.addView(text(user.optString("full_name", platformUserName), 18f, green, true))
+            panel.addView(space(8))
+            addProfileField(panel, "Account type", "INVESTOR")
+            addProfileField(panel, "Account status", user.optString("status", "unknown").uppercase(Locale.US))
+            addProfileField(panel, "Email address", user.optString("email"))
+            addProfileField(panel, "Contact number", user.optString("phone"))
+            addProfileField(panel, "Registration date", user.optString("created_at"))
+            body.addView(panel)
+            body.addView(space(12))
+            body.addView(actionButton("SIGN OUT", false) { signOutPlatform() })
+        }
+    }
+
     private fun openAdminDashboard() {
         if (!platformAuthenticated) {
             showPlatformAuthScreen(false, "Sign in with an administrator account to continue.")
@@ -2688,6 +2719,22 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         body.addView(panel)
         body.addView(space(12))
         body.addView(actionButton("EDIT USER PROFILE", true) { showEditUserDialog(user) })
+        body.addView(actionButton("CHANGE ACCOUNT TYPE", false) {
+            val currentRole = user.optString("role", "user").lowercase(Locale.US)
+            val nextRole = if (currentRole == "investor") "user" else "investor"
+            AlertDialog.Builder(this)
+                .setTitle("Change account type?")
+                .setMessage("Change ${user.optString("full_name")} from ${currentRole.uppercase(Locale.US)} to ${nextRole.uppercase(Locale.US)}? The existing login and account history will be retained.")
+                .setNegativeButton("CANCEL", null)
+                .setPositiveButton("CHANGE") { _, _ ->
+                    platformRequest("admin_change_role", mapOf("user_id" to userId, "role" to nextRole)) {
+                        toast(it.optString("message", "Account type updated."))
+                        openAdminDashboard()
+                    }
+                }.show()
+        })
+        body.addView(space(8))
+
         body.addView(space(8))
         when (user.optString("status", "pending").lowercase(Locale.US)) {
             "pending" -> body.addView(actionButton("APPROVE USER", true) { adminUserAction("admin_approve_user", userId) })
@@ -2877,7 +2924,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             setPadding(dp(6), dp(8), dp(6), dp(8))
             elevation = dp(8).toFloat()
         }
-        val tabs = if (platformUserRole == "investor") listOf("Trade", "Accounts") else listOf("Home", "Trade", "Accounts", "Settings")
+        val tabs = if (platformUserRole == "investor") listOf("Trade", "Accounts", "Profile") else listOf("Home", "Trade", "Accounts", "Settings")
         tabs.forEach { tab ->
             val item = TextView(this).apply {
                 text = tab
@@ -2894,7 +2941,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     private fun openTab(tab: String) {
-        if (platformUserRole == "investor" && tab !in listOf("Trade", "Accounts")) {
+        if (platformUserRole == "investor" && tab !in listOf("Trade", "Accounts", "Profile")) {
             toast("Investor access is limited to Trade and Accounts.")
             return
         }
