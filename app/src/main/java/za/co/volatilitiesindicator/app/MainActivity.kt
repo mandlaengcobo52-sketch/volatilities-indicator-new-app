@@ -1433,7 +1433,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             if (!reversal.isNullOrBlank() && autoTradingEnabled && accountConnected) {
                 val anotherActive = positions.values.any { it.symbol == position.symbol && it.localId != position.localId &&
                     it.status !in setOf("CLOSED", "BUY FAILED", "PROPOSAL FAILED") && !it.status.startsWith("ERROR") }
-                val reversalStake = roundStake(dailyCapital * 0.20)
+                val reversalStake = roundStake(dailyCapital * 0.10)
                 if (!anotherActive && availableBalance >= reversalStake && openPosition(position.symbol, reversal, "MASTER", reversalStake)) {
                     addNotification("Trade", "${displayIndexName(position.symbol)} reversal submitted", "The previous contract is confirmed closed. Opening the opposite ${reversal} contract.")
                 }
@@ -1460,7 +1460,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             val lockedNetProfit = roundStake(
                 position.stake * position.lockedProfitPercent / 100.0
             )
-            val hitProfitTarget = position.profit >= roundStake(position.stake * 0.20)
+            val hitProfitTarget = position.profit >= roundStake(position.stake * 0.99)
             val reversedToLock = position.trailingActivated &&
                 position.lockedProfitPercent >= 10 &&
                 position.profit < position.peakProfit &&
@@ -1597,7 +1597,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             return
         }
 
-        val stake = roundStake(dailyCapital * 0.20)
+        val stake = roundStake(dailyCapital * 0.10)
         val available = (availableBalance - reservedRecoveryCapital()).coerceAtLeast(0.0)
         if (stake <= 0.0 || available + 0.000001 < stake) return
         if (openPosition(symbol, mssDirection, "MASTER", stake)) {
