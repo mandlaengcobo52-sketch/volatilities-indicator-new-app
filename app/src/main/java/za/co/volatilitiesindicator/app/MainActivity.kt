@@ -2493,6 +2493,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             addProfileField(panel, "Subscription expiry", user.optString("subscription_expiry_date", "Not approved"))
             addProfileField(panel, "Selected trading plan", when(user.optString("investor_plan")) { "A" -> "Plan A · 50% target · 15 days"; "B" -> "Plan B · 100% target · 30 days"; else -> "Not selected" })
             addProfileField(panel, "Plan approval", user.optString("investor_plan_status", "not_selected").replace('_',' ').uppercase(Locale.US))
+            val planStartDate = user.optString("investor_plan_start_date").takeUnless { it.isBlank() || it == "null" } ?: "Not approved"
+            val planExpiryDate = user.optString("investor_plan_expiry_date").takeUnless { it.isBlank() || it == "null" } ?: "Not approved"
+            addProfileField(panel, "Investor plan start date", planStartDate)
+            addProfileField(panel, "Investor plan expiry date", planExpiryDate)
             body.addView(panel)
             body.addView(space(12))
             body.addView(actionButton("UPLOAD SUBSCRIPTION PROOF OF PAYMENT", true) { openPaymentProofPicker("subscription") })
@@ -2940,25 +2944,35 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         addProfileField(panel, "Subscription expiry", user.optString("subscription_expiry_date", "Not approved"))
         addProfileField(panel, "Investor plan", when(user.optString("investor_plan")) { "A" -> "Plan A · 15 days"; "B" -> "Plan B · 30 days"; else -> "Not selected" })
         addProfileField(panel, "Investor plan status", user.optString("investor_plan_status", "not_selected").replace('_',' ').uppercase(Locale.US))
+        val planStartDate = user.optString("investor_plan_start_date").takeUnless { it.isBlank() || it == "null" } ?: "Not approved"
+        val planExpiryDate = user.optString("investor_plan_expiry_date").takeUnless { it.isBlank() || it == "null" } ?: "Not approved"
+        addProfileField(panel, "Investor plan start date", planStartDate)
+        addProfileField(panel, "Investor plan expiry date", planExpiryDate)
         body.addView(panel)
         if (user.optString("subscription_proof_name", user.optString("payment_proof_name")).isNotBlank()) {
             body.addView(actionButton("VIEW SUBSCRIPTION PROOF", true) { adminViewPaymentProof(userId, "subscription") })
+            body.addView(space(8))
             body.addView(actionButton("APPROVE SUBSCRIPTION", true) { adminDecision("admin_subscription_decision", userId, "approve") })
+            body.addView(space(8))
             body.addView(actionButton("REJECT SUBSCRIPTION", false) { adminDecision("admin_subscription_decision", userId, "reject") })
         }
         if (user.optString("investment_proof_name").isNotBlank()) {
+            body.addView(space(8))
             body.addView(actionButton("VIEW INVESTMENT PROOF", true) { adminViewPaymentProof(userId, "investment") })
+            body.addView(space(8))
             body.addView(actionButton("APPROVE INVESTMENT PAYMENT", true) { adminDecision("admin_investment_payment_decision", userId, "approve") })
+            body.addView(space(8))
             body.addView(actionButton("REJECT INVESTMENT PAYMENT", false) { adminDecision("admin_investment_payment_decision", userId, "reject") })
         }
         if (user.optString("role").equals("investor", true) && user.optString("investor_plan_status") == "pending") {
             body.addView(space(8))
             body.addView(actionButton("APPROVE INVESTOR PLAN", true) { adminDecision("admin_investor_plan_decision", userId, "approve") })
-            body.addView(space(6))
+            body.addView(space(8))
             body.addView(actionButton("REJECT INVESTOR PLAN", false) { adminDecision("admin_investor_plan_decision", userId, "reject") })
         }
         body.addView(space(12))
         body.addView(actionButton("EDIT USER PROFILE", true) { showEditUserDialog(user) })
+        body.addView(space(8))
         body.addView(actionButton("CHANGE ACCOUNT TYPE", false) {
             val currentRole = user.optString("role", "user").lowercase(Locale.US)
             val nextRole = if (currentRole == "investor") "user" else "investor"
