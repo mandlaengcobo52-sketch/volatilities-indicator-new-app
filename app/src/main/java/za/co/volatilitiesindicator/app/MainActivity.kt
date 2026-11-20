@@ -746,6 +746,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (symbol !in indexes || !quote.isFinite()) return
         latestPrices[symbol] = quote
         marketFeedConnected = true
+        if (accountConnected) evaluateOriginalEntries(symbol, quote)
         runOnUiThread {
             feedPillView?.text = "LIVE"
             feedPillView?.setTextColor(green)
@@ -764,7 +765,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             marketFeedConnected = true
             candlesByIndex[symbol] = candles.sortedBy { it.epoch }
             calculatePreviousDailyLevels(symbol, candles)
-            evaluateOriginalEntries(symbol, candles)
             evaluateRecoverySignals(symbol, candles)
             val lastClose = candles.last().close
             if (!latestPrices.containsKey(symbol)) latestPrices[symbol] = lastClose
@@ -1345,51 +1345,27 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             .sumOf { winner -> roundStake(winner.stake + winner.profit + winner.pairedLoss) }
     }
 
-    private fun evaluateOriginalEntries(symbol: String, candles: List<DerivApiClient.Candle>) {
+    private fun evaluateOriginalEntries(symbol: String, quote: Double) {
+        if (!autoTradingEnabled || !accountConnected || dailyCapital <= 0.0 || !quote.isFinite()) return
         val levels = dailyLevels[symbol] ?: return
-        val orderedCandles = candles.sortedBy { it.epoch }
-        // Deriv supplies the currently-forming candle last. Original entries use
-        // only the most recently completed H1 candle, never a live tick or wick.
-        val closedCandle = orderedCandles.dropLast(1).lastOrNull() ?: return
-        val sweptLow = closedCandle.low <= levels.second && closedCandle.close > levels.second
-        val sweptHigh = closedCandle.high >= levels.first && closedCandle.close < levels.first
-        val confirmedSweep = when {
-            sweptLow && sweptHigh -> {
-                originalSweepStatus[symbol] = "Both previous-day boundaries were swept in the same completed H1 candle. Waiting for a separate confirmed sweep."
-                return
-            }
-            sweptLow -> {
-                originalSweepStatus[symbol] = "Previous-day LOW swept and reclaimed. Completed H1 candle closed above ${formatPrice(levels.second)}."
-                true
-            }
-            sweptHigh -> {
-                originalSweepStatus[symbol] = "Previous-day HIGH swept and rejected. Completed H1 candle closed below ${formatPrice(levels.first)}."
-                true
-            }
-            else -> {
-                originalSweepStatus[symbol] = "No confirmed sweep on the latest completed H1 candle. Waiting for a sweep and reclaim of the previous-day high or low."
-                false
-            }
-        }
-        if (!confirmedSweep) return
-        if (!autoTradingEnabled || !accountConnected || dailyCapital <= 0.0) return
         val today = utcDayKey(System.currentTimeMillis() / 1000L)
         val pairKey = "$today|$symbol|PAIR"
         val legacyRiseKey = "$today|$symbol|RISE"
         val legacyFallKey = "$today|$symbol|FALL"
         if (pairKey in originalTriggered || legacyRiseKey in originalTriggered || legacyFallKey in originalTriggered) return
-        // Never start another original pair on an index while any leg or recovery on
-        // that same index is still active. Both original legs must close before recovery;
-        // the recovery then remains in the same execution group.
+
+        // Preserve the original working entry trigger: a live quote reaching
+        // either previous-day boundary qualifies the original RISE/FALL pair.
+        // MSS and CHOCH remain exclusive to recovery qualification.
+        val boundaryReached = quote <= levels.second || quote >= levels.first
+        if (!boundaryReached) return
+
         val indexAlreadyActive = positions.values.any {
             it.symbol == symbol && it.status != "CLOSED" &&
                 !it.status.startsWith("ERROR") && it.status !in setOf("BUY FAILED", "PROPOSAL FAILED")
         }
         if (indexAlreadyActive) return
-        // Global limit: at most two active trade groups across every index.
         if (activeTradeGroupIds().size >= 2) return
-
-        // A confirmed H1 sweep/reclaim starts the agreed simultaneous RISE/FALL pair.
 
         val stake = roundStake(dailyCapital * 0.25)
         val requiredForPair = roundStake(stake * 2.0)
@@ -1400,9 +1376,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             }
             return
         }
+
         val pairId = "PAIR-${today}-${symbol}-${UUID.randomUUID()}"
-        // Queue both legs first. Do not consume today's signal if a synchronous
-        // execution gate rejects either request before it reaches Deriv.
         val riseQueued = openPosition(symbol, "RISE", "ORIGINAL", stake, pairId)
         val fallQueued = riseQueued && openPosition(symbol, "FALL", "ORIGINAL", stake, pairId)
         if (!riseQueued || !fallQueued) {
@@ -1469,10 +1444,17 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (role == "RECOVERY") {
             addNotification("Trade", "${displayIndexName(symbol)} recovery setup", "Recovery ${direction.lowercase(Locale.US)} proposal requested after the existing recovery conditions aligned.")
         }
-        derivService?.client?.send(proposal)
+        val client = derivService?.client
+        if (client == null) {
+            pendingRequests.remove(req)
+            positions.remove(localId)
+            addNotification("Trade", "${displayIndexName(symbol)} execution failed", "Deriv trading connection is unavailable. The original pair signal has not been consumed.")
+            return false
+        }
+        client.send(proposal)
         savePositions()
         runOnUiThread { if (selectedTab == "Trade") render() }
-            return true
+        return true
     }
     private fun subscribePosition(contractId: Long) {
         val req = JSONObject().put("proposal_open_contract", 1).put("contract_id", contractId).put("subscribe", 1)
@@ -3116,7 +3098,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (autoTradingEnabled && accountConnected) {
             indexes.forEach { symbol ->
                 candlesByIndex[symbol]?.let { evaluateRecoverySignals(symbol, it) }
-                candlesByIndex[symbol]?.let { evaluateOriginalEntries(symbol, it) }
+                latestPrices[symbol]?.let { evaluateOriginalEntries(symbol, it) }
             }
         }
         render()
