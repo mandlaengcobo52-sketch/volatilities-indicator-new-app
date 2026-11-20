@@ -169,6 +169,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val positions = linkedMapOf<String, Position>()
     private val pendingRequests = mutableMapOf<Int, String>()
     private val dailyLevels = mutableMapOf<String, Pair<Double, Double>>() // high, low
+    private val originalSweepStatus = mutableMapOf<String, String>()
     private val candlesByIndex = mutableMapOf<String, List<DerivApiClient.Candle>>()
     private val originalTriggered = mutableSetOf<String>()
     private val recoveryWaiting = mutableSetOf<String>()
@@ -745,7 +746,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (symbol !in indexes || !quote.isFinite()) return
         latestPrices[symbol] = quote
         marketFeedConnected = true
-        if (accountConnected) evaluateOriginalEntries(symbol, quote)
         runOnUiThread {
             feedPillView?.text = "LIVE"
             feedPillView?.setTextColor(green)
@@ -764,6 +764,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             marketFeedConnected = true
             candlesByIndex[symbol] = candles.sortedBy { it.epoch }
             calculatePreviousDailyLevels(symbol, candles)
+            evaluateOriginalEntries(symbol, candles)
             evaluateRecoverySignals(symbol, candles)
             val lastClose = candles.last().close
             if (!latestPrices.containsKey(symbol)) latestPrices[symbol] = lastClose
@@ -1205,12 +1206,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (!accountConnected) {
             return "Reference levels are available. Waiting for Deriv account connection before entry conditions can be evaluated."
         }
-        val price = latestPrices[symbol] ?: return "Waiting for live market price data."
-        return when {
-            price >= levels.first -> "Price is at or above the previous-day high. The high-side entry condition is being evaluated."
-            price <= levels.second -> "Price is at or below the previous-day low. The low-side entry condition is being evaluated."
-            else -> "Waiting for price to reach the previous-day high (${formatPrice(levels.first)}) or low (${formatPrice(levels.second)})."
-        }
+        return originalSweepStatus[symbol]
+            ?: "Waiting for a completed H1 candle to sweep and reclaim the previous-day high (${formatPrice(levels.first)}) or low (${formatPrice(levels.second)})."
     }
 
     private fun recoveryStatusText(symbol: String): String {
@@ -1348,9 +1345,34 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             .sumOf { winner -> roundStake(winner.stake + winner.profit + winner.pairedLoss) }
     }
 
-    private fun evaluateOriginalEntries(symbol: String, quote: Double) {
-        if (!autoTradingEnabled || !accountConnected || dailyCapital <= 0.0 || !quote.isFinite()) return
+    private fun evaluateOriginalEntries(symbol: String, candles: List<DerivApiClient.Candle>) {
         val levels = dailyLevels[symbol] ?: return
+        val orderedCandles = candles.sortedBy { it.epoch }
+        // Deriv supplies the currently-forming candle last. Original entries use
+        // only the most recently completed H1 candle, never a live tick or wick.
+        val closedCandle = orderedCandles.dropLast(1).lastOrNull() ?: return
+        val sweptLow = closedCandle.low <= levels.second && closedCandle.close > levels.second
+        val sweptHigh = closedCandle.high >= levels.first && closedCandle.close < levels.first
+        val confirmedSweep = when {
+            sweptLow && sweptHigh -> {
+                originalSweepStatus[symbol] = "Both previous-day boundaries were swept in the same completed H1 candle. Waiting for a separate confirmed sweep."
+                return
+            }
+            sweptLow -> {
+                originalSweepStatus[symbol] = "Previous-day LOW swept and reclaimed. Completed H1 candle closed above ${formatPrice(levels.second)}."
+                true
+            }
+            sweptHigh -> {
+                originalSweepStatus[symbol] = "Previous-day HIGH swept and rejected. Completed H1 candle closed below ${formatPrice(levels.first)}."
+                true
+            }
+            else -> {
+                originalSweepStatus[symbol] = "No confirmed sweep on the latest completed H1 candle. Waiting for a sweep and reclaim of the previous-day high or low."
+                false
+            }
+        }
+        if (!confirmedSweep) return
+        if (!autoTradingEnabled || !accountConnected || dailyCapital <= 0.0) return
         val today = utcDayKey(System.currentTimeMillis() / 1000L)
         val pairKey = "$today|$symbol|PAIR"
         val legacyRiseKey = "$today|$symbol|RISE"
@@ -1367,9 +1389,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         // Global limit: at most two active trade groups across every index.
         if (activeTradeGroupIds().size >= 2) return
 
-        // A single qualifying boundary starts the agreed simultaneous RISE/FALL pair.
-        val boundaryReached = quote <= levels.second || quote >= levels.first
-        if (!boundaryReached) return
+        // A confirmed H1 sweep/reclaim starts the agreed simultaneous RISE/FALL pair.
 
         val stake = roundStake(dailyCapital * 0.25)
         val requiredForPair = roundStake(stake * 2.0)
@@ -3090,7 +3110,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (autoTradingEnabled && accountConnected) {
             indexes.forEach { symbol ->
                 candlesByIndex[symbol]?.let { evaluateRecoverySignals(symbol, it) }
-                latestPrices[symbol]?.let { evaluateOriginalEntries(symbol, it) }
+                candlesByIndex[symbol]?.let { evaluateOriginalEntries(symbol, it) }
             }
         }
         render()
