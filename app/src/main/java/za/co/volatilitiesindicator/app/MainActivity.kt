@@ -1531,50 +1531,56 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         } else if (position.status != "CLOSING") {
             position.status = "OPEN"
         }
-        // Deriv's profit field is NET profit. Convert it to TOTAL contract return
-        // by adding this contract's original stake before evaluating protection.
-        // Protection starts only when total return reaches 140% of this stake
-        // (stake + 40% net profit). The lock then advances to 150%, 160%, etc.
-        // No account balance, loss, or reversal signal can activate this protection.
-        if (!isSold && position.status == "OPEN" && position.role != "EXISTING" && position.stake > 0.0) {
-            val currentTotalReturn = position.stake + position.profit
-            val activationTotalReturn = position.stake * 1.40
+        // TRAILING STOP IS PER CONTRACT, NEVER THE COMBINED RISE + FALL P/L.
+        // Deriv's profit field is this contract's NET profit (stake excluded).
+        // This contract activates only after its own net profit reaches 40% of its own stake.
+        // 140% total return therefore means 100% stake + 40% net profit.
+        if (!isSold && position.status == "OPEN" &&
+            position.role != "EXISTING" && position.stake > 0.0) {
 
-            if (currentTotalReturn >= activationTotalReturn) {
+            val activationProfit = roundStake(position.stake * 0.40)
+
+            // Do not use account P/L, index combined P/L, or the paired leg's profit here.
+            if (position.profit >= activationProfit) {
                 position.trailingActivated = true
             }
 
-            // Retain the highest NET profit; total return is reconstructed by adding stake.
-            if (position.profit > 0.0 && position.profit > position.peakProfit) {
+            // Each Position stores and updates only its own highest NET profit.
+            if (position.trailingActivated && position.profit > position.peakProfit) {
                 position.peakProfit = position.profit
             }
 
             if (position.trailingActivated) {
-                val peakTotalReturn = position.stake + position.peakProfit
-                val peakTotalReturnPercent = (peakTotalReturn / position.stake * 100.0).toInt()
+                // Convert this contract's own peak NET profit into total-return percentage.
+                val peakProfitPercent = (position.peakProfit / position.stake * 100.0).toInt()
+                val peakTotalReturnPercent = 100 + peakProfitPercent
                 val newLock = (peakTotalReturnPercent / 10) * 10
                 if (newLock >= 140 && newLock > position.lockedProfitPercent) {
                     position.lockedProfitPercent = newLock
                 }
             }
 
-            val lockedTotalReturn = roundStake(position.stake * position.lockedProfitPercent / 100.0)
+            // Convert the locked total-return percentage back to this contract's NET profit.
+            val lockedNetProfit = roundStake(
+                position.stake * (position.lockedProfitPercent - 100).coerceAtLeast(0) / 100.0
+            )
             val reversedToLock = position.trailingActivated &&
                 position.lockedProfitPercent >= 140 &&
-                (position.stake + position.peakProfit) >= activationTotalReturn &&
-                currentTotalReturn < (position.stake + position.peakProfit) &&
-                currentTotalReturn <= lockedTotalReturn
+                position.peakProfit >= activationProfit &&
+                position.profit < position.peakProfit &&
+                position.profit <= lockedNetProfit
 
             if (reversedToLock) {
                 if (position.role == "ORIGINAL" && !position.pairExitTriggered) {
+                    // One leg's own trailing stop triggers closure of both original legs.
                     closeOriginalPairAfterTrailing(position)
-                } else if (position.role == "RECOVERY" && position.status == "OPEN" &&
-                    position.canSell && position.contractId > 0L) {
+                } else if (position.role == "RECOVERY" && position.canSell &&
+                    position.contractId > 0L) {
                     closeRunningPosition(position)
                 }
             } else if (position.role == "ORIGINAL" && position.pairExitTriggered &&
                 position.status == "OPEN" && position.canSell && position.contractId > 0L) {
-                // Retry a paired close if this leg became sellable after the other leg triggered it.
+                // Retry closing this leg if Deriv made it sellable after its paired leg.
                 closeRunningPosition(position)
             }
         }
