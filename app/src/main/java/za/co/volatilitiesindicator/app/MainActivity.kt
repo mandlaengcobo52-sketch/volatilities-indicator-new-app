@@ -102,6 +102,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
     private val notificationChannelId = "vi_app_alerts"
     private val notificationPermissionRequest = 9001
+    private val paymentProofPickerRequest = 9107
 
     private var marketFeedConnected = false
     private var accountConnected = false
@@ -2428,8 +2429,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         addProfileField(panel, "Email address", user.optString("email"))
         addProfileField(panel, "Contact number", user.optString("phone"))
         addProfileField(panel, "Registration date", user.optString("created_at"))
+        addProfileField(panel, "Proof of payment", if (user.optString("payment_proof_name").isNotBlank()) "Uploaded: ${user.optString("payment_proof_name")}" else "Not uploaded")
         body.addView(panel)
         body.addView(space(12))
+        body.addView(actionButton("UPLOAD PROOF OF PAYMENT", true) { openPaymentProofPicker() })
+        body.addView(space(8))
         body.addView(actionButton("VIEW INVESTMENT PLANS", true) { loadInvestmentPlans(false) })
         body.addView(space(8))
         body.addView(actionButton("MY INVESTMENT PROFILE", false) { loadMyInvestments() })
@@ -2461,10 +2465,92 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             addProfileField(panel, "Email address", user.optString("email"))
             addProfileField(panel, "Contact number", user.optString("phone"))
             addProfileField(panel, "Registration date", user.optString("created_at"))
+            addProfileField(panel, "Proof of payment", if (user.optString("payment_proof_name").isNotBlank()) "Uploaded: ${user.optString("payment_proof_name")}" else "Not uploaded")
             body.addView(panel)
             body.addView(space(12))
+            body.addView(actionButton("UPLOAD PROOF OF PAYMENT", true) { openPaymentProofPicker() })
+            body.addView(space(8))
             body.addView(actionButton("SIGN OUT", false) { signOutPlatform() })
         }
+    }
+
+    private fun openPaymentProofPicker() {
+        if (!platformAuthenticated || platformAuthToken.isBlank()) {
+            toast("Please sign in before uploading proof of payment.")
+            return
+        }
+        val picker = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/pdf", "image/jpeg", "image/png"))
+        }
+        startActivityForResult(picker, paymentProofPickerRequest)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != paymentProofPickerRequest || resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        val mimeType = contentResolver.getType(uri)?.lowercase(Locale.US).orEmpty()
+        if (mimeType !in listOf("application/pdf", "image/jpeg", "image/png")) {
+            toast("Please select a PDF, JPG or PNG proof of payment.")
+            return
+        }
+        try {
+            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            if (bytes == null || bytes.isEmpty()) {
+                toast("The selected file could not be read.")
+                return
+            }
+            if (bytes.size > 5 * 1024 * 1024) {
+                toast("The proof of payment must not exceed 5 MB.")
+                return
+            }
+            val extension = when (mimeType) {
+                "application/pdf" -> "pdf"
+                "image/jpeg" -> "jpg"
+                else -> "png"
+            }
+            uploadPaymentProof(bytes, mimeType, "proof_of_payment.$extension")
+        } catch (_: Exception) {
+            toast("Unable to read the selected proof of payment.")
+        }
+    }
+
+    private fun uploadPaymentProof(bytes: ByteArray, mimeType: String, fileName: String) {
+        if (!platformAuthenticated || platformAuthToken.isBlank()) {
+            toast("Please sign in before uploading proof of payment.")
+            return
+        }
+        val body = okhttp3.MultipartBody.Builder()
+            .setType(okhttp3.MultipartBody.FORM)
+            .addFormDataPart("action", "upload_payment_proof")
+            .addFormDataPart("proof", fileName,
+                okhttp3.RequestBody.create(okhttp3.MediaType.parse(mimeType), bytes))
+            .build()
+        val request = Request.Builder().url(platformAuthUrl)
+            .header("Authorization", "Bearer $platformAuthToken")
+            .post(body).build()
+        httpClient.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                runOnUiThread { toast("Proof of payment could not be uploaded. Check your connection.") }
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val code = response.code
+                val raw = response.body?.string().orEmpty()
+                response.close()
+                val result = try { JSONObject(raw) } catch (_: Exception) { JSONObject() }
+                runOnUiThread {
+                    if (result.optBoolean("ok")) {
+                        toast(result.optString("message", "Proof of payment uploaded successfully."))
+                        if (platformUserRole == "investor") showInvestorProfile() else openUserProfile()
+                    } else {
+                        toast(result.optString("message", "Proof of payment upload failed."))
+                        if (code == 401) signOutPlatform()
+                    }
+                }
+            }
+        })
     }
 
     private fun openAdminDashboard() {
@@ -2722,6 +2808,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         addProfileField(panel, "Role", user.optString("role", "user").uppercase(Locale.US))
         addProfileField(panel, "Status", user.optString("status", "unknown").uppercase(Locale.US))
         addProfileField(panel, "Registered", user.optString("created_at"))
+        addProfileField(panel, "Proof of payment", if (user.optString("payment_proof_name").isNotBlank()) user.optString("payment_proof_name") else "Not uploaded")
+        addProfileField(panel, "Proof uploaded", user.optString("payment_proof_uploaded_at", "Not uploaded"))
         body.addView(panel)
         body.addView(space(12))
         body.addView(actionButton("EDIT USER PROFILE", true) { showEditUserDialog(user) })
