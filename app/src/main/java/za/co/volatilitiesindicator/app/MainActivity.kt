@@ -40,6 +40,8 @@ import android.widget.Button
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.TextView
 import org.json.JSONObject
 import java.util.Locale
@@ -293,7 +295,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                         platformUser = json.optJSONObject("user") ?: JSONObject()
                         platformUserName = platformUser.optString("full_name")
                         platformUserRole = platformUser.optString("role", "user").lowercase(Locale.US)
-                        if (platformUserRole == "admin") showDerivRequiredScreen() else openUserProfile()
+                        when (platformUserRole) {
+                            "admin" -> showDerivRequiredScreen()
+                            "investor" -> showInvestorDerivScreen()
+                            else -> openUserProfile()
+                        }
                     } else {
                         platformPrefs.edit().remove("token").apply()
                         platformAuthToken = ""
@@ -306,7 +312,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         })
     }
 
-    private fun submitPlatformAuth(isRegister: Boolean, fields: List<EditText>, status: TextView, submit: Button) {
+    private fun submitPlatformAuth(isRegister: Boolean, fields: List<EditText>, status: TextView, submit: Button, selectedRole: String = "user") {
         if (platformAuthBusy) return
         val values = fields.map { it.text.toString().trim() }
         val body = FormBody.Builder().add("action", if (isRegister) "register" else "login")
@@ -314,6 +320,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             if (values.size != 6 || values.any { it.isBlank() }) { status.text = "Please complete every field."; return }
             body.add("first_name", values[0]).add("surname", values[1]).add("email", values[2])
                 .add("phone", values[3]).add("password", values[4]).add("password_confirm", values[5])
+                .add("role", selectedRole)
         } else {
             if (values.size != 2 || values.any { it.isBlank() }) { status.text = "Enter your email and password."; return }
             body.add("email", values[0]).add("password", values[1])
@@ -345,7 +352,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                             platformUserName = platformUser.optString("full_name")
                             platformUserRole = platformUser.optString("role", "user").lowercase(Locale.US)
                             if (platformAuthenticated) {
-                                if (platformUserRole == "admin") showDerivRequiredScreen() else openUserProfile()
+                                when (platformUserRole) {
+                                    "admin" -> showDerivRequiredScreen()
+                                    "investor" -> showInvestorDerivScreen()
+                                    else -> openUserProfile()
+                                }
                             } else status.text = "Login did not return a valid session."
                         }
                     } else status.text = message
@@ -401,7 +412,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             }
         }
         panel.addView(TextView(this).apply {
-            text = if (register) "CREATE ACCOUNT" else "ACCOUNT LOGIN"
+            text = if (register) "CREATE YOUR PROFILE" else "ACCOUNT LOGIN"
             textSize = 21f
             setTextColor(Color.rgb(0, 230, 118))
             typeface = Typeface.DEFAULT_BOLD
@@ -470,6 +481,42 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             return edit
         }
 
+        var selectedRegistrationRole = "user"
+        if (register) {
+            panel.addView(TextView(this).apply {
+                text = "SELECT ACCOUNT TYPE"
+                textSize = 14f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.WHITE)
+                setPadding(0, dp(8), 0, dp(6))
+            })
+            val roleChoices = RadioGroup(this).apply {
+                orientation = RadioGroup.VERTICAL
+                setPadding(dp(4), 0, 0, dp(10))
+            }
+            val userChoice = RadioButton(this).apply {
+                id = View.generateViewId()
+                text = "USER — Standard platform account"
+                textSize = 14f
+                setTextColor(Color.WHITE)
+                isChecked = true
+                buttonTintList = android.content.res.ColorStateList.valueOf(Color.rgb(0, 230, 118))
+            }
+            val investorChoice = RadioButton(this).apply {
+                id = View.generateViewId()
+                text = "INVESTOR — Deriv trading account"
+                textSize = 14f
+                setTextColor(Color.WHITE)
+                buttonTintList = android.content.res.ColorStateList.valueOf(Color.rgb(0, 230, 118))
+            }
+            roleChoices.addView(userChoice)
+            roleChoices.addView(investorChoice)
+            roleChoices.setOnCheckedChangeListener { _, checkedId ->
+                selectedRegistrationRole = if (checkedId == investorChoice.id) "investor" else "user"
+            }
+            panel.addView(roleChoices)
+        }
+
         val fields = if (register) listOf(
             field("First name"),
             field("Surname"),
@@ -488,7 +535,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             isAllCaps = false
             setTextColor(Color.BLACK)
             background = rounded(Color.rgb(0, 230, 118), Color.rgb(0, 230, 118), 10)
-            setOnClickListener { submitPlatformAuth(register, fields, status, this) }
+            setOnClickListener { submitPlatformAuth(register, fields, status, this, selectedRegistrationRole) }
         }
         panel.addView(submit, LinearLayout.LayoutParams(-1, dp(54)).apply {
             topMargin = dp(10)
@@ -516,6 +563,51 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         panel.addView(TextView(this).apply { text = "Welcome${if (platformUserName.isNotBlank()) ", $platformUserName" else ""}. Connect your Deriv account to unlock the application."; textSize = 14f; gravity = Gravity.CENTER; setTextColor(ink); setPadding(0, dp(16), 0, dp(16)) })
         panel.addView(Button(this).apply { text = "CONNECT DERIV ACCOUNT"; setOnClickListener { startMarketFeedService(); showAccountModeDialog() } }, LinearLayout.LayoutParams(-1, dp(52)))
         panel.addView(TextView(this).apply { text = "Sign out"; gravity = Gravity.CENTER; setTextColor(red); setPadding(0, dp(18), 0, dp(8)); setOnClickListener { signOutPlatform() } })
+        root.addView(panel, LinearLayout.LayoutParams(-1, -2))
+        setContentView(root)
+    }
+
+    private fun showInvestorDerivScreen() {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(24), dp(24), dp(24), dp(24))
+            setBackgroundColor(pageColor)
+        }
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(24), dp(20), dp(24))
+            background = GradientDrawable().apply {
+                setColor(cardColor)
+                setCornerRadius(dp(16).toFloat())
+                setStroke(dp(1), lineColor)
+            }
+        }
+        panel.addView(TextView(this).apply {
+            text = "INVESTOR ACCOUNT APPROVED"
+            textSize = 19f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(green)
+        })
+        panel.addView(TextView(this).apply {
+            text = "Welcome${if (platformUserName.isNotBlank()) ", $platformUserName" else ""}. Continue to Deriv to register a free account or log in to your existing account. After successful Deriv login, you will enter the Investor trading area."
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setTextColor(ink)
+            setPadding(0, dp(16), 0, dp(16))
+        })
+        panel.addView(Button(this).apply {
+            text = "REGISTER / LOGIN WITH DERIV"
+            setOnClickListener { showAccountModeDialog() }
+        }, LinearLayout.LayoutParams(-1, dp(52)))
+        panel.addView(TextView(this).apply {
+            text = "Sign out"
+            gravity = Gravity.CENTER
+            setTextColor(red)
+            setPadding(0, dp(18), 0, dp(8))
+            setOnClickListener { signOutPlatform() }
+        })
         root.addView(panel, LinearLayout.LayoutParams(-1, -2))
         setContentView(root)
     }
@@ -618,6 +710,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         // immediately after the execution account reconnects.
         candlesByIndex.forEach { (symbol, candles) -> evaluateRecoverySignals(symbol, candles) }
         runOnUiThread {
+            if (platformUserRole == "investor") selectedTab = "Trade"
             accountIdView?.text = accountLabel
             accountStatusView?.text = "CONNECTED"
             accountStatusView?.setTextColor(green)
@@ -865,7 +958,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val page = intent.getStringExtra("notification_page")
         val notificationId = intent.getLongExtra("notification_id", -1L)
         if (!page.isNullOrBlank() && page in listOf("Home", "Trade", "Accounts", "Settings")) {
-            selectedTab = page
+            selectedTab = if (platformUserRole == "investor" && page !in listOf("Trade", "Accounts")) "Trade" else page
         }
         if (notificationId > 0L) {
             appNotifications.firstOrNull { it.id == notificationId }?.let { item ->
@@ -1898,6 +1991,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     private fun render() {
+        if (platformUserRole == "investor" && selectedTab !in listOf("Trade", "Accounts")) selectedTab = "Trade"
         pageScrollView?.let { oldScroll ->
             if (renderedTab.isNotBlank()) scrollPositions[renderedTab] = oldScroll.scrollY
         }
@@ -1937,7 +2031,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
         scroll.addView(content)
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
-        if (platformUserRole == "admin") root.addView(bottomNavigation())
+        if (platformUserRole == "admin" || platformUserRole == "investor") root.addView(bottomNavigation())
         setContentView(root)
         renderedTab = selectedTab
 
@@ -2231,6 +2325,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         content.addView(deriv)
         content.addView(space(12))
 
+        if (platformUserRole != "investor") {
         val users = card()
         users.addView(text("USER ACCOUNT", 15f, green, true))
         users.addView(text(if (platformAuthenticated) platformUserName.ifBlank { "Signed-in account" } else "Sign in to view your profile", 13f, muted))
@@ -2245,6 +2340,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         admin.addView(space(10))
         admin.addView(actionButton("ADMIN ACCOUNT", false) { openAdminDashboard() })
         content.addView(admin)
+        }
     }
 
     // All account-management requests use the existing authenticated mobile-auth.php session.
@@ -2311,7 +2407,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             platformUser = result.optJSONObject("user") ?: platformUser
             platformUserName = platformUser.optString("full_name", platformUserName)
             platformUserRole = platformUser.optString("role", platformUserRole).lowercase(Locale.US)
-            showUserProfile(platformUser)
+            if (platformUserRole == "investor") showInvestorDerivScreen() else showUserProfile(platformUser)
         }
     }
 
@@ -2383,7 +2479,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             val statusRow = horizontal()
             statusRow.addView(text("Status: ${user.optString("status", "unknown").uppercase(Locale.US)}", 12f,
                 if (user.optString("status") == "approved") green else amber, true), LinearLayout.LayoutParams(0, -2, 1f))
-            statusRow.addView(text("${user.optString("role", "user").uppercase(Locale.US)}", 11f, muted))
+            statusRow.addView(text("ACCOUNT TYPE: ${user.optString("role", "user").uppercase(Locale.US)}", 11f, muted))
             item.addView(statusRow)
             item.addView(space(8))
             item.addView(actionButton("OPEN USER PROFILE", false) { showAdminUserProfile(user) })
@@ -2781,7 +2877,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             setPadding(dp(6), dp(8), dp(6), dp(8))
             elevation = dp(8).toFloat()
         }
-        listOf("Home", "Trade", "Accounts", "Settings").forEach { tab ->
+        val tabs = if (platformUserRole == "investor") listOf("Trade", "Accounts") else listOf("Home", "Trade", "Accounts", "Settings")
+        tabs.forEach { tab ->
             val item = TextView(this).apply {
                 text = tab
                 textSize = 12f
@@ -2797,6 +2894,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     private fun openTab(tab: String) {
+        if (platformUserRole == "investor" && tab !in listOf("Trade", "Accounts")) {
+            toast("Investor access is limited to Trade and Accounts.")
+            return
+        }
         selectedTab = tab
         render()
     }
