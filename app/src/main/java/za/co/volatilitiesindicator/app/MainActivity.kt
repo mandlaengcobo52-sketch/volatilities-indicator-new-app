@@ -161,7 +161,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var lockedProfitPercent: Int = 0,
         var pairExitTriggered: Boolean = false,
         var recoveryAfterEpoch: Long = 0L,
-        var pairedLoss: Double = 0.0
+        var pairedLoss: Double = 0.0,
+        var entryBarrier: Double = 0.0
     )
 
     private val positions = linkedMapOf<String, Position>()
@@ -184,6 +185,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val tradeStatusViews = mutableMapOf<String, TextView>()
     private val tradeProfitViews = mutableMapOf<String, TextView>()
     private val tradeTrailingViews = mutableMapOf<String, TextView>()
+    private val tradeEntryBarrierViews = mutableMapOf<String, TextView>()
     private val insufficientFundsNotified = mutableSetOf<String>()
     private val pendingReversalDirection = mutableMapOf<String, String>()
     private val lastExecutedSignalEpoch = mutableMapOf<String, Long>()
@@ -1400,6 +1402,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
 
         position.profit = contract.optDouble("profit", position.profit)
+        position.entryBarrier = contract.optDouble(
+            "entry_tick",
+            contract.optDouble("entry_spot", contract.optDouble("barrier", position.entryBarrier))
+        )
 
         val validToSell = contract.opt("is_valid_to_sell")
         position.canSell = when (validToSell) {
@@ -1620,7 +1626,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 .put("lockedProfitPercent", p.lockedProfitPercent)
                 .put("pairExitTriggered", p.pairExitTriggered)
                 .put("recoveryAfterEpoch", p.recoveryAfterEpoch)
-                .put("pairedLoss", p.pairedLoss))
+                .put("pairedLoss", p.pairedLoss)
+                .put("entryBarrier", p.entryBarrier))
         }
         // commit() makes completed trade records durable before activity teardown/update.
         tradePrefs.edit().putString("positions", array.toString()).commit()
@@ -1650,6 +1657,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 p.pairExitTriggered = o.optBoolean("pairExitTriggered", false)
                 p.recoveryAfterEpoch = o.optLong("recoveryAfterEpoch", p.closedAt)
                 p.pairedLoss = o.optDouble("pairedLoss", 0.0)
+                p.entryBarrier = o.optDouble("entryBarrier", 0.0)
                 if (p.recoveryEligible && !p.recoveryUsed) recoveryWaiting.add(p.localId)
                 positions[p.localId] = p
                 if (p.contractId > 0 && p.status != "CLOSED") subscribePosition(p.contractId)
@@ -1847,6 +1855,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         tradeStatusViews.clear()
         tradeProfitViews.clear()
         tradeTrailingViews.clear()
+        tradeEntryBarrierViews.clear()
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -2006,13 +2015,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 if (recoveryChoch[symbol].isNullOrBlank()) amber else green, true)
             chochStatusViews[symbol] = chochView
             indexCard.addView(chochView)
-            indexCard.addView(space(8))
-            indexCard.addView(divider())
-            indexCard.addView(space(8))
-            indexCard.addView(text("RECOVERY STATUS", 11f, whiteText, true))
-            val recoveryView = text(recoveryStatusText(symbol), 11f, muted)
-            recoveryStatusViews[symbol] = recoveryView
-            indexCard.addView(recoveryView)
             content.addView(indexCard)
             content.addView(space(9))
         }
@@ -2060,6 +2062,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                         if (p.direction == "RISE") green else red, true))
                     c.addView(text("Contract: ${if (p.contractId > 0L) p.contractId.toString() else "Pending"}",
                         12f, Color.WHITE))
+                    val entryBarrierView = text(
+                        "ENTRY BARRIER: ${if (p.entryBarrier > 0.0) formatPrice(p.entryBarrier) else "Awaiting Deriv entry price"}",
+                        12f, blue, true
+                    )
+                    tradeEntryBarrierViews[p.localId] = entryBarrierView
+                    c.addView(entryBarrierView)
                     c.addView(text("Stake: ${formatMoney(p.stake)}", 13f, gold))
 
                     val statusView = text("Status: ${p.status}", 13f,
@@ -2132,6 +2140,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     private fun updateTradePositionViews(position: Position) {
+        tradeEntryBarrierViews[position.localId]?.text =
+            "ENTRY BARRIER: ${if (position.entryBarrier > 0.0) formatPrice(position.entryBarrier) else "Awaiting Deriv entry price"}"
         tradeStatusViews[position.localId]?.apply {
             text = "Status: ${position.status}"
             setTextColor(if (position.status == "OPEN") green else amber)
