@@ -154,6 +154,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var recoveryUsed: Boolean = false,
         var closedAt: Long = 0L,
         var peakProfit: Double = 0.0,
+        var trailingActivated: Boolean = false,
         var lockedProfitPercent: Int = 0,
         var pairExitTriggered: Boolean = false,
         var recoveryAfterEpoch: Long = 0L,
@@ -1437,16 +1438,36 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         } else if (position.status != "CLOSING") {
             position.status = "OPEN"
         }
-        // Step trailing protection: 40%, 50%, 60%, ... of stake.
-        // The protected level only rises and closes on a reversal back to that level.
-        if (!isSold && position.status == "OPEN" && position.role != "EXISTING") {
-            if (position.profit > position.peakProfit) position.peakProfit = position.profit
-            val peakPercent = if (position.stake > 0.0) (position.peakProfit / position.stake * 100.0).toInt() else 0
-            val newLock = if (peakPercent >= 40) (peakPercent / 10) * 10 else 0
-            if (newLock > position.lockedProfitPercent) position.lockedProfitPercent = newLock
+        // Profit protection is measured ONLY against this contract's stake.
+        // It cannot activate from a loss, a price reversal, or a percentage of account balance.
+        // Activation: actual floating profit must first reach +40% of this stake.
+        // Thereafter the lock advances in 10-percentage-point steps: 40%, 50%, 60%, ...
+        if (!isSold && position.status == "OPEN" && position.role != "EXISTING" && position.stake > 0.0) {
+            val activationAmount = position.stake * 0.40
+            if (position.profit >= activationAmount) {
+                position.trailingActivated = true
+            }
+
+            // Track only positive floating profit; losses can never create a peak or activate protection.
+            if (position.profit > 0.0 && position.profit > position.peakProfit) {
+                position.peakProfit = position.profit
+            }
+
+            if (position.trailingActivated) {
+                val peakPercent = (position.peakProfit / position.stake * 100.0).toInt()
+                val newLock = (peakPercent / 10) * 10
+                if (newLock >= 40 && newLock > position.lockedProfitPercent) {
+                    position.lockedProfitPercent = newLock
+                }
+            }
+
             val lockedAmount = roundStake(position.stake * position.lockedProfitPercent / 100.0)
-            val reversedToLock = position.lockedProfitPercent >= 40 &&
-                position.profit < position.peakProfit && position.profit <= lockedAmount
+            val reversedToLock = position.trailingActivated &&
+                position.lockedProfitPercent >= 40 &&
+                position.peakProfit >= activationAmount &&
+                position.profit < position.peakProfit &&
+                position.profit <= lockedAmount
+
             if (reversedToLock) {
                 if (position.role == "ORIGINAL" && !position.pairExitTriggered) {
                     closeOriginalPairAfterTrailing(position)
@@ -1656,6 +1677,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 .put("recoveryUsed", p.recoveryUsed)
                 .put("closedAt", p.closedAt)
                 .put("peakProfit", p.peakProfit)
+                .put("trailingActivated", p.trailingActivated)
                 .put("lockedProfitPercent", p.lockedProfitPercent)
                 .put("pairExitTriggered", p.pairExitTriggered)
                 .put("recoveryAfterEpoch", p.recoveryAfterEpoch)
@@ -1678,7 +1700,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 p.recoveryEligible = o.optBoolean("recoveryEligible", false)
                 p.recoveryUsed = o.optBoolean("recoveryUsed", false)
                 p.closedAt = o.optLong("closedAt", 0L)
-                p.peakProfit = o.optDouble("peakProfit", p.profit)
+                p.peakProfit = o.optDouble("peakProfit", p.profit.coerceAtLeast(0.0))
+                p.trailingActivated = o.optBoolean(
+                    "trailingActivated",
+                    p.stake > 0.0 && p.peakProfit >= p.stake * 0.40
+                )
                 p.lockedProfitPercent = o.optInt("lockedProfitPercent", 0)
                 p.pairExitTriggered = o.optBoolean("pairExitTriggered", false)
                 p.recoveryAfterEpoch = o.optLong("recoveryAfterEpoch", p.closedAt)
