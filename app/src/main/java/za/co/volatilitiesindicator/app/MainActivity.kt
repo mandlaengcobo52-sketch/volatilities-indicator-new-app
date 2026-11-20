@@ -2665,6 +2665,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         body.addView(space(14))
         body.addView(text("INVESTMENT ADMINISTRATION", 17f, gold, true))
         body.addView(space(8))
+        body.addView(actionButton("MANAGE SUBSCRIPTIONS", true) { loadAdminSubscriptions() })
+        body.addView(space(8))
         body.addView(actionButton("MANAGE INVESTMENT PLANS", true) { loadInvestmentPlans(true) })
         body.addView(space(8))
         body.addView(actionButton("VIEW INVESTMENT REQUESTS", false) { loadAdminInvestments() })
@@ -2848,6 +2850,41 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     "min_amount" to min.text.toString().trim(), "max_amount" to max.text.toString().trim(), "enabled" to if (enabled.isChecked) "1" else "0")
                 investmentRequest("admin_save_plan", values) { toast(it.optString("message", "Plan saved.")); loadInvestmentPlans(true) }
             }.show()
+    }
+
+    private fun loadAdminSubscriptions() {
+        platformRequest("admin_users") { result ->
+            val users = result.optJSONArray("users") ?: JSONArray()
+            val body = accountSubPage("MANAGE SUBSCRIPTIONS", "Review subscription payments and subscription status.")
+            var count = 0
+            for (i in 0 until users.length()) {
+                val user = users.optJSONObject(i) ?: continue
+                val uid = user.optString("id")
+                val proofName = user.optString("subscription_proof_name", user.optString("payment_proof_name"))
+                val status = user.optString("subscription_status", "pending")
+                val item = card()
+                item.addView(text(user.optString("full_name", "User"), 16f, green, true))
+                addProfileField(item, "Email", user.optString("email"))
+                addProfileField(item, "Subscription", "R500")
+                addProfileField(item, "Status", status.replace('_', ' ').uppercase(Locale.US))
+                addProfileField(item, "Proof of payment", if (proofName.isBlank()) "Not uploaded" else proofName)
+                if (proofName.isNotBlank()) {
+                    item.addView(actionButton("VIEW SUBSCRIPTION PROOF", false) { adminViewPaymentProof(uid, "subscription") })
+                    if (status != "approved") {
+                        item.addView(actionButton("APPROVE SUBSCRIPTION", true) {
+                            adminDecision("admin_subscription_decision", uid, "approve")
+                        })
+                        item.addView(actionButton("REJECT SUBSCRIPTION", false) {
+                            adminDecision("admin_subscription_decision", uid, "reject")
+                        })
+                    }
+                }
+                body.addView(item)
+                body.addView(space(8))
+                count++
+            }
+            if (count == 0) body.addView(text("No registered accounts found.", 14f, muted))
+        }
     }
 
     private fun loadAdminInvestments() {
