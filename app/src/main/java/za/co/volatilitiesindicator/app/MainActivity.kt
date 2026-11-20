@@ -1394,6 +1394,18 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP).toDouble()
 
     private fun openPosition(symbol: String, direction: String, role: String, stake: Double, originalId: String = "") {
+        if (platformAuthenticated && platformUserRole == "investor") {
+            val today = java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US).format(java.util.Date())
+            val subscriptionActive = platformUser.optString("subscription_status") == "approved" &&
+                platformUser.optString("subscription_expiry_date") >= today
+            val planActive = platformUser.optString("investor_plan_status") == "approved" &&
+                platformUser.optString("investor_plan_expiry_date") >= today
+            if (!subscriptionActive || !planActive) {
+                addNotification("Account", "Investor execution blocked", "An active approved subscription and an approved, unexpired Investor plan are required before trading.")
+                runOnUiThread { toast("Trading requires an approved active subscription and Investor plan.") }
+                return
+            }
+        }
         val roundedStake = roundStake(stake)
         if (!accountConnected || !roundedStake.isFinite() || roundedStake <= 0.0) return
         val localId = UUID.randomUUID().toString()
@@ -1421,7 +1433,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             .put("basis", "stake")
             .put("contract_type", contractType)
             .put("currency", accountCurrency)
-            .put("duration", 3)
+            .put("duration", if (platformAuthenticated && platformUserRole == "investor") {
+                if (platformUser.optString("investor_plan") == "A") 5 else 7
+            } else 3)
             .put("duration_unit", "d")
             .put("underlying_symbol", symbol)
             .put("req_id", req)
@@ -2431,6 +2445,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         addProfileField(panel, "Email address", user.optString("email"))
         addProfileField(panel, "Contact number", user.optString("phone"))
         addProfileField(panel, "Registration date", user.optString("created_at"))
+        addProfileField(panel, "Subscription", "R500 · ${if (user.optString("subscription_status") == "approved" && user.optString("subscription_expiry_date") < java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US).format(java.util.Date())) "EXPIRED" else user.optString("subscription_status", "pending").uppercase(Locale.US)}")
+        addProfileField(panel, "Subscription inception", user.optString("subscription_inception_date", "Not approved"))
+        addProfileField(panel, "Subscription expiry", user.optString("subscription_expiry_date", "Not approved"))
         addProfileField(panel, "Proof of payment", if (user.optString("payment_proof_name").isNotBlank()) "Uploaded: ${user.optString("payment_proof_name")}" else "Not uploaded")
         body.addView(panel)
         body.addView(space(12))
@@ -2468,12 +2485,36 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             addProfileField(panel, "Contact number", user.optString("phone"))
             addProfileField(panel, "Registration date", user.optString("created_at"))
             addProfileField(panel, "Proof of payment", if (user.optString("payment_proof_name").isNotBlank()) "Uploaded: ${user.optString("payment_proof_name")}" else "Not uploaded")
+            addProfileField(panel, "Subscription", "R500 · ${user.optString("subscription_status", "pending").uppercase(Locale.US)}")
+            addProfileField(panel, "Subscription inception", user.optString("subscription_inception_date", "Not approved"))
+            addProfileField(panel, "Subscription expiry", user.optString("subscription_expiry_date", "Not approved"))
+            addProfileField(panel, "Selected trading plan", when(user.optString("investor_plan")) { "A" -> "Plan A · 50% target · 15 days"; "B" -> "Plan B · 100% target · 30 days"; else -> "Not selected" })
+            addProfileField(panel, "Plan approval", user.optString("investor_plan_status", "not_selected").replace('_',' ').uppercase(Locale.US))
             body.addView(panel)
             body.addView(space(12))
             body.addView(actionButton("UPLOAD PROOF OF PAYMENT", true) { openPaymentProofPicker() })
             body.addView(space(8))
+            body.addView(actionButton("SELECT INVESTOR TRADING PLAN", true) { showInvestorPlanSelection() })
+            body.addView(space(8))
             body.addView(actionButton("SIGN OUT", false) { signOutPlatform() })
         }
+    }
+
+    private fun showInvestorPlanSelection() {
+        val current = platformUser.optString("investor_plan")
+        val options = arrayOf("Plan A — 50% overall target · 15 days · 5-day contracts · 25% stake per leg · 40% leg target", "Plan B — 100% overall target · 30 days · 7-day contracts · 25% stake per leg · 40% leg target")
+        val selected = if (current == "B") 1 else 0
+        AlertDialog.Builder(this).setTitle("Choose Investor Trading Plan")
+            .setSingleChoiceItems(options, selected, null)
+            .setNegativeButton("CANCEL", null)
+            .setPositiveButton("SUBMIT SELECTION") { dialog, _ ->
+                val index = (dialog as AlertDialog).listView.checkedItemPosition
+                val plan = if (index == 1) "B" else "A"
+                platformRequest("investor_select_plan", mapOf("plan" to plan)) {
+                    toast(it.optString("message", "Plan selection submitted."))
+                    showInvestorProfile()
+                }
+            }.show()
     }
 
     private fun openPaymentProofPicker() {
@@ -2547,7 +2588,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                         toast(result.optString("message", "Proof of payment uploaded successfully."))
                         if (platformUserRole == "investor") showInvestorProfile() else openUserProfile()
                     } else {
-                        toast(result.optString("message", "Proof of payment upload failed."))
+                        val message = result.optString("message").ifBlank { "Upload failed (HTTP $code). Check server upload limits and mobile-auth.php response." }
+                        toast(message)
                         if (code == 401) signOutPlatform()
                     }
                 }
@@ -2812,7 +2854,24 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         addProfileField(panel, "Registered", user.optString("created_at"))
         addProfileField(panel, "Proof of payment", if (user.optString("payment_proof_name").isNotBlank()) user.optString("payment_proof_name") else "Not uploaded")
         addProfileField(panel, "Proof uploaded", user.optString("payment_proof_uploaded_at", "Not uploaded"))
+        addProfileField(panel, "Subscription", user.optString("subscription_status", "pending").uppercase(Locale.US))
+        addProfileField(panel, "Subscription expiry", user.optString("subscription_expiry_date", "Not approved"))
+        addProfileField(panel, "Investor plan", when(user.optString("investor_plan")) { "A" -> "Plan A · 15 days"; "B" -> "Plan B · 30 days"; else -> "Not selected" })
+        addProfileField(panel, "Investor plan status", user.optString("investor_plan_status", "not_selected").replace('_',' ').uppercase(Locale.US))
         body.addView(panel)
+        if (user.optString("payment_proof_name").isNotBlank()) {
+            body.addView(actionButton("VIEW PROOF OF PAYMENT", true) { adminViewPaymentProof(userId) })
+            body.addView(space(6))
+            body.addView(actionButton("APPROVE SUBSCRIPTION", true) { adminDecision("admin_subscription_decision", userId, "approve") })
+            body.addView(space(6))
+            body.addView(actionButton("REJECT SUBSCRIPTION", false) { adminDecision("admin_subscription_decision", userId, "reject") })
+        }
+        if (user.optString("role").equals("investor", true) && user.optString("investor_plan_status") == "pending") {
+            body.addView(space(8))
+            body.addView(actionButton("APPROVE INVESTOR PLAN", true) { adminDecision("admin_investor_plan_decision", userId, "approve") })
+            body.addView(space(6))
+            body.addView(actionButton("REJECT INVESTOR PLAN", false) { adminDecision("admin_investor_plan_decision", userId, "reject") })
+        }
         body.addView(space(12))
         body.addView(actionButton("EDIT USER PROFILE", true) { showEditUserDialog(user) })
         body.addView(actionButton("CHANGE ACCOUNT TYPE", false) {
@@ -2849,6 +2908,28 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 .setNegativeButton("CANCEL", null)
                 .setPositiveButton("DELETE") { _, _ -> adminUserAction("admin_delete_user", userId) }.show()
         })
+    }
+
+    private fun adminDecision(action: String, userId: String, decision: String) {
+        platformRequest(action, mapOf("user_id" to userId, "decision" to decision)) {
+            toast(it.optString("message", "Decision saved."))
+            openAdminDashboard()
+        }
+    }
+
+    private fun adminViewPaymentProof(userId: String) {
+        platformRequest("admin_get_payment_proof", mapOf("user_id" to userId)) { result ->
+            try {
+                val bytes = android.util.Base64.decode(result.optString("content"), android.util.Base64.DEFAULT)
+                val mime = result.optString("mime", "application/octet-stream")
+                val extension = when (mime) { "application/pdf" -> "pdf"; "image/jpeg" -> "jpg"; "image/png" -> "png"; else -> "bin" }
+                val file = java.io.File(cacheDir, "payment-proof-$userId.$extension")
+                file.writeBytes(bytes)
+                val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+                val view = Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                startActivity(Intent.createChooser(view, "View proof of payment"))
+            } catch (_: Exception) { toast("No application is available to open this proof of payment.") }
+        }
     }
 
     private fun adminUserAction(action: String, userId: String) {
