@@ -19,6 +19,8 @@ import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.security.MessageDigest
 import java.security.SecureRandom
@@ -2526,7 +2528,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             .setType(okhttp3.MultipartBody.FORM)
             .addFormDataPart("action", "upload_payment_proof")
             .addFormDataPart("proof", fileName,
-                okhttp3.RequestBody.create(okhttp3.MediaType.parse(mimeType), bytes))
+                bytes.toRequestBody(mimeType.toMediaType()))
             .build()
         val request = Request.Builder().url(platformAuthUrl)
             .header("Authorization", "Bearer $platformAuthToken")
