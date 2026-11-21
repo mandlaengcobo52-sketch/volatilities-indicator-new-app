@@ -164,7 +164,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var recoveryAfterEpoch: Long = 0L,
         var pairedLoss: Double = 0.0,
         var entryBarrier: Double = 0.0,
-        var expiryAt: Long = 0L
+        var expiryAt: Long = 0L,
+        var openedAt: Long = 0L
     )
 
     private val positions = linkedMapOf<String, Position>()
@@ -852,6 +853,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 val buy = json.optJSONObject("buy") ?: return
                 val position = positions[localId] ?: return
                 position.contractId = buy.optLong("contract_id", 0L)
+                position.openedAt = buy.optLong("purchase_time", System.currentTimeMillis() / 1000L)
                 if (position.contractId <= 0L) { position.status = "BUY FAILED"; return }
                 position.status = "OPEN"
                 savePositions()
@@ -1398,6 +1400,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 stake = stake
             )
             restored.contractId = contractId
+            restored.openedAt = contract.optLong("date_start", contract.optLong("purchase_time", System.currentTimeMillis() / 1000L))
             restored.status = "OPEN"
             positions[restored.localId] = restored
             foundPosition = restored
@@ -1418,6 +1421,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             contract.optDouble("entry_spot", contract.optDouble("barrier", position.entryBarrier))
         )
         position.expiryAt = contract.optLong("date_expiry", position.expiryAt)
+        if (position.openedAt <= 0L) {
+            position.openedAt = contract.optLong("date_start", contract.optLong("purchase_time", System.currentTimeMillis() / 1000L))
+        }
 
         val validToSell = contract.opt("is_valid_to_sell")
         position.canSell = when (validToSell) {
@@ -1615,6 +1621,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 !it.status.startsWith("ERROR")
         }
         if (active != null) {
+            // A position can only be closed by a NEW opposite qualification
+            // formed after that specific contract was opened. Historical or
+            // pre-entry MSS/CHOCH state must never close a newly opened trade.
+            if (active.openedAt > 0L && qualificationClosedAt <= active.openedAt) return
             // Same-direction confirmation never closes or duplicates a trade.
             if (active.direction == mssDirection) return
             // An opposite MSS + CHOCH must close the old contract first.
@@ -1650,7 +1660,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 .put("recoveryAfterEpoch", p.recoveryAfterEpoch)
                 .put("pairedLoss", p.pairedLoss)
                 .put("entryBarrier", p.entryBarrier)
-                .put("expiryAt", p.expiryAt))
+                .put("expiryAt", p.expiryAt)
+                .put("openedAt", p.openedAt))
         }
         // commit() makes completed trade records durable before activity teardown/update.
         tradePrefs.edit().putString("positions", array.toString()).commit()
@@ -1682,6 +1693,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 p.pairedLoss = o.optDouble("pairedLoss", 0.0)
                 p.entryBarrier = o.optDouble("entryBarrier", 0.0)
                 p.expiryAt = o.optLong("expiryAt", 0L)
+                p.openedAt = o.optLong("openedAt", 0L)
                 if (p.recoveryEligible && !p.recoveryUsed) recoveryWaiting.add(p.localId)
                 positions[p.localId] = p
                 if (p.contractId > 0 && p.status != "CLOSED") subscribePosition(p.contractId)
