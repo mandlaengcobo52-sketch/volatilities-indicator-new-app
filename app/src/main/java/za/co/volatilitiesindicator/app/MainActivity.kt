@@ -180,6 +180,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     // recovery before a fresh new direction change is confirmed.
     private val recoveryMssEpoch = mutableMapOf<String, Long>()
     private val recoveryChochEpoch = mutableMapOf<String, Long>()
+    // A confirmed CHOCH remains pending until a later closed candle retests its exact level.
+    private val pendingChochDirection = mutableMapOf<String, String>()
+    private val pendingChochLevel = mutableMapOf<String, Double>()
+    private val pendingChochEpoch = mutableMapOf<String, Long>()
     private var requestCounter = 7000
     private var dailyCapital = 0.0
     private var accountCurrency = "USD"
@@ -265,6 +269,16 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             val chochEpoch = tradePrefs.getLong("signal_choch_epoch_$symbol", 0L)
             if (mssEpoch > 0L) recoveryMssEpoch[symbol] = mssEpoch
             if (chochEpoch > 0L) recoveryChochEpoch[symbol] = chochEpoch
+            val pendingDirection = tradePrefs.getString("pending_choch_direction_$symbol", "").orEmpty()
+            val pendingLevel = java.lang.Double.longBitsToDouble(
+                tradePrefs.getLong("pending_choch_level_bits_$symbol", 0L)
+            )
+            val pendingEpoch = tradePrefs.getLong("pending_choch_epoch_$symbol", 0L)
+            if (pendingDirection in setOf("RISE", "FALL") && pendingLevel.isFinite() && pendingLevel != 0.0 && pendingEpoch > 0L) {
+                pendingChochDirection[symbol] = pendingDirection
+                pendingChochLevel[symbol] = pendingLevel
+                pendingChochEpoch[symbol] = pendingEpoch
+            }
             val executedEpoch = tradePrefs.getLong("last_executed_signal_epoch_$symbol", 0L)
             if (executedEpoch > 0L) lastExecutedSignalEpoch[symbol] = executedEpoch
         }
@@ -1221,7 +1235,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val mss = recoveryMss[symbol]
         val choch = recoveryChoch[symbol]
         return when {
-            !mss.isNullOrBlank() && mss == choch -> "MSS + CHOCH confirmed ${mss}. Waiting for execution."
+            !pendingChochDirection[symbol].isNullOrBlank() -> "MSS + CHOCH confirmed ${pendingChochDirection[symbol]}. Waiting for touch or penetration of the CHOCH level."
+            !mss.isNullOrBlank() && mss == choch -> "MSS + CHOCH confirmed ${mss}. Waiting for retest."
             !mss.isNullOrBlank() -> "MSS confirmed ${mss}. Waiting for matching CHOCH."
             !choch.isNullOrBlank() -> "CHOCH confirmed ${choch}. Waiting for matching MSS."
             else -> "Waiting for MSS + CHOCH confirmation on a closed H1 candle."
@@ -1232,7 +1247,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val mss = recoveryMss[symbol]
         val choch = recoveryChoch[symbol]
         return when {
-            !mss.isNullOrBlank() && mss == choch -> "MSS + CHOCH confirmed ${mss}."
+            !pendingChochDirection[symbol].isNullOrBlank() -> "MSS + CHOCH confirmed ${pendingChochDirection[symbol]}. Waiting for touch or penetration of the CHOCH level."
+            !mss.isNullOrBlank() && mss == choch -> "MSS + CHOCH confirmed ${mss}. Waiting for retest."
             !mss.isNullOrBlank() -> "MSS confirmed ${mss}. Waiting for matching CHOCH."
             !choch.isNullOrBlank() -> "CHOCH confirmed ${choch}. Waiting for matching MSS."
             else -> "Waiting for MSS + CHOCH confirmation on a closed H1 candle."
@@ -1564,8 +1580,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (closed.size < 7) return
         val last = closed.last()
         val prior = closed.dropLast(1)
-        // Only a fresh H1 qualification may execute: maximum age is one hour
-        // measured from the candle close (not the candle opening timestamp).
+        // Only a fresh H1 candle may qualify: maximum age is one hour from its close.
         val qualificationClosedAt = last.epoch + 3600L
         val qualificationAgeSeconds = (System.currentTimeMillis() / 1000L) - qualificationClosedAt
         if (qualificationAgeSeconds < 0L || qualificationAgeSeconds > 3600L) return
@@ -1577,26 +1592,39 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             if (prior[i].high > prior[i - 1].high && prior[i].high > prior[i + 1].high) swingHighs.add(prior[i].high)
             if (prior[i].low < prior[i - 1].low && prior[i].low < prior[i + 1].low) swingLows.add(prior[i].low)
         }
-        val lastHigh = swingHighs.lastOrNull() ?: return
-        val lastLow = swingLows.lastOrNull() ?: return
+        val lastHigh = swingHighs.lastOrNull()
+        val lastLow = swingLows.lastOrNull()
 
-        // MSS = close beyond the latest confirmed swing. CHOCH = the same
-        // structural break confirmed by candle direction. Both must agree on
-        // this exact closed candle; no live-tick or previous-day trigger is used.
+        // MSS and CHOCH are confirmed on a completed candle. Save the exact broken level;
+        // execution is not permitted until a later completed candle touches or penetrates it.
         val mssDirection = when {
-            last.close > lastHigh -> "RISE"
-            last.close < lastLow -> "FALL"
+            lastHigh != null && last.close > lastHigh -> "RISE"
+            lastLow != null && last.close < lastLow -> "FALL"
             else -> ""
         }
         val chochDirection = when {
-            last.close > lastHigh && last.close > last.open -> "RISE"
-            last.close < lastLow && last.close < last.open -> "FALL"
+            lastHigh != null && last.close > lastHigh && last.close > last.open -> "RISE"
+            lastLow != null && last.close < lastLow && last.close < last.open -> "FALL"
             else -> ""
         }
         recoveryMss[symbol] = mssDirection
         recoveryChoch[symbol] = chochDirection
         recoveryMssEpoch[symbol] = if (mssDirection.isNotBlank()) last.epoch else 0L
         recoveryChochEpoch[symbol] = if (chochDirection.isNotBlank()) last.epoch else 0L
+
+        if (pendingChochDirection[symbol].isNullOrBlank() &&
+            mssDirection.isNotBlank() && mssDirection == chochDirection) {
+            val chochLevel = if (chochDirection == "RISE") lastHigh ?: return else lastLow ?: return
+            pendingChochDirection[symbol] = chochDirection
+            pendingChochLevel[symbol] = chochLevel
+            pendingChochEpoch[symbol] = last.epoch
+            tradePrefs.edit()
+                .putString("pending_choch_direction_$symbol", chochDirection)
+                .putLong("pending_choch_level_bits_$symbol", java.lang.Double.doubleToRawLongBits(chochLevel))
+                .putLong("pending_choch_epoch_$symbol", last.epoch)
+                .apply()
+        }
+
         tradePrefs.edit()
             .putString("signal_mss_$symbol", mssDirection)
             .putString("signal_choch_$symbol", chochDirection)
@@ -1609,28 +1637,44 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             updateRecoveryStatusView(symbol)
         }
         if (!autoTradingEnabled || !accountConnected || dailyCapital <= 0.0) return
-        if (mssDirection.isBlank() || mssDirection != chochDirection) return
-        if (lastExecutedSignalEpoch[symbol] == last.epoch) return
+
+        val direction = pendingChochDirection[symbol] ?: return
+        val level = pendingChochLevel[symbol] ?: return
+        val signalEpoch = pendingChochEpoch[symbol] ?: return
+        // The retest must be on a later candle than the candle that confirmed CHOCH.
+        if (last.epoch <= signalEpoch) return
+        if (lastExecutedSignalEpoch[symbol] == signalEpoch) return
+
+        // Touch and penetration only: the candle's traded range must include the exact CHOCH level.
+        // The candle must then close back on the correct side of that level.
+        val retestConfirmed = when (direction) {
+            "RISE" -> last.low <= level && last.high >= level && last.close > level
+            "FALL" -> last.high >= level && last.low <= level && last.close < level
+            else -> false
+        }
+        if (!retestConfirmed) return
 
         val active = positions.values.firstOrNull {
             it.symbol == symbol && it.status !in setOf("CLOSED", "BUY FAILED", "PROPOSAL FAILED") &&
                 !it.status.startsWith("ERROR")
         }
-        if (active != null) {
-            // One contract per index. A new or opposite MSS + CHOCH signal
-            // must not auto-sell an existing contract or queue a second contract.
-            return
-        }
+        if (active != null) return
 
         val stake = roundStake(dailyCapital * 0.10)
         val available = (availableBalance - reservedRecoveryCapital()).coerceAtLeast(0.0)
         if (stake <= 0.0 || available + 0.000001 < stake) return
-        if (openPosition(symbol, mssDirection, "MASTER", stake)) {
-            lastExecutedSignalEpoch[symbol] = last.epoch
+        if (openPosition(symbol, direction, "MASTER", stake)) {
+            lastExecutedSignalEpoch[symbol] = signalEpoch
+            pendingChochDirection.remove(symbol)
+            pendingChochLevel.remove(symbol)
+            pendingChochEpoch.remove(symbol)
             tradePrefs.edit()
-                .putLong("last_executed_signal_epoch_$symbol", last.epoch)
+                .putLong("last_executed_signal_epoch_$symbol", signalEpoch)
+                .remove("pending_choch_direction_$symbol")
+                .remove("pending_choch_level_bits_$symbol")
+                .remove("pending_choch_epoch_$symbol")
                 .apply()
-            addNotification("Trade", "${displayIndexName(symbol)} ${mssDirection} signal submitted", "Closed-candle MSS and CHOCH agree. Stake: ${formatMoney(stake)}. Contract expiry: 12 hours.")
+            addNotification("Trade", "${displayIndexName(symbol)} ${direction} signal submitted", "MSS and CHOCH confirmed; a later closed candle touched or penetrated the CHOCH level and closed back on the correct side. Stake: ${formatMoney(stake)}. Contract expiry: 12 hours.")
         }
     }
 
