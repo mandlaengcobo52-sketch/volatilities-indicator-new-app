@@ -86,6 +86,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val recoveryStatusViews = mutableMapOf<String, TextView>()
     private val mssStatusViews = mutableMapOf<String, TextView>()
     private val chochStatusViews = mutableMapOf<String, TextView>()
+    private val retestStatusViews = mutableMapOf<String, TextView>()
 
     private data class AppNotification(
         val id: Long,
@@ -1278,6 +1279,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             text = signalQualificationText(recoveryChoch[symbol])
             setTextColor(if (recoveryChoch[symbol].isNullOrBlank()) amber else green)
         }
+        retestStatusViews[symbol]?.apply {
+            val direction = pendingChochDirection[symbol]
+            text = if (direction.isNullOrBlank()) "NOT QUALIFIED" else "WAITING FOR TOUCH OR PENETRATION · $direction"
+            setTextColor(if (direction.isNullOrBlank()) amber else amber)
+        }
     }
 
     private fun formatMoney(value: Double): String =
@@ -1913,6 +1919,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         recoveryStatusViews.clear()
         mssStatusViews.clear()
         chochStatusViews.clear()
+        retestStatusViews.clear()
         tradeStatusViews.clear()
         tradeProfitViews.clear()
         tradeTargetViews.clear()
@@ -2077,6 +2084,15 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 if (recoveryChoch[symbol].isNullOrBlank()) amber else green, true)
             chochStatusViews[symbol] = chochView
             indexCard.addView(chochView)
+            indexCard.addView(space(5))
+            indexCard.addView(text("RETEST QUALIFICATION", 10f, whiteText, true))
+            val retestDirection = pendingChochDirection[symbol]
+            val retestView = text(
+                if (retestDirection.isNullOrBlank()) "NOT QUALIFIED" else "WAITING FOR TOUCH OR PENETRATION · $retestDirection",
+                11f, amber, true
+            )
+            retestStatusViews[symbol] = retestView
+            indexCard.addView(retestView)
             content.addView(indexCard)
             content.addView(space(9))
         }
