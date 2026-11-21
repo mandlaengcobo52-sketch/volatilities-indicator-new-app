@@ -191,7 +191,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val tradeEntryBarrierViews = mutableMapOf<String, TextView>()
     private val tradeExpiryViews = mutableMapOf<String, TextView>()
     private val insufficientFundsNotified = mutableSetOf<String>()
-    private val pendingReversalDirection = mutableMapOf<String, String>()
     private val lastExecutedSignalEpoch = mutableMapOf<String, Long>()
 
     private val tradePrefs by lazy { getSharedPreferences("vi_trade_engine", MODE_PRIVATE) }
@@ -1459,15 +1458,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     )) { }
                 }
             }
-            val reversal = pendingReversalDirection.remove(position.symbol)
-            if (!reversal.isNullOrBlank() && autoTradingEnabled && accountConnected) {
-                val anotherActive = positions.values.any { it.symbol == position.symbol && it.localId != position.localId &&
-                    it.status !in setOf("CLOSED", "BUY FAILED", "PROPOSAL FAILED") && !it.status.startsWith("ERROR") }
-                val reversalStake = roundStake(dailyCapital * 0.10)
-                if (!anotherActive && availableBalance >= reversalStake && openPosition(position.symbol, reversal, "MASTER", reversalStake)) {
-                    addNotification("Trade", "${displayIndexName(position.symbol)} reversal submitted", "The previous contract is confirmed closed. Opening the opposite ${reversal} contract.")
-                }
-            }
         } else if (position.status != "CLOSING") {
             position.status = "OPEN"
         }
@@ -1490,7 +1480,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             val lockedNetProfit = roundStake(
                 position.stake * position.lockedProfitPercent / 100.0
             )
-            val reversedToLock = position.trailingActivated &&
+            // A trailing stop belongs exclusively to this Position. It may
+            // close only after THIS contract has first reached +10% of its own
+            // stake, recorded a peak, and then retraced to its own lock level.
+            val ownTradeReachedActivation = position.trailingActivated &&
+                position.peakProfit >= roundStake(position.stake * 0.10)
+            val reversedToLock = ownTradeReachedActivation &&
                 position.lockedProfitPercent >= 10 &&
                 position.profit < position.peakProfit &&
                 position.profit <= lockedNetProfit
@@ -1621,17 +1616,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 !it.status.startsWith("ERROR")
         }
         if (active != null) {
-            // A position can only be closed by a NEW opposite qualification
-            // formed after that specific contract was opened. Historical or
-            // pre-entry MSS/CHOCH state must never close a newly opened trade.
-            if (active.openedAt > 0L && qualificationClosedAt <= active.openedAt) return
-            // Same-direction confirmation never closes or duplicates a trade.
-            if (active.direction == mssDirection) return
-            // An opposite MSS + CHOCH must close the old contract first.
-            if (active.status == "OPEN" && active.canSell && active.contractId > 0L) {
-                pendingReversalDirection[symbol] = mssDirection
-                closeRunningPosition(active)
-            }
+            // One contract per index. A new or opposite MSS + CHOCH signal
+            // must never auto-sell an existing contract or queue a second
+            // contract. The existing position remains under its own trailing
+            // stop (or user-initiated close) until Deriv confirms it is closed.
             return
         }
 
