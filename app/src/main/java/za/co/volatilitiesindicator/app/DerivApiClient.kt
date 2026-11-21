@@ -253,6 +253,10 @@ private val candleIndexes = listOf(
     private var accessToken:
         String? = null
 
+    // Invalidates in-flight HTTP/OTP/WebSocket callbacks when accounts are switched.
+    @Volatile
+    private var connectionGeneration: Long = 0L
+
     private var accountType:
         String =
         "DEMO"
@@ -299,6 +303,7 @@ private val candleIndexes = listOf(
             return
         }
 
+        val generation = ++connectionGeneration
         accessToken =
             cleanToken
 
@@ -320,8 +325,8 @@ private val candleIndexes = listOf(
         manuallyDisconnected =
             false
 
-        // Cancel only authenticated-account reconnect work.
-        // The public market-data socket must remain alive while accounts switch.
+        marketDataReconnectFuture?.cancel(false)
+        marketDataReconnectFuture = null
         cancelReconnect()
 
         stopHeartbeat()
@@ -336,7 +341,7 @@ private val candleIndexes = listOf(
          * First obtain the account belonging to
          * the requested mode.
          */
-        loadAccountsAndConnect()
+        loadAccountsAndConnect(generation)
     }
 
     /*
@@ -362,7 +367,8 @@ private val candleIndexes = listOf(
      * GET
      * /trading/v1/options/accounts
      */
-    private fun loadAccountsAndConnect() {
+    private fun loadAccountsAndConnect(generation: Long) {
+        if (generation != connectionGeneration || manuallyDisconnected) return
 
         val token =
             accessToken
@@ -413,7 +419,8 @@ private val candleIndexes = listOf(
                         call: okhttp3.Call,
                         e: java.io.IOException
                     ) {
-                                                if (
+                        if (generation != connectionGeneration || manuallyDisconnected) return
+                        if (
                             manuallyDisconnected
                         ) {
 
@@ -434,7 +441,10 @@ private val candleIndexes = listOf(
                         call: okhttp3.Call,
                         response: Response
                     ) {
-
+                        if (generation != connectionGeneration || manuallyDisconnected) {
+                            response.close()
+                            return
+                        }
                         val body =
                             response.body
                                 ?.string()
@@ -478,7 +488,8 @@ private val candleIndexes = listOf(
                                 )
 
                             handleAccountsResponse(
-                                json
+                                json,
+                                generation
                             )
 
                         } catch (
@@ -503,8 +514,10 @@ private val candleIndexes = listOf(
      * Process the current Deriv account response.
      */
     private fun handleAccountsResponse(
-        json: JSONObject
+        json: JSONObject,
+        generation: Long
     ) {
+        if (generation != connectionGeneration || manuallyDisconnected) return
 
         /*
          * Deriv returns the account collection in data.
@@ -612,13 +625,16 @@ private val candleIndexes = listOf(
         )
 
         requestWebSocketOtp(
-            selectedId
+            selectedId,
+            generation
         )
     }
 
     private fun requestWebSocketOtp(
-        selectedAccountId: String
+        selectedAccountId: String,
+        generation: Long
     ) {
+        if (generation != connectionGeneration || manuallyDisconnected) return
 
         val token =
             accessToken
@@ -663,6 +679,7 @@ private val candleIndexes = listOf(
                         call: okhttp3.Call,
                         e: java.io.IOException
                     ) {
+                        if (generation != connectionGeneration || manuallyDisconnected) return
 
                         if (
                             manuallyDisconnected
@@ -685,7 +702,10 @@ private val candleIndexes = listOf(
                         call: okhttp3.Call,
                         response: Response
                     ) {
-
+                        if (generation != connectionGeneration || manuallyDisconnected) {
+                            response.close()
+                            return
+                        }
                         val body =
                             response.body
                                 ?.string()
@@ -745,7 +765,8 @@ private val candleIndexes = listOf(
                             }
 
                             openAuthenticatedWebSocket(
-                                websocketUrl
+                                websocketUrl,
+                                generation
                             )
 
                         } catch (
@@ -863,8 +884,11 @@ private val candleIndexes = listOf(
      * Deriv's OTP endpoint.
      */
     private fun openAuthenticatedWebSocket(
-        websocketUrl: String
+        websocketUrl: String,
+        generation: Long
     ) {
+
+        if (generation != connectionGeneration || manuallyDisconnected) return
 
         if (
             manuallyDisconnected
@@ -902,15 +926,8 @@ private val candleIndexes = listOf(
                             response: Response
                         ) {
 
-                            if (
-                                manuallyDisconnected
-                            ) {
-
-                                socket.close(
-                                    1000,
-                                    "Manual disconnect"
-                                )
-
+                            if (generation != connectionGeneration || webSocket !== socket || manuallyDisconnected) {
+                                socket.close(1000, "Obsolete account session")
                                 return
                             }
 
@@ -938,8 +955,9 @@ private val candleIndexes = listOf(
                                 socket
                             )
 
-                            // Keep public index subscriptions active independently
-                            // from the authenticated trading-account connection.
+                            // connectWithAccessToken() closes both sockets before reconnecting.
+                            // Restore the separate public market-data socket after the
+                            // authenticated session is back, so live prices/candles resume too.
                             requestHistoricalCandles()
 
                             /*
@@ -1396,8 +1414,6 @@ if (tick != null) {
                 tradeMessageType == "proposal_open_contract" ||
                 tradeMessageType == "proposal" ||
                 tradeMessageType == "buy" ||
-                tradeMessageType == "sell" ||
-                    tradeMessageType == "contracts_for" ||
                 json.has("error")
             ) {
                 callback.onTradeData(json)
@@ -1520,6 +1536,7 @@ if (tick != null) {
         if (
             !directBalance.isNaN()
         ) {
+
             val currency =
                 json.optString(
                     "currency",
@@ -1818,6 +1835,7 @@ if (tick != null) {
             "HTTP $statusCode"
         }
     }
+
     /*
      * Schedule an automatic reconnect.
      *
@@ -1899,9 +1917,10 @@ if (tick != null) {
         webSocket =
             null
 
-        // Do not close marketDataSocket here. It is a separate public
-        // connection and must continue supplying index ticks during
-        // DEMO/REAL account changes and authenticated reconnects.
+        try { marketDataSocket?.close(1000, "Client disconnected") } catch (_: Exception) {}
+        marketDataSocket = null
+        marketDataTimeout?.cancel(false)
+        marketDataTimeout = null
 
         connected =
             false
@@ -1919,8 +1938,10 @@ if (tick != null) {
      */
     fun disconnect() {
 
+        ++connectionGeneration
         manuallyDisconnected =
             true
+        accessToken = null
 
         cancelReconnect()
         marketDataReconnectFuture?.cancel(false)
@@ -1966,27 +1987,25 @@ candleRequestSymbols.clear()
         callback.onDisconnected()
     }
 
-    /*
+    /**
      * Disconnect only the authenticated trading account.
-     * The public market-data socket and its reconnect loop remain active.
+     * The public market-data socket remains active for the index monitor.
+     * In-flight account HTTP/OTP/WebSocket callbacks are invalidated.
      */
     fun disconnectAccount() {
-        manuallyDisconnected = true
+        ++connectionGeneration
+        accessToken = null
         cancelReconnect()
         stopHeartbeat()
 
         try {
-            webSocket?.close(1000, "Trading account disconnected")
+            webSocket?.close(1000, "Platform user changed")
         } catch (_: Exception) {
         }
         webSocket = null
-
         connected = false
         connecting = false
-        lastAuthenticatedMessageAt = 0L
         accountId = null
-        accessToken = null
-
         callback.onDisconnected()
     }
 
@@ -2100,6 +2119,7 @@ candleRequestSymbols.clear()
             return
         }
 
+        val generation = ++connectionGeneration
         accountType =
             normalized
 
@@ -2118,7 +2138,7 @@ candleRequestSymbols.clear()
             "Switching to Deriv $accountType account..."
         )
 
-        loadAccountsAndConnect()
+        loadAccountsAndConnect(generation)
     }
 
     /*
@@ -2133,6 +2153,7 @@ candleRequestSymbols.clear()
         if (
             !connected
         ) {
+
             callback.onError(
                 "Deriv is not connected."
             )
