@@ -164,7 +164,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var entryBarrier: Double = 0.0,
         var expiryAt: Long = 0L,
         var openedAt: Long = 0L,
-        var closeReason: String = ""
+        var closeReason: String = "",
+        var qualificationMssEpoch: Long = 0L,
+        var qualificationChochEpoch: Long = 0L,
+        var qualificationRetestEpoch: Long = 0L,
+        var qualificationChochLevel: Double = 0.0
     )
 
     private val positions = linkedMapOf<String, Position>()
@@ -1309,12 +1313,27 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private fun roundStake(value: Double): Double =
         BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP).toDouble()
 
-    private fun openPosition(symbol: String, direction: String, role: String, stake: Double, originalId: String = "", accountGatePassed: Boolean = false): Boolean {
+    private fun openPosition(
+        symbol: String,
+        direction: String,
+        role: String,
+        stake: Double,
+        originalId: String = "",
+        accountGatePassed: Boolean = false,
+        qualificationMssEpoch: Long = 0L,
+        qualificationChochEpoch: Long = 0L,
+        qualificationRetestEpoch: Long = 0L,
+        qualificationChochLevel: Double = 0.0
+    ): Boolean {
         if (platformAuthenticated && platformUserRole in setOf("user", "investor") && !accountGatePassed) {
             if (!accountGatePending.add(symbol)) return false
             platformRequest("account_trade_gate", mapOf("daily_capital" to dailyCapital.toString()), onResult = {
                 accountGatePending.remove(symbol)
-                openPosition(symbol, direction, role, stake, originalId, true)
+                openPosition(
+                    symbol, direction, role, stake, originalId, true,
+                    qualificationMssEpoch, qualificationChochEpoch,
+                    qualificationRetestEpoch, qualificationChochLevel
+                )
             }, onError = { accountGatePending.remove(symbol) })
             return true
         }
@@ -1333,7 +1352,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val roundedStake = roundStake(stake)
         if (!accountConnected || !roundedStake.isFinite() || roundedStake <= 0.0) return false
         val localId = UUID.randomUUID().toString()
-        val p = Position(localId, symbol, direction, role, roundedStake, originalId)
+        val p = Position(localId, symbol, direction, role, roundedStake, originalId).apply {
+            this.qualificationMssEpoch = qualificationMssEpoch
+            this.qualificationChochEpoch = qualificationChochEpoch
+            this.qualificationRetestEpoch = qualificationRetestEpoch
+            this.qualificationChochLevel = qualificationChochLevel
+        }
         // The only concurrency limit is one live/pending contract per index.
         // Different indexes may execute simultaneously; there is no global
         // trade-count limit and no two-cycle/two-lifecycle execution cap.
@@ -1669,7 +1693,17 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val stake = roundStake(dailyCapital * 0.10)
         val available = (availableBalance - reservedRecoveryCapital()).coerceAtLeast(0.0)
         if (stake <= 0.0 || available + 0.000001 < stake) return
-        if (openPosition(symbol, direction, "MASTER", stake)) {
+        // In the current qualification model MSS and CHOCH are confirmed by the same closed candle.
+        val mssEpoch = signalEpoch
+        val chochEpoch = signalEpoch
+        if (mssEpoch <= 0L || chochEpoch <= 0L || last.epoch <= chochEpoch) return
+        if (openPosition(
+                symbol, direction, "MASTER", stake,
+                qualificationMssEpoch = mssEpoch,
+                qualificationChochEpoch = chochEpoch,
+                qualificationRetestEpoch = last.epoch,
+                qualificationChochLevel = level
+            )) {
             lastExecutedSignalEpoch[symbol] = signalEpoch
             pendingChochDirection.remove(symbol)
             pendingChochLevel.remove(symbol)
@@ -1699,7 +1733,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 .put("entryBarrier", p.entryBarrier)
                 .put("expiryAt", p.expiryAt)
                 .put("openedAt", p.openedAt)
-                .put("closeReason", p.closeReason))
+                .put("closeReason", p.closeReason)
+                .put("qualificationMssEpoch", p.qualificationMssEpoch)
+                .put("qualificationChochEpoch", p.qualificationChochEpoch)
+                .put("qualificationRetestEpoch", p.qualificationRetestEpoch)
+                .put("qualificationChochLevel", p.qualificationChochLevel))
         }
         // commit() makes completed trade records durable before activity teardown/update.
         tradePrefs.edit().putString("positions", array.toString()).commit()
@@ -1725,6 +1763,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 p.expiryAt = o.optLong("expiryAt", 0L)
                 p.openedAt = o.optLong("openedAt", 0L)
                 p.closeReason = o.optString("closeReason", "")
+                p.qualificationMssEpoch = o.optLong("qualificationMssEpoch", 0L)
+                p.qualificationChochEpoch = o.optLong("qualificationChochEpoch", 0L)
+                p.qualificationRetestEpoch = o.optLong("qualificationRetestEpoch", 0L)
+                p.qualificationChochLevel = o.optDouble("qualificationChochLevel", 0.0)
                 if (p.recoveryEligible && !p.recoveryUsed) recoveryWaiting.add(p.localId)
                 positions[p.localId] = p
                 if (p.contractId > 0 && p.status != "CLOSED") subscribePosition(p.contractId)
@@ -2099,7 +2141,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     private fun showTrade() {
-        pageHeading("RUNNING TRADES", "Contracts opened by confirmed MSS + CHOCH.")
+        pageHeading("RUNNING TRADES", "Contracts opened after confirmed MSS + CHOCH + RETEST.")
         content.addView(autoTradingButton())
         content.addView(space(10))
         val summary = card()
@@ -2137,6 +2179,21 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
                     c.addView(text("${p.role} · ${p.direction}", 14f,
                         if (p.direction == "RISE") green else red, true))
+                    val hasFullQualification = p.qualificationMssEpoch > 0L &&
+                        p.qualificationChochEpoch > 0L && p.qualificationRetestEpoch > p.qualificationChochEpoch
+                    val qualificationDetails = if (hasFullQualification) {
+                        val mssTime = java.text.DateFormat.getDateTimeInstance().format(
+                            java.util.Date(p.qualificationMssEpoch * 1000L))
+                        val chochTime = java.text.DateFormat.getDateTimeInstance().format(
+                            java.util.Date(p.qualificationChochEpoch * 1000L))
+                        val retestTime = java.text.DateFormat.getDateTimeInstance().format(
+                            java.util.Date(p.qualificationRetestEpoch * 1000L))
+                        "QUALIFICATION: CONFIRMED\nMSS: CONFIRMED · $mssTime\nCHOCH: CONFIRMED · $chochTime\nRETEST: TOUCH / PENETRATION CONFIRMED\nCHOCH LEVEL: ${formatPrice(p.qualificationChochLevel)}\nRETEST CANDLE: $retestTime"
+                    } else {
+                        "QUALIFICATION: NOT RECORDED FOR THIS TRADE"
+                    }
+                    c.addView(text(qualificationDetails, 12f,
+                        if (hasFullQualification) green else amber, true))
                     c.addView(text("Contract: ${if (p.contractId > 0L) p.contractId.toString() else "Pending"}",
                         12f, Color.WHITE))
                     val entryBarrierView = text(
@@ -2204,6 +2261,14 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 val c = card(indexNameColor(p.symbol))
                 c.addView(text("${displayIndexName(p.symbol)} · ${p.role}", 14f, indexNameColor(p.symbol), true))
                 c.addView(text("DIRECTION: ${p.direction}", 14f, if (p.direction == "RISE") green else red, true))
+                val historyFullyQualified = p.qualificationMssEpoch > 0L &&
+                    p.qualificationChochEpoch > 0L && p.qualificationRetestEpoch > p.qualificationChochEpoch
+                c.addView(text(
+                    if (historyFullyQualified)
+                        "QUALIFICATION: MSS + CHOCH + RETEST CONFIRMED · TOUCH / PENETRATION · LEVEL ${formatPrice(p.qualificationChochLevel)}"
+                    else "QUALIFICATION: NOT RECORDED FOR THIS TRADE",
+                    12f, if (historyFullyQualified) green else amber, true
+                ))
                 c.addView(text("Stake: ${formatMoney(p.stake)}", 13f, Color.WHITE))
                 c.addView(text("FINAL P/L: ${formatMoney(p.profit)}", 14f, if (p.profit >= 0.0) green else red, true))
                 val closedText = if (p.closedAt > 0L) java.text.DateFormat.getDateTimeInstance().format(java.util.Date(p.closedAt * 1000L)) else "Time unavailable"
