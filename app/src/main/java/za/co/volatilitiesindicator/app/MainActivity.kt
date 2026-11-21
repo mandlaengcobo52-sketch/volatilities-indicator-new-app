@@ -126,6 +126,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private var platformAuthBusy = false
     private var platformUserName = ""
     private var platformUserRole = "user"
+    private val accountGatePending = mutableSetOf<String>()
     private var platformUser = JSONObject()
     private var oauthState = ""
     private var codeVerifier = ""
@@ -1300,7 +1301,15 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private fun roundStake(value: Double): Double =
         BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP).toDouble()
 
-    private fun openPosition(symbol: String, direction: String, role: String, stake: Double, originalId: String = ""): Boolean {
+    private fun openPosition(symbol: String, direction: String, role: String, stake: Double, originalId: String = "", accountGatePassed: Boolean = false): Boolean {
+        if (platformAuthenticated && platformUserRole in setOf("user", "investor") && !accountGatePassed) {
+            if (!accountGatePending.add(symbol)) return false
+            platformRequest("account_trade_gate", mapOf("daily_capital" to dailyCapital.toString()), onResult = {
+                accountGatePending.remove(symbol)
+                openPosition(symbol, direction, role, stake, originalId, true)
+            }, onError = { accountGatePending.remove(symbol) })
+            return true
+        }
         if (platformAuthenticated && platformUserRole == "investor") {
             val today = java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US).format(java.util.Date())
             val subscriptionActive = platformUser.optString("subscription_status") == "approved" &&
@@ -1437,6 +1446,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 ?: System.currentTimeMillis() / 1000L
             if (!wasAlreadyClosed) {
                 addNotification("Trade", "${displayIndexName(position.symbol)} trade closed", "${position.role} ${position.direction} final P/L: ${formatMoney(position.profit)}.")
+                if (platformAuthenticated && platformUserRole in setOf("user", "investor") && position.contractId > 0L) {
+                    platformRequest("account_trade_result", mapOf(
+                        "trade_id" to position.contractId.toString(),
+                        "profit" to position.profit.toString()
+                    )) { }
+                }
             }
             val reversal = pendingReversalDirection.remove(position.symbol)
             if (!reversal.isNullOrBlank() && autoTradingEnabled && accountConnected) {
@@ -2220,7 +2235,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     // All account-management requests use the existing authenticated mobile-auth.php session.
-    private fun platformRequest(action: String, values: Map<String, String> = emptyMap(), onResult: (JSONObject) -> Unit) {
+    private fun platformRequest(action: String, values: Map<String, String> = emptyMap(), onResult: (JSONObject) -> Unit, onError: () -> Unit = {}) {
         if (!platformAuthenticated || platformAuthToken.isBlank()) {
             toast("Please sign in to your Volatilities Indicator account first.")
             showPlatformAuthScreen(false, "Please sign in to continue.")
@@ -2233,7 +2248,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             .post(form.build()).build()
         httpClient.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                runOnUiThread { toast("Unable to contact the account server. Check your connection.") }
+                runOnUiThread { toast("Unable to contact the account server. Check your connection."); onError() }
             }
             override fun onResponse(call: Call, response: Response) {
                 val raw = response.body?.string().orEmpty()
@@ -2244,6 +2259,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                         val message = result.optString("message", "The account request could not be completed.")
                         toast(message)
                         if (response.code == 401) signOutPlatform()
+                        onError()
                     } else onResult(result)
                 }
             }
