@@ -170,6 +170,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     )
 
     private val positions = linkedMapOf<String, Position>()
+    // Serializes the per-index reservation check and insertion across callbacks.
+    private val positionExecutionLock = Any()
     private val pendingRequests = mutableMapOf<Int, String>()
     private val originalSweepStatus = mutableMapOf<String, String>()
     private val candlesByIndex = mutableMapOf<String, List<DerivApiClient.Candle>>()
@@ -266,6 +268,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             val chochEpoch = tradePrefs.getLong("signal_choch_epoch_$symbol", 0L)
             if (mssEpoch > 0L) recoveryMssEpoch[symbol] = mssEpoch
             if (chochEpoch > 0L) recoveryChochEpoch[symbol] = chochEpoch
+            val executedEpoch = tradePrefs.getLong("last_executed_signal_epoch_$symbol", 0L)
+            if (executedEpoch > 0L) lastExecutedSignalEpoch[symbol] = executedEpoch
         }
         loadNotifications()
         originalTriggered.addAll(tradePrefs.getStringSet("triggered_$tradingDayKey", emptySet()) ?: emptySet())
@@ -1275,28 +1279,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         return String.format(Locale.US, "%04d-%02d-%02d", c.get(Calendar.YEAR), c.get(Calendar.MONTH) + 1, c.get(Calendar.DAY_OF_MONTH))
     }
 
-    // A RISE/FALL pair is one global execution slot. A recovery remains in
-    // the same slot as the original pair that qualified it.
-    private fun tradeGroupId(position: Position): String {
-        if (position.role == "RECOVERY") {
-            val parent = positions[position.originalId]
-            return parent?.originalId?.takeIf { it.isNotBlank() } ?: position.originalId
-        }
-        return position.originalId.ifBlank { position.localId }
-    }
-
-    private fun isActiveTradePosition(position: Position): Boolean {
-        return position.status !in setOf("CLOSED", "ERROR", "BUY FAILED", "PROPOSAL FAILED") &&
-            !position.status.startsWith("ERROR")
-    }
-
-    private fun activeTradeGroupIds(): Set<String> {
-        return positions.values
-            .filter { isActiveTradePosition(it) }
-            .map { tradeGroupId(it) }
-            .toSet()
-    }
-
     // Recovery capital reservation is retired in the replacement trading plan.
     private fun reservedRecoveryCapital(): Double = 0.0
 
@@ -1333,14 +1315,23 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val roundedStake = roundStake(stake)
         if (!accountConnected || !roundedStake.isFinite() || roundedStake <= 0.0) return false
         val localId = UUID.randomUUID().toString()
-        // Enforce one live or pending contract per index.
-        val indexBusy = positions.values.any {
-            it.symbol == symbol && it.status !in setOf("CLOSED", "BUY FAILED", "PROPOSAL FAILED") &&
-                !it.status.startsWith("ERROR")
-        }
-        if (indexBusy) return false
         val p = Position(localId, symbol, direction, role, roundedStake, originalId)
-        positions[localId] = p
+        // The only concurrency limit is one live/pending contract per index.
+        // Different indexes may execute simultaneously; there is no global
+        // trade-count limit and no two-cycle/two-lifecycle execution cap.
+        val reserved = synchronized(positionExecutionLock) {
+            val indexBusy = positions.values.any {
+                it.symbol == symbol && it.status !in setOf("CLOSED", "BUY FAILED", "PROPOSAL FAILED") &&
+                    !it.status.startsWith("ERROR")
+            }
+            if (indexBusy) {
+                false
+            } else {
+                positions[localId] = p
+                true
+            }
+        }
+        if (!reserved) return false
         val req = nextRequestId()
         pendingRequests[req] = localId
         // Deriv contract types: CALL = Rise, PUT = Fall.
@@ -1676,6 +1667,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (stake <= 0.0 || available + 0.000001 < stake) return
         if (openPosition(symbol, mssDirection, "MASTER", stake)) {
             lastExecutedSignalEpoch[symbol] = last.epoch
+            tradePrefs.edit()
+                .putLong("last_executed_signal_epoch_$symbol", last.epoch)
+                .apply()
             addNotification("Trade", "${displayIndexName(symbol)} ${mssDirection} signal submitted", "Closed-candle MSS and CHOCH agree. Stake: ${formatMoney(stake)}. Contract expiry: 12 hours.")
         }
     }
@@ -1717,14 +1711,19 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 p.recoveryEligible = o.optBoolean("recoveryEligible", false)
                 p.recoveryUsed = o.optBoolean("recoveryUsed", false)
                 p.closedAt = o.optLong("closedAt", 0L)
-                p.peakProfit = o.optDouble("peakProfit", p.profit.coerceAtLeast(0.0))
-                p.trailingActivated = o.optBoolean(
-                    "trailingActivated",
-                    p.stake > 0.0 && p.peakProfit >= p.stake * 0.10
-                )
+                val savedPeakProfit = o.optDouble("peakProfit", 0.0).coerceAtLeast(0.0)
+                val savedTrailingFlag = o.optBoolean("trailingActivated", false)
                 val savedLockPercent = o.optInt("lockedProfitPercent", 0)
-                // New trailing protection is expressed as net profit percentage of stake.
-                p.lockedProfitPercent = savedLockPercent.coerceAtLeast(0)
+                val activationThreshold = roundStake(p.stake * 0.10)
+                // A saved Boolean alone is not proof of activation. Restore an
+                // active stop only when this contract's own saved peak reached
+                // +10% of its own stake and its saved lock is at least 10%.
+                val hasVerifiedTradeActivation = p.stake > 0.0 &&
+                    savedPeakProfit >= activationThreshold && savedLockPercent >= 10
+                p.trailingActivated = savedTrailingFlag && hasVerifiedTradeActivation
+                p.peakProfit = if (p.trailingActivated) savedPeakProfit else 0.0
+                // New trailing protection is expressed as net profit percentage of this trade's stake.
+                p.lockedProfitPercent = if (p.trailingActivated) savedLockPercent else 0
                 p.pairExitTriggered = o.optBoolean("pairExitTriggered", false)
                 p.recoveryAfterEpoch = o.optLong("recoveryAfterEpoch", p.closedAt)
                 p.pairedLoss = o.optDouble("pairedLoss", 0.0)
