@@ -162,7 +162,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var pairExitTriggered: Boolean = false,
         var recoveryAfterEpoch: Long = 0L,
         var pairedLoss: Double = 0.0,
-        var entryBarrier: Double = 0.0
+        var entryBarrier: Double = 0.0,
+        var expiryAt: Long = 0L
     )
 
     private val positions = linkedMapOf<String, Position>()
@@ -186,6 +187,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val tradeProfitViews = mutableMapOf<String, TextView>()
     private val tradeTrailingViews = mutableMapOf<String, TextView>()
     private val tradeEntryBarrierViews = mutableMapOf<String, TextView>()
+    private val tradeExpiryViews = mutableMapOf<String, TextView>()
     private val insufficientFundsNotified = mutableSetOf<String>()
     private val pendingReversalDirection = mutableMapOf<String, String>()
     private val lastExecutedSignalEpoch = mutableMapOf<String, Long>()
@@ -1406,6 +1408,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             "entry_tick",
             contract.optDouble("entry_spot", contract.optDouble("barrier", position.entryBarrier))
         )
+        position.expiryAt = contract.optLong("date_expiry", position.expiryAt)
 
         val validToSell = contract.opt("is_valid_to_sell")
         position.canSell = when (validToSell) {
@@ -1544,6 +1547,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (closed.size < 7) return
         val last = closed.last()
         val prior = closed.dropLast(1)
+        // Only a fresh H1 qualification may execute: maximum age is one hour
+        // measured from the candle close (not the candle opening timestamp).
+        val qualificationClosedAt = last.epoch + 3600L
+        val qualificationAgeSeconds = (System.currentTimeMillis() / 1000L) - qualificationClosedAt
+        if (qualificationAgeSeconds < 0L || qualificationAgeSeconds > 3600L) return
 
         // Use confirmed local swing points from completed candles only.
         val swingHighs = mutableListOf<Double>()
@@ -1626,7 +1634,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 .put("pairExitTriggered", p.pairExitTriggered)
                 .put("recoveryAfterEpoch", p.recoveryAfterEpoch)
                 .put("pairedLoss", p.pairedLoss)
-                .put("entryBarrier", p.entryBarrier))
+                .put("entryBarrier", p.entryBarrier)
+                .put("expiryAt", p.expiryAt))
         }
         // commit() makes completed trade records durable before activity teardown/update.
         tradePrefs.edit().putString("positions", array.toString()).commit()
@@ -1657,6 +1666,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 p.recoveryAfterEpoch = o.optLong("recoveryAfterEpoch", p.closedAt)
                 p.pairedLoss = o.optDouble("pairedLoss", 0.0)
                 p.entryBarrier = o.optDouble("entryBarrier", 0.0)
+                p.expiryAt = o.optLong("expiryAt", 0L)
                 if (p.recoveryEligible && !p.recoveryUsed) recoveryWaiting.add(p.localId)
                 positions[p.localId] = p
                 if (p.contractId > 0 && p.status != "CLOSED") subscribePosition(p.contractId)
@@ -1855,6 +1865,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         tradeProfitViews.clear()
         tradeTrailingViews.clear()
         tradeEntryBarrierViews.clear()
+        tradeExpiryViews.clear()
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -2027,7 +2038,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         summary.addView(text("DAILY STARTING CAPITAL", 12f, gold, true))
         summary.addView(text(String.format(Locale.US, "%.2f %s", dailyCapital, accountCurrency), 18f, blue, true))
         summary.addView(text("ACCOUNT MODE: $executionMode", 12f, if (executionMode == "REAL") blue else red, true))
-        summary.addView(text("Stake per contract: 20% of daily starting capital", 12f, gold))
         content.addView(summary)
         content.addView(space(16))
 
@@ -2067,6 +2077,14 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     )
                     tradeEntryBarrierViews[p.localId] = entryBarrierView
                     c.addView(entryBarrierView)
+                    val expiryText = if (p.expiryAt > 0L) {
+                        java.text.DateFormat.getDateTimeInstance().format(java.util.Date(p.expiryAt * 1000L))
+                    } else {
+                        "Awaiting Deriv expiry"
+                    }
+                    val expiryView = text("EXPIRY: $expiryText", 12f, blue, true)
+                    tradeExpiryViews[p.localId] = expiryView
+                    c.addView(expiryView)
                     c.addView(text("Stake: ${formatMoney(p.stake)}", 13f, gold))
 
                     val statusView = text("Status: ${p.status}", 13f,
@@ -2101,13 +2119,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     }
                 }
 
-                val combinedProfit = indexPositions.sumOf { it.profit }
-                c.addView(space(8))
-                c.addView(divider())
-                c.addView(space(8))
-                c.addView(text("INDEX COMBINED P/L: ${formatMoney(combinedProfit)}", 13f,
-                    if (combinedProfit >= 0.0) green else red, true))
-
                 content.addView(c)
                 content.addView(space(8))
             }
@@ -2141,6 +2152,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private fun updateTradePositionViews(position: Position) {
         tradeEntryBarrierViews[position.localId]?.text =
             "ENTRY BARRIER: ${if (position.entryBarrier > 0.0) formatPrice(position.entryBarrier) else "Awaiting Deriv entry price"}"
+        tradeExpiryViews[position.localId]?.text = "EXPIRY: " + if (position.expiryAt > 0L) {
+            java.text.DateFormat.getDateTimeInstance().format(java.util.Date(position.expiryAt * 1000L))
+        } else {
+            "Awaiting Deriv expiry"
+        }
         tradeStatusViews[position.localId]?.apply {
             text = "Status: ${position.status}"
             setTextColor(if (position.status == "OPEN") green else amber)
