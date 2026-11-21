@@ -157,9 +157,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var recoveryEligible: Boolean = false,
         var recoveryUsed: Boolean = false,
         var closedAt: Long = 0L,
-        var peakProfit: Double = 0.0,
-        var trailingActivated: Boolean = false,
-        var lockedProfitPercent: Int = 0,
         var pairExitTriggered: Boolean = false,
         var recoveryAfterEpoch: Long = 0L,
         var pairedLoss: Double = 0.0,
@@ -190,7 +187,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private var tradeStatusView: TextView? = null
     private val tradeStatusViews = mutableMapOf<String, TextView>()
     private val tradeProfitViews = mutableMapOf<String, TextView>()
-    private val tradeTrailingViews = mutableMapOf<String, TextView>()
+    private val tradeTargetViews = mutableMapOf<String, TextView>()
     private val tradeEntryBarrierViews = mutableMapOf<String, TextView>()
     private val tradeExpiryViews = mutableMapOf<String, TextView>()
     private val insufficientFundsNotified = mutableSetOf<String>()
@@ -860,14 +857,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 position.openedAt = buy.optLong("purchase_time", System.currentTimeMillis() / 1000L)
                 if (position.contractId <= 0L) { position.status = "BUY FAILED"; return }
                 position.status = "OPEN"
-                // A newly purchased contract must NEVER inherit an active trailing stop.
-                // It remains inactive until this contract's own live P/L reaches +10% of its stake.
-                position.trailingActivated = false
-                position.peakProfit = 0.0
-                position.lockedProfitPercent = 0
                 position.closeReason = ""
                 savePositions()
-                addNotification("Trade", "${displayIndexName(position.symbol)} ${position.role.lowercase(Locale.US)} opened", "${position.direction} contract opened. Stake: ${formatMoney(position.stake)}. Trailing stop is WAITING for this trade to reach +10% profit.")
+                addNotification(
+                    "Trade",
+                    "${displayIndexName(position.symbol)} ${position.role.lowercase(Locale.US)} opened",
+                    "${position.direction} contract opened. Stake: ${formatMoney(position.stake)}. Fixed profit target: ${formatMoney(roundStake(position.stake * 0.10))} (10% of this trade's stake)."
+                )
                 subscribePosition(position.contractId)
                 runOnUiThread {
                     updateMasterDecisionViews(position.symbol)
@@ -1413,7 +1409,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
 
         // Use this contract's own purchase price and P/L from Deriv.
-        // Daily/account capital is not used by profit or trailing-stop calculations.
+        // Daily/account capital is not used by this contract's P/L or profit target.
         val contractStake = contract.optDouble("buy_price", 0.0)
         if (contractStake > 0.0) {
             position.stake = contractStake
@@ -1489,47 +1485,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         } else if (position.status != "CLOSING") {
             position.status = "OPEN"
         }
-        // Trailing activates at +10% of this contract's stake and initially
-        // protects +10%. Protection advances in 10-point increments.
-        if (!isSold && position.status == "OPEN" && position.stake > 0.0) {
-            val activationProfit = roundStake(position.stake * 0.10)
-            if (!position.trailingActivated && position.profit >= activationProfit) {
-                position.trailingActivated = true
-                position.peakProfit = position.profit
-                position.lockedProfitPercent = 10
-                addNotification(
-                    "Trade",
-                    "${displayIndexName(position.symbol)} trailing stop activated",
-                    "This ${position.direction} trade reached ${formatMoney(position.profit)} profit, meeting its own +10% activation threshold (${formatMoney(activationProfit)})."
-                )
-            }
-            if (position.trailingActivated && position.profit > position.peakProfit) {
-                position.peakProfit = position.profit
-            }
-            if (position.trailingActivated) {
-                val peakProfitPercent = (position.peakProfit / position.stake * 100.0).toInt()
-                val newLock = (peakProfitPercent / 10) * 10
-                if (newLock >= 10 && newLock > position.lockedProfitPercent) {
-                    position.lockedProfitPercent = newLock
-                }
-            }
-            val lockedNetProfit = roundStake(
-                position.stake * position.lockedProfitPercent / 100.0
-            )
-            // A trailing stop belongs exclusively to this Position. It may
-            // close only after THIS contract has first reached +10% of its own
-            // stake, recorded a peak, and then retraced to its own lock level.
-            val ownTradeReachedActivation = position.trailingActivated &&
-                position.peakProfit >= roundStake(position.stake * 0.10)
-            val reversedToLock = ownTradeReachedActivation &&
-                position.lockedProfitPercent >= 10 &&
-                position.profit < position.peakProfit &&
-                position.profit <= lockedNetProfit
-            // Close this contract when its own P/L retraces to its own
-            // locked-profit threshold. Do not use account or daily-capital P/L.
-            if (reversedToLock && position.canSell && position.contractId > 0L) {
-                closeRunningPosition(position, "TRAILING STOP")
-            }
+        // Fixed take-profit belongs exclusively to this contract:
+        // close when its own live P/L reaches 10% of its own purchase stake.
+        // A fixed take-profit check is used; no dynamic profit-locking logic.
+        if (!isSold && position.status == "OPEN" && position.stake > 0.0 &&
+            position.profit >= roundStake(position.stake * 0.10) &&
+            position.canSell && position.contractId > 0L) {
+            closeRunningPosition(position, "TAKE PROFIT (10% OF STAKE)")
         }
 
         savePositions()
@@ -1656,9 +1618,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
         if (active != null) {
             // One contract per index. A new or opposite MSS + CHOCH signal
-            // must never auto-sell an existing contract or queue a second
-            // contract. The existing position remains under its own trailing
-            // stop (or user-initiated close) until Deriv confirms it is closed.
+            // must not auto-sell an existing contract or queue a second contract.
             return
         }
 
@@ -1683,9 +1643,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 .put("recoveryEligible", p.recoveryEligible)
                 .put("recoveryUsed", p.recoveryUsed)
                 .put("closedAt", p.closedAt)
-                .put("peakProfit", p.peakProfit)
-                .put("trailingActivated", p.trailingActivated)
-                .put("lockedProfitPercent", p.lockedProfitPercent)
                 .put("pairExitTriggered", p.pairExitTriggered)
                 .put("recoveryAfterEpoch", p.recoveryAfterEpoch)
                 .put("pairedLoss", p.pairedLoss)
@@ -1711,19 +1668,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 p.recoveryEligible = o.optBoolean("recoveryEligible", false)
                 p.recoveryUsed = o.optBoolean("recoveryUsed", false)
                 p.closedAt = o.optLong("closedAt", 0L)
-                val savedPeakProfit = o.optDouble("peakProfit", 0.0).coerceAtLeast(0.0)
-                val savedTrailingFlag = o.optBoolean("trailingActivated", false)
-                val savedLockPercent = o.optInt("lockedProfitPercent", 0)
-                val activationThreshold = roundStake(p.stake * 0.10)
-                // A saved Boolean alone is not proof of activation. Restore an
-                // active stop only when this contract's own saved peak reached
-                // +10% of its own stake and its saved lock is at least 10%.
-                val hasVerifiedTradeActivation = p.stake > 0.0 &&
-                    savedPeakProfit >= activationThreshold && savedLockPercent >= 10
-                p.trailingActivated = savedTrailingFlag && hasVerifiedTradeActivation
-                p.peakProfit = if (p.trailingActivated) savedPeakProfit else 0.0
-                // New trailing protection is expressed as net profit percentage of this trade's stake.
-                p.lockedProfitPercent = if (p.trailingActivated) savedLockPercent else 0
                 p.pairExitTriggered = o.optBoolean("pairExitTriggered", false)
                 p.recoveryAfterEpoch = o.optLong("recoveryAfterEpoch", p.closedAt)
                 p.pairedLoss = o.optDouble("pairedLoss", 0.0)
@@ -1927,7 +1871,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         chochStatusViews.clear()
         tradeStatusViews.clear()
         tradeProfitViews.clear()
-        tradeTrailingViews.clear()
+        tradeTargetViews.clear()
         tradeEntryBarrierViews.clear()
         tradeExpiryViews.clear()
 
@@ -2161,14 +2105,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     tradeProfitViews[p.localId] = profitView
                     c.addView(profitView)
 
-                    val trailingText = if (p.trailingActivated) {
-                        "TRAILING STOP: ACTIVE · PROTECTING ${p.lockedProfitPercent}% (${formatMoney(p.stake * p.lockedProfitPercent / 100.0)})"
-                    } else {
-                        "TRAILING STOP: WAITING · ACTIVATES ONLY AT +10% (${formatMoney(p.stake * 0.10)} profit)"
-                    }
-                    val trailingView = text(trailingText, 12f, if (p.trailingActivated) green else amber, true)
-                    tradeTrailingViews[p.localId] = trailingView
-                    c.addView(trailingView)
+                    val targetProfit = roundStake(p.stake * 0.10)
+                    val targetView = text(
+                        "PROFIT TARGET: 10% OF STAKE (${formatMoney(targetProfit)})",
+                        12f, amber, true
+                    )
+                    tradeTargetViews[p.localId] = targetView
+                    c.addView(targetView)
 
                     if (p.contractId > 0L && p.status == "OPEN") {
                         c.addView(space(6))
@@ -2229,13 +2172,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             text = "Profit / Loss: ${formatMoney(position.profit)}"
             setTextColor(if (position.profit >= 0.0) green else red)
         }
-        tradeTrailingViews[position.localId]?.apply {
-            text = if (position.trailingActivated) {
-                "TRAILING STOP: ACTIVE · PROTECTING ${position.lockedProfitPercent}% (${formatMoney(position.stake * position.lockedProfitPercent / 100.0)})"
-            } else {
-                "TRAILING STOP: WAITING · ACTIVATES ONLY AT +10% (${formatMoney(position.stake * 0.10)} profit)"
-            }
-            setTextColor(if (position.trailingActivated) green else amber)
+        tradeTargetViews[position.localId]?.apply {
+            text = "PROFIT TARGET: 10% OF STAKE (${formatMoney(roundStake(position.stake * 0.10))})"
+            setTextColor(amber)
         }
     }
 
