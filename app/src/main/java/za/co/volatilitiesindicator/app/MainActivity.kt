@@ -148,7 +148,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val symbol: String,
         var direction: String,
         val role: String,
-        val stake: Double,
+        var stake: Double,
         val originalId: String = "",
         var contractId: Long = 0L,
         var profit: Double = 0.0,
@@ -165,14 +165,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var pairedLoss: Double = 0.0,
         var entryBarrier: Double = 0.0,
         var expiryAt: Long = 0L,
-        var openedAt: Long = 0L
+        var openedAt: Long = 0L,
+        var closeReason: String = ""
     )
 
     private val positions = linkedMapOf<String, Position>()
     private val pendingRequests = mutableMapOf<Int, String>()
-    // Atomically reserve an index while its account gate / proposal / buy flow is starting.
-    private val executionLock = Any()
-    private val indexExecutionReservations = mutableSetOf<String>()
     private val originalSweepStatus = mutableMapOf<String, String>()
     private val candlesByIndex = mutableMapOf<String, List<DerivApiClient.Candle>>()
     private val originalTriggered = mutableSetOf<String>()
@@ -1306,49 +1304,14 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP).toDouble()
 
     private fun openPosition(symbol: String, direction: String, role: String, stake: Double, originalId: String = "", accountGatePassed: Boolean = false): Boolean {
-        // Reserve the index BEFORE any asynchronous account-gate request. This closes
-        // the race where two qualifying callbacks both pass the old positions check.
-        if (!accountGatePassed) {
-            val reserved = synchronized(executionLock) {
-                val activeForIndex = positions.values.any {
-                    it.symbol == symbol && isActiveTradePosition(it)
-                }
-                if (activeForIndex || !indexExecutionReservations.add(symbol)) {
-                    false
-                } else {
-                    true
-                }
-            }
-            if (!reserved) return false
-        } else {
-            // The asynchronous account-gate callback must still own this reservation.
-            val reservationStillOwned = synchronized(executionLock) {
-                symbol in indexExecutionReservations
-            }
-            if (!reservationStillOwned) return false
-        }
-
-        fun releaseIndexReservation() {
-            synchronized(executionLock) {
-                indexExecutionReservations.remove(symbol)
-            }
-        }
-
         if (platformAuthenticated && platformUserRole in setOf("user", "investor") && !accountGatePassed) {
-            if (!accountGatePending.add(symbol)) {
-                releaseIndexReservation()
-                return false
-            }
+            if (!accountGatePending.add(symbol)) return false
             platformRequest("account_trade_gate", mapOf("daily_capital" to dailyCapital.toString()), onResult = {
                 accountGatePending.remove(symbol)
                 openPosition(symbol, direction, role, stake, originalId, true)
-            }, onError = {
-                accountGatePending.remove(symbol)
-                releaseIndexReservation()
-            })
+            }, onError = { accountGatePending.remove(symbol) })
             return true
         }
-
         if (platformAuthenticated && platformUserRole == "investor") {
             val today = java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US).format(java.util.Date())
             val subscriptionActive = platformUser.optString("subscription_status") == "approved" &&
@@ -1356,46 +1319,22 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             val planActive = platformUser.optString("investor_plan_status") == "approved" &&
                 platformUser.optString("investor_plan_expiry_date") >= today
             if (!subscriptionActive || !planActive) {
-                releaseIndexReservation()
                 addNotification("Account", "Investor execution blocked", "An active approved subscription and an approved, unexpired Investor plan are required before trading.")
                 runOnUiThread { toast("Trading requires an approved active subscription and Investor plan.") }
                 return false
             }
         }
-
         val roundedStake = roundStake(stake)
-        if (!accountConnected || !roundedStake.isFinite() || roundedStake <= 0.0) {
-            releaseIndexReservation()
-            return false
-        }
-
-        val client = derivService?.client
-        if (client == null) {
-            releaseIndexReservation()
-            addNotification("Trade", "${displayIndexName(symbol)} execution failed", "Deriv trading connection is unavailable. The qualifying MSS + CHOCH signal remains available for retry.")
-            return false
-        }
-
-        // Recheck while holding the same lock immediately before creating the local
-        // pending position. This is the single source of truth for the per-index gate.
+        if (!accountConnected || !roundedStake.isFinite() || roundedStake <= 0.0) return false
         val localId = UUID.randomUUID().toString()
-        val p = synchronized(executionLock) {
-            val alreadyActive = positions.values.any {
-                it.symbol == symbol && isActiveTradePosition(it)
-            }
-            if (alreadyActive) {
-                indexExecutionReservations.remove(symbol)
-                null
-            } else {
-                Position(localId, symbol, direction, role, roundedStake, originalId).also {
-                    it.status = "REQUESTING PROPOSAL"
-                    positions[localId] = it
-                    // The pending Position now blocks all further entries for this index.
-                    indexExecutionReservations.remove(symbol)
-                }
-            }
-        } ?: return false
-
+        // Enforce one live or pending contract per index.
+        val indexBusy = positions.values.any {
+            it.symbol == symbol && it.status !in setOf("CLOSED", "BUY FAILED", "PROPOSAL FAILED") &&
+                !it.status.startsWith("ERROR")
+        }
+        if (indexBusy) return false
+        val p = Position(localId, symbol, direction, role, roundedStake, originalId)
+        positions[localId] = p
         val req = nextRequestId()
         pendingRequests[req] = localId
         // Deriv contract types: CALL = Rise, PUT = Fall.
@@ -1410,7 +1349,14 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             .put("duration_unit", "h")
             .put("underlying_symbol", symbol)
             .put("req_id", req)
-
+        p.status = "REQUESTING PROPOSAL"
+        val client = derivService?.client
+        if (client == null) {
+            pendingRequests.remove(req)
+            positions.remove(localId)
+            addNotification("Trade", "${displayIndexName(symbol)} execution failed", "Deriv trading connection is unavailable. The qualifying MSS + CHOCH signal remains available for retry.")
+            return false
+        }
         client.send(proposal)
         savePositions()
         runOnUiThread { if (selectedTab == "Trade") render() }
@@ -1469,6 +1415,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             "PUT" -> position.direction = "FALL"
         }
 
+        // Use this contract's own purchase price and P/L from Deriv.
+        // Daily/account capital is not used by profit or trailing-stop calculations.
+        val contractStake = contract.optDouble("buy_price", 0.0)
+        if (contractStake > 0.0) {
+            position.stake = contractStake
+        }
         position.profit = contract.optDouble("profit", position.profit)
         position.entryBarrier = contract.optDouble(
             "entry_tick",
@@ -1504,8 +1456,32 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             position.closedAt = contract.optLong("sell_time", 0L).takeIf { it > 0L }
                 ?: contract.optLong("date_expiry", 0L).takeIf { it > 0L }
                 ?: System.currentTimeMillis() / 1000L
+            if (position.closeReason.isBlank()) {
+                position.closeReason = when {
+                    listOf(soldValue, expiredValue).any { value ->
+                        when (value) {
+                            is Boolean -> value
+                            is Number -> value.toInt() == 1
+                            is String -> value.equals("true", true) || value == "1"
+                            else -> false
+                        }
+                    } && expiredValue.let { value ->
+                        when (value) {
+                            is Boolean -> value
+                            is Number -> value.toInt() == 1
+                            is String -> value.equals("true", true) || value == "1"
+                            else -> false
+                        }
+                    } -> "CONTRACT EXPIRY"
+                    else -> "CLOSED BY DERIV (trigger not reported)"
+                }
+            }
             if (!wasAlreadyClosed) {
-                addNotification("Trade", "${displayIndexName(position.symbol)} trade closed", "${position.role} ${position.direction} final P/L: ${formatMoney(position.profit)}.")
+                addNotification(
+                    "Trade",
+                    "${displayIndexName(position.symbol)} trade closed",
+                    "Closed by: ${position.closeReason}. ${position.role} ${position.direction}. Final P/L: ${formatMoney(position.profit)}."
+                )
                 if (platformAuthenticated && platformUserRole in setOf("user", "investor") && position.contractId > 0L) {
                     platformRequest("account_trade_result", mapOf(
                         "trade_id" to position.contractId.toString(),
@@ -1544,8 +1520,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 position.lockedProfitPercent >= 10 &&
                 position.profit < position.peakProfit &&
                 position.profit <= lockedNetProfit
+            // Close this contract when its own P/L retraces to its own
+            // locked-profit threshold. Do not use account or daily-capital P/L.
             if (reversedToLock && position.canSell && position.contractId > 0L) {
-                closeRunningPosition(position)
+                closeRunningPosition(position, "TRAILING STOP")
             }
         }
 
@@ -1562,7 +1540,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     }
 
-    private fun closeRunningPosition(position: Position) {
+    private fun closeRunningPosition(position: Position, reason: String = "MANUAL CLOSE") {
         if (!accountConnected) {
             toast("Connect the Deriv trading account before closing this contract.")
             return
@@ -1571,6 +1549,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             toast("Deriv has not made this contract available for sale yet. Please wait for the next contract update.")
             return
         }
+        position.closeReason = reason
         position.status = "CLOSING"
         savePositions()
         val req = nextRequestId()
@@ -1704,7 +1683,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 .put("pairedLoss", p.pairedLoss)
                 .put("entryBarrier", p.entryBarrier)
                 .put("expiryAt", p.expiryAt)
-                .put("openedAt", p.openedAt))
+                .put("openedAt", p.openedAt)
+                .put("closeReason", p.closeReason))
         }
         // commit() makes completed trade records durable before activity teardown/update.
         tradePrefs.edit().putString("positions", array.toString()).commit()
@@ -1737,6 +1717,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 p.entryBarrier = o.optDouble("entryBarrier", 0.0)
                 p.expiryAt = o.optLong("expiryAt", 0L)
                 p.openedAt = o.optLong("openedAt", 0L)
+                p.closeReason = o.optString("closeReason", "")
                 if (p.recoveryEligible && !p.recoveryUsed) recoveryWaiting.add(p.localId)
                 positions[p.localId] = p
                 if (p.contractId > 0 && p.status != "CLOSED") subscribePosition(p.contractId)
