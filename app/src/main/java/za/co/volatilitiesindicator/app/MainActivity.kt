@@ -2235,7 +2235,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     // All account-management requests use the existing authenticated mobile-auth.php session.
-    private fun platformRequest(action: String, values: Map<String, String> = emptyMap(), onResult: (JSONObject) -> Unit, onError: () -> Unit = {}) {
+    private fun platformRequest(action: String, values: Map<String, String> = emptyMap(), onError: () -> Unit = {}, onResult: (JSONObject) -> Unit) {
         if (!platformAuthenticated || platformAuthToken.isBlank()) {
             toast("Please sign in to your Volatilities Indicator account first.")
             showPlatformAuthScreen(false, "Please sign in to continue.")
