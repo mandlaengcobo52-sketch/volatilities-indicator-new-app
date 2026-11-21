@@ -24,6 +24,24 @@ class DerivConnectionService : Service() {
     @Volatile
     private var activityCallback: DerivApiClient.Callback? = null
 
+    @Volatile
+    private var activePlatformUserId: String = ""
+
+    fun getPlatformUserId(): String = activePlatformUserId
+
+    /**
+     * Change the owner of the persistent Deriv client. A user switch or logout
+     * disconnects the previous authenticated socket before the new owner is set.
+     */
+    fun setPlatformUser(userId: String) {
+        val normalized = userId.trim()
+        if (normalized == activePlatformUserId) return
+        if (activePlatformUserId.isNotBlank() || client.isConnected() || client.isConnecting()) {
+            client.disconnectAccount()
+        }
+        activePlatformUserId = normalized
+    }
+
     val client: DerivApiClient by lazy {
         DerivApiClient(object : DerivApiClient.Callback {
 
@@ -118,59 +136,32 @@ class DerivConnectionService : Service() {
         startId: Int
     ): Int {
 
-        if (
-            intent == null ||
-            intent.action == ACTION_BOOT_RECONNECT
-        ) {
+        if (intent == null || intent.action == ACTION_BOOT_RECONNECT) {
+            val authPrefs = getSharedPreferences("vi_platform_auth", MODE_PRIVATE)
+            val derivPrefs = getSharedPreferences("deriv_oauth", MODE_PRIVATE)
 
-            val settings = getSharedPreferences(
-                "volatilities_app_settings",
-                MODE_PRIVATE
-            )
+            val platformToken = authPrefs.getString("token", "").orEmpty()
+            val ownerId = authPrefs.getString("active_user_id", "").orEmpty()
+            val executionMode = if (ownerId.isNotBlank()) {
+                derivPrefs.getString("user_${ownerId}_oauth_mode", "DEMO") ?: "DEMO"
+            } else "DEMO"
+            val tokenKey = "user_${ownerId}_${if (executionMode.equals("REAL", true)) "real" else "demo"}_token"
+            val derivToken = if (ownerId.isNotBlank()) derivPrefs.getString(tokenKey, "").orEmpty() else ""
+            val manuallyDisconnected = if (ownerId.isNotBlank()) {
+                derivPrefs.getBoolean("user_${ownerId}_manually_disconnected", false)
+            } else true
 
-            val authPrefs = getSharedPreferences(
-                "vi_platform_auth",
-                MODE_PRIVATE
-            )
-
-            val derivPrefs = getSharedPreferences(
-                "deriv_oauth",
-                MODE_PRIVATE
-            )
-
-            val executionMode = settings.getString(
-                "executionMode",
-                "DEMO"
-            ) ?: "DEMO"
-
-            val manuallyDisconnected = settings.getBoolean(
-                "deriv_manually_disconnected",
-                false
-            )
-
-            val platformToken = authPrefs.getString(
-                "mobile_auth_token",
-                ""
-            ).orEmpty()
-
-            val derivToken = derivPrefs.getString(
-                if (executionMode.equals("REAL", true))
-                    "real_token"
-                else
-                    "demo_token",
-                ""
-            ).orEmpty()
-
-            if (
-                !manuallyDisconnected &&
-                platformToken.isNotBlank() &&
-                derivToken.isNotBlank()
-            ) {
-                client.ensureConnectedOnResume(
-                    derivToken,
-                    executionMode
-                )
+            if (platformToken.isNotBlank() && ownerId.isNotBlank()) {
+                setPlatformUser(ownerId)
+                if (!manuallyDisconnected && derivToken.isNotBlank()) {
+                    client.ensureConnectedOnResume(derivToken, executionMode)
+                }
+            } else {
+                setPlatformUser("")
             }
+        } else {
+            val requestedOwner = intent.getStringExtra(EXTRA_PLATFORM_USER_ID).orEmpty()
+            if (requestedOwner.isNotBlank()) setPlatformUser(requestedOwner)
         }
 
         return START_STICKY
@@ -242,6 +233,7 @@ class DerivConnectionService : Service() {
     }
 
     companion object {
+        const val EXTRA_PLATFORM_USER_ID = "za.co.volatilitiesindicator.app.EXTRA_PLATFORM_USER_ID"
         const val CHANNEL_ID = "deriv_connection_service"
         const val NOTIFICATION_ID = 7401
                 const val ACTION_BOOT_RECONNECT = "za.co.volatilitiesindicator.app.ACTION_BOOT_RECONNECT"
