@@ -210,6 +210,38 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val tradeTargetViews = mutableMapOf<String, TextView>()
     private val tradeEntryBarrierViews = mutableMapOf<String, TextView>()
     private val tradeExpiryViews = mutableMapOf<String, TextView>()
+    private val tradeCountdownViews = mutableMapOf<String, TextView>()
+    private val tradeCountdownHandler = Handler(Looper.getMainLooper())
+    private val tradeCountdownTask = object : Runnable {
+        override fun run() {
+            if (selectedTab != "Trade") return
+
+            val now = System.currentTimeMillis() / 1000L
+            tradeCountdownViews.forEach { (localId, view) ->
+                val position = positions[localId]
+                when {
+                    position == null || position.status == "CLOSED" -> {
+                        view.text = "TIME REMAINING: CLOSED"
+                    }
+                    position.expiryAt <= 0L -> {
+                        view.text = "TIME REMAINING: Awaiting Deriv expiry"
+                    }
+                    else -> {
+                        val remaining = (position.expiryAt - now).coerceAtLeast(0L)
+                        val hours = remaining / 3600L
+                        val minutes = (remaining % 3600L) / 60L
+                        val seconds = remaining % 60L
+                        view.text = String.format(
+                            Locale.US,
+                            "TIME REMAINING: %02d:%02d:%02d",
+                            hours, minutes, seconds
+                        )
+                    }
+                }
+            }
+            tradeCountdownHandler.postDelayed(this, 1000L)
+        }
+    }
     private val insufficientFundsNotified = mutableSetOf<String>()
     private val lastExecutedSignalEpoch = mutableMapOf<String, Long>()
 
@@ -707,11 +739,16 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         // Flush the complete trade ledger whenever the activity leaves the foreground.
         savePositions()
         saveNotifications()
+        tradeCountdownHandler.removeCallbacks(tradeCountdownTask)
         super.onPause()
     }
 
     override fun onResume() {
         super.onResume()
+        if (selectedTab == "Trade" && tradeCountdownViews.isNotEmpty()) {
+            tradeCountdownHandler.removeCallbacks(tradeCountdownTask)
+            tradeCountdownHandler.post(tradeCountdownTask)
+        }
         if (!platformAuthenticated) return
         val previousMode = executionMode
         val ownerId = platformUserId
@@ -748,6 +785,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     override fun onDestroy() {
         candleRefreshHandler.removeCallbacks(candleRefreshTask)
+        tradeCountdownHandler.removeCallbacks(tradeCountdownTask)
         derivService?.detachActivity(this)
         if (serviceBound) {
             try { unbindService(serviceConnection) } catch (_: Exception) {}
@@ -759,6 +797,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     override fun onConnecting(message: String) {
         runOnUiThread {
             accountConnected = false
+            accountBalanceLabel = "Balance loading…"
+            availableBalance = 0.0
+            accountBalanceView?.text = accountBalanceLabel
             accountStatusView?.text = message
             accountStatusView?.setTextColor(amber)
             if (selectedTab == "Accounts") render()
@@ -776,6 +817,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         executionMode = if (accountType.equals("REAL", true)) "REAL" else "DEMO"
         accountLabel = "$accountId ($accountType)"
         addNotification("Accounts", "Deriv account connected", "$accountLabel is connected.")
+        // Clear the previous account's displayed balance until this account responds.
+        accountBalanceLabel = "Balance loading…"
+        availableBalance = 0.0
+        accountBalanceView?.text = accountBalanceLabel
+        derivService?.client?.requestBalance()
         derivService?.client?.requestOpenTrades()
         // Re-check already-qualified MSS/CHOCH against any waiting closed original
         // immediately after the execution account reconnects.
@@ -805,7 +851,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
         runOnUiThread {
             accountBalanceView?.text = accountBalanceLabel
-            renderIfHome()
+            if (selectedTab == "Accounts") {
+                render()
+            } else {
+                renderIfHome()
+            }
         }
     }
 
@@ -2054,6 +2104,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         tradeTargetViews.clear()
         tradeEntryBarrierViews.clear()
         tradeExpiryViews.clear()
+        tradeCountdownViews.clear()
+        tradeCountdownHandler.removeCallbacks(tradeCountdownTask)
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -2297,6 +2349,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     val expiryView = text("EXPIRY: $expiryText", 12f, blue, true)
                     tradeExpiryViews[p.localId] = expiryView
                     c.addView(expiryView)
+
+                    val countdownView = text("TIME REMAINING: Calculating…", 15f, gold, true)
+                    tradeCountdownViews[p.localId] = countdownView
+                    c.addView(countdownView)
+
                     c.addView(text("Stake: ${formatMoney(p.stake)}", 13f, gold))
 
                     val statusView = text("Status: ${p.status}", 13f,
@@ -2366,6 +2423,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
         tradeStatusView = text(if (accountConnected) "EXECUTION CONNECTED" else "CONNECT A DERIV ACCOUNT TO ENABLE EXECUTION", 12f, if (accountConnected) green else amber, true)
         content.addView(tradeStatusView)
+        tradeCountdownHandler.removeCallbacks(tradeCountdownTask)
+        tradeCountdownHandler.post(tradeCountdownTask)
     }
 
     private fun updateTradePositionViews(position: Position) {
@@ -2397,7 +2456,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         deriv.addView(space(6))
         deriv.addView(text("Account mode: $executionMode", 13f, if (executionMode == "REAL") blue else red, true))
         deriv.addView(text(if (accountConnected) accountLabel else "Connection: Disconnected", 13f, Color.WHITE))
-        deriv.addView(text(accountBalanceLabel, 13f, blue))
+        accountBalanceView = text(accountBalanceLabel, 13f, blue)
+        deriv.addView(accountBalanceView)
         val pl = accountProfitLoss()
         accountOpenPlView = text("OPEN TRADE P/L: ${formatMoney(pl.first)}", 13f, if (pl.first >= 0) green else red, true)
         accountClosedPlView = text("CLOSED TRADE P/L: ${formatMoney(pl.second)}", 13f, if (pl.second >= 0) green else red, true)
