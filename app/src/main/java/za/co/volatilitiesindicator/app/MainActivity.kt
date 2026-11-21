@@ -2876,27 +2876,22 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             addProfileField(item, "Daily projected growth", "R${moneyText(inv.optDouble("daily_growth_amount"))}")
             addProfileField(item, "Projected growth to date", "R${moneyText(inv.optDouble("accrued_projected_growth"))}")
             addProfileField(item, "Potential projected return", "R${moneyText(inv.optDouble("potential_return"))}")
-
-            // Withdrawal is always visible. It becomes actionable only after 50%
-            // of the investment's actual duration has elapsed from its start date.
-            val withdrawalStatus = inv.optString("withdrawal_status").trim()
-            val eligibility = investmentWithdrawalEligibility(inv)
+            val withdrawalStatus = inv.optString("withdrawal_status").trim().uppercase(Locale.US)
+            val investmentApproved = inv.optString("status").equals("DEMO_APPROVED", true)
+            val withdrawalEligible = investmentApproved && inv.optBoolean("withdrawal_available")
+            val noPreviousRequest = withdrawalStatus.isBlank()
             val withdrawalButton = actionButton(
                 when {
-                    withdrawalStatus.isNotBlank() -> "WITHDRAWAL: ${friendlyInvestmentStatus(withdrawalStatus)}"
-                    eligibility.first -> "REQUEST WITHDRAWAL"
-                    else -> "WITHDRAWAL LOCKED · ${eligibility.second}"
+                    withdrawalStatus == "PENDING_DEMO_REVIEW" -> "WITHDRAWAL REQUEST UNDER REVIEW"
+                    withdrawalStatus == "DEMO_APPROVED_NOT_PAID" -> "WITHDRAWAL REVIEW APPROVED"
+                    withdrawalStatus == "DEMO_REJECTED" -> "WITHDRAWAL REVIEW REJECTED"
+                    withdrawalEligible -> "REQUEST WITHDRAWAL REVIEW"
+                    else -> "WITHDRAWAL AVAILABLE AFTER 50% OF DURATION"
                 }, false
-            ) {
-                if (eligibility.first && withdrawalStatus.isBlank()) showWithdrawalRequestDialog(inv)
-            }
-            val canRequest = eligibility.first && withdrawalStatus.isBlank()
-            withdrawalButton.isEnabled = canRequest
-            withdrawalButton.alpha = if (canRequest) 1.0f else 0.55f
+            ) { showWithdrawalRequestDialog(inv) }
+            withdrawalButton.isEnabled = withdrawalEligible && noPreviousRequest
+            withdrawalButton.alpha = if (withdrawalButton.isEnabled) 1.0f else 0.55f
             item.addView(withdrawalButton)
-            if (withdrawalStatus.isBlank() && !eligibility.first) {
-                item.addView(text("Withdrawal becomes available after 50% of the investment period has elapsed. ${eligibility.second}", 12f, amber))
-            }
             body.addView(item); body.addView(space(10))
         }
     }
@@ -2908,38 +2903,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         "DEMO_APPROVED_NOT_PAID" -> "WITHDRAWAL REVIEW APPROVED"
         "DEMO_REJECTED" -> "WITHDRAWAL REVIEW REJECTED"
         else -> status.replace("DEMO_", "").replace('_', ' ').uppercase(Locale.US)
-    }
-
-    /** Returns (eligible, remaining-time label). Server-side validation is also required. */
-    private fun investmentWithdrawalEligibility(inv: JSONObject): Pair<Boolean, String> {
-        val startText = inv.optString("investment_date").trim()
-        val durationDays = inv.optInt("duration_days", 0)
-        if (startText.isBlank() || startText.equals("null", true) || durationDays <= 0) {
-            return false to "Waiting for the confirmed investment start date."
-        }
-        val patterns = listOf(
-            "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
-            "yyyy-MM-dd'T'HH:mm:ssXXX",
-            "yyyy-MM-dd'T'HH:mm:ss'Z'",
-            "yyyy-MM-dd HH:mm:ss",
-            "yyyy-MM-dd"
-        )
-        val startMillis = patterns.firstNotNullOfOrNull { pattern ->
-            try {
-                java.text.SimpleDateFormat(pattern, Locale.US).apply {
-                    isLenient = false
-                    timeZone = TimeZone.getTimeZone("Africa/Johannesburg")
-                }.parse(startText)?.time
-            } catch (_: Exception) { null }
-        } ?: return false to "The investment start date is not valid."
-        val unlockMillis = startMillis + durationDays.toLong() * 12L * 60L * 60L * 1000L
-        val remaining = unlockMillis - System.currentTimeMillis()
-        if (remaining <= 0L) return true to "Available"
-        val hours = (remaining + 3_599_999L) / 3_600_000L
-        val daysLeft = hours / 24L
-        val hoursLeft = hours % 24L
-        val label = if (daysLeft > 0L) "${daysLeft}d ${hoursLeft}h remaining" else "${hoursLeft}h remaining"
-        return false to label
     }
 
     private fun showWithdrawalRequestDialog(inv: JSONObject) {
