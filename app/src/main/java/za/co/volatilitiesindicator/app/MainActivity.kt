@@ -129,6 +129,17 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private var platformUserRole = "user"
     private val accountGatePending = mutableSetOf<String>()
     private var platformUser = JSONObject()
+
+    // Deriv credentials are isolated by the authenticated Volatilities Indicator user ID.
+    private val platformUserId: String
+        get() = platformUser.optString("id").trim()
+            .ifBlank { platformPrefs.getString("active_user_id", "").orEmpty() }
+
+    private fun derivTokenKey(mode: String, userId: String = platformUserId): String =
+        "user_${userId}_${if (mode.equals("REAL", true)) "real" else "demo"}_token"
+
+    private fun derivModeKey(userId: String = platformUserId): String =
+        "user_${userId}_oauth_mode"
     private var oauthState = ""
     private var codeVerifier = ""
     private var feedPillView: TextView? = null
@@ -210,13 +221,16 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 ?: return
             derivService = service
             service.attachActivity(this@MainActivity)
-            // Public market feed: does not require signing in to a Deriv account.
+            // Bind the persistent Deriv client to this platform user's identity before
+            // reading connection state. A different owner forces the old socket closed.
+            val ownerId = if (platformAuthenticated) platformUserId else ""
+            service.setPlatformUser(ownerId)
+            // Public market feed remains available independently of account authentication.
             service.client.requestHistoricalCandles()
             candleRefreshHandler.removeCallbacks(candleRefreshTask)
             candleRefreshHandler.postDelayed(candleRefreshTask, 60_000L)
-            executionMode = if (prefs.getString("oauth_mode", executionMode).equals("REAL", true)) "REAL" else "DEMO"
-            val tokenKey = if (executionMode == "REAL") "real_token" else "demo_token"
-            val savedToken = prefs.getString(tokenKey, "").orEmpty()
+            executionMode = if (ownerId.isNotBlank() && prefs.getString(derivModeKey(ownerId), "DEMO").equals("REAL", true)) "REAL" else "DEMO"
+            val savedToken = if (ownerId.isNotBlank()) prefs.getString(derivTokenKey(executionMode, ownerId), "").orEmpty() else ""
 
             // The foreground service owns the Deriv client, so an Activity recreation
             // (including device rotation) must restore the UI from the existing socket
@@ -298,7 +312,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         } else {
             showPlatformAuthScreen(false)
         }
-        handleOAuthCallback(intent)
     }
 
     private fun verifyPlatformSession() {
@@ -323,6 +336,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     if (response.isSuccessful && json.optBoolean("ok")) {
                         platformAuthenticated = true
                         platformUser = json.optJSONObject("user") ?: JSONObject()
+                        val verifiedUserId = platformUser.optString("id").trim()
+                        if (verifiedUserId.isNotBlank()) {
+                            platformPrefs.edit().putString("active_user_id", verifiedUserId).apply()
+                            derivService?.setPlatformUser(verifiedUserId)
+                        }
                         platformUserName = platformUser.optString("full_name")
                         platformUserRole = platformUser.optString("role", "user").lowercase(Locale.US)
                         when (platformUserRole) {
@@ -330,8 +348,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                             "investor" -> showInvestorDerivScreen()
                             else -> openUserProfile()
                         }
+                        handleOAuthCallback(intent)
                     } else {
-                        platformPrefs.edit().remove("token").apply()
+                        derivService?.setPlatformUser("")
+                        platformPrefs.edit().remove("token").remove("active_user_id").apply()
                         platformAuthToken = ""
                         platformAuthenticated = false
                         showPlatformAuthScreen(false, json.optString("message", "Please sign in again."))
@@ -379,6 +399,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                             platformPrefs.edit().putString("token", platformAuthToken).apply()
                             platformAuthenticated = platformAuthToken.isNotBlank()
                             platformUser = json.optJSONObject("user") ?: JSONObject()
+                            val loggedInUserId = platformUser.optString("id").trim()
+                            if (loggedInUserId.isNotBlank()) {
+                                platformPrefs.edit().putString("active_user_id", loggedInUserId).apply()
+                                derivService?.setPlatformUser(loggedInUserId)
+                            }
                             platformUserName = platformUser.optString("full_name")
                             platformUserRole = platformUser.optString("role", "user").lowercase(Locale.US)
                             if (platformAuthenticated) {
@@ -649,12 +674,20 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             override fun onFailure(call: Call, e: IOException) { }
             override fun onResponse(call: Call, response: Response) { response.close() }
         })
+        // Close the current user's live connection before removing the active identity.
+        derivService?.setPlatformUser("")
         platformPrefs.edit().clear().apply()
         platformAuthToken = ""; platformAuthenticated = false
         platformUser = JSONObject(); platformUserName = ""; platformUserRole = "user"
-        derivService?.client?.disconnectAccount()
         accountConnected = false
-        prefs.edit().remove("demo_token").remove("real_token").apply()
+        accountLabel = "Not connected"
+        accountBalanceLabel = "Balance unavailable"
+        availableBalance = 0.0
+        // Remove legacy device-wide credentials; they cannot safely be assigned to a user.
+        prefs.edit()
+            .remove("demo_token").remove("real_token")
+            .remove("oauth_state").remove("code_verifier").remove("oauth_user_id")
+            .apply()
         showPlatformAuthScreen(false, "You have signed out.")
     }
 
@@ -662,7 +695,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         super.onNewIntent(intent)
         setIntent(intent)
         handleNotificationIntent(intent)
-        handleOAuthCallback(intent)
+        if (platformAuthenticated) {
+            handleOAuthCallback(intent)
+        } else if (platformAuthToken.isNotBlank()) {
+            verifyPlatformSession()
+        }
     }
 
     override fun onPause() {
@@ -677,10 +714,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         super.onResume()
         if (!platformAuthenticated) return
         val previousMode = executionMode
-        executionMode = if (prefs.getString("oauth_mode", executionMode).equals("REAL", true)) "REAL" else "DEMO"
+        val ownerId = platformUserId
+        if (ownerId.isBlank()) return
+        executionMode = if (prefs.getString(derivModeKey(ownerId), "DEMO").equals("REAL", true)) "REAL" else "DEMO"
         if (previousMode != executionMode && ::content.isInitialized && accountConnected) render()
-        val tokenKey = if (executionMode == "REAL") "real_token" else "demo_token"
-        val savedToken = prefs.getString(tokenKey, "").orEmpty()
+        derivService?.setPlatformUser(ownerId)
+        val savedToken = prefs.getString(derivTokenKey(executionMode, ownerId), "").orEmpty()
         if (savedToken.isNotBlank() && derivService != null &&
             derivService?.client?.isConnected() != true &&
             derivService?.client?.isConnecting() != true
@@ -691,7 +730,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     private fun startMarketFeedService() {
         if (serviceBound) return
-        val intent = Intent(this, DerivConnectionService::class.java)
+        val intent = Intent(this, DerivConnectionService::class.java).apply {
+            putExtra(DerivConnectionService.EXTRA_PLATFORM_USER_ID, if (platformAuthenticated) platformUserId else "")
+        }
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 startForegroundService(intent)
@@ -725,8 +766,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     override fun onConnected(accountId: String, accountType: String) {
-        if (!platformAuthenticated) {
-            derivService?.client?.disconnect()
+        if (!platformAuthenticated || platformUserId.isBlank() || derivService?.getPlatformUserId() != platformUserId) {
+            derivService?.client?.disconnectAccount()
             accountConnected = false
             runOnUiThread { showPlatformAuthScreen(false, "Please sign in to your Volatilities Indicator account first.") }
             return
@@ -1781,7 +1822,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             .setTitle("Connect Deriv account")
             .setItems(modes) { _, which ->
                 executionMode = if (which == 1) "REAL" else "DEMO"
-                prefs.edit().putString("oauth_mode", executionMode).apply()
+                val ownerId = platformUserId
+                if (ownerId.isNotBlank()) prefs.edit().putString(derivModeKey(ownerId), executionMode).apply()
                 render()
                 beginDerivConnection()
             }
@@ -1790,8 +1832,14 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     private fun beginDerivConnection() {
-        val tokenKey = if (executionMode == "REAL") "real_token" else "demo_token"
-        val savedToken = prefs.getString(tokenKey, "").orEmpty()
+        val ownerId = platformUserId
+        if (!platformAuthenticated || ownerId.isBlank()) {
+            toast("Sign in to your Volatilities Indicator account first.")
+            return
+        }
+        prefs.edit().remove("user_${ownerId}_manually_disconnected").apply()
+        derivService?.setPlatformUser(ownerId)
+        val savedToken = prefs.getString(derivTokenKey(executionMode, ownerId), "").orEmpty()
         if (savedToken.isNotBlank()) {
             connectWithToken(savedToken)
         } else {
@@ -1800,12 +1848,19 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     private fun startDerivOAuth() {
+        val ownerId = platformUserId
+        if (!platformAuthenticated || ownerId.isBlank()) {
+            toast("Sign in to your Volatilities Indicator account first.")
+            return
+        }
         oauthState = "android-" + UUID.randomUUID().toString()
         codeVerifier = generateCodeVerifier()
         prefs.edit()
             .putString("oauth_state", oauthState)
             .putString("code_verifier", codeVerifier)
             .putString("oauth_mode", executionMode)
+            .putString(derivModeKey(ownerId), executionMode)
+            .putString("oauth_user_id", ownerId)
             .apply()
 
         val challenge = generateCodeChallenge(codeVerifier)
@@ -1839,16 +1894,29 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val code = data.getQueryParameter("code")
         val returnedState = data.getQueryParameter("state")
         val expectedState = prefs.getString("oauth_state", "").orEmpty()
+        val oauthOwnerId = prefs.getString("oauth_user_id", "").orEmpty()
+        val activeOwnerId = platformPrefs.getString("active_user_id", "").orEmpty()
+        if (!platformAuthenticated || oauthOwnerId.isBlank() || activeOwnerId.isBlank() ||
+            oauthOwnerId != activeOwnerId || oauthOwnerId != platformUserId) {
+            toast("Deriv sign-in cancelled: the platform user who started this connection is no longer signed in.")
+            return
+        }
         if (code.isNullOrBlank() || expectedState.isBlank() || returnedState != expectedState) {
             toast("Deriv sign-in failed: authorization code or security state is invalid.")
             return
         }
 
-        executionMode = if (prefs.getString("oauth_mode", "DEMO").equals("REAL", true)) "REAL" else "DEMO"
+        executionMode = if (prefs.getString(derivModeKey(oauthOwnerId), "DEMO").equals("REAL", true)) "REAL" else "DEMO"
         exchangeOAuthCode(code)
     }
 
     private fun exchangeOAuthCode(code: String) {
+        val ownerId = prefs.getString("oauth_user_id", "").orEmpty()
+        val exchangeMode = executionMode
+        if (ownerId.isBlank() || ownerId != platformPrefs.getString("active_user_id", "").orEmpty()) {
+            toast("Deriv sign-in cancelled because the platform account changed.")
+            return
+        }
         val verifier = prefs.getString("code_verifier", "").orEmpty()
         if (verifier.isBlank()) {
             toast("Deriv sign-in failed: PKCE verifier is missing.")
@@ -1858,7 +1926,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val body = FormBody.Builder()
             .add("grant_type", "authorization_code")
             .add("code", code)
-            .add("client_id", DerivApiClient.clientId(executionMode))
+            .add("client_id", DerivApiClient.clientId(exchangeMode))
             .add("redirect_uri", DerivApiClient.OAUTH_REDIRECT_URI)
             .add("code_verifier", verifier)
             .build()
@@ -1888,19 +1956,34 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     return
                 }
 
-                val tokenKey = if (executionMode == "REAL") "real_token" else "demo_token"
+                if (ownerId != platformPrefs.getString("active_user_id", "").orEmpty()) {
+                    runOnUiThread { toast("Deriv token was not saved because the platform user changed during authorization.") }
+                    return
+                }
+                val tokenKey = derivTokenKey(exchangeMode, ownerId)
                 prefs.edit()
                     .putString(tokenKey, token)
                     .remove("oauth_state")
                     .remove("code_verifier")
+                    .remove("oauth_user_id")
                     .apply()
 
-                runOnUiThread { connectWithToken(token) }
+                runOnUiThread {
+                    if (ownerId == platformUserId && platformAuthenticated) {
+                        executionMode = exchangeMode
+                        connectWithToken(token)
+                    }
+                }
             }
         })
     }
 
     private fun connectWithToken(token: String) {
+        val ownerId = platformUserId
+        if (!platformAuthenticated || ownerId.isBlank()) {
+            toast("Sign in to your Volatilities Indicator account first.")
+            return
+        }
         if (token.isBlank()) {
             toast("Deriv access token is empty.")
             return
@@ -1912,6 +1995,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             return
         }
 
+        service.setPlatformUser(ownerId)
         accountConnected = false
         accountLabel = "Connecting…"
         accountBalanceLabel = "Balance loading…"
@@ -1920,10 +2004,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     private fun disconnectDerivAccount() {
-        val tokenKey = if (executionMode == "REAL") "real_token" else "demo_token"
-        prefs.edit()
-            .remove(tokenKey)
-            .apply()
+        val ownerId = platformUserId
+        if (ownerId.isNotBlank()) {
+            prefs.edit()
+                .remove(derivTokenKey(executionMode, ownerId))
+                .putBoolean("user_${ownerId}_manually_disconnected", true)
+                .apply()
+        }
         try { derivService?.client?.disconnectAccount() } catch (_: Exception) {}
         accountConnected = false
         accountLabel = "Not connected"
