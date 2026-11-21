@@ -1466,12 +1466,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             val lockedNetProfit = roundStake(
                 position.stake * position.lockedProfitPercent / 100.0
             )
-            val hitProfitTarget = position.profit >= roundStake(position.stake * 0.99)
             val reversedToLock = position.trailingActivated &&
                 position.lockedProfitPercent >= 10 &&
                 position.profit < position.peakProfit &&
                 position.profit <= lockedNetProfit
-            if ((hitProfitTarget || reversedToLock) && position.canSell && position.contractId > 0L) {
+            if (reversedToLock && position.canSell && position.contractId > 0L) {
                 closeRunningPosition(position)
             }
         }
