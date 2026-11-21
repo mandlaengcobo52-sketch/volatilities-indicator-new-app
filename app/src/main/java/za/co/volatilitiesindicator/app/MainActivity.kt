@@ -87,6 +87,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val mssStatusViews = mutableMapOf<String, TextView>()
     private val chochStatusViews = mutableMapOf<String, TextView>()
     private val retestStatusViews = mutableMapOf<String, TextView>()
+    // Last confirmed retest details remain visible after the signal is consumed by execution.
+    private val confirmedRetestDetails = mutableMapOf<String, String>()
 
     private data class AppNotification(
         val id: Long,
@@ -210,38 +212,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val tradeTargetViews = mutableMapOf<String, TextView>()
     private val tradeEntryBarrierViews = mutableMapOf<String, TextView>()
     private val tradeExpiryViews = mutableMapOf<String, TextView>()
-    private val tradeCountdownViews = mutableMapOf<String, TextView>()
-    private val tradeCountdownHandler = Handler(Looper.getMainLooper())
-    private val tradeCountdownTask = object : Runnable {
-        override fun run() {
-            if (selectedTab != "Trade") return
-
-            val now = System.currentTimeMillis() / 1000L
-            tradeCountdownViews.forEach { (localId, view) ->
-                val position = positions[localId]
-                when {
-                    position == null || position.status == "CLOSED" -> {
-                        view.text = "TIME REMAINING: CLOSED"
-                    }
-                    position.expiryAt <= 0L -> {
-                        view.text = "TIME REMAINING: Awaiting Deriv expiry"
-                    }
-                    else -> {
-                        val remaining = (position.expiryAt - now).coerceAtLeast(0L)
-                        val hours = remaining / 3600L
-                        val minutes = (remaining % 3600L) / 60L
-                        val seconds = remaining % 60L
-                        view.text = String.format(
-                            Locale.US,
-                            "TIME REMAINING: %02d:%02d:%02d",
-                            hours, minutes, seconds
-                        )
-                    }
-                }
-            }
-            tradeCountdownHandler.postDelayed(this, 1000L)
-        }
-    }
     private val insufficientFundsNotified = mutableSetOf<String>()
     private val lastExecutedSignalEpoch = mutableMapOf<String, Long>()
 
@@ -739,16 +709,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         // Flush the complete trade ledger whenever the activity leaves the foreground.
         savePositions()
         saveNotifications()
-        tradeCountdownHandler.removeCallbacks(tradeCountdownTask)
         super.onPause()
     }
 
     override fun onResume() {
         super.onResume()
-        if (selectedTab == "Trade" && tradeCountdownViews.isNotEmpty()) {
-            tradeCountdownHandler.removeCallbacks(tradeCountdownTask)
-            tradeCountdownHandler.post(tradeCountdownTask)
-        }
         if (!platformAuthenticated) return
         val previousMode = executionMode
         val ownerId = platformUserId
@@ -785,7 +750,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     override fun onDestroy() {
         candleRefreshHandler.removeCallbacks(candleRefreshTask)
-        tradeCountdownHandler.removeCallbacks(tradeCountdownTask)
         derivService?.detachActivity(this)
         if (serviceBound) {
             try { unbindService(serviceConnection) } catch (_: Exception) {}
@@ -797,9 +761,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     override fun onConnecting(message: String) {
         runOnUiThread {
             accountConnected = false
-            accountBalanceLabel = "Balance loading…"
-            availableBalance = 0.0
-            accountBalanceView?.text = accountBalanceLabel
             accountStatusView?.text = message
             accountStatusView?.setTextColor(amber)
             if (selectedTab == "Accounts") render()
@@ -817,11 +778,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         executionMode = if (accountType.equals("REAL", true)) "REAL" else "DEMO"
         accountLabel = "$accountId ($accountType)"
         addNotification("Accounts", "Deriv account connected", "$accountLabel is connected.")
-        // Clear the previous account's displayed balance until this account responds.
-        accountBalanceLabel = "Balance loading…"
-        availableBalance = 0.0
-        accountBalanceView?.text = accountBalanceLabel
-        derivService?.client?.requestBalance()
         derivService?.client?.requestOpenTrades()
         // Re-check already-qualified MSS/CHOCH against any waiting closed original
         // immediately after the execution account reconnects.
@@ -851,11 +807,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
         runOnUiThread {
             accountBalanceView?.text = accountBalanceLabel
-            if (selectedTab == "Accounts") {
-                render()
-            } else {
-                renderIfHome()
-            }
+            renderIfHome()
         }
     }
 
@@ -1371,13 +1323,26 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             setTextColor(if (recoveryMss[symbol].isNullOrBlank()) amber else green)
         }
         chochStatusViews[symbol]?.apply {
-            text = signalQualificationText(recoveryChoch[symbol])
-            setTextColor(if (recoveryChoch[symbol].isNullOrBlank()) amber else green)
+            val direction = recoveryChoch[symbol]
+            val pendingDirection = pendingChochDirection[symbol]
+            val level = pendingChochLevel[symbol]
+            val epoch = pendingChochEpoch[symbol] ?: recoveryChochEpoch[symbol] ?: 0L
+            text = if (!direction.isNullOrBlank() && level != null && epoch > 0L) {
+                "QUALIFIED · $direction\nCHOCH LEVEL: ${formatPrice(level)}\nCONFIRMATION CANDLE: ${formatSignalTime(epoch)}"
+            } else signalQualificationText(direction)
+            setTextColor(if (direction.isNullOrBlank()) amber else green)
         }
         retestStatusViews[symbol]?.apply {
             val direction = pendingChochDirection[symbol]
-            text = if (direction.isNullOrBlank()) "NOT QUALIFIED" else "WAITING FOR TOUCH OR PENETRATION · $direction"
-            setTextColor(if (direction.isNullOrBlank()) amber else amber)
+            val level = pendingChochLevel[symbol]
+            val confirmed = confirmedRetestDetails[symbol]
+            text = when {
+                !confirmed.isNullOrBlank() -> confirmed
+                !direction.isNullOrBlank() && level != null ->
+                    "WAITING FOR RETEST · $direction\nRETEST LEVEL: ${formatPrice(level)}\nRETEST CANDLE: NOT YET CONFIRMED"
+                else -> "NOT QUALIFIED · WAITING FOR MSS + CHOCH"
+            }
+            setTextColor(if (!confirmed.isNullOrBlank()) green else amber)
         }
     }
 
@@ -1775,6 +1740,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
         if (!retestConfirmed) return
 
+        confirmedRetestDetails[symbol] = "RETESTED · $direction\nCHOCH LEVEL: ${formatPrice(level)}\nRETEST CANDLE TIME: ${formatSignalTime(last.epoch)}\nCANDLE LOW: ${formatPrice(last.low)}\nCANDLE HIGH: ${formatPrice(last.high)}\nCANDLE CLOSE: ${formatPrice(last.close)}"
+        runOnUiThread { updateRecoveryStatusView(symbol) }
+
         val active = positions.values.firstOrNull {
             it.symbol == symbol && it.status !in setOf("CLOSED", "BUY FAILED", "PROPOSAL FAILED") &&
                 !it.status.startsWith("ERROR")
@@ -2104,8 +2072,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         tradeTargetViews.clear()
         tradeEntryBarrierViews.clear()
         tradeExpiryViews.clear()
-        tradeCountdownViews.clear()
-        tradeCountdownHandler.removeCallbacks(tradeCountdownTask)
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -2261,17 +2227,26 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             indexCard.addView(mssView)
             indexCard.addView(space(5))
             indexCard.addView(text("CHOCH QUALIFICATION", 10f, whiteText, true))
-            val chochView = text(signalQualificationText(recoveryChoch[symbol]), 11f,
+            val pendingLevel = pendingChochLevel[symbol]
+            val pendingEpoch = pendingChochEpoch[symbol] ?: recoveryChochEpoch[symbol] ?: 0L
+            val chochInitialText = if (!recoveryChoch[symbol].isNullOrBlank() && pendingLevel != null && pendingEpoch > 0L) {
+                "QUALIFIED · ${recoveryChoch[symbol]}\nCHOCH LEVEL: ${formatPrice(pendingLevel)}\nCONFIRMATION CANDLE: ${formatSignalTime(pendingEpoch)}"
+            } else signalQualificationText(recoveryChoch[symbol])
+            val chochView = text(chochInitialText, 11f,
                 if (recoveryChoch[symbol].isNullOrBlank()) amber else green, true)
             chochStatusViews[symbol] = chochView
             indexCard.addView(chochView)
             indexCard.addView(space(5))
             indexCard.addView(text("RETEST QUALIFICATION", 10f, whiteText, true))
             val retestDirection = pendingChochDirection[symbol]
-            val retestView = text(
-                if (retestDirection.isNullOrBlank()) "NOT QUALIFIED" else "WAITING FOR TOUCH OR PENETRATION · $retestDirection",
-                11f, amber, true
-            )
+            val retestLevel = pendingChochLevel[symbol]
+            val retestInitialText = when {
+                !confirmedRetestDetails[symbol].isNullOrBlank() -> confirmedRetestDetails[symbol]!!
+                !retestDirection.isNullOrBlank() && retestLevel != null -> "WAITING FOR RETEST · $retestDirection\nRETEST LEVEL: ${formatPrice(retestLevel)}\nRETEST CANDLE: NOT YET CONFIRMED"
+                else -> "NOT QUALIFIED · WAITING FOR MSS + CHOCH"
+            }
+            val retestView = text(retestInitialText, 11f,
+                if (retestDirection.isNullOrBlank()) amber else amber, true)
             retestStatusViews[symbol] = retestView
             indexCard.addView(retestView)
             content.addView(indexCard)
@@ -2349,11 +2324,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     val expiryView = text("EXPIRY: $expiryText", 12f, blue, true)
                     tradeExpiryViews[p.localId] = expiryView
                     c.addView(expiryView)
-
-                    val countdownView = text("TIME REMAINING: Calculating…", 15f, gold, true)
-                    tradeCountdownViews[p.localId] = countdownView
-                    c.addView(countdownView)
-
                     c.addView(text("Stake: ${formatMoney(p.stake)}", 13f, gold))
 
                     val statusView = text("Status: ${p.status}", 13f,
@@ -2423,8 +2393,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
         tradeStatusView = text(if (accountConnected) "EXECUTION CONNECTED" else "CONNECT A DERIV ACCOUNT TO ENABLE EXECUTION", 12f, if (accountConnected) green else amber, true)
         content.addView(tradeStatusView)
-        tradeCountdownHandler.removeCallbacks(tradeCountdownTask)
-        tradeCountdownHandler.post(tradeCountdownTask)
     }
 
     private fun updateTradePositionViews(position: Position) {
@@ -2456,8 +2424,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         deriv.addView(space(6))
         deriv.addView(text("Account mode: $executionMode", 13f, if (executionMode == "REAL") blue else red, true))
         deriv.addView(text(if (accountConnected) accountLabel else "Connection: Disconnected", 13f, Color.WHITE))
-        accountBalanceView = text(accountBalanceLabel, 13f, blue)
-        deriv.addView(accountBalanceView)
+        deriv.addView(text(accountBalanceLabel, 13f, blue))
         val pl = accountProfitLoss()
         accountOpenPlView = text("OPEN TRADE P/L: ${formatMoney(pl.first)}", 13f, if (pl.first >= 0) green else red, true)
         accountClosedPlView = text("CLOSED TRADE P/L: ${formatMoney(pl.second)}", 13f, if (pl.second >= 0) green else red, true)
@@ -2936,22 +2903,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             addProfileField(item, "Daily projected growth", "R${moneyText(inv.optDouble("daily_growth_amount"))}")
             addProfileField(item, "Projected growth to date", "R${moneyText(inv.optDouble("accrued_projected_growth"))}")
             addProfileField(item, "Potential projected return", "R${moneyText(inv.optDouble("potential_return"))}")
-            val withdrawalStatus = inv.optString("withdrawal_status").trim().uppercase(Locale.US)
-            val investmentApproved = inv.optString("status").equals("DEMO_APPROVED", true)
-            val withdrawalEligible = investmentApproved && inv.optBoolean("withdrawal_available")
-            val noPreviousRequest = withdrawalStatus.isBlank()
-            val withdrawalButton = actionButton(
-                when {
-                    withdrawalStatus == "PENDING_DEMO_REVIEW" -> "WITHDRAWAL REQUEST UNDER REVIEW"
-                    withdrawalStatus == "DEMO_APPROVED_NOT_PAID" -> "WITHDRAWAL REVIEW APPROVED"
-                    withdrawalStatus == "DEMO_REJECTED" -> "WITHDRAWAL REVIEW REJECTED"
-                    withdrawalEligible -> "REQUEST WITHDRAWAL REVIEW"
-                    else -> "WITHDRAWAL AVAILABLE AFTER 50% OF DURATION"
-                }, false
-            ) { showWithdrawalRequestDialog(inv) }
-            withdrawalButton.isEnabled = withdrawalEligible && noPreviousRequest
-            withdrawalButton.alpha = if (withdrawalButton.isEnabled) 1.0f else 0.55f
-            item.addView(withdrawalButton)
+            if (inv.optBoolean("withdrawal_available") && inv.optString("withdrawal_status").isBlank()) {
+                item.addView(actionButton("REQUEST WITHDRAWAL REVIEW", false) { showWithdrawalRequestDialog(inv) })
+            }
             body.addView(item); body.addView(space(10))
         }
     }
@@ -2962,7 +2916,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         "PENDING_DEMO_REVIEW" -> "PENDING WITHDRAWAL REVIEW"
         "DEMO_APPROVED_NOT_PAID" -> "WITHDRAWAL REVIEW APPROVED"
         "DEMO_REJECTED" -> "WITHDRAWAL REVIEW REJECTED"
-        else -> status.replace("DEMO_", "").replace('_', ' ').uppercase(Locale.US)
+        else -> status.replace('_', ' ').uppercase(Locale.US)
     }
 
     private fun showWithdrawalRequestDialog(inv: JSONObject) {
@@ -3460,6 +3414,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     private fun formatPrice(value: Double): String =
         String.format(Locale.US, "%,.2f", value)
+
+    private fun formatSignalTime(epochSeconds: Long): String =
+        if (epochSeconds <= 0L) "Unavailable" else
+            java.text.DateFormat.getDateTimeInstance().format(java.util.Date(epochSeconds * 1000L))
 
     private fun dp(value: Int): Int =
         (value * resources.displayMetrics.density).toInt()
