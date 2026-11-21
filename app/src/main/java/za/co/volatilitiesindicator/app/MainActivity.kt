@@ -856,8 +856,14 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 position.openedAt = buy.optLong("purchase_time", System.currentTimeMillis() / 1000L)
                 if (position.contractId <= 0L) { position.status = "BUY FAILED"; return }
                 position.status = "OPEN"
+                // A newly purchased contract must NEVER inherit an active trailing stop.
+                // It remains inactive until this contract's own live P/L reaches +10% of its stake.
+                position.trailingActivated = false
+                position.peakProfit = 0.0
+                position.lockedProfitPercent = 0
+                position.closeReason = ""
                 savePositions()
-                addNotification("Trade", "${displayIndexName(position.symbol)} ${position.role.lowercase(Locale.US)} opened", "${position.direction} contract opened. Stake: ${formatMoney(position.stake)}.")
+                addNotification("Trade", "${displayIndexName(position.symbol)} ${position.role.lowercase(Locale.US)} opened", "${position.direction} contract opened. Stake: ${formatMoney(position.stake)}. Trailing stop is WAITING for this trade to reach +10% profit.")
                 subscribePosition(position.contractId)
                 runOnUiThread {
                     updateMasterDecisionViews(position.symbol)
@@ -1495,8 +1501,16 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         // Trailing activates at +10% of this contract's stake and initially
         // protects +10%. Protection advances in 10-point increments.
         if (!isSold && position.status == "OPEN" && position.stake > 0.0) {
-            if (position.profit >= roundStake(position.stake * 0.10)) {
+            val activationProfit = roundStake(position.stake * 0.10)
+            if (!position.trailingActivated && position.profit >= activationProfit) {
                 position.trailingActivated = true
+                position.peakProfit = position.profit
+                position.lockedProfitPercent = 10
+                addNotification(
+                    "Trade",
+                    "${displayIndexName(position.symbol)} trailing stop activated",
+                    "This ${position.direction} trade reached ${formatMoney(position.profit)} profit, meeting its own +10% activation threshold (${formatMoney(activationProfit)})."
+                )
             }
             if (position.trailingActivated && position.profit > position.peakProfit) {
                 position.peakProfit = position.profit
@@ -2149,9 +2163,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     c.addView(profitView)
 
                     val trailingText = if (p.trailingActivated) {
-                        "TRAILING STOP: ON · PROTECTING ${p.lockedProfitPercent}% (${formatMoney(p.stake * p.lockedProfitPercent / 100.0)})"
+                        "TRAILING STOP: ACTIVE · PROTECTING ${p.lockedProfitPercent}% (${formatMoney(p.stake * p.lockedProfitPercent / 100.0)})"
                     } else {
-                        "TRAILING STOP: ON · WAITING FOR +10% (${formatMoney(p.stake * 0.10)} profit)"
+                        "TRAILING STOP: WAITING · ACTIVATES ONLY AT +10% (${formatMoney(p.stake * 0.10)} profit)"
                     }
                     val trailingView = text(trailingText, 12f, if (p.trailingActivated) green else amber, true)
                     tradeTrailingViews[p.localId] = trailingView
@@ -2218,9 +2232,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
         tradeTrailingViews[position.localId]?.apply {
             text = if (position.trailingActivated) {
-                "TRAILING STOP: ON · PROTECTING ${position.lockedProfitPercent}% (${formatMoney(position.stake * position.lockedProfitPercent / 100.0)})"
+                "TRAILING STOP: ACTIVE · PROTECTING ${position.lockedProfitPercent}% (${formatMoney(position.stake * position.lockedProfitPercent / 100.0)})"
             } else {
-                "TRAILING STOP: ON · WAITING FOR +10% (${formatMoney(position.stake * 0.10)} profit)"
+                "TRAILING STOP: WAITING · ACTIVATES ONLY AT +10% (${formatMoney(position.stake * 0.10)} profit)"
             }
             setTextColor(if (position.trailingActivated) green else amber)
         }
