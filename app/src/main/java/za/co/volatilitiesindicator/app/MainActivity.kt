@@ -1107,7 +1107,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             text = if (unread > 0) "🔔 $unread" else "🔔"
             textSize = 16f
             gravity = Gravity.CENTER
-            setTextColor(gold)
+            setTextColor(red)
             setPadding(dp(13), dp(8), dp(13), dp(8))
             background = rounded(Color.BLACK, lineColor, 22)
             contentDescription = "$unread unread notifications"
@@ -1121,7 +1121,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private fun updateNotificationBadge() {
         val unread = appNotifications.count { !it.read }
         notificationBellView?.text = if (unread > 0) "🔔 $unread" else "🔔"
-        notificationBellView?.setTextColor(gold)
+        notificationBellView?.setTextColor(red)
         notificationBellView?.contentDescription = "$unread unread notifications"
     }
 
@@ -1150,7 +1150,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 val time = java.text.DateFormat.getDateTimeInstance().format(java.util.Date(item.timestamp))
                 text = "$state · ${item.page.uppercase(Locale.US)} · ${item.title}\n${item.message}\n$time"
                 textSize = 14f
-                setTextColor(gold)
+                setTextColor(red)
                 setPadding(dp(8), dp(12), dp(8), dp(12))
                 setBackgroundColor(Color.BLACK)
                 setOnClickListener {
@@ -1334,7 +1334,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             .put("basis", "stake")
             .put("contract_type", contractType)
             .put("currency", accountCurrency)
-            .put("duration", 6)
+            .put("duration", 12)
             .put("duration_unit", "h")
             .put("underlying_symbol", symbol)
             .put("req_id", req)
@@ -1615,7 +1615,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (stake <= 0.0 || available + 0.000001 < stake) return
         if (openPosition(symbol, mssDirection, "MASTER", stake)) {
             lastExecutedSignalEpoch[symbol] = last.epoch
-            addNotification("Trade", "${displayIndexName(symbol)} ${mssDirection} signal submitted", "Closed-candle MSS and CHOCH agree. Stake: ${formatMoney(stake)}. Contract expiry: 6 hours.")
+            addNotification("Trade", "${displayIndexName(symbol)} ${mssDirection} signal submitted", "Closed-candle MSS and CHOCH agree. Stake: ${formatMoney(stake)}. Contract expiry: 12 hours.")
         }
     }
 
