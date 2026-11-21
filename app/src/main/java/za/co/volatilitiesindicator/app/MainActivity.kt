@@ -1107,7 +1107,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             text = if (unread > 0) "🔔 $unread" else "🔔"
             textSize = 16f
             gravity = Gravity.CENTER
-            setTextColor(red)
+            setTextColor(gold)
             setPadding(dp(13), dp(8), dp(13), dp(8))
             background = rounded(Color.BLACK, lineColor, 22)
             contentDescription = "$unread unread notifications"
@@ -1121,7 +1121,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private fun updateNotificationBadge() {
         val unread = appNotifications.count { !it.read }
         notificationBellView?.text = if (unread > 0) "🔔 $unread" else "🔔"
-        notificationBellView?.setTextColor(red)
+        notificationBellView?.setTextColor(gold)
         notificationBellView?.contentDescription = "$unread unread notifications"
     }
 
@@ -1150,7 +1150,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 val time = java.text.DateFormat.getDateTimeInstance().format(java.util.Date(item.timestamp))
                 text = "$state · ${item.page.uppercase(Locale.US)} · ${item.title}\n${item.message}\n$time"
                 textSize = 14f
-                setTextColor(red)
+                setTextColor(gold)
                 setPadding(dp(8), dp(12), dp(8), dp(12))
                 setBackgroundColor(Color.BLACK)
                 setOnClickListener {
