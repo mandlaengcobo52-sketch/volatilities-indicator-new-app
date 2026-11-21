@@ -126,7 +126,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private var platformAuthBusy = false
     private var platformUserName = ""
     private var platformUserRole = "user"
-    private val accountGatePending = mutableSetOf<String>()
     private var platformUser = JSONObject()
     private var oauthState = ""
     private var codeVerifier = ""
@@ -163,9 +162,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var pairExitTriggered: Boolean = false,
         var recoveryAfterEpoch: Long = 0L,
         var pairedLoss: Double = 0.0,
-        var entryBarrier: Double = 0.0,
-        var expiryAt: Long = 0L,
-        var openedAt: Long = 0L
+        var entryBarrier: Double = 0.0
     )
 
     private val positions = linkedMapOf<String, Position>()
@@ -189,8 +186,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val tradeProfitViews = mutableMapOf<String, TextView>()
     private val tradeTrailingViews = mutableMapOf<String, TextView>()
     private val tradeEntryBarrierViews = mutableMapOf<String, TextView>()
-    private val tradeExpiryViews = mutableMapOf<String, TextView>()
     private val insufficientFundsNotified = mutableSetOf<String>()
+    private val pendingReversalDirection = mutableMapOf<String, String>()
     private val lastExecutedSignalEpoch = mutableMapOf<String, Long>()
 
     private val tradePrefs by lazy { getSharedPreferences("vi_trade_engine", MODE_PRIVATE) }
@@ -852,7 +849,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 val buy = json.optJSONObject("buy") ?: return
                 val position = positions[localId] ?: return
                 position.contractId = buy.optLong("contract_id", 0L)
-                position.openedAt = buy.optLong("purchase_time", System.currentTimeMillis() / 1000L)
                 if (position.contractId <= 0L) { position.status = "BUY FAILED"; return }
                 position.status = "OPEN"
                 savePositions()
@@ -1302,15 +1298,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private fun roundStake(value: Double): Double =
         BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP).toDouble()
 
-    private fun openPosition(symbol: String, direction: String, role: String, stake: Double, originalId: String = "", accountGatePassed: Boolean = false): Boolean {
-        if (platformAuthenticated && platformUserRole in setOf("user", "investor") && !accountGatePassed) {
-            if (!accountGatePending.add(symbol)) return false
-            platformRequest("account_trade_gate", mapOf("daily_capital" to dailyCapital.toString()), onResult = {
-                accountGatePending.remove(symbol)
-                openPosition(symbol, direction, role, stake, originalId, true)
-            }, onError = { accountGatePending.remove(symbol) })
-            return true
-        }
+    private fun openPosition(symbol: String, direction: String, role: String, stake: Double, originalId: String = ""): Boolean {
         if (platformAuthenticated && platformUserRole == "investor") {
             val today = java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US).format(java.util.Date())
             val subscriptionActive = platformUser.optString("subscription_status") == "approved" &&
@@ -1344,7 +1332,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             .put("basis", "stake")
             .put("contract_type", contractType)
             .put("currency", accountCurrency)
-            .put("duration", 12)
+            .put("duration", 6)
             .put("duration_unit", "h")
             .put("underlying_symbol", symbol)
             .put("req_id", req)
@@ -1399,7 +1387,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 stake = stake
             )
             restored.contractId = contractId
-            restored.openedAt = contract.optLong("date_start", contract.optLong("purchase_time", System.currentTimeMillis() / 1000L))
             restored.status = "OPEN"
             positions[restored.localId] = restored
             foundPosition = restored
@@ -1419,10 +1406,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             "entry_tick",
             contract.optDouble("entry_spot", contract.optDouble("barrier", position.entryBarrier))
         )
-        position.expiryAt = contract.optLong("date_expiry", position.expiryAt)
-        if (position.openedAt <= 0L) {
-            position.openedAt = contract.optLong("date_start", contract.optLong("purchase_time", System.currentTimeMillis() / 1000L))
-        }
 
         val validToSell = contract.opt("is_valid_to_sell")
         position.canSell = when (validToSell) {
@@ -1451,11 +1434,14 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 ?: System.currentTimeMillis() / 1000L
             if (!wasAlreadyClosed) {
                 addNotification("Trade", "${displayIndexName(position.symbol)} trade closed", "${position.role} ${position.direction} final P/L: ${formatMoney(position.profit)}.")
-                if (platformAuthenticated && platformUserRole in setOf("user", "investor") && position.contractId > 0L) {
-                    platformRequest("account_trade_result", mapOf(
-                        "trade_id" to position.contractId.toString(),
-                        "profit" to position.profit.toString()
-                    )) { }
+            }
+            val reversal = pendingReversalDirection.remove(position.symbol)
+            if (!reversal.isNullOrBlank() && autoTradingEnabled && accountConnected) {
+                val anotherActive = positions.values.any { it.symbol == position.symbol && it.localId != position.localId &&
+                    it.status !in setOf("CLOSED", "BUY FAILED", "PROPOSAL FAILED") && !it.status.startsWith("ERROR") }
+                val reversalStake = roundStake(dailyCapital * 0.10)
+                if (!anotherActive && availableBalance >= reversalStake && openPosition(position.symbol, reversal, "MASTER", reversalStake)) {
+                    addNotification("Trade", "${displayIndexName(position.symbol)} reversal submitted", "The previous contract is confirmed closed. Opening the opposite ${reversal} contract.")
                 }
             }
         } else if (position.status != "CLOSING") {
@@ -1480,12 +1466,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             val lockedNetProfit = roundStake(
                 position.stake * position.lockedProfitPercent / 100.0
             )
-            // A trailing stop belongs exclusively to this Position. It may
-            // close only after THIS contract has first reached +10% of its own
-            // stake, recorded a peak, and then retraced to its own lock level.
-            val ownTradeReachedActivation = position.trailingActivated &&
-                position.peakProfit >= roundStake(position.stake * 0.10)
-            val reversedToLock = ownTradeReachedActivation &&
+            val reversedToLock = position.trailingActivated &&
                 position.lockedProfitPercent >= 10 &&
                 position.profit < position.peakProfit &&
                 position.profit <= lockedNetProfit
@@ -1563,11 +1544,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (closed.size < 7) return
         val last = closed.last()
         val prior = closed.dropLast(1)
-        // Only a fresh H1 qualification may execute: maximum age is one hour
-        // measured from the candle close (not the candle opening timestamp).
-        val qualificationClosedAt = last.epoch + 3600L
-        val qualificationAgeSeconds = (System.currentTimeMillis() / 1000L) - qualificationClosedAt
-        if (qualificationAgeSeconds < 0L || qualificationAgeSeconds > 3600L) return
 
         // Use confirmed local swing points from completed candles only.
         val swingHighs = mutableListOf<Double>()
@@ -1616,10 +1592,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 !it.status.startsWith("ERROR")
         }
         if (active != null) {
-            // One contract per index. A new or opposite MSS + CHOCH signal
-            // must never auto-sell an existing contract or queue a second
-            // contract. The existing position remains under its own trailing
-            // stop (or user-initiated close) until Deriv confirms it is closed.
+            // Same-direction confirmation never closes or duplicates a trade.
+            if (active.direction == mssDirection) return
+            // An opposite MSS + CHOCH must close the old contract first.
+            if (active.status == "OPEN" && active.canSell && active.contractId > 0L) {
+                pendingReversalDirection[symbol] = mssDirection
+                closeRunningPosition(active)
+            }
             return
         }
 
@@ -1628,7 +1607,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (stake <= 0.0 || available + 0.000001 < stake) return
         if (openPosition(symbol, mssDirection, "MASTER", stake)) {
             lastExecutedSignalEpoch[symbol] = last.epoch
-            addNotification("Trade", "${displayIndexName(symbol)} ${mssDirection} signal submitted", "Closed-candle MSS and CHOCH agree. Stake: ${formatMoney(stake)}. Contract expiry: 12 hours.")
+            addNotification("Trade", "${displayIndexName(symbol)} ${mssDirection} signal submitted", "Closed-candle MSS and CHOCH agree. Stake: ${formatMoney(stake)}. Contract expiry: 6 hours.")
         }
     }
 
@@ -1647,9 +1626,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 .put("pairExitTriggered", p.pairExitTriggered)
                 .put("recoveryAfterEpoch", p.recoveryAfterEpoch)
                 .put("pairedLoss", p.pairedLoss)
-                .put("entryBarrier", p.entryBarrier)
-                .put("expiryAt", p.expiryAt)
-                .put("openedAt", p.openedAt))
+                .put("entryBarrier", p.entryBarrier))
         }
         // commit() makes completed trade records durable before activity teardown/update.
         tradePrefs.edit().putString("positions", array.toString()).commit()
@@ -1680,8 +1657,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 p.recoveryAfterEpoch = o.optLong("recoveryAfterEpoch", p.closedAt)
                 p.pairedLoss = o.optDouble("pairedLoss", 0.0)
                 p.entryBarrier = o.optDouble("entryBarrier", 0.0)
-                p.expiryAt = o.optLong("expiryAt", 0L)
-                p.openedAt = o.optLong("openedAt", 0L)
                 if (p.recoveryEligible && !p.recoveryUsed) recoveryWaiting.add(p.localId)
                 positions[p.localId] = p
                 if (p.contractId > 0 && p.status != "CLOSED") subscribePosition(p.contractId)
@@ -1880,7 +1855,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         tradeProfitViews.clear()
         tradeTrailingViews.clear()
         tradeEntryBarrierViews.clear()
-        tradeExpiryViews.clear()
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -2053,6 +2027,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         summary.addView(text("DAILY STARTING CAPITAL", 12f, gold, true))
         summary.addView(text(String.format(Locale.US, "%.2f %s", dailyCapital, accountCurrency), 18f, blue, true))
         summary.addView(text("ACCOUNT MODE: $executionMode", 12f, if (executionMode == "REAL") blue else red, true))
+        summary.addView(text("Stake per contract: 20% of daily starting capital", 12f, gold))
         content.addView(summary)
         content.addView(space(16))
 
@@ -2092,14 +2067,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     )
                     tradeEntryBarrierViews[p.localId] = entryBarrierView
                     c.addView(entryBarrierView)
-                    val expiryText = if (p.expiryAt > 0L) {
-                        java.text.DateFormat.getDateTimeInstance().format(java.util.Date(p.expiryAt * 1000L))
-                    } else {
-                        "Awaiting Deriv expiry"
-                    }
-                    val expiryView = text("EXPIRY: $expiryText", 12f, blue, true)
-                    tradeExpiryViews[p.localId] = expiryView
-                    c.addView(expiryView)
                     c.addView(text("Stake: ${formatMoney(p.stake)}", 13f, gold))
 
                     val statusView = text("Status: ${p.status}", 13f,
@@ -2134,6 +2101,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     }
                 }
 
+                val combinedProfit = indexPositions.sumOf { it.profit }
+                c.addView(space(8))
+                c.addView(divider())
+                c.addView(space(8))
+                c.addView(text("INDEX COMBINED P/L: ${formatMoney(combinedProfit)}", 13f,
+                    if (combinedProfit >= 0.0) green else red, true))
+
                 content.addView(c)
                 content.addView(space(8))
             }
@@ -2167,11 +2141,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private fun updateTradePositionViews(position: Position) {
         tradeEntryBarrierViews[position.localId]?.text =
             "ENTRY BARRIER: ${if (position.entryBarrier > 0.0) formatPrice(position.entryBarrier) else "Awaiting Deriv entry price"}"
-        tradeExpiryViews[position.localId]?.text = "EXPIRY: " + if (position.expiryAt > 0L) {
-            java.text.DateFormat.getDateTimeInstance().format(java.util.Date(position.expiryAt * 1000L))
-        } else {
-            "Awaiting Deriv expiry"
-        }
         tradeStatusViews[position.localId]?.apply {
             text = "Status: ${position.status}"
             setTextColor(if (position.status == "OPEN") green else amber)
@@ -2235,7 +2204,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     // All account-management requests use the existing authenticated mobile-auth.php session.
-    private fun platformRequest(action: String, values: Map<String, String> = emptyMap(), onError: () -> Unit = {}, onResult: (JSONObject) -> Unit) {
+    private fun platformRequest(action: String, values: Map<String, String> = emptyMap(), onResult: (JSONObject) -> Unit) {
         if (!platformAuthenticated || platformAuthToken.isBlank()) {
             toast("Please sign in to your Volatilities Indicator account first.")
             showPlatformAuthScreen(false, "Please sign in to continue.")
@@ -2248,7 +2217,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             .post(form.build()).build()
         httpClient.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                runOnUiThread { toast("Unable to contact the account server. Check your connection."); onError() }
+                runOnUiThread { toast("Unable to contact the account server. Check your connection.") }
             }
             override fun onResponse(call: Call, response: Response) {
                 val raw = response.body?.string().orEmpty()
@@ -2259,7 +2228,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                         val message = result.optString("message", "The account request could not be completed.")
                         toast(message)
                         if (response.code == 401) signOutPlatform()
-                        onError()
                     } else onResult(result)
                 }
             }
