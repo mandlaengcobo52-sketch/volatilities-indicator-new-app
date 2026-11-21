@@ -87,8 +87,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val mssStatusViews = mutableMapOf<String, TextView>()
     private val chochStatusViews = mutableMapOf<String, TextView>()
     private val retestStatusViews = mutableMapOf<String, TextView>()
-    // Last confirmed retest details remain visible after the signal is consumed by execution.
-    private val confirmedRetestDetails = mutableMapOf<String, String>()
 
     private data class AppNotification(
         val id: Long,
@@ -202,6 +200,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val pendingChochDirection = mutableMapOf<String, String>()
     private val pendingChochLevel = mutableMapOf<String, Double>()
     private val pendingChochEpoch = mutableMapOf<String, Long>()
+    // 0 = waiting for first retest candle; 1 = first retest candle failed and
+    // the immediately following closed candle is the final confirmation attempt.
+    private val pendingChochRetestAttempt = mutableMapOf<String, Int>()
+    private val pendingChochRetestFirstEpoch = mutableMapOf<String, Long>()
     private var requestCounter = 7000
     private var dailyCapital = 0.0
     private var accountCurrency = "USD"
@@ -212,6 +214,38 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val tradeTargetViews = mutableMapOf<String, TextView>()
     private val tradeEntryBarrierViews = mutableMapOf<String, TextView>()
     private val tradeExpiryViews = mutableMapOf<String, TextView>()
+    private val tradeCountdownViews = mutableMapOf<String, TextView>()
+    private val tradeCountdownHandler = Handler(Looper.getMainLooper())
+    private val tradeCountdownTask = object : Runnable {
+        override fun run() {
+            if (selectedTab != "Trade") return
+
+            val now = System.currentTimeMillis() / 1000L
+            tradeCountdownViews.forEach { (localId, view) ->
+                val position = positions[localId]
+                when {
+                    position == null || position.status == "CLOSED" -> {
+                        view.text = "TIME REMAINING: CLOSED"
+                    }
+                    position.expiryAt <= 0L -> {
+                        view.text = "TIME REMAINING: Awaiting Deriv expiry"
+                    }
+                    else -> {
+                        val remaining = (position.expiryAt - now).coerceAtLeast(0L)
+                        val hours = remaining / 3600L
+                        val minutes = (remaining % 3600L) / 60L
+                        val seconds = remaining % 60L
+                        view.text = String.format(
+                            Locale.US,
+                            "TIME REMAINING: %02d:%02d:%02d",
+                            hours, minutes, seconds
+                        )
+                    }
+                }
+            }
+            tradeCountdownHandler.postDelayed(this, 1000L)
+        }
+    }
     private val insufficientFundsNotified = mutableSetOf<String>()
     private val lastExecutedSignalEpoch = mutableMapOf<String, Long>()
 
@@ -299,6 +333,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 pendingChochDirection[symbol] = pendingDirection
                 pendingChochLevel[symbol] = pendingLevel
                 pendingChochEpoch[symbol] = pendingEpoch
+                val retestAttempt = tradePrefs.getInt("pending_choch_retest_attempt_$symbol", 0).coerceIn(0, 1)
+                val firstRetestEpoch = tradePrefs.getLong("pending_choch_retest_first_epoch_$symbol", 0L)
+                if (retestAttempt == 1 && firstRetestEpoch > pendingEpoch) {
+                    pendingChochRetestAttempt[symbol] = 1
+                    pendingChochRetestFirstEpoch[symbol] = firstRetestEpoch
+                }
             }
             val executedEpoch = tradePrefs.getLong("last_executed_signal_epoch_$symbol", 0L)
             if (executedEpoch > 0L) lastExecutedSignalEpoch[symbol] = executedEpoch
@@ -709,11 +749,16 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         // Flush the complete trade ledger whenever the activity leaves the foreground.
         savePositions()
         saveNotifications()
+        tradeCountdownHandler.removeCallbacks(tradeCountdownTask)
         super.onPause()
     }
 
     override fun onResume() {
         super.onResume()
+        if (selectedTab == "Trade" && tradeCountdownViews.isNotEmpty()) {
+            tradeCountdownHandler.removeCallbacks(tradeCountdownTask)
+            tradeCountdownHandler.post(tradeCountdownTask)
+        }
         if (!platformAuthenticated) return
         val previousMode = executionMode
         val ownerId = platformUserId
@@ -750,6 +795,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     override fun onDestroy() {
         candleRefreshHandler.removeCallbacks(candleRefreshTask)
+        tradeCountdownHandler.removeCallbacks(tradeCountdownTask)
         derivService?.detachActivity(this)
         if (serviceBound) {
             try { unbindService(serviceConnection) } catch (_: Exception) {}
@@ -761,6 +807,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     override fun onConnecting(message: String) {
         runOnUiThread {
             accountConnected = false
+            accountBalanceLabel = "Balance loading…"
+            availableBalance = 0.0
+            accountBalanceView?.text = accountBalanceLabel
             accountStatusView?.text = message
             accountStatusView?.setTextColor(amber)
             if (selectedTab == "Accounts") render()
@@ -778,6 +827,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         executionMode = if (accountType.equals("REAL", true)) "REAL" else "DEMO"
         accountLabel = "$accountId ($accountType)"
         addNotification("Accounts", "Deriv account connected", "$accountLabel is connected.")
+        // Clear the previous account's displayed balance until this account responds.
+        accountBalanceLabel = "Balance loading…"
+        availableBalance = 0.0
+        accountBalanceView?.text = accountBalanceLabel
+        derivService?.client?.requestBalance()
         derivService?.client?.requestOpenTrades()
         // Re-check already-qualified MSS/CHOCH against any waiting closed original
         // immediately after the execution account reconnects.
@@ -807,7 +861,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
         runOnUiThread {
             accountBalanceView?.text = accountBalanceLabel
-            renderIfHome()
+            if (selectedTab == "Accounts") {
+                render()
+            } else {
+                renderIfHome()
+            }
         }
     }
 
@@ -1283,7 +1341,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val mss = recoveryMss[symbol]
         val choch = recoveryChoch[symbol]
         return when {
-            !pendingChochDirection[symbol].isNullOrBlank() -> "MSS + CHOCH confirmed ${pendingChochDirection[symbol]}. Waiting for touch or penetration of the CHOCH level."
+            !pendingChochDirection[symbol].isNullOrBlank() -> if ((pendingChochRetestAttempt[symbol] ?: 0) == 1) "First retest candle did not close on the required side. Waiting for the immediately following candle to close correctly." else "MSS + CHOCH confirmed ${pendingChochDirection[symbol]}. Waiting for the first retest candle to touch the CHOCH level and close on the required side."
             !mss.isNullOrBlank() && mss == choch -> "MSS + CHOCH confirmed ${mss}. Waiting for retest."
             !mss.isNullOrBlank() -> "MSS confirmed ${mss}. Waiting for matching CHOCH."
             !choch.isNullOrBlank() -> "CHOCH confirmed ${choch}. Waiting for matching MSS."
@@ -1295,7 +1353,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val mss = recoveryMss[symbol]
         val choch = recoveryChoch[symbol]
         return when {
-            !pendingChochDirection[symbol].isNullOrBlank() -> "MSS + CHOCH confirmed ${pendingChochDirection[symbol]}. Waiting for touch or penetration of the CHOCH level."
+            !pendingChochDirection[symbol].isNullOrBlank() -> if ((pendingChochRetestAttempt[symbol] ?: 0) == 1) "First retest candle did not close on the required side. Waiting for the immediately following candle to close correctly." else "MSS + CHOCH confirmed ${pendingChochDirection[symbol]}. Waiting for the first retest candle to touch the CHOCH level and close on the required side."
             !mss.isNullOrBlank() && mss == choch -> "MSS + CHOCH confirmed ${mss}. Waiting for retest."
             !mss.isNullOrBlank() -> "MSS confirmed ${mss}. Waiting for matching CHOCH."
             !choch.isNullOrBlank() -> "CHOCH confirmed ${choch}. Waiting for matching MSS."
@@ -1323,26 +1381,17 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             setTextColor(if (recoveryMss[symbol].isNullOrBlank()) amber else green)
         }
         chochStatusViews[symbol]?.apply {
-            val direction = recoveryChoch[symbol]
-            val pendingDirection = pendingChochDirection[symbol]
-            val level = pendingChochLevel[symbol]
-            val epoch = pendingChochEpoch[symbol] ?: recoveryChochEpoch[symbol] ?: 0L
-            text = if (!direction.isNullOrBlank() && level != null && epoch > 0L) {
-                "QUALIFIED · $direction\nCHOCH LEVEL: ${formatPrice(level)}\nCONFIRMATION CANDLE: ${formatSignalTime(epoch)}"
-            } else signalQualificationText(direction)
-            setTextColor(if (direction.isNullOrBlank()) amber else green)
+            text = signalQualificationText(recoveryChoch[symbol])
+            setTextColor(if (recoveryChoch[symbol].isNullOrBlank()) amber else green)
         }
         retestStatusViews[symbol]?.apply {
             val direction = pendingChochDirection[symbol]
-            val level = pendingChochLevel[symbol]
-            val confirmed = confirmedRetestDetails[symbol]
             text = when {
-                !confirmed.isNullOrBlank() -> confirmed
-                !direction.isNullOrBlank() && level != null ->
-                    "WAITING FOR RETEST · $direction\nRETEST LEVEL: ${formatPrice(level)}\nRETEST CANDLE: NOT YET CONFIRMED"
-                else -> "NOT QUALIFIED · WAITING FOR MSS + CHOCH"
+                direction.isNullOrBlank() -> "NOT QUALIFIED"
+                (pendingChochRetestAttempt[symbol] ?: 0) == 1 -> "FINAL CANDLE WAITING · $direction"
+                else -> "WAITING FOR FIRST RETEST · $direction"
             }
-            setTextColor(if (!confirmed.isNullOrBlank()) green else amber)
+            setTextColor(if (direction.isNullOrBlank()) amber else amber)
         }
     }
 
@@ -1731,17 +1780,57 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (last.epoch <= signalEpoch) return
         if (lastExecutedSignalEpoch[symbol] == signalEpoch) return
 
-        // Touch and penetration only: the candle's traded range must include the exact CHOCH level.
-        // The candle must then close back on the correct side of that level.
-        val retestConfirmed = when (direction) {
-            "RISE" -> last.low <= level && last.high >= level && last.close > level
-            "FALL" -> last.high >= level && last.low <= level && last.close < level
+        // First retest candle must touch/penetrate the exact CHOCH level and close
+        // on the required side. If it does not, only the immediately following
+        // completed candle gets one final opportunity to close on that side.
+        // The second candle does not need to touch the level again.
+        val firstRetestEpoch = pendingChochRetestFirstEpoch[symbol] ?: 0L
+        val retestAttempt = pendingChochRetestAttempt[symbol] ?: 0
+        val closesCorrectSide = when (direction) {
+            "RISE" -> last.close > level
+            "FALL" -> last.close < level
             else -> false
         }
+        val retestConfirmed = if (retestAttempt == 0) {
+            val touchedLevel = last.low <= level && last.high >= level
+            if (!touchedLevel) return
+            if (closesCorrectSide) {
+                true
+            } else {
+                pendingChochRetestAttempt[symbol] = 1
+                pendingChochRetestFirstEpoch[symbol] = last.epoch
+                tradePrefs.edit()
+                    .putInt("pending_choch_retest_attempt_$symbol", 1)
+                    .putLong("pending_choch_retest_first_epoch_$symbol", last.epoch)
+                    .apply()
+                runOnUiThread { updateRecoveryStatusView(symbol); updateMasterDecisionViews(symbol) }
+                return
+            }
+        } else {
+            // Do not reprocess the first failed retest candle; only a later closed candle counts.
+            if (last.epoch <= firstRetestEpoch) return
+            if (closesCorrectSide) {
+                true
+            } else {
+                // The second candle also failed: permanently cancel this pending setup.
+                pendingChochDirection.remove(symbol)
+                pendingChochLevel.remove(symbol)
+                pendingChochEpoch.remove(symbol)
+                pendingChochRetestAttempt.remove(symbol)
+                pendingChochRetestFirstEpoch.remove(symbol)
+                tradePrefs.edit()
+                    .remove("pending_choch_direction_$symbol")
+                    .remove("pending_choch_level_bits_$symbol")
+                    .remove("pending_choch_epoch_$symbol")
+                    .remove("pending_choch_retest_attempt_$symbol")
+                    .remove("pending_choch_retest_first_epoch_$symbol")
+                    .apply()
+                addNotification("Home", "${displayIndexName(symbol)} CHOCH retest failed", "The first retest candle and the immediately following candle both failed to close on the required side of the CHOCH level. The setup has been cancelled.")
+                runOnUiThread { updateRecoveryStatusView(symbol); updateMasterDecisionViews(symbol) }
+                return
+            }
+        }
         if (!retestConfirmed) return
-
-        confirmedRetestDetails[symbol] = "RETESTED · $direction\nCHOCH LEVEL: ${formatPrice(level)}\nRETEST CANDLE TIME: ${formatSignalTime(last.epoch)}\nCANDLE LOW: ${formatPrice(last.low)}\nCANDLE HIGH: ${formatPrice(last.high)}\nCANDLE CLOSE: ${formatPrice(last.close)}"
-        runOnUiThread { updateRecoveryStatusView(symbol) }
 
         val active = positions.values.firstOrNull {
             it.symbol == symbol && it.status !in setOf("CLOSED", "BUY FAILED", "PROPOSAL FAILED") &&
@@ -1767,13 +1856,17 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             pendingChochDirection.remove(symbol)
             pendingChochLevel.remove(symbol)
             pendingChochEpoch.remove(symbol)
+            pendingChochRetestAttempt.remove(symbol)
+            pendingChochRetestFirstEpoch.remove(symbol)
             tradePrefs.edit()
                 .putLong("last_executed_signal_epoch_$symbol", signalEpoch)
                 .remove("pending_choch_direction_$symbol")
                 .remove("pending_choch_level_bits_$symbol")
                 .remove("pending_choch_epoch_$symbol")
+                .remove("pending_choch_retest_attempt_$symbol")
+                .remove("pending_choch_retest_first_epoch_$symbol")
                 .apply()
-            addNotification("Trade", "${displayIndexName(symbol)} ${direction} signal submitted", "MSS and CHOCH confirmed; a later closed candle touched or penetrated the CHOCH level and closed back on the correct side. Stake: ${formatMoney(stake)}. Contract expiry: 12 hours.")
+            addNotification("Trade", "${displayIndexName(symbol)} ${direction} signal submitted", "MSS and CHOCH confirmed; the CHOCH retest passed within the first retest candle or the immediately following candle. Stake: ${formatMoney(stake)}. Contract expiry: 12 hours.")
         }
     }
 
@@ -2072,6 +2165,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         tradeTargetViews.clear()
         tradeEntryBarrierViews.clear()
         tradeExpiryViews.clear()
+        tradeCountdownViews.clear()
+        tradeCountdownHandler.removeCallbacks(tradeCountdownTask)
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -2227,26 +2322,21 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             indexCard.addView(mssView)
             indexCard.addView(space(5))
             indexCard.addView(text("CHOCH QUALIFICATION", 10f, whiteText, true))
-            val pendingLevel = pendingChochLevel[symbol]
-            val pendingEpoch = pendingChochEpoch[symbol] ?: recoveryChochEpoch[symbol] ?: 0L
-            val chochInitialText = if (!recoveryChoch[symbol].isNullOrBlank() && pendingLevel != null && pendingEpoch > 0L) {
-                "QUALIFIED · ${recoveryChoch[symbol]}\nCHOCH LEVEL: ${formatPrice(pendingLevel)}\nCONFIRMATION CANDLE: ${formatSignalTime(pendingEpoch)}"
-            } else signalQualificationText(recoveryChoch[symbol])
-            val chochView = text(chochInitialText, 11f,
+            val chochView = text(signalQualificationText(recoveryChoch[symbol]), 11f,
                 if (recoveryChoch[symbol].isNullOrBlank()) amber else green, true)
             chochStatusViews[symbol] = chochView
             indexCard.addView(chochView)
             indexCard.addView(space(5))
             indexCard.addView(text("RETEST QUALIFICATION", 10f, whiteText, true))
             val retestDirection = pendingChochDirection[symbol]
-            val retestLevel = pendingChochLevel[symbol]
-            val retestInitialText = when {
-                !confirmedRetestDetails[symbol].isNullOrBlank() -> confirmedRetestDetails[symbol]!!
-                !retestDirection.isNullOrBlank() && retestLevel != null -> "WAITING FOR RETEST · $retestDirection\nRETEST LEVEL: ${formatPrice(retestLevel)}\nRETEST CANDLE: NOT YET CONFIRMED"
-                else -> "NOT QUALIFIED · WAITING FOR MSS + CHOCH"
-            }
-            val retestView = text(retestInitialText, 11f,
-                if (retestDirection.isNullOrBlank()) amber else amber, true)
+            val retestView = text(
+                when {
+                    retestDirection.isNullOrBlank() -> "NOT QUALIFIED"
+                    (pendingChochRetestAttempt[symbol] ?: 0) == 1 -> "FINAL CANDLE WAITING · $retestDirection"
+                    else -> "WAITING FOR FIRST RETEST · $retestDirection"
+                },
+                11f, amber, true
+            )
             retestStatusViews[symbol] = retestView
             indexCard.addView(retestView)
             content.addView(indexCard)
@@ -2324,6 +2414,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     val expiryView = text("EXPIRY: $expiryText", 12f, blue, true)
                     tradeExpiryViews[p.localId] = expiryView
                     c.addView(expiryView)
+
+                    val countdownView = text("TIME REMAINING: Calculating…", 15f, gold, true)
+                    tradeCountdownViews[p.localId] = countdownView
+                    c.addView(countdownView)
+
                     c.addView(text("Stake: ${formatMoney(p.stake)}", 13f, gold))
 
                     val statusView = text("Status: ${p.status}", 13f,
@@ -2393,6 +2488,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
         tradeStatusView = text(if (accountConnected) "EXECUTION CONNECTED" else "CONNECT A DERIV ACCOUNT TO ENABLE EXECUTION", 12f, if (accountConnected) green else amber, true)
         content.addView(tradeStatusView)
+        tradeCountdownHandler.removeCallbacks(tradeCountdownTask)
+        tradeCountdownHandler.post(tradeCountdownTask)
     }
 
     private fun updateTradePositionViews(position: Position) {
@@ -2424,7 +2521,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         deriv.addView(space(6))
         deriv.addView(text("Account mode: $executionMode", 13f, if (executionMode == "REAL") blue else red, true))
         deriv.addView(text(if (accountConnected) accountLabel else "Connection: Disconnected", 13f, Color.WHITE))
-        deriv.addView(text(accountBalanceLabel, 13f, blue))
+        accountBalanceView = text(accountBalanceLabel, 13f, blue)
+        deriv.addView(accountBalanceView)
         val pl = accountProfitLoss()
         accountOpenPlView = text("OPEN TRADE P/L: ${formatMoney(pl.first)}", 13f, if (pl.first >= 0) green else red, true)
         accountClosedPlView = text("CLOSED TRADE P/L: ${formatMoney(pl.second)}", 13f, if (pl.second >= 0) green else red, true)
@@ -2903,9 +3001,22 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             addProfileField(item, "Daily projected growth", "R${moneyText(inv.optDouble("daily_growth_amount"))}")
             addProfileField(item, "Projected growth to date", "R${moneyText(inv.optDouble("accrued_projected_growth"))}")
             addProfileField(item, "Potential projected return", "R${moneyText(inv.optDouble("potential_return"))}")
-            if (inv.optBoolean("withdrawal_available") && inv.optString("withdrawal_status").isBlank()) {
-                item.addView(actionButton("REQUEST WITHDRAWAL REVIEW", false) { showWithdrawalRequestDialog(inv) })
-            }
+            val withdrawalStatus = inv.optString("withdrawal_status").trim().uppercase(Locale.US)
+            val investmentApproved = inv.optString("status").equals("DEMO_APPROVED", true)
+            val withdrawalEligible = investmentApproved && inv.optBoolean("withdrawal_available")
+            val noPreviousRequest = withdrawalStatus.isBlank()
+            val withdrawalButton = actionButton(
+                when {
+                    withdrawalStatus == "PENDING_DEMO_REVIEW" -> "WITHDRAWAL REQUEST UNDER REVIEW"
+                    withdrawalStatus == "DEMO_APPROVED_NOT_PAID" -> "WITHDRAWAL REVIEW APPROVED"
+                    withdrawalStatus == "DEMO_REJECTED" -> "WITHDRAWAL REVIEW REJECTED"
+                    withdrawalEligible -> "REQUEST WITHDRAWAL REVIEW"
+                    else -> "WITHDRAWAL AVAILABLE AFTER 50% OF DURATION"
+                }, false
+            ) { showWithdrawalRequestDialog(inv) }
+            withdrawalButton.isEnabled = withdrawalEligible && noPreviousRequest
+            withdrawalButton.alpha = if (withdrawalButton.isEnabled) 1.0f else 0.55f
+            item.addView(withdrawalButton)
             body.addView(item); body.addView(space(10))
         }
     }
@@ -2916,7 +3027,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         "PENDING_DEMO_REVIEW" -> "PENDING WITHDRAWAL REVIEW"
         "DEMO_APPROVED_NOT_PAID" -> "WITHDRAWAL REVIEW APPROVED"
         "DEMO_REJECTED" -> "WITHDRAWAL REVIEW REJECTED"
-        else -> status.replace('_', ' ').uppercase(Locale.US)
+        else -> status.replace("DEMO_", "").replace('_', ' ').uppercase(Locale.US)
     }
 
     private fun showWithdrawalRequestDialog(inv: JSONObject) {
@@ -3414,10 +3525,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     private fun formatPrice(value: Double): String =
         String.format(Locale.US, "%,.2f", value)
-
-    private fun formatSignalTime(epochSeconds: Long): String =
-        if (epochSeconds <= 0L) "Unavailable" else
-            java.text.DateFormat.getDateTimeInstance().format(java.util.Date(epochSeconds * 1000L))
 
     private fun dp(value: Int): Int =
         (value * resources.displayMetrics.density).toInt()
