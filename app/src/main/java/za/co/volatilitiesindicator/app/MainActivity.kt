@@ -1374,6 +1374,22 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         return if (signal.isNullOrBlank()) "NOT QUALIFIED" else "QUALIFIED · $signal"
     }
 
+    // Keep the exact numeric CHOCH break level visible alongside its direction.
+    private fun chochQualificationDisplay(symbol: String): String {
+        val direction = recoveryChoch[symbol]
+        if (direction.isNullOrBlank()) return "NOT QUALIFIED"
+        val level = pendingChochLevel[symbol]
+            ?: positions.values
+                .filter { it.symbol == symbol && it.qualificationChochLevel > 0.0 }
+                .maxByOrNull { it.openedAt }
+                ?.qualificationChochLevel
+        return if (level != null && level.isFinite() && level > 0.0) {
+            "QUALIFIED · $direction\nCHOCH LEVEL: ${formatPrice(level)}"
+        } else {
+            "QUALIFIED · $direction\nCHOCH LEVEL: WAITING FOR LEVEL"
+        }
+    }
+
     private fun updateRecoveryStatusView(symbol: String) {
         recoveryStatusViews[symbol]?.text = recoveryStatusText(symbol)
         mssStatusViews[symbol]?.apply {
@@ -1381,7 +1397,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             setTextColor(if (recoveryMss[symbol].isNullOrBlank()) amber else green)
         }
         chochStatusViews[symbol]?.apply {
-            text = signalQualificationText(recoveryChoch[symbol])
+            text = chochQualificationDisplay(symbol)
             setTextColor(if (recoveryChoch[symbol].isNullOrBlank()) amber else green)
         }
         retestStatusViews[symbol]?.apply {
@@ -2322,7 +2338,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             indexCard.addView(mssView)
             indexCard.addView(space(5))
             indexCard.addView(text("CHOCH QUALIFICATION", 10f, whiteText, true))
-            val chochView = text(signalQualificationText(recoveryChoch[symbol]), 11f,
+            val chochView = text(chochQualificationDisplay(symbol), 11f,
                 if (recoveryChoch[symbol].isNullOrBlank()) amber else green, true)
             chochStatusViews[symbol] = chochView
             indexCard.addView(chochView)
