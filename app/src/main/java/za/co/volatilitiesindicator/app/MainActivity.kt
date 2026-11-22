@@ -75,6 +75,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     // Auto trading defaults ON to preserve the existing automatic execution behaviour.
     // OFF pauses new original/recovery entries but does not affect open contracts.
     private var autoTradingEnabled = true
+    // Standalone trade-management control; defaults OFF and is independent of Auto Trading.
+    private var trailingStopEnabled = false
 
     private val indexes = listOf("R_10", "R_25", "R_50", "R_75", "R_100")
     private val latestPrices = mutableMapOf<String, Double>()
@@ -181,7 +183,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var qualificationMssEpoch: Long = 0L,
         var qualificationChochEpoch: Long = 0L,
         var qualificationRetestEpoch: Long = 0L,
-        var qualificationChochLevel: Double = 0.0
+        var qualificationChochLevel: Double = 0.0,
+        var trailingPeakProfitPct: Double = 0.0,
+        var trailingExtremePrice: Double = 0.0,
+        var trailingLastMarketPrice: Double = 0.0
     )
 
     private val positions = linkedMapOf<String, Position>()
@@ -312,6 +317,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         darkInterface = settingsPrefs.getBoolean("dark_interface", true)
         autoTradingEnabled = settingsPrefs.getBoolean("auto_trading_enabled", true)
+        trailingStopEnabled = settingsPrefs.getBoolean("trailing_stop_enabled", false)
         window.statusBarColor = pageColor
         window.navigationBarColor = if (darkInterface) Color.rgb(19, 25, 33) else Color.WHITE
         window.decorView.systemUiVisibility = if (darkInterface) 0 else
@@ -890,6 +896,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     override fun onTick(symbol: String, quote: Double, epoch: Long) {
         if (symbol !in indexes || !quote.isFinite()) return
         latestPrices[symbol] = quote
+        updateTrailingMarketPrice(symbol, quote)
         marketFeedConnected = true
         runOnUiThread {
             feedPillView?.apply {
@@ -1005,7 +1012,7 @@ indexStatusViews[symbol]?.apply {
                 addNotification(
                     "Trade",
                     "${displayIndexName(position.symbol)} ${position.role.lowercase(Locale.US)} opened",
-                    "${position.direction} contract opened. Stake: ${formatMoney(position.stake)}. Fixed profit target: ${formatMoney(roundStake(position.stake * 0.10))} (10% of this trade's stake)."
+                    "${position.direction} contract opened. Stake: ${formatMoney(position.stake)}. Fixed profit target when Trailing Stop is OFF: ${formatMoney(roundStake(position.stake * 0.20))} (20% of this trade's stake)."
                 )
                 subscribePosition(position.contractId)
                 runOnUiThread {
@@ -1675,13 +1682,14 @@ indexStatusViews[symbol]?.apply {
         } else if (position.status != "CLOSING") {
             position.status = "OPEN"
         }
-        // Fixed take-profit belongs exclusively to this contract:
-        // close when its own live P/L reaches 10% of its own purchase stake.
-        // A fixed take-profit check is used; no dynamic profit-locking logic.
+        // Each contract is managed against its own purchase stake and live Deriv P/L.
         if (!isSold && position.status == "OPEN" && position.stake > 0.0 &&
-            position.profit >= roundStake(position.stake * 0.10) &&
             position.canSell && position.contractId > 0L) {
-            closeRunningPosition(position, "TAKE PROFIT (10% OF STAKE)")
+            if (trailingStopEnabled) {
+                evaluateTrailingProfit(position)
+            } else if (position.profit >= roundStake(position.stake * 0.20)) {
+                closeRunningPosition(position, "FIXED TAKE PROFIT (20% OF STAKE)")
+            }
         }
 
         savePositions()
@@ -1946,6 +1954,9 @@ indexStatusViews[symbol]?.apply {
         .put("qualificationChochEpoch", p.qualificationChochEpoch)
         .put("qualificationRetestEpoch", p.qualificationRetestEpoch)
         .put("qualificationChochLevel", p.qualificationChochLevel)
+        .put("trailingPeakProfitPct", p.trailingPeakProfitPct)
+        .put("trailingExtremePrice", p.trailingExtremePrice)
+        .put("trailingLastMarketPrice", p.trailingLastMarketPrice)
 
     private fun positionFromJson(o: JSONObject): Position {
         val p = Position(
@@ -1970,6 +1981,9 @@ indexStatusViews[symbol]?.apply {
         p.qualificationChochEpoch = o.optLong("qualificationChochEpoch", 0L)
         p.qualificationRetestEpoch = o.optLong("qualificationRetestEpoch", 0L)
         p.qualificationChochLevel = o.optDouble("qualificationChochLevel", 0.0)
+        p.trailingPeakProfitPct = o.optDouble("trailingPeakProfitPct", 0.0)
+        p.trailingExtremePrice = o.optDouble("trailingExtremePrice", 0.0)
+        p.trailingLastMarketPrice = o.optDouble("trailingLastMarketPrice", 0.0)
         return p
     }
 
@@ -2508,6 +2522,8 @@ indexStatusViews[symbol]?.apply {
 
     private fun showTrade() {
         pageHeading("RUNNING TRADES", "Contracts opened after confirmed MSS + CHOCH + RETEST.")
+        content.addView(trailingStopButton())
+        content.addView(space(8))
         content.addView(autoTradingButton())
         content.addView(space(10))
         val summary = card()
@@ -2593,11 +2609,13 @@ indexStatusViews[symbol]?.apply {
                     tradeProfitViews[p.localId] = profitView
                     c.addView(profitView)
 
-                    val targetProfit = roundStake(p.stake * 0.10)
-                    val targetView = text(
-                        "PROFIT TARGET: 10% OF STAKE (${formatMoney(targetProfit)})",
-                        12f, amber, true
-                    )
+                    val targetProfit = roundStake(p.stake * 0.20)
+                    val targetLabel = if (trailingStopEnabled) {
+                        "TRAILING STOP: ON · PEAK ${String.format(Locale.US, "%.0f", p.trailingPeakProfitPct)}%"
+                    } else {
+                        "FIXED PROFIT TARGET: 20% OF STAKE (${formatMoney(targetProfit)})"
+                    }
+                    val targetView = text(targetLabel, 12f, amber, true)
                     tradeTargetViews[p.localId] = targetView
                     c.addView(targetView)
 
@@ -2677,7 +2695,11 @@ indexStatusViews[symbol]?.apply {
             setTextColor(if (position.profit >= 0.0) green else red)
         }
         tradeTargetViews[position.localId]?.apply {
-            text = "PROFIT TARGET: 10% OF STAKE (${formatMoney(roundStake(position.stake * 0.10))})"
+            text = if (trailingStopEnabled) {
+                "TRAILING STOP: ON · PEAK ${String.format(Locale.US, "%.0f", position.trailingPeakProfitPct)}%"
+            } else {
+                "FIXED PROFIT TARGET: 20% OF STAKE (${formatMoney(roundStake(position.stake * 0.20))})"
+            }
             setTextColor(amber)
         }
     }
@@ -3436,6 +3458,87 @@ indexStatusViews[symbol]?.apply {
                     openAdminDashboard()
                 }
             }.show()
+    }
+
+    private fun trailingStopButton(): View {
+        val button = actionButton(
+            if (trailingStopEnabled) "TRAILING STOP: ON" else "TRAILING STOP: OFF",
+            primary = trailingStopEnabled
+        ) {
+            trailingStopEnabled = !trailingStopEnabled
+            settingsPrefs.edit().putBoolean("trailing_stop_enabled", trailingStopEnabled).apply()
+            addNotification(
+                "Trade",
+                "Trailing Stop ${if (trailingStopEnabled) "enabled" else "disabled"}",
+                if (trailingStopEnabled) "Trailing profit protection is active for open contracts. Fixed 20% take-profit is suspended."
+                else "Trailing protection is disabled. Open contracts use a fixed 20% profit target based on their own stake."
+            )
+            render()
+        }
+        button.setTextColor(Color.WHITE)
+        button.background = rounded(
+            if (trailingStopEnabled) green else red,
+            if (trailingStopEnabled) green else red, 10
+        )
+        return button
+    }
+
+    // Maintain the favorable extreme from actual Deriv underlying-price ticks.
+    private fun updateTrailingMarketPrice(symbol: String, quote: Double) {
+        positions.values.filter { it.symbol == symbol && it.status == "OPEN" }.forEach { p ->
+            val oldExtreme = p.trailingExtremePrice
+            if (oldExtreme == 0.0) {
+                p.trailingExtremePrice = quote
+            } else if (p.direction == "RISE" && quote > oldExtreme) {
+                p.trailingExtremePrice = quote
+            } else if (p.direction == "FALL" && quote < oldExtreme) {
+                p.trailingExtremePrice = quote
+            }
+            p.trailingLastMarketPrice = quote
+            if (trailingStopEnabled) evaluateTrailingProfit(p)
+        }
+        savePositions()
+    }
+
+    private fun trailingCloseLevel(peakPct: Double, expiryAt: Long): Double {
+        val now = System.currentTimeMillis() / 1000L
+        val lessThanTwoHours = expiryAt > now && expiryAt - now < 2L * 60L * 60L
+        if (peakPct >= 81.0 && lessThanTwoHours) return 50.0
+        return when {
+            peakPct >= 90.0 -> 80.0
+            peakPct >= 80.0 -> 70.0
+            peakPct >= 70.0 -> 60.0
+            peakPct >= 60.0 -> 50.0
+            peakPct >= 50.0 -> 40.0
+            peakPct >= 40.0 -> 30.0
+            peakPct >= 30.0 -> 10.0
+            else -> 0.0
+        }
+    }
+
+    private fun evaluateTrailingProfit(p: Position) {
+        if (!trailingStopEnabled || p.status != "OPEN" || p.stake <= 0.0 ||
+            !p.canSell || p.contractId <= 0L) return
+        val profitPct = (p.profit / p.stake) * 100.0
+        if (profitPct > p.trailingPeakProfitPct) {
+            p.trailingPeakProfitPct = profitPct
+            // Reset the directional extreme when a new P/L peak is established.
+            latestPrices[p.symbol]?.let { p.trailingExtremePrice = it }
+        }
+        val closePct = trailingCloseLevel(p.trailingPeakProfitPct, p.expiryAt)
+        if (closePct <= 0.0 || profitPct > closePct) {
+            savePositions()
+            return
+        }
+        val marketPrice = latestPrices[p.symbol] ?: return
+        val reversed = when (p.direction) {
+            "RISE" -> p.trailingExtremePrice > 0.0 && marketPrice < p.trailingExtremePrice
+            "FALL" -> p.trailingExtremePrice > 0.0 && marketPrice > p.trailingExtremePrice
+            else -> false
+        }
+        if (reversed) {
+            closeRunningPosition(p, "TRAILING STOP (${closePct.toInt()}% OF STAKE) · MARKET REVERSAL")
+        }
     }
 
     private fun autoTradingButton(): View {
