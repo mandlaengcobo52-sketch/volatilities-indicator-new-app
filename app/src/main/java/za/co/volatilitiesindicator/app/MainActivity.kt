@@ -3304,7 +3304,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             if (autoTradingEnabled) "AUTO TRADING: ON" else "AUTO TRADING: OFF",
             primary = autoTradingEnabled
         ) { toggleAutoTrading() }
-        button.setTextColor(Color.WHITE)
+        button.setTextColor(Color.BLACK)
         button.background = rounded(
             if (autoTradingEnabled) green else red,
             if (autoTradingEnabled) green else red,
@@ -3481,7 +3481,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             text = label
             textSize = 12f
             isAllCaps = false
-            setTextColor(if (primary) Color.WHITE else green)
+            setTextColor(if (primary) Color.BLACK else green)
             background = rounded(if (primary) green else if (darkInterface) Color.rgb(7, 27, 13) else Color.rgb(235, 247, 241),
                 if (primary) green else if (darkInterface) lineColor else Color.rgb(210, 235, 222), 10)
             setPadding(dp(12), dp(8), dp(12), dp(8))
@@ -3504,7 +3504,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         return TextView(this).apply {
             text = value
             textSize = size
-            setTextColor(color)
+            setTextColor(
+    if (color == green) Color.rgb(0, 100, 45) else color
+)
             if (bold) setTypeface(null, Typeface.BOLD)
         }
     }
