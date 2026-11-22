@@ -155,6 +155,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val candleRefreshTask = object : Runnable {
         override fun run() {
             derivService?.client?.refreshHistoricalCandles()
+            derivService?.client?.refreshM5Candles()
             candleRefreshHandler.postDelayed(this, 60_000L)
         }
     }
@@ -187,7 +188,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var trailingPeakProfitPct: Double = 0.0,
         var trailingPeakInitialized: Boolean = false,
         var trailingExtremePrice: Double = 0.0,
-        var trailingLastMarketPrice: Double = 0.0
+        var trailingLastMarketPrice: Double = 0.0,
+        var trailingLastM5Epoch: Long = 0L
     )
 
     private val positions = linkedMapOf<String, Position>()
@@ -897,7 +899,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     override fun onTick(symbol: String, quote: Double, epoch: Long) {
         if (symbol !in indexes || !quote.isFinite()) return
         latestPrices[symbol] = quote
-        updateTrailingMarketPrice(symbol, quote)
         marketFeedConnected = true
         runOnUiThread {
             feedPillView?.apply {
@@ -937,6 +938,61 @@ indexStatusViews[symbol]?.apply {
             }
             if (selectedTab == "Home") runOnUiThread { updateMasterDecisionViews(symbol); updateRecoveryStatusView(symbol) }
         }
+    }
+
+    override fun onM5Candles(
+        symbol: String,
+        candles: List<DerivApiClient.Candle>
+    ) {
+        if (symbol !in indexes || candles.size < 3) return
+
+        // Deriv includes the currently forming candle as the newest candle.
+        // Only fully completed M5 candles may confirm a reversal.
+        val completed = candles.sortedBy { it.epoch }.dropLast(1)
+        if (completed.size < 2) return
+
+        val previous = completed[completed.lastIndex - 1]
+        val latest = completed.last()
+        if (latest.epoch <= previous.epoch) return
+
+        positions.values
+            .filter {
+                it.symbol == symbol &&
+                    it.status == "OPEN" &&
+                    it.contractId > 0L &&
+                    it.canSell
+            }
+            .forEach { position ->
+                if (!trailingStopEnabled || position.stake <= 0.0) return@forEach
+                if (latest.epoch <= position.trailingLastM5Epoch) return@forEach
+                // Do not use an M5 candle that began before this contract was opened.
+                if (position.openedAt > 0L && latest.epoch < position.openedAt) {
+                    position.trailingLastM5Epoch = latest.epoch
+                    return@forEach
+                }
+
+                position.trailingLastM5Epoch = latest.epoch
+                val protectedPct = trailingCloseLevel(position.trailingPeakProfitPct)
+                val currentProfitPct = (position.profit / position.stake) * 100.0
+
+                val reversalConfirmed = when (position.direction) {
+                    "RISE" -> latest.close < previous.low
+                    "FALL" -> latest.close > previous.high
+                    else -> false
+                }
+
+                if (protectedPct > 0.0 &&
+                    currentProfitPct <= protectedPct &&
+                    reversalConfirmed
+                ) {
+                    closeRunningPosition(
+                        position,
+                        "TRAILING STOP (${protectedPct.toInt()}% OF STAKE) · CONFIRMED M5 REVERSAL"
+                    )
+                }
+            }
+
+        savePositions()
     }
 
     override fun onMarketDataError(symbol: String, message: String) {
@@ -1959,6 +2015,7 @@ indexStatusViews[symbol]?.apply {
         .put("trailingPeakInitialized", p.trailingPeakInitialized)
         .put("trailingExtremePrice", p.trailingExtremePrice)
         .put("trailingLastMarketPrice", p.trailingLastMarketPrice)
+        .put("trailingLastM5Epoch", p.trailingLastM5Epoch)
 
     private fun positionFromJson(o: JSONObject): Position {
         val p = Position(
@@ -1987,6 +2044,7 @@ indexStatusViews[symbol]?.apply {
         p.trailingPeakInitialized = o.optBoolean("trailingPeakInitialized", false)
         p.trailingExtremePrice = o.optDouble("trailingExtremePrice", 0.0)
         p.trailingLastMarketPrice = o.optDouble("trailingLastMarketPrice", 0.0)
+        p.trailingLastM5Epoch = o.optLong("trailingLastM5Epoch", 0L)
         return p
     }
 
@@ -3499,67 +3557,34 @@ indexStatusViews[symbol]?.apply {
         return button
     }
 
-    // Maintain the favorable extreme from actual Deriv underlying-price ticks.
-    private fun updateTrailingMarketPrice(symbol: String, quote: Double) {
-        positions.values.filter { it.symbol == symbol && it.status == "OPEN" }.forEach { p ->
-            val oldExtreme = p.trailingExtremePrice
-            if (oldExtreme == 0.0) {
-                p.trailingExtremePrice = quote
-            } else if (p.direction == "RISE" && quote > oldExtreme) {
-                p.trailingExtremePrice = quote
-            } else if (p.direction == "FALL" && quote < oldExtreme) {
-                p.trailingExtremePrice = quote
-            }
-            p.trailingLastMarketPrice = quote
-            if (trailingStopEnabled) evaluateTrailingProfit(p)
-        }
-        savePositions()
-    }
-
-    private fun trailingCloseLevel(peakPct: Double, expiryAt: Long): Double {
-        val now = System.currentTimeMillis() / 1000L
-        val lessThanTwoHours = expiryAt > now && expiryAt - now < 2L * 60L * 60L
-        if (peakPct >= 81.0 && lessThanTwoHours) return 50.0
-        return when {
-            peakPct >= 90.0 -> 80.0
-            peakPct >= 80.0 -> 70.0
-            peakPct >= 70.0 -> 60.0
-            peakPct >= 60.0 -> 50.0
-            peakPct >= 50.0 -> 40.0
-            peakPct >= 40.0 -> 30.0
-            peakPct >= 30.0 -> 10.0
-            else -> 0.0
-        }
+    private fun trailingCloseLevel(peakPct: Double): Double = when {
+        peakPct >= 90.0 -> 70.0
+        peakPct >= 70.0 -> 50.0
+        peakPct >= 50.0 -> 30.0
+        else -> 0.0
     }
 
     private fun evaluateTrailingProfit(p: Position) {
-        if (!trailingStopEnabled || p.status != "OPEN" || p.stake <= 0.0 ||
-            !p.canSell || p.contractId <= 0L) return
+        if (!trailingStopEnabled ||
+            p.status != "OPEN" ||
+            p.stake <= 0.0 ||
+            !p.canSell ||
+            p.contractId <= 0L
+        ) return
+
         val profitPct = (p.profit / p.stake) * 100.0
         if (!p.trailingPeakInitialized) {
-            // First observation is the baseline: e.g. +5% or -95%, not 0%.
+            // Initialize from the contract's actual P/L, including a negative value.
             p.trailingPeakProfitPct = profitPct
             p.trailingPeakInitialized = true
-            latestPrices[p.symbol]?.let { p.trailingExtremePrice = it }
         } else if (profitPct > p.trailingPeakProfitPct) {
+            // Keep the highest P/L percentage reached by this individual contract.
             p.trailingPeakProfitPct = profitPct
-            // Reset the directional extreme when a new P/L peak is established.
-            latestPrices[p.symbol]?.let { p.trailingExtremePrice = it }
         }
-        val closePct = trailingCloseLevel(p.trailingPeakProfitPct, p.expiryAt)
-        if (closePct <= 0.0 || profitPct > closePct) {
-            savePositions()
-            return
-        }
-        val marketPrice = latestPrices[p.symbol] ?: return
-        val reversed = when (p.direction) {
-            "RISE" -> p.trailingExtremePrice > 0.0 && marketPrice < p.trailingExtremePrice
-            "FALL" -> p.trailingExtremePrice > 0.0 && marketPrice > p.trailingExtremePrice
-            else -> false
-        }
-        if (reversed) {
-            closeRunningPosition(p, "TRAILING STOP (${closePct.toInt()}% OF STAKE) · MARKET REVERSAL")
-        }
+
+        // P/L updates only maintain the high-water mark. A completed M5 candle
+        // must separately confirm the directional reversal before any close.
+        savePositions()
     }
 
     private fun autoTradingButton(): View {
