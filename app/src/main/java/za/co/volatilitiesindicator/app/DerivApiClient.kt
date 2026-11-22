@@ -48,7 +48,14 @@ class DerivApiClient(
             symbol: String,
             candles: List<Candle>
         ) {
-            // Optional callback for historical candle data.
+            // Optional callback for historical H1 qualification data.
+        }
+
+        fun onM5Candles(
+            symbol: String,
+            candles: List<Candle>
+        ) {
+            // Optional callback for M5 trailing-stop confirmation data.
         }
 
         fun onMarketDataError(symbol: String, message: String) {
@@ -241,6 +248,7 @@ class DerivApiClient(
 
 private var marketDataRequestId = 1000
 private val candleRequestSymbols = java.util.concurrent.ConcurrentHashMap<Int, String>()
+private val m5CandleRequestSymbols = java.util.concurrent.ConcurrentHashMap<Int, String>()
 
 private val candleIndexes = listOf(
     "R_10",
@@ -1188,6 +1196,20 @@ private fun connectMarketDataEndpoint() {
                 }
                 webSocket.send(message.toString())
             }
+            // Separate M5 history feed for trailing-stop reversal confirmation.
+            for (symbol in candleIndexes) {
+                val requestId = marketDataRequestId++
+                m5CandleRequestSymbols[requestId] = symbol
+                val message = JSONObject().apply {
+                    put("ticks_history", symbol)
+                    put("count", 100)
+                    put("end", "latest")
+                    put("style", "candles")
+                    put("granularity", 300)
+                    put("req_id", requestId)
+                }
+                webSocket.send(message.toString())
+            }
             for (symbol in candleIndexes) {
                 val tickRequest = JSONObject().apply {
                     put("ticks", symbol)
@@ -1202,17 +1224,39 @@ private fun connectMarketDataEndpoint() {
             try {
                 val json = JSONObject(text)
                 val apiError = json.optJSONObject("error")
+                val echoRequest = json.optJSONObject("echo_req")
+                val requestId = json.optInt("req_id", -1)
+                val m5SymbolForRequest = m5CandleRequestSymbols.remove(requestId)
+                val isM5 = m5SymbolForRequest != null
+
                 if (apiError != null) {
-                    val failedReqId = json.optInt("req_id", -1)
-                    val failedSymbol = json.optJSONObject("echo_req")?.optString("ticks_history", "")
-                        ?.takeIf { it in candleIndexes }
-                        ?: candleRequestSymbols.remove(failedReqId).orEmpty()
-                    val message = apiError.optString("message", "Deriv market-data request failed")
-                    android.util.Log.e("DerivCandles", "Endpoint $endpoint returned API error: ${apiError.optString("code")} - $message")
-                    if (failedSymbol in candleIndexes) callback.onMarketDataError(failedSymbol, message)
-                    // An open socket with API errors is not proof that this endpoint supports v3 candle requests.
-                    if (failedSymbol in candleIndexes && marketDataEndpointIndex < marketDataEndpoints.lastIndex) {
-                        try { webSocket.close(1011, "Endpoint does not support candle request") } catch (_: Exception) {}
+                    val failedSymbol = m5SymbolForRequest ?: (
+                        echoRequest?.optString("ticks_history", "")
+                            ?.takeIf { it in candleIndexes }
+                            ?: candleRequestSymbols.remove(requestId).orEmpty()
+                    )
+                    val message = apiError.optString(
+                        "message",
+                        "Deriv market-data request failed"
+                    )
+                    android.util.Log.e(
+                        "DerivCandles",
+                        "Endpoint $endpoint returned API error: ${apiError.optString("code")} - $message"
+                    )
+                    // M5 failures must not mark the H1 qualification feed as failed.
+                    if (isM5) {
+                        android.util.Log.e("DerivCandles", "M5 request failed for $failedSymbol: $message")
+                    } else {
+                        if (failedSymbol in candleIndexes) {
+                            callback.onMarketDataError(failedSymbol, message)
+                        }
+                        if (failedSymbol in candleIndexes &&
+                            marketDataEndpointIndex < marketDataEndpoints.lastIndex
+                        ) {
+                            try {
+                                webSocket.close(1011, "Endpoint does not support candle request")
+                            } catch (_: Exception) {}
+                        }
                     }
                     return
                 }
@@ -1222,20 +1266,29 @@ private fun connectMarketDataEndpoint() {
                     val tickSymbol = tick.optString("symbol", "")
                     val quote = tick.optDouble("quote", Double.NaN)
                     val epoch = tick.optLong("epoch", 0L)
-                    if (tickSymbol in candleIndexes && quote.isFinite()) callback.onTick(tickSymbol, quote, epoch)
+                    if (tickSymbol in candleIndexes && quote.isFinite()) {
+                        callback.onTick(tickSymbol, quote, epoch)
+                    }
                 }
 
-                val echoRequest = json.optJSONObject("echo_req")
-                val requestId = json.optInt("req_id", -1)
-                val symbol = echoRequest?.optString("ticks_history", "")?.takeIf { it in candleIndexes }
-                    ?: candleRequestSymbols.remove(requestId).orEmpty()
+                val symbol = m5SymbolForRequest ?: (
+                    echoRequest?.optString("ticks_history", "")
+                        ?.takeIf { it in candleIndexes }
+                        ?: candleRequestSymbols.remove(requestId).orEmpty()
+                )
                 if (symbol !in candleIndexes) return
 
-                val candlesJson = json.optJSONArray("candles") ?: json.optJSONObject("history")?.optJSONArray("candles")
+                val candlesJson = json.optJSONArray("candles")
+                    ?: json.optJSONObject("history")?.optJSONArray("candles")
                 if (candlesJson == null) {
-                    callback.onMarketDataError(symbol, "Deriv returned no H1 candles for $symbol.")
+                    if (isM5) {
+                        android.util.Log.e("DerivCandles", "Deriv returned no M5 candles for $symbol.")
+                    } else {
+                        callback.onMarketDataError(symbol, "Deriv returned no H1 candles for $symbol.")
+                    }
                     return
                 }
+
                 val candles = mutableListOf<Candle>()
                 for (i in 0 until candlesJson.length()) {
                     val item = candlesJson.optJSONObject(i) ?: continue
@@ -1244,20 +1297,44 @@ private fun connectMarketDataEndpoint() {
                     val high = item.optDouble("high", Double.NaN)
                     val low = item.optDouble("low", Double.NaN)
                     val close = item.optDouble("close", Double.NaN)
-                    if (epoch > 0L && open.isFinite() && high.isFinite() && low.isFinite() && close.isFinite()) {
-                        candles.add(Candle(epoch = epoch, open = open, high = high, low = low, close = close))
+                    if (epoch > 0L && open.isFinite() && high.isFinite() &&
+                        low.isFinite() && close.isFinite()
+                    ) {
+                        candles.add(
+                            Candle(
+                                epoch = epoch,
+                                open = open,
+                                high = high,
+                                low = low,
+                                close = close
+                            )
+                        )
                     }
                 }
+
                 if (candles.isNotEmpty()) {
-                    candleRequestSymbols.remove(requestId)
-                    callback.onCandles(symbol, candles.sortedBy { it.epoch })
-                    // Keep the timeout active until all five index histories have replied.
-                    if (candleRequestSymbols.isEmpty()) {
-                        marketDataTimeout?.cancel(false)
-                        marketDataTimeout = null
+                    val sortedCandles = candles.sortedBy { it.epoch }
+                    if (isM5) {
+                        callback.onM5Candles(symbol, sortedCandles)
+                    } else {
+                        candleRequestSymbols.remove(requestId)
+                        callback.onCandles(symbol, sortedCandles)
+                        // Keep the timeout active until all five H1 histories have replied.
+                        if (candleRequestSymbols.isEmpty()) {
+                            marketDataTimeout?.cancel(false)
+                            marketDataTimeout = null
+                        }
                     }
+                } else if (isM5) {
+                    android.util.Log.e(
+                        "DerivCandles",
+                        "Deriv returned an M5 response, but no valid candles could be read for $symbol."
+                    )
                 } else {
-                    callback.onMarketDataError(symbol, "Deriv returned a candle response, but no valid candles could be read.")
+                    callback.onMarketDataError(
+                        symbol,
+                        "Deriv returned a candle response, but no valid candles could be read."
+                    )
                 }
             } catch (e: Exception) {
                 android.util.Log.e("DerivCandles", "Candle response parsing failed: ${e.message}; response=$text", e)
@@ -1271,6 +1348,7 @@ private fun connectMarketDataEndpoint() {
             marketDataTimeout?.cancel(false)
             marketDataTimeout = null
             candleRequestSymbols.clear()
+            m5CandleRequestSymbols.clear()
             if (manuallyDisconnected) return
             if (marketDataAttempt < marketDataEndpoints.size - 1) {
                 marketDataAttempt++
@@ -1292,6 +1370,7 @@ private fun connectMarketDataEndpoint() {
             marketDataTimeout?.cancel(false)
             marketDataTimeout = null
             candleRequestSymbols.clear()
+            m5CandleRequestSymbols.clear()
             if (manuallyDisconnected) return
             if (code == 1011 && marketDataAttempt < marketDataEndpoints.size - 1) {
                 marketDataAttempt++
@@ -1358,9 +1437,38 @@ fun refreshHistoricalCandles() {
 
     android.util.Log.d(
         "DerivCandles",
-        "Historical candle refresh requested for all indexes"
+        "Historical H1 candle refresh requested for all indexes"
     )
 }
+
+fun refreshM5Candles() {
+    val socket = marketDataSocket
+    if (socket == null) {
+        requestHistoricalCandles()
+        return
+    }
+
+    for (symbol in candleIndexes) {
+        val requestId = marketDataRequestId++
+        m5CandleRequestSymbols[requestId] = symbol
+        val message = JSONObject().apply {
+            put("ticks_history", symbol)
+            put("count", 100)
+            put("end", "latest")
+            put("style", "candles")
+            put("granularity", 300)
+            put("req_id", requestId)
+        }
+        if (!socket.send(message.toString())) {
+            m5CandleRequestSymbols.remove(requestId)
+            android.util.Log.e(
+                "DerivCandles",
+                "Failed to request refreshed M5 candles for $symbol"
+            )
+        }
+    }
+}
+
     private fun handleWebSocketMessage(
         text: String
     ) {
@@ -1975,6 +2083,7 @@ marketDataTimeout?.cancel(false)
 marketDataTimeout = null
 
 candleRequestSymbols.clear()
+m5CandleRequestSymbols.clear()
         connected =
             false
 
