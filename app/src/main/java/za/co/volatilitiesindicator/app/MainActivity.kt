@@ -383,6 +383,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                             platformPrefs.edit().putString("active_user_id", verifiedUserId).apply()
                             derivService?.setPlatformUser(verifiedUserId)
                         }
+                        restoreMarketFeedServiceIfNeeded()
                         platformUserName = platformUser.optString("full_name")
                         platformUserRole = platformUser.optString("role", "user").lowercase(Locale.US)
                         when (platformUserRole) {
@@ -446,6 +447,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                                 platformPrefs.edit().putString("active_user_id", loggedInUserId).apply()
                                 derivService?.setPlatformUser(loggedInUserId)
                             }
+                            restoreMarketFeedServiceIfNeeded()
                             platformUserName = platformUser.optString("full_name")
                             platformUserRole = platformUser.optString("role", "user").lowercase(Locale.US)
                             if (platformAuthenticated) {
@@ -718,6 +720,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         })
         // Close the current user's live connection before removing the active identity.
         derivService?.setPlatformUser("")
+        prefs.edit().putBoolean("market_feed_service_started", false).apply()
         platformPrefs.edit().clear().apply()
         platformAuthToken = ""; platformAuthenticated = false
         platformUser = JSONObject(); platformUserName = ""; platformUserRole = "user"
@@ -763,6 +766,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val previousMode = executionMode
         val ownerId = platformUserId
         if (ownerId.isBlank()) return
+        restoreMarketFeedServiceIfNeeded()
         executionMode = if (prefs.getString(derivModeKey(ownerId), "DEMO").equals("REAL", true)) "REAL" else "DEMO"
         if (previousMode != executionMode && ::content.isInitialized && accountConnected) render()
         derivService?.setPlatformUser(ownerId)
@@ -775,8 +779,25 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
     }
 
+    // Reattach to the foreground Deriv service after Activity recreation (for example,
+    // screen rotation). The service owns the WebSocket; MainActivity only binds to it.
+    private fun restoreMarketFeedServiceIfNeeded() {
+        if (!platformAuthenticated || platformUserId.isBlank() || serviceBound) return
+        val ownerId = platformUserId
+        val mode = if (prefs.getString(derivModeKey(ownerId), "DEMO").equals("REAL", true)) "REAL" else "DEMO"
+        val savedToken = prefs.getString(derivTokenKey(mode, ownerId), "").orEmpty()
+        val wasStarted = prefs.getBoolean("market_feed_service_started", false)
+        val manuallyDisconnected = prefs.getBoolean("user_${ownerId}_manually_disconnected", false)
+        // Rebind if this app previously started the market service, or if this user has
+        // a saved Deriv token that should be restored after Activity recreation.
+        if (wasStarted || (savedToken.isNotBlank() && !manuallyDisconnected)) {
+            startMarketFeedService()
+        }
+    }
+
     private fun startMarketFeedService() {
         if (serviceBound) return
+        prefs.edit().putBoolean("market_feed_service_started", true).apply()
         val intent = Intent(this, DerivConnectionService::class.java).apply {
             putExtra(DerivConnectionService.EXTRA_PLATFORM_USER_ID, if (platformAuthenticated) platformUserId else "")
         }
