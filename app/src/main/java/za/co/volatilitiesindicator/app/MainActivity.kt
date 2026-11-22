@@ -892,7 +892,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         latestPrices[symbol] = quote
         marketFeedConnected = true
         runOnUiThread {
-            feedPillView?.text = "LIVE"
             feedPillView?.apply {
     text = "LIVE"
     setTextColor(Color.BLACK)
@@ -908,6 +907,7 @@ indexStatusViews[symbol]?.apply {
             updateMasterDecisionViews(symbol)
         }
     }
+
 
     override fun onCandles(symbol: String, candles: List<DerivApiClient.Candle>) {
         if (symbol !in indexes) return
