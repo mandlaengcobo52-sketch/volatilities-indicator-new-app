@@ -903,7 +903,6 @@ indexStatusViews[symbol]?.apply {
     setTextColor(Color.BLACK)
     background = rounded(green, green, 20)
 }
-            }
             updateMasterDecisionViews(symbol)
         }
     }
