@@ -111,6 +111,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private var accountBalanceLabel = "Balance unavailable"
     private var availableBalance = 0.0
     private var executionMode = "DEMO"
+    // Position ledgers are isolated by the authenticated Deriv account ID.
+    private var currentDerivAccountId = ""
     private var accountStatusView: TextView? = null
     private var accountOpenPlView: TextView? = null
     private var accountClosedPlView: TextView? = null
@@ -316,7 +318,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         tradingDayKey = tradePrefs.getString("day_key", "").orEmpty()
         dailyCapital = tradePrefs.getFloat("daily_capital", 0f).toDouble()
-        loadPositions()
+        // Trade positions are loaded only after Deriv confirms the active account.
         indexes.forEach { symbol ->
             tradePrefs.getString("signal_mss_$symbol", null)?.let { recoveryMss[symbol] = it }
             tradePrefs.getString("signal_choch_$symbol", null)?.let { recoveryChoch[symbol] = it }
@@ -825,7 +827,15 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
         accountConnected = true
         executionMode = if (accountType.equals("REAL", true)) "REAL" else "DEMO"
+        val previousDerivAccountId = currentDerivAccountId
+        currentDerivAccountId = accountId.trim()
         accountLabel = "$accountId ($accountType)"
+        if (previousDerivAccountId != currentDerivAccountId) {
+            // Never carry the previous account's local positions into this account.
+            positions.clear()
+            recoveryWaiting.clear()
+            loadPositions()
+        }
         addNotification("Accounts", "Deriv account connected", "$accountLabel is connected.")
         // Clear the previous account's displayed balance until this account responds.
         accountBalanceLabel = "Balance loading…"
@@ -1899,61 +1909,147 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
     }
 
+    private fun accountStorageSuffix(): String = currentDerivAccountId
+        .trim()
+        .replace(Regex("[^A-Za-z0-9_-]"), "_")
+
+    private fun accountPositionsKey(): String = "positions_account_${accountStorageSuffix()}"
+    private fun accountHistoryKey(): String = "trade_history_account_${accountStorageSuffix()}"
+
+    private fun positionToJson(p: Position): JSONObject = JSONObject()
+        .put("id", p.localId).put("ownerAccountId", currentDerivAccountId)
+        .put("symbol", p.symbol).put("direction", p.direction)
+        .put("role", p.role).put("stake", p.stake).put("original", p.originalId)
+        .put("contract", p.contractId).put("profit", p.profit).put("status", p.status)
+        .put("recoveryEligible", p.recoveryEligible).put("recoveryUsed", p.recoveryUsed)
+        .put("closedAt", p.closedAt).put("pairExitTriggered", p.pairExitTriggered)
+        .put("recoveryAfterEpoch", p.recoveryAfterEpoch).put("pairedLoss", p.pairedLoss)
+        .put("entryBarrier", p.entryBarrier).put("expiryAt", p.expiryAt)
+        .put("openedAt", p.openedAt).put("closeReason", p.closeReason)
+        .put("qualificationMssEpoch", p.qualificationMssEpoch)
+        .put("qualificationChochEpoch", p.qualificationChochEpoch)
+        .put("qualificationRetestEpoch", p.qualificationRetestEpoch)
+        .put("qualificationChochLevel", p.qualificationChochLevel)
+
+    private fun positionFromJson(o: JSONObject): Position {
+        val p = Position(
+            localId = o.optString("id"), symbol = o.optString("symbol"),
+            direction = o.optString("direction"), role = o.optString("role"),
+            stake = o.optDouble("stake", 0.0), originalId = o.optString("original", "")
+        )
+        p.contractId = o.optLong("contract", 0L)
+        p.profit = o.optDouble("profit", 0.0)
+        p.status = o.optString("status", "OPEN")
+        p.recoveryEligible = o.optBoolean("recoveryEligible", false)
+        p.recoveryUsed = o.optBoolean("recoveryUsed", false)
+        p.closedAt = o.optLong("closedAt", 0L)
+        p.pairExitTriggered = o.optBoolean("pairExitTriggered", false)
+        p.recoveryAfterEpoch = o.optLong("recoveryAfterEpoch", p.closedAt)
+        p.pairedLoss = o.optDouble("pairedLoss", 0.0)
+        p.entryBarrier = o.optDouble("entryBarrier", 0.0)
+        p.expiryAt = o.optLong("expiryAt", 0L)
+        p.openedAt = o.optLong("openedAt", 0L)
+        p.closeReason = o.optString("closeReason", "")
+        p.qualificationMssEpoch = o.optLong("qualificationMssEpoch", 0L)
+        p.qualificationChochEpoch = o.optLong("qualificationChochEpoch", 0L)
+        p.qualificationRetestEpoch = o.optLong("qualificationRetestEpoch", 0L)
+        p.qualificationChochLevel = o.optDouble("qualificationChochLevel", 0.0)
+        return p
+    }
+
     private fun savePositions() {
-        val array = JSONArray()
-        positions.values.forEach { p ->
-            array.put(JSONObject().put("id", p.localId).put("symbol", p.symbol).put("direction", p.direction)
-                .put("role", p.role).put("stake", p.stake).put("original", p.originalId)
-                .put("contract", p.contractId).put("profit", p.profit).put("status", p.status)
-                .put("recoveryEligible", p.recoveryEligible)
-                .put("recoveryUsed", p.recoveryUsed)
-                .put("closedAt", p.closedAt)
-                .put("pairExitTriggered", p.pairExitTriggered)
-                .put("recoveryAfterEpoch", p.recoveryAfterEpoch)
-                .put("pairedLoss", p.pairedLoss)
-                .put("entryBarrier", p.entryBarrier)
-                .put("expiryAt", p.expiryAt)
-                .put("openedAt", p.openedAt)
-                .put("closeReason", p.closeReason)
-                .put("qualificationMssEpoch", p.qualificationMssEpoch)
-                .put("qualificationChochEpoch", p.qualificationChochEpoch)
-                .put("qualificationRetestEpoch", p.qualificationRetestEpoch)
-                .put("qualificationChochLevel", p.qualificationChochLevel))
-        }
-        // commit() makes completed trade records durable before activity teardown/update.
-        tradePrefs.edit().putString("positions", array.toString()).commit()
+        // Do not write anything until Deriv has identified the active account.
+        if (currentDerivAccountId.isBlank()) return
+        val all = JSONArray()
+        positions.values.forEach { all.put(positionToJson(it)) }
+        val completedArchive = JSONArray()
+        positions.values.filter { it.status == "CLOSED" }
+            .sortedByDescending { it.closedAt }
+            .forEach { completedArchive.put(positionToJson(it)) }
+        // Each Deriv account has its own independent active ledger and history archive.
+        tradePrefs.edit()
+            .putString(accountPositionsKey(), all.toString())
+            .putString(accountHistoryKey(), completedArchive.toString())
+            .commit()
     }
 
     private fun loadPositions() {
-        val raw = tradePrefs.getString("positions", "") ?: return
-        try {
-            val array = JSONArray(raw)
-            for (i in 0 until array.length()) {
-                val o = array.getJSONObject(i)
-                val p = Position(o.getString("id"), o.getString("symbol"), o.getString("direction"), o.getString("role"), o.getDouble("stake"), o.optString("original"))
-                p.contractId = o.optLong("contract")
-                p.profit = o.optDouble("profit")
-                p.status = o.optString("status", "OPEN")
-                p.recoveryEligible = o.optBoolean("recoveryEligible", false)
-                p.recoveryUsed = o.optBoolean("recoveryUsed", false)
-                p.closedAt = o.optLong("closedAt", 0L)
-                p.pairExitTriggered = o.optBoolean("pairExitTriggered", false)
-                p.recoveryAfterEpoch = o.optLong("recoveryAfterEpoch", p.closedAt)
-                p.pairedLoss = o.optDouble("pairedLoss", 0.0)
-                p.entryBarrier = o.optDouble("entryBarrier", 0.0)
-                p.expiryAt = o.optLong("expiryAt", 0L)
-                p.openedAt = o.optLong("openedAt", 0L)
-                p.closeReason = o.optString("closeReason", "")
-                p.qualificationMssEpoch = o.optLong("qualificationMssEpoch", 0L)
-                p.qualificationChochEpoch = o.optLong("qualificationChochEpoch", 0L)
-                p.qualificationRetestEpoch = o.optLong("qualificationRetestEpoch", 0L)
-                p.qualificationChochLevel = o.optDouble("qualificationChochLevel", 0.0)
-                if (p.recoveryEligible && !p.recoveryUsed) recoveryWaiting.add(p.localId)
-                positions[p.localId] = p
-                if (p.contractId > 0 && p.status != "CLOSED") subscribePosition(p.contractId)
+        if (currentDerivAccountId.isBlank()) return
+        val loaded = linkedMapOf<String, Position>()
+        fun readArray(key: String, completedOnly: Boolean = false) {
+            val raw = tradePrefs.getString(key, "").orEmpty()
+            if (raw.isBlank()) return
+            try {
+                val array = JSONArray(raw)
+                for (i in 0 until array.length()) {
+                    val obj = array.optJSONObject(i) ?: continue
+                    // Reject records explicitly owned by another Deriv account.
+                    val owner = obj.optString("ownerAccountId", currentDerivAccountId)
+                    if (owner.isNotBlank() && owner != currentDerivAccountId) continue
+                    val p = positionFromJson(obj)
+                    if (p.localId.isBlank() || p.symbol.isBlank()) continue
+                    if (completedOnly && p.status != "CLOSED") continue
+                    loaded[p.localId] = p
+                }
+            } catch (_: Exception) { }
+        }
+        // Intentionally do not import the old unscoped "positions" / history keys:
+        // they have no reliable account ownership and may contain Demo contracts.
+        readArray(accountPositionsKey())
+        val ledgerIds = loaded.keys.toSet()
+        val archive = linkedMapOf<String, Position>()
+        val rawArchive = tradePrefs.getString(accountHistoryKey(), "").orEmpty()
+        if (rawArchive.isNotBlank()) {
+            try {
+                val array = JSONArray(rawArchive)
+                for (i in 0 until array.length()) {
+                    val obj = array.optJSONObject(i) ?: continue
+                    val owner = obj.optString("ownerAccountId", currentDerivAccountId)
+                    if (owner.isNotBlank() && owner != currentDerivAccountId) continue
+                    val p = positionFromJson(obj)
+                    if (p.status == "CLOSED" && p.localId.isNotBlank()) archive[p.localId] = p
+                }
+            } catch (_: Exception) { }
+        }
+        archive.forEach { (id, position) -> if (id !in ledgerIds) loaded[id] = position }
+        positions.clear()
+        positions.putAll(loaded)
+        recoveryWaiting.clear()
+        positions.values.forEach { position ->
+            if (position.recoveryEligible && !position.recoveryUsed) recoveryWaiting.add(position.localId)
+            if (position.contractId > 0L && position.status != "CLOSED") subscribePosition(position.contractId)
+        }
+        savePositions()
+    }
+
+    private fun deleteHistoryRecord(position: Position) {
+        if (position.status != "CLOSED") return
+        AlertDialog.Builder(this)
+            .setTitle("DELETE TRADE HISTORY")
+            .setMessage("Permanently delete the completed history record for ${displayIndexName(position.symbol)} contract ${position.contractId}? This will not close or change any open Deriv contract.")
+            .setNegativeButton("CANCEL", null)
+            .setPositiveButton("DELETE") { _, _ ->
+                positions.remove(position.localId)
+                recoveryWaiting.remove(position.localId)
+                savePositions()
+                render()
             }
-            savePositions()
-        } catch (_: Exception) { }
+            .show()
+    }
+
+    private fun deleteAllTradeHistory() {
+        val completedCount = positions.values.count { it.status == "CLOSED" }
+        if (completedCount == 0) return
+        AlertDialog.Builder(this)
+            .setTitle("DELETE ALL TRADE HISTORY")
+            .setMessage("Permanently delete all $completedCount completed trade history records? Running trades and open Deriv contracts will not be closed or changed.")
+            .setNegativeButton("CANCEL", null)
+            .setPositiveButton("DELETE ALL") { _, _ ->
+                positions.entries.removeAll { it.value.status == "CLOSED" }
+                savePositions()
+                render()
+            }
+            .show()
     }
 
     private fun showAccountModeDialog() {
@@ -2490,8 +2586,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         content.addView(divider())
         content.addView(space(14))
         content.addView(text("TRADE HISTORY", 17f, Color.WHITE, true))
-        content.addView(text("Completed contracts.", 12f, whiteText))
+        content.addView(text("Completed contracts. Saved separately from running positions.", 12f, whiteText))
         content.addView(space(8))
+        if (closedPositions.isNotEmpty()) {
+            content.addView(actionButton("DELETE ALL TRADE HISTORY", false) { deleteAllTradeHistory() })
+            content.addView(space(8))
+        }
         if (closedPositions.isEmpty()) {
             content.addView(text("No completed trades yet.", 12f, muted))
         } else {
@@ -2511,6 +2611,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 c.addView(text("FINAL P/L: ${formatMoney(p.profit)}", 14f, if (p.profit >= 0.0) green else red, true))
                 val closedText = if (p.closedAt > 0L) java.text.DateFormat.getDateTimeInstance().format(java.util.Date(p.closedAt * 1000L)) else "Time unavailable"
                 c.addView(text("Closed: $closedText", 11f, Color.WHITE))
+                c.addView(space(8))
+                c.addView(actionButton("DELETE THIS HISTORY RECORD", false) { deleteHistoryRecord(p) })
                 content.addView(c)
                 content.addView(space(8))
             }
@@ -3558,28 +3660,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private fun dp(value: Int): Int =
         (value * resources.displayMetrics.density).toInt()
 
-    /**
-     * Toasts may be requested from Deriv WebSocket callbacks, which run on
-     * OkHttp's background thread and do not have a Looper. Always marshal the
-     * Toast operation onto Android's main thread so a UI notification cannot
-     * throw inside WebSocket message processing and be misreported as an
-     * invalid Deriv message.
-     */
     private fun toast(message: String) {
-        if (message.isBlank()) return
-        val showToast = Runnable {
-            if (!isFinishing && !isDestroyed) {
-                android.widget.Toast.makeText(
-                    applicationContext,
-                    message,
-                    android.widget.Toast.LENGTH_SHORT
-                ).show()
-            }
-        }
-        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
-            showToast.run()
-        } else {
-            runOnUiThread { showToast.run() }
-        }
+        android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show()
     }
 }
