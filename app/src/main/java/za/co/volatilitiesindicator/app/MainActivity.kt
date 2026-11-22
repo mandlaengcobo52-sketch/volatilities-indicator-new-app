@@ -2613,8 +2613,9 @@ indexStatusViews[symbol]?.apply {
                     c.addView(profitView)
 
                     val targetProfit = roundStake(p.stake * 0.20)
+                    val currentProfitPct = if (p.stake > 0.0) (p.profit / p.stake) * 100.0 else 0.0
                     val targetLabel = if (trailingStopEnabled) {
-                        "TRAILING STOP: ON · PEAK ${String.format(Locale.US, "%.0f", p.trailingPeakProfitPct)}%"
+                        "TRAILING STOP: ON · CURRENT ${String.format(Locale.US, "%+.2f", currentProfitPct)}% · PEAK ${String.format(Locale.US, "%+.2f", p.trailingPeakProfitPct)}%"
                     } else {
                         "FIXED PROFIT TARGET: 20% OF STAKE (${formatMoney(targetProfit)})"
                     }
@@ -2699,7 +2700,9 @@ indexStatusViews[symbol]?.apply {
         }
         tradeTargetViews[position.localId]?.apply {
             text = if (trailingStopEnabled) {
-                "TRAILING STOP: ON · PEAK ${String.format(Locale.US, "%.0f", position.trailingPeakProfitPct)}%"
+                val currentProfitPct = if (position.stake > 0.0)
+                    (position.profit / position.stake) * 100.0 else 0.0
+                "TRAILING STOP: ON · CURRENT ${String.format(Locale.US, "%+.2f", currentProfitPct)}% · PEAK ${String.format(Locale.US, "%+.2f", position.trailingPeakProfitPct)}%"
             } else {
                 "FIXED PROFIT TARGET: 20% OF STAKE (${formatMoney(roundStake(position.stake * 0.20))})"
             }
