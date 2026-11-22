@@ -893,11 +893,17 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         marketFeedConnected = true
         runOnUiThread {
             feedPillView?.text = "LIVE"
-            feedPillView?.setTextColor(green)
-            priceViews[symbol]?.text = formatPrice(quote)
-            indexStatusViews[symbol]?.apply {
-                text = "LIVE"
-                setTextColor(green)
+            feedPillView?.apply {
+    text = "LIVE"
+    setTextColor(Color.BLACK)
+    background = rounded(green, green, 20)
+}
+
+indexStatusViews[symbol]?.apply {
+    text = "LIVE"
+    setTextColor(Color.BLACK)
+    background = rounded(green, green, 20)
+}
             }
             updateMasterDecisionViews(symbol)
         }
@@ -3505,10 +3511,18 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     private fun updateConnectionLabels(message: String) {
-        if (selectedTab == "Home") {
-            feedPillView?.text = if (marketFeedConnected) "LIVE" else "CONNECTING"
-            feedPillView?.setTextColor(if (marketFeedConnected) green else amber)
+    if (selectedTab == "Home") {
+        val isLive = marketFeedConnected
+        feedPillView?.apply {
+            text = if (isLive) "LIVE" else "CONNECTING"
+            setTextColor(if (isLive) Color.BLACK else amber)
+            background = rounded(
+                if (isLive) green else Color.WHITE,
+                if (isLive) green else amber,
+                20
+            )
         }
+    }
     }
 
     private fun renderIfHome() {
@@ -3624,21 +3638,30 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     private fun pill(label: String, color: Int): TextView {
-        return TextView(this).apply {
-            text = label
-            textSize = 10f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(color)
-            setPadding(dp(9), dp(5), dp(9), dp(5))
-            background = rounded(Color.WHITE, color, 20)
-        }
+    val isLive = color == green
+    return TextView(this).apply {
+        text = label
+        textSize = 10f
+        setTypeface(null, Typeface.BOLD)
+        setTextColor(if (isLive) Color.BLACK else color)
+        setPadding(dp(9), dp(5), dp(9), dp(5))
+        background = rounded(
+            if (isLive) green else Color.WHITE,
+            if (isLive) green else color,
+            20
+        )
+    }
     }
 
     private fun text(value: String, size: Float, color: Int, bold: Boolean = false): TextView {
         return TextView(this).apply {
             text = value
             textSize = size
-            setTextColor(color)
+            setTextColor(
+    if (!darkInterface && color == green)
+        Color.rgb(0, 100, 45)
+    else color
+)
             if (bold) setTypeface(null, Typeface.BOLD)
         }
     }
