@@ -54,17 +54,17 @@ import org.json.JSONArray
 class MainActivity : Activity(), DerivApiClient.Callback {
 
     private var darkInterface = true
-    private val ink: Int get() = if (darkInterface) Color.rgb(242, 246, 244) else Color.rgb(28, 39, 51)
-    private val muted: Int get() = if (darkInterface) Color.WHITE else Color.rgb(28, 39, 51)
+    private val ink: Int get() = if (darkInterface) Color.WHITE else Color.rgb(28, 39, 51)
+    private val muted: Int get() = if (darkInterface) Color.rgb(155, 167, 159) else Color.rgb(28, 39, 51)
     private val whiteText: Int get() = if (darkInterface) Color.WHITE else ink
-    private val green = Color.rgb(0, 200, 83)
-    private val red = Color.rgb(244, 67, 54)
-    private val amber = Color.rgb(255, 214, 0)
-    private val gold = Color.rgb(255, 214, 0)
-    private val blue = Color.rgb(33, 150, 243)
-    private val pageColor: Int get() = if (darkInterface) Color.rgb(0, 7, 5) else Color.rgb(245, 247, 250)
-    private val cardColor: Int get() = if (darkInterface) Color.rgb(5, 25, 18) else Color.WHITE
-    private val lineColor: Int get() = if (darkInterface) Color.rgb(25, 91, 62) else Color.rgb(190, 225, 205)
+    private val green = Color.rgb(0, 255, 102)
+    private val red = Color.rgb(255, 91, 82)
+    private val amber = Color.rgb(255, 212, 0)
+    private val gold = Color.rgb(255, 212, 0)
+    private val blue = Color.rgb(50, 152, 255)
+    private val pageColor: Int get() = if (darkInterface) Color.rgb(2, 6, 4) else Color.rgb(245, 247, 250)
+    private val cardColor: Int get() = if (darkInterface) Color.rgb(3, 20, 10) else Color.WHITE
+    private val lineColor: Int get() = if (darkInterface) Color.rgb(23, 107, 56) else Color.rgb(190, 225, 205)
 
     private lateinit var content: LinearLayout
     private var selectedTab = "Home"
@@ -111,8 +111,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private var accountBalanceLabel = "Balance unavailable"
     private var availableBalance = 0.0
     private var executionMode = "DEMO"
-    // Position ledgers are isolated by the authenticated Deriv account ID.
-    private var currentDerivAccountId = ""
     private var accountStatusView: TextView? = null
     private var accountOpenPlView: TextView? = null
     private var accountClosedPlView: TextView? = null
@@ -306,19 +304,19 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.statusBarColor = pageColor
-        window.navigationBarColor = Color.WHITE
+        window.navigationBarColor = Color.rgb(2, 6, 4)
         window.decorView.systemUiVisibility =
             View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
                 View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         darkInterface = settingsPrefs.getBoolean("dark_interface", true)
         autoTradingEnabled = settingsPrefs.getBoolean("auto_trading_enabled", true)
         window.statusBarColor = pageColor
-        window.navigationBarColor = if (darkInterface) Color.rgb(19, 25, 33) else Color.WHITE
+        window.navigationBarColor = if (darkInterface) Color.rgb(2, 6, 4) else Color.WHITE
         window.decorView.systemUiVisibility = if (darkInterface) 0 else
             View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         tradingDayKey = tradePrefs.getString("day_key", "").orEmpty()
         dailyCapital = tradePrefs.getFloat("daily_capital", 0f).toDouble()
-        // Trade positions are loaded only after Deriv confirms the active account.
+        loadPositions()
         indexes.forEach { symbol ->
             tradePrefs.getString("signal_mss_$symbol", null)?.let { recoveryMss[symbol] = it }
             tradePrefs.getString("signal_choch_$symbol", null)?.let { recoveryChoch[symbol] = it }
@@ -473,7 +471,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
             setPadding(dp(20), dp(18), dp(20), dp(20))
-            setBackgroundColor(Color.rgb(0, 7, 5))
+            setBackgroundColor(Color.rgb(2, 6, 4))
         }
         val scroll = ScrollView(this).apply { isFillViewport = true }
         val page = LinearLayout(this).apply {
@@ -495,7 +493,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         page.addView(TextView(this).apply {
             text = "VOLATILITIES INDICATOR"
             textSize = 25f
-            setTextColor(Color.rgb(0, 230, 118))
+            setTextColor(Color.rgb(0, 255, 102))
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             setPadding(0, dp(4), 0, dp(22))
@@ -505,15 +503,15 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(22), dp(20), dp(22))
             background = GradientDrawable().apply {
-                setColor(Color.rgb(3, 22, 14))
+                setColor(Color.rgb(3, 20, 10))
                 setCornerRadius(dp(22).toFloat())
-                setStroke(dp(2), Color.rgb(0, 230, 118))
+                setStroke(dp(2), Color.rgb(0, 255, 102))
             }
         }
         panel.addView(TextView(this).apply {
             text = if (register) "CREATE YOUR PROFILE" else "ACCOUNT LOGIN"
             textSize = 21f
-            setTextColor(Color.rgb(0, 230, 118))
+            setTextColor(Color.rgb(0, 255, 102))
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             setPadding(0, 0, 0, dp(12))
@@ -531,13 +529,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 this.hint = hint
                 textSize = 16f
                 setTextColor(Color.WHITE)
-                setHintTextColor(Color.rgb(170, 190, 180))
+                setHintTextColor(Color.rgb(155, 167, 159))
                 setSingleLine(true)
                 if (password) {
                     inputType = android.text.InputType.TYPE_CLASS_TEXT
                     transformationMethod = android.text.method.PasswordTransformationMethod.getInstance()
                 }
-                backgroundTintList = android.content.res.ColorStateList.valueOf(Color.rgb(0, 230, 118))
+                backgroundTintList = android.content.res.ColorStateList.valueOf(Color.rgb(0, 255, 102))
             }
             val fieldParams = LinearLayout.LayoutParams(-1, dp(58)).apply {
                 bottomMargin = dp(7)
@@ -554,7 +552,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     textSize = 12f
                     typeface = Typeface.DEFAULT_BOLD
                     gravity = Gravity.CENTER
-                    setTextColor(Color.rgb(0, 230, 118))
+                    setTextColor(Color.rgb(0, 255, 102))
                     setPadding(dp(10), 0, dp(4), 0)
                     contentDescription = "Show password"
                     isClickable = true
@@ -599,14 +597,14 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 textSize = 14f
                 setTextColor(Color.WHITE)
                 isChecked = true
-                buttonTintList = android.content.res.ColorStateList.valueOf(Color.rgb(0, 230, 118))
+                buttonTintList = android.content.res.ColorStateList.valueOf(Color.rgb(0, 255, 102))
             }
             val investorChoice = RadioButton(this).apply {
                 id = View.generateViewId()
                 text = "INVESTOR — Deriv trading account"
                 textSize = 14f
                 setTextColor(Color.WHITE)
-                buttonTintList = android.content.res.ColorStateList.valueOf(Color.rgb(0, 230, 118))
+                buttonTintList = android.content.res.ColorStateList.valueOf(Color.rgb(0, 255, 102))
             }
             roleChoices.addView(userChoice)
             roleChoices.addView(investorChoice)
@@ -633,7 +631,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             textSize = 16f
             isAllCaps = false
             setTextColor(Color.BLACK)
-            background = rounded(Color.rgb(0, 230, 118), Color.rgb(0, 230, 118), 10)
+            background = rounded(Color.rgb(0, 255, 102), Color.rgb(0, 255, 102), 10)
             setOnClickListener { submitPlatformAuth(register, fields, status, this, selectedRegistrationRole) }
         }
         panel.addView(submit, LinearLayout.LayoutParams(-1, dp(54)).apply {
@@ -643,7 +641,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         panel.addView(TextView(this).apply {
             text = if (register) "Already registered? Login" else "New user? Register here"
             gravity = Gravity.CENTER
-            setTextColor(Color.rgb(0, 230, 118))
+            setTextColor(Color.rgb(0, 255, 102))
             setPadding(0, dp(20), 0, dp(8))
             textSize = 16f
             setOnClickListener { showPlatformAuthScreen(!register) }
@@ -827,15 +825,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
         accountConnected = true
         executionMode = if (accountType.equals("REAL", true)) "REAL" else "DEMO"
-        val previousDerivAccountId = currentDerivAccountId
-        currentDerivAccountId = accountId.trim()
         accountLabel = "$accountId ($accountType)"
-        if (previousDerivAccountId != currentDerivAccountId) {
-            // Never carry the previous account's local positions into this account.
-            positions.clear()
-            recoveryWaiting.clear()
-            loadPositions()
-        }
         addNotification("Accounts", "Deriv account connected", "$accountLabel is connected.")
         // Clear the previous account's displayed balance until this account responds.
         accountBalanceLabel = "Balance loading…"
@@ -1909,147 +1899,61 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
     }
 
-    private fun accountStorageSuffix(): String = currentDerivAccountId
-        .trim()
-        .replace(Regex("[^A-Za-z0-9_-]"), "_")
-
-    private fun accountPositionsKey(): String = "positions_account_${accountStorageSuffix()}"
-    private fun accountHistoryKey(): String = "trade_history_account_${accountStorageSuffix()}"
-
-    private fun positionToJson(p: Position): JSONObject = JSONObject()
-        .put("id", p.localId).put("ownerAccountId", currentDerivAccountId)
-        .put("symbol", p.symbol).put("direction", p.direction)
-        .put("role", p.role).put("stake", p.stake).put("original", p.originalId)
-        .put("contract", p.contractId).put("profit", p.profit).put("status", p.status)
-        .put("recoveryEligible", p.recoveryEligible).put("recoveryUsed", p.recoveryUsed)
-        .put("closedAt", p.closedAt).put("pairExitTriggered", p.pairExitTriggered)
-        .put("recoveryAfterEpoch", p.recoveryAfterEpoch).put("pairedLoss", p.pairedLoss)
-        .put("entryBarrier", p.entryBarrier).put("expiryAt", p.expiryAt)
-        .put("openedAt", p.openedAt).put("closeReason", p.closeReason)
-        .put("qualificationMssEpoch", p.qualificationMssEpoch)
-        .put("qualificationChochEpoch", p.qualificationChochEpoch)
-        .put("qualificationRetestEpoch", p.qualificationRetestEpoch)
-        .put("qualificationChochLevel", p.qualificationChochLevel)
-
-    private fun positionFromJson(o: JSONObject): Position {
-        val p = Position(
-            localId = o.optString("id"), symbol = o.optString("symbol"),
-            direction = o.optString("direction"), role = o.optString("role"),
-            stake = o.optDouble("stake", 0.0), originalId = o.optString("original", "")
-        )
-        p.contractId = o.optLong("contract", 0L)
-        p.profit = o.optDouble("profit", 0.0)
-        p.status = o.optString("status", "OPEN")
-        p.recoveryEligible = o.optBoolean("recoveryEligible", false)
-        p.recoveryUsed = o.optBoolean("recoveryUsed", false)
-        p.closedAt = o.optLong("closedAt", 0L)
-        p.pairExitTriggered = o.optBoolean("pairExitTriggered", false)
-        p.recoveryAfterEpoch = o.optLong("recoveryAfterEpoch", p.closedAt)
-        p.pairedLoss = o.optDouble("pairedLoss", 0.0)
-        p.entryBarrier = o.optDouble("entryBarrier", 0.0)
-        p.expiryAt = o.optLong("expiryAt", 0L)
-        p.openedAt = o.optLong("openedAt", 0L)
-        p.closeReason = o.optString("closeReason", "")
-        p.qualificationMssEpoch = o.optLong("qualificationMssEpoch", 0L)
-        p.qualificationChochEpoch = o.optLong("qualificationChochEpoch", 0L)
-        p.qualificationRetestEpoch = o.optLong("qualificationRetestEpoch", 0L)
-        p.qualificationChochLevel = o.optDouble("qualificationChochLevel", 0.0)
-        return p
-    }
-
     private fun savePositions() {
-        // Do not write anything until Deriv has identified the active account.
-        if (currentDerivAccountId.isBlank()) return
-        val all = JSONArray()
-        positions.values.forEach { all.put(positionToJson(it)) }
-        val completedArchive = JSONArray()
-        positions.values.filter { it.status == "CLOSED" }
-            .sortedByDescending { it.closedAt }
-            .forEach { completedArchive.put(positionToJson(it)) }
-        // Each Deriv account has its own independent active ledger and history archive.
-        tradePrefs.edit()
-            .putString(accountPositionsKey(), all.toString())
-            .putString(accountHistoryKey(), completedArchive.toString())
-            .commit()
+        val array = JSONArray()
+        positions.values.forEach { p ->
+            array.put(JSONObject().put("id", p.localId).put("symbol", p.symbol).put("direction", p.direction)
+                .put("role", p.role).put("stake", p.stake).put("original", p.originalId)
+                .put("contract", p.contractId).put("profit", p.profit).put("status", p.status)
+                .put("recoveryEligible", p.recoveryEligible)
+                .put("recoveryUsed", p.recoveryUsed)
+                .put("closedAt", p.closedAt)
+                .put("pairExitTriggered", p.pairExitTriggered)
+                .put("recoveryAfterEpoch", p.recoveryAfterEpoch)
+                .put("pairedLoss", p.pairedLoss)
+                .put("entryBarrier", p.entryBarrier)
+                .put("expiryAt", p.expiryAt)
+                .put("openedAt", p.openedAt)
+                .put("closeReason", p.closeReason)
+                .put("qualificationMssEpoch", p.qualificationMssEpoch)
+                .put("qualificationChochEpoch", p.qualificationChochEpoch)
+                .put("qualificationRetestEpoch", p.qualificationRetestEpoch)
+                .put("qualificationChochLevel", p.qualificationChochLevel))
+        }
+        // commit() makes completed trade records durable before activity teardown/update.
+        tradePrefs.edit().putString("positions", array.toString()).commit()
     }
 
     private fun loadPositions() {
-        if (currentDerivAccountId.isBlank()) return
-        val loaded = linkedMapOf<String, Position>()
-        fun readArray(key: String, completedOnly: Boolean = false) {
-            val raw = tradePrefs.getString(key, "").orEmpty()
-            if (raw.isBlank()) return
-            try {
-                val array = JSONArray(raw)
-                for (i in 0 until array.length()) {
-                    val obj = array.optJSONObject(i) ?: continue
-                    // Reject records explicitly owned by another Deriv account.
-                    val owner = obj.optString("ownerAccountId", currentDerivAccountId)
-                    if (owner.isNotBlank() && owner != currentDerivAccountId) continue
-                    val p = positionFromJson(obj)
-                    if (p.localId.isBlank() || p.symbol.isBlank()) continue
-                    if (completedOnly && p.status != "CLOSED") continue
-                    loaded[p.localId] = p
-                }
-            } catch (_: Exception) { }
-        }
-        // Intentionally do not import the old unscoped "positions" / history keys:
-        // they have no reliable account ownership and may contain Demo contracts.
-        readArray(accountPositionsKey())
-        val ledgerIds = loaded.keys.toSet()
-        val archive = linkedMapOf<String, Position>()
-        val rawArchive = tradePrefs.getString(accountHistoryKey(), "").orEmpty()
-        if (rawArchive.isNotBlank()) {
-            try {
-                val array = JSONArray(rawArchive)
-                for (i in 0 until array.length()) {
-                    val obj = array.optJSONObject(i) ?: continue
-                    val owner = obj.optString("ownerAccountId", currentDerivAccountId)
-                    if (owner.isNotBlank() && owner != currentDerivAccountId) continue
-                    val p = positionFromJson(obj)
-                    if (p.status == "CLOSED" && p.localId.isNotBlank()) archive[p.localId] = p
-                }
-            } catch (_: Exception) { }
-        }
-        archive.forEach { (id, position) -> if (id !in ledgerIds) loaded[id] = position }
-        positions.clear()
-        positions.putAll(loaded)
-        recoveryWaiting.clear()
-        positions.values.forEach { position ->
-            if (position.recoveryEligible && !position.recoveryUsed) recoveryWaiting.add(position.localId)
-            if (position.contractId > 0L && position.status != "CLOSED") subscribePosition(position.contractId)
-        }
-        savePositions()
-    }
-
-    private fun deleteHistoryRecord(position: Position) {
-        if (position.status != "CLOSED") return
-        AlertDialog.Builder(this)
-            .setTitle("DELETE TRADE HISTORY")
-            .setMessage("Permanently delete the completed history record for ${displayIndexName(position.symbol)} contract ${position.contractId}? This will not close or change any open Deriv contract.")
-            .setNegativeButton("CANCEL", null)
-            .setPositiveButton("DELETE") { _, _ ->
-                positions.remove(position.localId)
-                recoveryWaiting.remove(position.localId)
-                savePositions()
-                render()
+        val raw = tradePrefs.getString("positions", "") ?: return
+        try {
+            val array = JSONArray(raw)
+            for (i in 0 until array.length()) {
+                val o = array.getJSONObject(i)
+                val p = Position(o.getString("id"), o.getString("symbol"), o.getString("direction"), o.getString("role"), o.getDouble("stake"), o.optString("original"))
+                p.contractId = o.optLong("contract")
+                p.profit = o.optDouble("profit")
+                p.status = o.optString("status", "OPEN")
+                p.recoveryEligible = o.optBoolean("recoveryEligible", false)
+                p.recoveryUsed = o.optBoolean("recoveryUsed", false)
+                p.closedAt = o.optLong("closedAt", 0L)
+                p.pairExitTriggered = o.optBoolean("pairExitTriggered", false)
+                p.recoveryAfterEpoch = o.optLong("recoveryAfterEpoch", p.closedAt)
+                p.pairedLoss = o.optDouble("pairedLoss", 0.0)
+                p.entryBarrier = o.optDouble("entryBarrier", 0.0)
+                p.expiryAt = o.optLong("expiryAt", 0L)
+                p.openedAt = o.optLong("openedAt", 0L)
+                p.closeReason = o.optString("closeReason", "")
+                p.qualificationMssEpoch = o.optLong("qualificationMssEpoch", 0L)
+                p.qualificationChochEpoch = o.optLong("qualificationChochEpoch", 0L)
+                p.qualificationRetestEpoch = o.optLong("qualificationRetestEpoch", 0L)
+                p.qualificationChochLevel = o.optDouble("qualificationChochLevel", 0.0)
+                if (p.recoveryEligible && !p.recoveryUsed) recoveryWaiting.add(p.localId)
+                positions[p.localId] = p
+                if (p.contractId > 0 && p.status != "CLOSED") subscribePosition(p.contractId)
             }
-            .show()
-    }
-
-    private fun deleteAllTradeHistory() {
-        val completedCount = positions.values.count { it.status == "CLOSED" }
-        if (completedCount == 0) return
-        AlertDialog.Builder(this)
-            .setTitle("DELETE ALL TRADE HISTORY")
-            .setMessage("Permanently delete all $completedCount completed trade history records? Running trades and open Deriv contracts will not be closed or changed.")
-            .setNegativeButton("CANCEL", null)
-            .setPositiveButton("DELETE ALL") { _, _ ->
-                positions.entries.removeAll { it.value.status == "CLOSED" }
-                savePositions()
-                render()
-            }
-            .show()
+            savePositions()
+        } catch (_: Exception) { }
     }
 
     private fun showAccountModeDialog() {
@@ -2586,12 +2490,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         content.addView(divider())
         content.addView(space(14))
         content.addView(text("TRADE HISTORY", 17f, Color.WHITE, true))
-        content.addView(text("Completed contracts. Saved separately from running positions.", 12f, whiteText))
+        content.addView(text("Completed contracts.", 12f, whiteText))
         content.addView(space(8))
-        if (closedPositions.isNotEmpty()) {
-            content.addView(actionButton("DELETE ALL TRADE HISTORY", false) { deleteAllTradeHistory() })
-            content.addView(space(8))
-        }
         if (closedPositions.isEmpty()) {
             content.addView(text("No completed trades yet.", 12f, muted))
         } else {
@@ -2611,8 +2511,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 c.addView(text("FINAL P/L: ${formatMoney(p.profit)}", 14f, if (p.profit >= 0.0) green else red, true))
                 val closedText = if (p.closedAt > 0L) java.text.DateFormat.getDateTimeInstance().format(java.util.Date(p.closedAt * 1000L)) else "Time unavailable"
                 c.addView(text("Closed: $closedText", 11f, Color.WHITE))
-                c.addView(space(8))
-                c.addView(actionButton("DELETE THIS HISTORY RECORD", false) { deleteHistoryRecord(p) })
                 content.addView(c)
                 content.addView(space(8))
             }
@@ -3533,7 +3431,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setBackgroundColor(if (darkInterface) Color.rgb(0, 7, 5) else Color.WHITE)
+            setBackgroundColor(if (darkInterface) Color.rgb(2, 6, 4) else Color.WHITE)
             setPadding(dp(6), dp(8), dp(6), dp(8))
             elevation = dp(8).toFloat()
         }
@@ -3584,7 +3482,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             textSize = 12f
             isAllCaps = false
             setTextColor(if (primary) Color.WHITE else green)
-            background = rounded(if (primary) green else if (darkInterface) Color.rgb(8, 42, 28) else Color.rgb(235, 247, 241),
+            background = rounded(if (primary) green else if (darkInterface) Color.rgb(7, 27, 13) else Color.rgb(235, 247, 241),
                 if (primary) green else if (darkInterface) lineColor else Color.rgb(210, 235, 222), 10)
             setPadding(dp(12), dp(8), dp(12), dp(8))
             setOnClickListener { action() }
