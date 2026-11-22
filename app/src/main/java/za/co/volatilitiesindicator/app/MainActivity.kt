@@ -185,6 +185,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var qualificationRetestEpoch: Long = 0L,
         var qualificationChochLevel: Double = 0.0,
         var trailingPeakProfitPct: Double = 0.0,
+        var trailingPeakInitialized: Boolean = false,
         var trailingExtremePrice: Double = 0.0,
         var trailingLastMarketPrice: Double = 0.0
     )
@@ -1955,6 +1956,7 @@ indexStatusViews[symbol]?.apply {
         .put("qualificationRetestEpoch", p.qualificationRetestEpoch)
         .put("qualificationChochLevel", p.qualificationChochLevel)
         .put("trailingPeakProfitPct", p.trailingPeakProfitPct)
+        .put("trailingPeakInitialized", p.trailingPeakInitialized)
         .put("trailingExtremePrice", p.trailingExtremePrice)
         .put("trailingLastMarketPrice", p.trailingLastMarketPrice)
 
@@ -1982,6 +1984,7 @@ indexStatusViews[symbol]?.apply {
         p.qualificationRetestEpoch = o.optLong("qualificationRetestEpoch", 0L)
         p.qualificationChochLevel = o.optDouble("qualificationChochLevel", 0.0)
         p.trailingPeakProfitPct = o.optDouble("trailingPeakProfitPct", 0.0)
+        p.trailingPeakInitialized = o.optBoolean("trailingPeakInitialized", false)
         p.trailingExtremePrice = o.optDouble("trailingExtremePrice", 0.0)
         p.trailingLastMarketPrice = o.optDouble("trailingLastMarketPrice", 0.0)
         return p
@@ -3466,6 +3469,16 @@ indexStatusViews[symbol]?.apply {
             primary = trailingStopEnabled
         ) {
             trailingStopEnabled = !trailingStopEnabled
+            if (trailingStopEnabled) {
+                // Seed every currently open trade from its actual live P/L percentage,
+                // including negative percentages; never assume a zero baseline.
+                positions.values.filter { it.status == "OPEN" && it.stake > 0.0 }.forEach { p ->
+                    p.trailingPeakProfitPct = (p.profit / p.stake) * 100.0
+                    p.trailingPeakInitialized = true
+                    latestPrices[p.symbol]?.let { p.trailingExtremePrice = it }
+                }
+                savePositions()
+            }
             settingsPrefs.edit().putBoolean("trailing_stop_enabled", trailingStopEnabled).apply()
             addNotification(
                 "Trade",
@@ -3520,7 +3533,12 @@ indexStatusViews[symbol]?.apply {
         if (!trailingStopEnabled || p.status != "OPEN" || p.stake <= 0.0 ||
             !p.canSell || p.contractId <= 0L) return
         val profitPct = (p.profit / p.stake) * 100.0
-        if (profitPct > p.trailingPeakProfitPct) {
+        if (!p.trailingPeakInitialized) {
+            // First observation is the baseline: e.g. +5% or -95%, not 0%.
+            p.trailingPeakProfitPct = profitPct
+            p.trailingPeakInitialized = true
+            latestPrices[p.symbol]?.let { p.trailingExtremePrice = it }
+        } else if (profitPct > p.trailingPeakProfitPct) {
             p.trailingPeakProfitPct = profitPct
             // Reset the directional extreme when a new P/L peak is established.
             latestPrices[p.symbol]?.let { p.trailingExtremePrice = it }
