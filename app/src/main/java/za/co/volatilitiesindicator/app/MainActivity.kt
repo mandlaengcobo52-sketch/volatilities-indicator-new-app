@@ -1558,14 +1558,15 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
         // TRAILING STOP IS PER CONTRACT, NEVER THE COMBINED RISE + FALL P/L.
         // Deriv's profit field is this contract's NET profit (stake excluded).
-        // This contract activates only after its own net profit reaches 40% of its own stake.
-        // 140% total return therefore means 100% stake + 40% net profit.
+        // Activate at 20% NET profit on this contract's own stake.
+        // Lock 20% at activation, then raise the protected NET-profit floor
+        // in 10-percentage-point stages: 30%, 40%, 50%, and so on.
         if (!isSold && position.status == "OPEN" &&
             position.role != "EXISTING" && position.stake > 0.0) {
 
-            val activationProfit = roundStake(position.stake * 0.40)
+            val activationProfit = roundStake(position.stake * 0.20)
 
-            // Do not use account P/L, index combined P/L, or the paired leg's profit here.
+            // Never use account P/L, index combined P/L, or the paired leg's profit.
             if (position.profit >= activationProfit) {
                 position.trailingActivated = true
             }
@@ -1576,21 +1577,20 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             }
 
             if (position.trailingActivated) {
-                // Convert this contract's own peak NET profit into total-return percentage.
+                // The lock is a NET-profit percentage of this contract's own stake.
                 val peakProfitPercent = (position.peakProfit / position.stake * 100.0).toInt()
-                val peakTotalReturnPercent = 100 + peakProfitPercent
-                val newLock = (peakTotalReturnPercent / 10) * 10
-                if (newLock >= 140 && newLock > position.lockedProfitPercent) {
+                val newLock = (peakProfitPercent / 10) * 10
+                if (newLock >= 20 && newLock > position.lockedProfitPercent) {
                     position.lockedProfitPercent = newLock
                 }
             }
 
-            // Convert the locked total-return percentage back to this contract's NET profit.
+            // Convert the protected NET-profit percentage into this contract's currency.
             val lockedNetProfit = roundStake(
-                position.stake * (position.lockedProfitPercent - 100).coerceAtLeast(0) / 100.0
+                position.stake * position.lockedProfitPercent.coerceAtLeast(0) / 100.0
             )
             val reversedToLock = position.trailingActivated &&
-                position.lockedProfitPercent >= 140 &&
+                position.lockedProfitPercent >= 20 &&
                 position.peakProfit >= activationProfit &&
                 position.profit < position.peakProfit &&
                 position.profit <= lockedNetProfit
@@ -1637,7 +1637,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         addNotification(
             "Trade",
             "${displayIndexName(winningPosition.symbol)} pair trailing stop",
-            "Total contract return reversed to the ${winningPosition.lockedProfitPercent}% protected level (stake included). Closing both RISE and FALL contracts."
+            "Contract net profit reversed to the ${winningPosition.lockedProfitPercent}% protected level. Closing both RISE and FALL contracts."
         )
         pair.forEach { leg ->
             if (leg.status == "OPEN" && leg.canSell && leg.contractId > 0L) {
@@ -1831,12 +1831,17 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 p.peakProfit = o.optDouble("peakProfit", p.profit.coerceAtLeast(0.0))
                 p.trailingActivated = o.optBoolean(
                     "trailingActivated",
-                    p.stake > 0.0 && p.peakProfit >= p.stake * 0.40
+                    p.stake > 0.0 && p.peakProfit >= p.stake * 0.20
                 )
                 val savedLockPercent = o.optInt("lockedProfitPercent", 0)
-                // Migrate values saved by the previous net-profit convention (40, 50, ...)
-                // to the new total-return convention (140, 150, ...).
-                p.lockedProfitPercent = if (savedLockPercent in 40..100) savedLockPercent + 100 else savedLockPercent
+                // Older builds stored the protected level as total return (140, 150, ...).
+                // Convert those values to NET-profit percentages (40, 50, ...) without
+                // lowering protection already earned by an open contract.
+                p.lockedProfitPercent = if (savedLockPercent >= 100) {
+                    savedLockPercent - 100
+                } else {
+                    savedLockPercent
+                }
                 p.pairExitTriggered = o.optBoolean("pairExitTriggered", false)
                 p.recoveryAfterEpoch = o.optLong("recoveryAfterEpoch", p.closedAt)
                 p.pairedLoss = o.optDouble("pairedLoss", 0.0)
@@ -3335,4 +3340,3 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show()
     }
 }
-
