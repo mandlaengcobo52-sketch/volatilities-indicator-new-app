@@ -85,10 +85,14 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val masterDecisionViews = mutableMapOf<String, TextView>()
     private val levelStatusViews = mutableMapOf<String, TextView>()
     private val recoveryStatusViews = mutableMapOf<String, TextView>()
-    private val dailyLevelsViews = mutableMapOf<String, TextView>()
     private val mssStatusViews = mutableMapOf<String, TextView>()
     private val chochStatusViews = mutableMapOf<String, TextView>()
     private val retestStatusViews = mutableMapOf<String, TextView>()
+    private val dailyReferenceViews = mutableMapOf<String, TextView>()
+    private val chochRecordViews = mutableMapOf<String, TextView>()
+    private val retestRecordViews = mutableMapOf<String, TextView>()
+    private val confirmedRetestPrice = mutableMapOf<String, Double>()
+    private val confirmedRetestEpoch = mutableMapOf<String, Long>()
 
     private data class AppNotification(
         val id: Long,
@@ -347,6 +351,15 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             val chochEpoch = tradePrefs.getLong("signal_choch_epoch_$symbol", 0L)
             if (mssEpoch > 0L) recoveryMssEpoch[symbol] = mssEpoch
             if (chochEpoch > 0L) recoveryChochEpoch[symbol] = chochEpoch
+            val savedChochLevelBits = tradePrefs.getLong("m15_choch_level_bits_$symbol", 0L)
+            val savedChochLevel = java.lang.Double.longBitsToDouble(savedChochLevelBits)
+            if (savedChochLevel.isFinite() && savedChochLevel > 0.0) pendingChochLevel[symbol] = savedChochLevel
+            val savedRetestEpoch = tradePrefs.getLong("m15_retest_epoch_$symbol", 0L)
+            val savedRetestPrice = java.lang.Double.longBitsToDouble(tradePrefs.getLong("m15_retest_price_bits_$symbol", 0L))
+            if (savedRetestEpoch > 0L && savedRetestPrice.isFinite() && savedRetestPrice > 0.0) {
+                confirmedRetestEpoch[symbol] = savedRetestEpoch
+                confirmedRetestPrice[symbol] = savedRetestPrice
+            }
             val pendingDirection = tradePrefs.getString("pending_choch_direction_$symbol", "").orEmpty()
             val pendingLevel = java.lang.Double.longBitsToDouble(
                 tradePrefs.getLong("pending_choch_level_bits_$symbol", 0L)
@@ -925,7 +938,6 @@ indexStatusViews[symbol]?.apply {
     setTextColor(Color.BLACK)
     background = rounded(green, green, 20)
 }
-            updateDailyLevelsView(symbol)
             updateMasterDecisionViews(symbol)
         }
     }
@@ -959,13 +971,20 @@ indexStatusViews[symbol]?.apply {
         val quote = latestPrices[symbol]
         val epoch = System.currentTimeMillis() / 1000L
         if (quote != null) updateDailyApproachFromTick(symbol, quote, epoch, forceRefresh = true)
-        runOnUiThread { updateDailyLevelsView(symbol); updateMasterDecisionViews(symbol); updateRecoveryStatusView(symbol) }
+        runOnUiThread {
+            updateDailyReferenceView(symbol)
+            updateMasterDecisionViews(symbol)
+            updateRecoveryStatusView(symbol)
+        }
     }
 
     override fun onM15Candles(symbol: String, candles: List<DerivApiClient.Candle>) {
         if (symbol !in indexes || candles.size < 8) return
-        m15CandlesByIndex[symbol] = candles.sortedBy { it.epoch }
-        evaluateNewTradingSignal(symbol, candles)
+        val sorted = candles.sortedBy { it.epoch }
+        m15CandlesByIndex[symbol] = sorted
+        updateM15ChochRetestRecord(symbol, sorted)
+        evaluateNewTradingSignal(symbol, sorted)
+        runOnUiThread { updateM15RecordViews(symbol) }
     }
 
     override fun onM5Candles(
@@ -1449,32 +1468,6 @@ indexStatusViews[symbol]?.apply {
         return "TRADE RUNNING · " + directions.joinToString(" + ")
     }
 
-    private fun dailyLevelsDisplay(symbol: String): String {
-        val candles = dailyCandlesByIndex[symbol]?.sortedBy { it.epoch }.orEmpty()
-        if (candles.isEmpty()) return "TODAY HIGH: --\nTODAY LOW: --\nPREVIOUS HIGH: --\nPREVIOUS LOW: --"
-        val nowEpoch = System.currentTimeMillis() / 1000L
-        val todayStart = utcDayStart(nowEpoch)
-        val today = candles.lastOrNull { it.epoch >= todayStart } ?: candles.last()
-        val previous = candles.lastOrNull { it.epoch < todayStart }
-            ?: candles.getOrNull(candles.lastIndex - 1)
-        fun stamp(candle: DerivApiClient.Candle?): String = candle?.let {
-            java.text.SimpleDateFormat("dd MMM HH:mm 'UTC'", Locale.US).apply {
-                timeZone = java.util.TimeZone.getTimeZone("UTC")
-            }.format(java.util.Date(it.epoch * 1000L))
-        } ?: "--"
-        val approach = dailyApproachByIndex[symbol]
-        val nearest = approach?.let { "\nSELECTED LEVEL: ${it.levelType} · ${formatPrice(it.level)}" }
-            ?: "\nSELECTED LEVEL: WAITING"
-        return "TODAY HIGH: ${formatPrice(today.high)} · ${stamp(today)}\n" +
-            "TODAY LOW: ${formatPrice(today.low)} · ${stamp(today)}\n" +
-            "PREVIOUS HIGH: ${previous?.let { formatPrice(it.high) } ?: "--"} · ${stamp(previous)}\n" +
-            "PREVIOUS LOW: ${previous?.let { formatPrice(it.low) } ?: "--"} · ${stamp(previous)}" + nearest
-    }
-
-    private fun updateDailyLevelsView(symbol: String) {
-        dailyLevelsViews[symbol]?.text = dailyLevelsDisplay(symbol)
-    }
-
     private fun masterDecisionText(symbol: String): String {
         runningDirectionText(symbol)?.let { return "$it. Contract is active on Deriv." }
         if (!marketFeedConnected || latestPrices[symbol] == null) return "Waiting for live market price data."
@@ -1503,7 +1496,6 @@ indexStatusViews[symbol]?.apply {
             setTextColor(if (running != null) green else amber)
         }
         marketStatusViews[symbol]?.text = masterDecisionText(symbol)
-        updateDailyLevelsView(symbol)
     }
 
     private fun signalQualificationText(signal: String?): String {
@@ -1520,7 +1512,7 @@ indexStatusViews[symbol]?.apply {
                 .maxByOrNull { it.openedAt }
                 ?.qualificationChochLevel
         return if (level != null && level.isFinite() && level > 0.0) {
-            "QUALIFIED · $direction\nCHOCH LEVEL: ${formatPrice(level)}\nCHOCH CANDLE TIME: ${recoveryChochEpoch[symbol]?.takeIf { it > 0L }?.let { java.text.SimpleDateFormat("dd MMM yyyy HH:mm 'UTC'", Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.format(java.util.Date(it * 1000L)) } ?: "WAITING"}"
+            "QUALIFIED · $direction\nCHOCH LEVEL: ${formatPrice(level)}"
         } else {
             "QUALIFIED · $direction\nCHOCH LEVEL: WAITING FOR LEVEL"
         }
@@ -1528,6 +1520,8 @@ indexStatusViews[symbol]?.apply {
 
     private fun updateRecoveryStatusView(symbol: String) {
         recoveryStatusViews[symbol]?.text = recoveryStatusText(symbol)
+        updateDailyReferenceView(symbol)
+        updateM15RecordViews(symbol)
         mssStatusViews[symbol]?.apply {
             text = signalQualificationText(recoveryMss[symbol])
             setTextColor(if (recoveryMss[symbol].isNullOrBlank()) amber else green)
@@ -1910,6 +1904,89 @@ indexStatusViews[symbol]?.apply {
         )
     }
 
+    private fun formatCandleTime(epochSeconds: Long): String {
+        if (epochSeconds <= 0L) return "--"
+        val formatter = java.text.SimpleDateFormat("dd MMM HH:mm", Locale.US)
+        formatter.timeZone = TimeZone.getTimeZone("UTC")
+        return formatter.format(java.util.Date(epochSeconds * 1000L)) + " UTC"
+    }
+
+    private fun dailyReferenceText(symbol: String): String {
+        val daily = dailyCandlesByIndex[symbol]?.sortedBy { it.epoch } ?: return
+            "TODAY HIGH: --\nTODAY LOW: --\nPREVIOUS HIGH: --\nPREVIOUS LOW: --"
+        if (daily.isEmpty()) return "TODAY HIGH: --\nTODAY LOW: --\nPREVIOUS HIGH: --\nPREVIOUS LOW: --"
+        val now = System.currentTimeMillis() / 1000L
+        val todayStart = utcDayStart(now)
+        val today = daily.lastOrNull { it.epoch >= todayStart } ?: daily.lastOrNull()
+        val previous = today?.let { t -> daily.lastOrNull { it.epoch < t.epoch } }
+        fun line(label: String, candle: DerivApiClient.Candle?, high: Boolean): String {
+            if (candle == null) return "$label: --"
+            val value = if (high) candle.high else candle.low
+            return "$label: ${formatPrice(value)}  ·  ${formatCandleTime(candle.epoch)}"
+        }
+        return listOf(
+            line("TODAY HIGH", today, true),
+            line("TODAY LOW", today, false),
+            line("PREVIOUS HIGH", previous, true),
+            line("PREVIOUS LOW", previous, false)
+        ).joinToString("\n")
+    }
+
+    private fun updateDailyReferenceView(symbol: String) {
+        dailyReferenceViews[symbol]?.text = dailyReferenceText(symbol)
+    }
+
+    // Record the M15 CHOCH break candle, then accept a retest only on a later
+    // fully closed M15 candle that touches the level and closes back beyond it.
+    private fun updateM15ChochRetestRecord(symbol: String, candles: List<DerivApiClient.Candle>) {
+        if (candles.size < 3) return
+        val closed = candles.dropLast(1)
+        if (closed.isEmpty()) return
+        val direction = recoveryChoch[symbol]
+        val chochEpoch = recoveryChochEpoch[symbol] ?: 0L
+        if (direction.isNullOrBlank() || chochEpoch <= 0L) return
+        val chochCandle = closed.lastOrNull { it.epoch == chochEpoch } ?: return
+        val level = pendingChochLevel[symbol] ?: when (direction) {
+            "RISE" -> closed.dropLast(1).lastOrNull()?.high
+            "FALL" -> closed.dropLast(1).lastOrNull()?.low
+            else -> null
+        } ?: return
+        pendingChochLevel[symbol] = level
+        val alreadyRecorded = confirmedRetestEpoch[symbol] ?: 0L
+        if (alreadyRecorded > chochEpoch) return
+        val retest = closed.firstOrNull { candle ->
+            candle.epoch > chochCandle.epoch &&
+                candle.low <= level && candle.high >= level &&
+                if (direction == "RISE") candle.close > level else candle.close < level
+        } ?: return
+        confirmedRetestPrice[symbol] = level
+        confirmedRetestEpoch[symbol] = retest.epoch + 900L
+        tradePrefs.edit()
+            .putLong("m15_retest_epoch_$symbol", retest.epoch + 900L)
+            .putLong("m15_retest_price_bits_$symbol", java.lang.Double.doubleToRawLongBits(level))
+            .apply()
+    }
+
+    private fun updateM15RecordViews(symbol: String) {
+        val direction = recoveryChoch[symbol]
+        val level = pendingChochLevel[symbol]
+        val epoch = recoveryChochEpoch[symbol] ?: 0L
+        chochRecordViews[symbol]?.text = if (!direction.isNullOrBlank() && level != null && epoch > 0L) {
+            "$direction · ${formatPrice(level)}\nCANDLE TIME: ${formatCandleTime(epoch + 900L)}"
+        } else "NOT RECORDED"
+        val retestEpoch = confirmedRetestEpoch[symbol] ?: 0L
+        val retestPrice = confirmedRetestPrice[symbol]
+        retestRecordViews[symbol]?.text = if (retestEpoch > 0L && retestPrice != null) {
+            "CONFIRMED · ${formatPrice(retestPrice)}\nCANDLE TIME: ${formatCandleTime(retestEpoch)}"
+        } else if (epoch > 0L) {
+            "WAITING FOR A LATER CLOSED M15 CANDLE TO RETEST THE CHOCH LEVEL"
+        } else "NOT RECORDED"
+        retestStatusViews[symbol]?.apply {
+            text = if (retestEpoch > 0L) "QUALIFIED · $direction" else if (epoch > 0L) "WAITING FOR RETEST · $direction" else "NOT QUALIFIED"
+            setTextColor(if (retestEpoch > 0L) green else amber)
+        }
+    }
+
     private fun utcDayStart(epoch: Long): Long = (epoch / 86400L) * 86400L
 
     private fun evaluateNewTradingSignal(symbol: String, candles: List<DerivApiClient.Candle>) {
@@ -1966,6 +2043,18 @@ indexStatusViews[symbol]?.apply {
         recoveryChoch[symbol] = chochDirection
         recoveryMssEpoch[symbol] = if (mssDirection.isNotBlank()) last.epoch else 0L
         recoveryChochEpoch[symbol] = if (chochDirection.isNotBlank()) last.epoch else 0L
+        if (chochDirection.isNotBlank()) {
+            pendingChochLevel[symbol] = if (chochDirection == "RISE") lastHigh ?: last.close else lastLow ?: last.close
+            pendingChochEpoch[symbol] = last.epoch
+            pendingChochDirection[symbol] = chochDirection
+            tradePrefs.edit()
+                .putLong("m15_choch_level_bits_$symbol", java.lang.Double.doubleToRawLongBits(pendingChochLevel[symbol] ?: 0.0))
+                .putString("pending_choch_direction_$symbol", chochDirection)
+                .putLong("pending_choch_epoch_$symbol", last.epoch)
+                .apply()
+            confirmedRetestEpoch.remove(symbol)
+            confirmedRetestPrice.remove(symbol)
+        }
         tradePrefs.edit()
             .putString("signal_mss_$symbol", mssDirection)
             .putString("signal_choch_$symbol", chochDirection)
@@ -2411,10 +2500,12 @@ indexStatusViews[symbol]?.apply {
         masterDecisionViews.clear()
         levelStatusViews.clear()
         recoveryStatusViews.clear()
-        dailyLevelsViews.clear()
         mssStatusViews.clear()
         chochStatusViews.clear()
         retestStatusViews.clear()
+        dailyReferenceViews.clear()
+        chochRecordViews.clear()
+        retestRecordViews.clear()
         tradeStatusViews.clear()
         tradeProfitViews.clear()
         tradeTargetViews.clear()
@@ -2556,11 +2647,11 @@ indexStatusViews[symbol]?.apply {
             indexCard.addView(priceRow)
             indexCard.addView(space(8))
             indexCard.addView(divider())
-            indexCard.addView(space(7))
+            indexCard.addView(space(8))
             indexCard.addView(text("DAILY HIGH / LOW REFERENCE LEVELS", 10f, Color.WHITE, true))
-            val dailyLevelsView = text(dailyLevelsDisplay(symbol), 10f, whiteText)
-            dailyLevelsViews[symbol] = dailyLevelsView
-            indexCard.addView(dailyLevelsView)
+            val dailyReferenceView = text(dailyReferenceText(symbol), 10f, whiteText)
+            dailyReferenceViews[symbol] = dailyReferenceView
+            indexCard.addView(dailyReferenceView)
             indexCard.addView(space(8))
             indexCard.addView(divider())
             indexCard.addView(space(8))
@@ -2588,6 +2679,9 @@ indexStatusViews[symbol]?.apply {
                 if (recoveryChoch[symbol].isNullOrBlank()) amber else green, true)
             chochStatusViews[symbol] = chochView
             indexCard.addView(chochView)
+            val chochRecordView = text("NOT RECORDED", 10f, whiteText)
+            chochRecordViews[symbol] = chochRecordView
+            indexCard.addView(chochRecordView)
             indexCard.addView(space(5))
             indexCard.addView(text("RETEST QUALIFICATION", 10f, whiteText, true))
             val retestDirection = pendingChochDirection[symbol]
@@ -2601,6 +2695,10 @@ indexStatusViews[symbol]?.apply {
             )
             retestStatusViews[symbol] = retestView
             indexCard.addView(retestView)
+            val retestRecordView = text("NOT RECORDED", 10f, whiteText)
+            retestRecordViews[symbol] = retestRecordView
+            indexCard.addView(retestRecordView)
+            updateM15RecordViews(symbol)
             content.addView(indexCard)
             content.addView(space(9))
         }
@@ -3849,4 +3947,3 @@ indexStatusViews[symbol]?.apply {
         android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show()
     }
 }
-
