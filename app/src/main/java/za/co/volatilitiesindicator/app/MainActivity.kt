@@ -89,6 +89,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val chochStatusViews = mutableMapOf<String, TextView>()
     private val retestStatusViews = mutableMapOf<String, TextView>()
     private val dailyReferenceViews = mutableMapOf<String, TextView>()
+    private val candleFeedStatusViews = mutableMapOf<String, TextView>()
+    private val dailyCandleFeedStatus = mutableMapOf<String, String>()
+    private val m15CandleFeedStatus = mutableMapOf<String, String>()
     private val chochRecordViews = mutableMapOf<String, TextView>()
     private val retestRecordViews = mutableMapOf<String, TextView>()
     private val confirmedRetestPrice = mutableMapOf<String, Double>()
@@ -966,25 +969,35 @@ indexStatusViews[symbol]?.apply {
     }
 
     override fun onDailyCandles(symbol: String, candles: List<DerivApiClient.Candle>) {
-        if (symbol !in indexes || candles.isEmpty()) return
-        dailyCandlesByIndex[symbol] = candles.sortedBy { it.epoch }
-        val quote = latestPrices[symbol]
-        val epoch = System.currentTimeMillis() / 1000L
-        if (quote != null) updateDailyApproachFromTick(symbol, quote, epoch, forceRefresh = true)
+        if (symbol !in indexes) return
+        dailyCandleFeedStatus[symbol] = "DAILY FEED: RECEIVED ${candles.size} CANDLES"
+        if (candles.isNotEmpty()) {
+            dailyCandlesByIndex[symbol] = candles.sortedBy { it.epoch }
+            val quote = latestPrices[symbol]
+            val epoch = System.currentTimeMillis() / 1000L
+            if (quote != null) updateDailyApproachFromTick(symbol, quote, epoch, forceRefresh = true)
+        }
         runOnUiThread {
             updateDailyReferenceView(symbol)
+            updateCandleFeedStatusView(symbol)
             updateMasterDecisionViews(symbol)
             updateRecoveryStatusView(symbol)
         }
     }
 
     override fun onM15Candles(symbol: String, candles: List<DerivApiClient.Candle>) {
-        if (symbol !in indexes || candles.size < 8) return
-        val sorted = candles.sortedBy { it.epoch }
-        m15CandlesByIndex[symbol] = sorted
-        updateM15ChochRetestRecord(symbol, sorted)
-        evaluateNewTradingSignal(symbol, sorted)
-        runOnUiThread { updateM15RecordViews(symbol) }
+        if (symbol !in indexes) return
+        m15CandleFeedStatus[symbol] = "M15 FEED: RECEIVED ${candles.size} CANDLES"
+        if (candles.size >= 8) {
+            val sorted = candles.sortedBy { it.epoch }
+            m15CandlesByIndex[symbol] = sorted
+            updateM15ChochRetestRecord(symbol, sorted)
+            evaluateNewTradingSignal(symbol, sorted)
+        }
+        runOnUiThread {
+            updateCandleFeedStatusView(symbol)
+            updateM15RecordViews(symbol)
+        }
     }
 
     override fun onM5Candles(
@@ -1936,6 +1949,16 @@ indexStatusViews[symbol]?.apply {
         dailyReferenceViews[symbol]?.text = dailyReferenceText(symbol)
     }
 
+    private fun candleFeedStatusText(symbol: String): String {
+        val daily = dailyCandleFeedStatus[symbol] ?: "DAILY FEED: NO CALLBACK RECEIVED"
+        val m15 = m15CandleFeedStatus[symbol] ?: "M15 FEED: NO CALLBACK RECEIVED"
+        return "$daily\n$m15"
+    }
+
+    private fun updateCandleFeedStatusView(symbol: String) {
+        candleFeedStatusViews[symbol]?.text = candleFeedStatusText(symbol)
+    }
+
     // Record the M15 CHOCH break candle, then accept a retest only on a later
     // fully closed M15 candle that touches the level and closes back beyond it.
     private fun updateM15ChochRetestRecord(symbol: String, candles: List<DerivApiClient.Candle>) {
@@ -2504,6 +2527,7 @@ indexStatusViews[symbol]?.apply {
         chochStatusViews.clear()
         retestStatusViews.clear()
         dailyReferenceViews.clear()
+        candleFeedStatusViews.clear()
         chochRecordViews.clear()
         retestRecordViews.clear()
         tradeStatusViews.clear()
@@ -2652,6 +2676,9 @@ indexStatusViews[symbol]?.apply {
             val dailyReferenceView = text(dailyReferenceText(symbol), 10f, whiteText)
             dailyReferenceViews[symbol] = dailyReferenceView
             indexCard.addView(dailyReferenceView)
+            val candleFeedStatusView = text(candleFeedStatusText(symbol), 9f, amber)
+            candleFeedStatusViews[symbol] = candleFeedStatusView
+            indexCard.addView(candleFeedStatusView)
             indexCard.addView(space(8))
             indexCard.addView(divider())
             indexCard.addView(space(8))
