@@ -249,6 +249,8 @@ class DerivApiClient(
 
     private var marketDataSocket: WebSocket? = null
     private var marketDataTimeout: ScheduledFuture<*>? = null
+    private var marketDataReconnectFuture: ScheduledFuture<*>? = null
+    @Volatile private var marketDataReconnectAttempt: Int = 0
 
 private var marketDataRequestId = 1000
 private val candleRequestSymbols = java.util.concurrent.ConcurrentHashMap<Int, String>()
@@ -967,9 +969,8 @@ private val candleIndexes = listOf(
                                 socket
                             )
 
-                            // connectWithAccessToken() closes both sockets before reconnecting.
-                            // Restore the separate public market-data socket after the
-                            // authenticated session is back, so live prices/candles resume too.
+                            // Market history uses Deriv's public data socket; account trading
+                            // remains isolated on this authenticated socket.
                             requestHistoricalCandles()
 
                             /*
@@ -1054,17 +1055,6 @@ private val candleIndexes = listOf(
 
                             webSocket =
                                 null
-                            if (marketDataSocket === socket) marketDataSocket = null
-                            marketDataTimeout?.cancel(false)
-                            marketDataTimeout = null
-                            val feedFailure = "Authenticated Deriv connection closed ($code): ${reason.ifBlank { "no close reason supplied" }}"
-                            dailyCandleRequestSymbols.values.toSet().forEach { callback.onCandleFeedError(it, "DAILY", feedFailure) }
-                            m15CandleRequestSymbols.values.toSet().forEach { callback.onCandleFeedError(it, "M15", feedFailure) }
-                            dailyCandleRequestSymbols.clear()
-                            m15CandleRequestSymbols.clear()
-                            candleRequestSymbols.clear()
-                            m5CandleRequestSymbols.clear()
-
                             callback.onDisconnected()
 
                             if (
@@ -1101,17 +1091,6 @@ private val candleIndexes = listOf(
 
                             webSocket =
                                 null
-                            if (marketDataSocket === socket) marketDataSocket = null
-                            marketDataTimeout?.cancel(false)
-                            marketDataTimeout = null
-                            val feedFailure = "Authenticated Deriv connection failed: ${t.message ?: "network error"}"
-                            dailyCandleRequestSymbols.values.toSet().forEach { callback.onCandleFeedError(it, "DAILY", feedFailure) }
-                            m15CandleRequestSymbols.values.toSet().forEach { callback.onCandleFeedError(it, "M15", feedFailure) }
-                            dailyCandleRequestSymbols.clear()
-                            m15CandleRequestSymbols.clear()
-                            candleRequestSymbols.clear()
-                            m5CandleRequestSymbols.clear()
-
                             val message =
                                 t.message
                                     ?.takeIf {
@@ -1176,7 +1155,9 @@ fun subscribeToLiveTicks() {
     }
 }
 // =============================================================
-// HISTORICAL CANDLES — USE THE AUTHENTICATED ACCOUNT SOCKET ONLY
+// HISTORICAL CANDLES — DEDICATED OFFICIAL PUBLIC MARKET-DATA SOCKET
+// Account authentication and trade execution remain on the authenticated socket.
+// Deriv documents market-data requests such as ticks_history on the public socket.
 // =============================================================
 
 private fun sendCandleHistoryRequest(
@@ -1211,7 +1192,7 @@ private fun sendCandleHistoryRequest(
             "M15" -> m15CandleRequestSymbols.remove(requestId)
             "M5" -> m5CandleRequestSymbols.remove(requestId)
         }
-        val message = "$timeframe candle request could not be sent for $symbol on the authenticated Deriv connection."
+        val message = "$timeframe candle request could not be sent for $symbol on the public market-data connection."
         android.util.Log.e("DerivCandles", message)
         if (timeframe == "H1") callback.onMarketDataError(symbol, message)
         else if (timeframe != "M5") callback.onCandleFeedError(symbol, timeframe, message)
@@ -1221,63 +1202,153 @@ private fun sendCandleHistoryRequest(
 }
 
 fun requestHistoricalCandles() {
-    val socket = webSocket
-    if (!connected || socket == null) {
-        val message = "Cannot request candles: authenticated Deriv WebSocket is not connected."
-        android.util.Log.e("DerivCandles", message)
-        for (symbol in candleIndexes) {
-            callback.onCandleFeedError(symbol, "DAILY", message)
-            callback.onCandleFeedError(symbol, "M15", message)
-        }
-        return
-    }
+    if (manuallyDisconnected) return
+    if (marketDataSocket != null) return
+    if (marketDataReconnectFuture?.isDone == false) return
 
-    // This is an alias only. There is no second market-data WebSocket.
-    marketDataSocket = socket
-    marketDataTimeout?.cancel(false)
-    candleRequestSymbols.clear()
+    val endpoint = "wss://api.derivws.com/trading/v1/options/ws/public"
+    android.util.Log.i("DerivCandles", "Connecting to official Deriv public market-data WebSocket: $endpoint")
+    val request = Request.Builder().url(endpoint).build()
+
+    val socket = webSocketClient.newWebSocket(request, object : WebSocketListener() {
+        override fun onOpen(webSocket: WebSocket, response: Response) {
+            if (marketDataSocket != null && marketDataSocket !== webSocket) {
+                webSocket.close(1000, "Superseded market-data socket")
+                return
+            }
+            marketDataSocket = webSocket
+            marketDataReconnectAttempt = 0
+            marketDataReconnectFuture?.cancel(false)
+            marketDataReconnectFuture = null
+            marketDataTimeout?.cancel(false)
+
+            // Clear only stale request registrations from an earlier public-socket session.
+            candleRequestSymbols.clear()
+            dailyCandleRequestSymbols.clear()
+            m15CandleRequestSymbols.clear()
+            m5CandleRequestSymbols.clear()
+
+            for (symbol in candleIndexes) {
+                sendCandleHistoryRequest(webSocket, symbol, "H1", 1000, 3600)
+                sendCandleHistoryRequest(webSocket, symbol, "DAILY", 3, 86400)
+                sendCandleHistoryRequest(webSocket, symbol, "M15", 300, 900)
+                sendCandleHistoryRequest(webSocket, symbol, "M5", 100, 300)
+            }
+
+            marketDataTimeout = scheduler.schedule({
+                if (marketDataSocket === webSocket) {
+                    val pendingDaily = dailyCandleRequestSymbols.entries.toList()
+                    val pendingM15 = m15CandleRequestSymbols.entries.toList()
+                    val pendingH1 = candleRequestSymbols.entries.toList()
+                    val pendingM5 = m5CandleRequestSymbols.entries.toList()
+
+                    pendingDaily.forEach { (id, symbol) ->
+                        dailyCandleRequestSymbols.remove(id)
+                        callback.onCandleFeedError(symbol, "DAILY", "No Daily candle response received from Deriv within 25 seconds.")
+                    }
+                    pendingM15.forEach { (id, symbol) ->
+                        m15CandleRequestSymbols.remove(id)
+                        callback.onCandleFeedError(symbol, "M15", "No M15 candle response received from Deriv within 25 seconds.")
+                    }
+                    pendingH1.forEach { (id, symbol) ->
+                        candleRequestSymbols.remove(id)
+                        callback.onMarketDataError(symbol, "No H1 candle response received from Deriv within 25 seconds.")
+                    }
+                    pendingM5.forEach { (id, _) -> m5CandleRequestSymbols.remove(id) }
+                    android.util.Log.e("DerivCandles", "Public candle response timeout: Daily=${pendingDaily.size}, M15=${pendingM15.size}, H1=${pendingH1.size}, M5=${pendingM5.size}")
+                }
+            }, 25, TimeUnit.SECONDS)
+        }
+
+        override fun onMessage(webSocket: WebSocket, text: String) {
+            if (marketDataSocket !== webSocket) return
+            try {
+                val json = JSONObject(text)
+                android.util.Log.d("DerivCandles", "Public market-data response: $text")
+                val handled = handleCandleHistoryMessage(json)
+                if (!handled) {
+                    val apiError = json.optJSONObject("error")
+                    if (apiError != null) {
+                        val message = "${apiError.optString("code", "DerivError")}: ${apiError.optString("message", "Market-data request rejected") }"
+                        android.util.Log.e("DerivCandles", "Unmatched public market-data error: $message")
+                        callback.onError("Deriv market-data error: $message")
+                    }
+                }
+            } catch (e: Exception) {
+                val message = "Unable to parse Deriv public market-data response: ${e.message ?: "invalid response"}"
+                android.util.Log.e("DerivCandles", message, e)
+                callback.onError(message)
+            }
+        }
+
+        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+            if (marketDataSocket !== webSocket) return
+            android.util.Log.w("DerivCandles", "Public market-data socket closing: code=$code reason=$reason")
+        }
+
+        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+            if (marketDataSocket !== webSocket) return
+            marketDataSocket = null
+            marketDataTimeout?.cancel(false)
+            marketDataTimeout = null
+            val message = "Deriv public market-data connection closed ($code): ${reason.ifBlank { "no reason supplied" }}"
+            reportPendingCandleFailure(message)
+            scheduleMarketDataReconnect()
+        }
+
+        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            if (marketDataSocket != null && marketDataSocket !== webSocket) return
+            marketDataSocket = null
+            marketDataTimeout?.cancel(false)
+            marketDataTimeout = null
+            val httpCode = response?.code
+            val message = if (httpCode != null) {
+                "Deriv public market-data WebSocket handshake failed: HTTP $httpCode. ${t.message ?: "No additional detail"}"
+            } else {
+                "Deriv public market-data WebSocket failed: ${t.message ?: "network error"}"
+            }
+            android.util.Log.e("DerivCandles", message, t)
+            reportPendingCandleFailure(message)
+            callback.onError(message)
+            scheduleMarketDataReconnect()
+        }
+    })
+
+    // OkHttp may call onOpen before newWebSocket() returns. Store the returned socket
+    // only when no newer socket has already replaced it.
+    if (marketDataSocket == null) marketDataSocket = socket
+}
+
+private fun reportPendingCandleFailure(message: String) {
+    dailyCandleRequestSymbols.values.toSet().forEach { callback.onCandleFeedError(it, "DAILY", message) }
+    m15CandleRequestSymbols.values.toSet().forEach { callback.onCandleFeedError(it, "M15", message) }
+    candleRequestSymbols.values.toSet().forEach { callback.onMarketDataError(it, message) }
     dailyCandleRequestSymbols.clear()
     m15CandleRequestSymbols.clear()
+    candleRequestSymbols.clear()
     m5CandleRequestSymbols.clear()
+}
 
-    refreshHistoricalCandles()
-    refreshM5Candles()
-
-    marketDataTimeout = scheduler.schedule({
-        if (webSocket === socket && connected) {
-            val pendingDaily = dailyCandleRequestSymbols.entries.toList()
-            val pendingM15 = m15CandleRequestSymbols.entries.toList()
-            val pendingH1 = candleRequestSymbols.entries.toList()
-            val pendingM5 = m5CandleRequestSymbols.entries.toList()
-
-            pendingDaily.forEach { (id, symbol) ->
-                dailyCandleRequestSymbols.remove(id)
-                callback.onCandleFeedError(symbol, "DAILY", "Deriv did not return the Daily candle response within 25 seconds.")
-            }
-            pendingM15.forEach { (id, symbol) ->
-                m15CandleRequestSymbols.remove(id)
-                callback.onCandleFeedError(symbol, "M15", "Deriv did not return the M15 candle response within 25 seconds.")
-            }
-            pendingH1.forEach { (id, symbol) ->
-                candleRequestSymbols.remove(id)
-                callback.onMarketDataError(symbol, "Deriv did not return the H1 candle response within 25 seconds.")
-            }
-            pendingM5.forEach { (id, symbol) -> m5CandleRequestSymbols.remove(id) }
-            android.util.Log.e(
-                "DerivCandles",
-                "Authenticated-socket candle timeout. Pending Daily=${pendingDaily.map { entry -> entry.value }}, M15=${pendingM15.map { entry -> entry.value }}, H1=${pendingH1.map { entry -> entry.value }}, M5=${pendingM5.map { entry -> entry.value }}"
-            )
-        }
-    }, 25, TimeUnit.SECONDS)
+private fun scheduleMarketDataReconnect() {
+    if (manuallyDisconnected || !connected || marketDataReconnectFuture?.isDone == false) return
+    if (marketDataReconnectAttempt >= 5) {
+        callback.onError("Deriv market-data reconnect stopped after 5 attempts. Account connection remains separate and active.")
+        return
+    }
+    marketDataReconnectAttempt++
+    val delaySeconds = (marketDataReconnectAttempt * 3L).coerceAtMost(15L)
+    marketDataReconnectFuture = scheduler.schedule({
+        marketDataReconnectFuture = null
+        if (!manuallyDisconnected && connected && marketDataSocket == null) requestHistoricalCandles()
+    }, delaySeconds, TimeUnit.SECONDS)
 }
 
 fun refreshHistoricalCandles() {
-    val socket = webSocket
-    if (!connected || socket == null) {
+    val socket = marketDataSocket
+    if (socket == null) {
         requestHistoricalCandles()
         return
     }
-    marketDataSocket = socket
     for (symbol in candleIndexes) {
         sendCandleHistoryRequest(socket, symbol, "H1", 1000, 3600)
         sendCandleHistoryRequest(socket, symbol, "DAILY", 3, 86400)
@@ -1286,12 +1357,11 @@ fun refreshHistoricalCandles() {
 }
 
 fun refreshM5Candles() {
-    val socket = webSocket
-    if (!connected || socket == null) {
-        android.util.Log.w("DerivCandles", "M5 refresh skipped: authenticated Deriv connection is not ready.")
+    val socket = marketDataSocket
+    if (socket == null) {
+        requestHistoricalCandles()
         return
     }
-    marketDataSocket = socket
     for (symbol in candleIndexes) {
         sendCandleHistoryRequest(socket, symbol, "M5", 100, 300)
     }
@@ -1955,9 +2025,16 @@ if (tick != null) {
         webSocket =
             null
 
+        try { marketDataSocket?.close(1000, "Account reconnect") } catch (_: Exception) {}
         marketDataSocket = null
         marketDataTimeout?.cancel(false)
         marketDataTimeout = null
+        marketDataReconnectFuture?.cancel(false)
+        marketDataReconnectFuture = null
+        candleRequestSymbols.clear()
+        dailyCandleRequestSymbols.clear()
+        m15CandleRequestSymbols.clear()
+        m5CandleRequestSymbols.clear()
 
         connected =
             false
@@ -1997,15 +2074,17 @@ if (tick != null) {
         ) {
         }
 
-        webSocket =
-            null
-marketDataSocket = null
-
-marketDataTimeout?.cancel(false)
-marketDataTimeout = null
-
-candleRequestSymbols.clear()
-m5CandleRequestSymbols.clear()
+        webSocket = null
+        try { marketDataSocket?.close(1000, "Manual disconnect") } catch (_: Exception) {}
+        marketDataSocket = null
+        marketDataTimeout?.cancel(false)
+        marketDataTimeout = null
+        marketDataReconnectFuture?.cancel(false)
+        marketDataReconnectFuture = null
+        candleRequestSymbols.clear()
+        dailyCandleRequestSymbols.clear()
+        m15CandleRequestSymbols.clear()
+        m5CandleRequestSymbols.clear()
         connected =
             false
 
@@ -2303,9 +2382,12 @@ m5CandleRequestSymbols.clear()
         webSocket =
             null
 
+        try { marketDataSocket?.close(1000, "Client destroyed") } catch (_: Exception) {}
         marketDataSocket = null
         marketDataTimeout?.cancel(false)
         marketDataTimeout = null
+        marketDataReconnectFuture?.cancel(false)
+        marketDataReconnectFuture = null
 
         connected =
             false
