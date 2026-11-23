@@ -222,9 +222,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             // instead of treating the account as disconnected.
             if (service.client.isConnected()) {
                 val activeAccountId = service.client.getAccountId()
-                if (!activeAccountId.isNullOrBlank()) {
+                val activeMode = service.client.getAccountType()
+                if (!activeAccountId.isNullOrBlank() &&
+                    activeMode.equals(executionMode, true)
+                ) {
                     accountConnected = true
-                    executionMode = service.client.getAccountType()
                     accountLabel = "$activeAccountId ($executionMode)"
                     service.client.requestBalance()
                     service.client.requestOpenTrades()
@@ -233,6 +235,15 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                         accountStatusView?.setTextColor(green)
                         accountIdView?.text = accountLabel
                         render()
+                    }
+                } else {
+                    // The service still owns a socket for the other environment.
+                    // Disconnect that authenticated session before restoring the
+                    // token selected in oauth_mode.
+                    accountConnected = false
+                    try { service.client.disconnectAccount() } catch (_: Exception) {}
+                    if (savedToken.isNotBlank()) {
+                        service.client.ensureConnectedOnResume(savedToken, executionMode)
                     }
                 }
             } else if (savedToken.isNotBlank()) {
@@ -936,6 +947,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             }
             "proposal_open_contract" -> handleOpenContract(json.optJSONObject("proposal_open_contract") ?: return)
             "portfolio" -> {
+                // Ignore stale portfolio packets from the previously connected
+                // account. Only the authenticated socket matching the selected
+                // DEMO/REAL environment may populate this environment's ledger.
+                if (!accountConnected ||
+                    derivService?.client?.getAccountType()?.equals(executionMode, true) != true
+                ) return
+
                 val list = json.optJSONObject("portfolio")
                     ?.optJSONArray("contracts") ?: return
 
@@ -2086,9 +2104,19 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             .setTitle("Connect Deriv account")
             .setItems(modes) { _, which ->
                 val selectedMode = if (which == 1) "REAL" else "DEMO"
-                if (selectedMode != executionMode) activateAccountMode(selectedMode)
+                if (selectedMode != executionMode) {
+                    // Stop the previously authenticated socket before changing
+                    // environments. Otherwise its portfolio stream can repopulate
+                    // the newly selected environment with the previous account's
+                    // contracts.
+                    accountConnected = false
+                    try { derivService?.client?.disconnectAccount() } catch (_: Exception) {}
+                    activateAccountMode(selectedMode)
+                }
                 prefs.edit().putString("oauth_mode", executionMode).apply()
                 accountConnected = false
+                accountLabel = "Connecting…"
+                accountBalanceLabel = "Balance loading…"
                 render()
                 beginDerivConnection()
             }
