@@ -1165,7 +1165,7 @@ private fun connectMarketDataEndpoint() {
                     put("count", 1000)
                     put("end", "latest")
                     put("style", "candles")
-                    put("granularity", 3600)
+                    put("granularity", 43200)
                     put("req_id", requestId)
                 }
                 webSocket.send(message.toString())
@@ -1215,7 +1215,7 @@ private fun connectMarketDataEndpoint() {
 
                 val candlesJson = json.optJSONArray("candles") ?: json.optJSONObject("history")?.optJSONArray("candles")
                 if (candlesJson == null) {
-                    callback.onMarketDataError(symbol, "Deriv returned no H1 candles for $symbol.")
+                    callback.onMarketDataError(symbol, "Deriv returned no 12-hour candles for $symbol.")
                     return
                 }
                 val candles = mutableListOf<Candle>()
@@ -1324,7 +1324,7 @@ fun refreshHistoricalCandles() {
             put("count", 1000)
             put("end", "latest")
             put("style", "candles")
-            put("granularity", 3600)
+            put("granularity", 43200)
             put("req_id", requestId)
         }
 
