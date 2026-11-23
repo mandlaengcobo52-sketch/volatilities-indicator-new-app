@@ -1593,23 +1593,16 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     /**
-     * Trailing-stop rules for an original RISE/FALL pair.
-     *
-     * Winning leg:
-     * - Arm at +50% of its own stake.
-     * - Initial stop is +30%.
-     * - For each additional +20 percentage points of peak profit, advance
-     *   the stop by +20 percentage points (70 -> 50, 90 -> 70, etc.).
-     *
-     * Remaining losing leg, only after the winning leg is confirmed closed:
-     * - Arm when its loss has recovered to -20% of its own stake.
-     * - Initial stop is -30%; it remains fixed while P/L improves from -20%
-     *   towards break-even.
-     * - At break-even, move the stop to 0%.
-     * - In profit, protect the peak in +20 percentage-point stages.
+     * Pair trailing protection for the two ORIGINAL contracts.
+     * Both sides are armed together as soon as either contract reaches +50%.
+     * The winning side trails profit; the losing side has an elastic -20% to
+     * -30% loss band and closes at -30%.
      */
     private fun evaluatePairTrailingStops(position: Position) {
-        if (position.status != "OPEN" || position.stake <= 0.0 || !position.stake.isFinite()) return
+        if (position.status != "OPEN" ||
+            position.stake <= 0.0 ||
+            !position.stake.isFinite()
+        ) return
 
         val pair = positions.values.filter {
             it.role == "ORIGINAL" && it.originalId == position.originalId
@@ -1617,67 +1610,70 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (pair.size != 2) return
 
         val peer = pair.firstOrNull { it.localId != position.localId } ?: return
-        val currentPercent = (position.profit / position.stake) * 100.0
-        if (!currentPercent.isFinite()) return
 
-        // Stage 1: protect a winning contract while its paired contract is still running.
-        if ((currentPercent >= 50.0 && peer.status != "CLOSED") ||
-            (position.trailingActivated && !position.losingRecoveryTrail)) {
-            if (!position.trailingActivated || !position.losingRecoveryTrail) {
-                position.trailingActivated = true
-                position.losingRecoveryTrail = false
-                position.trailingPeakPercent = currentPercent
-                position.trailingStopPercent = 30.0
-            } else if (currentPercent > position.trailingPeakPercent) {
-                position.trailingPeakPercent = currentPercent
-                val stages = kotlin.math.floor((position.trailingPeakPercent - 50.0) / 20.0)
-                    .toInt().coerceAtLeast(0)
-                position.trailingStopPercent = 30.0 + stages * 20.0
+        fun percent(leg: Position): Double? {
+            if (leg.stake <= 0.0 || !leg.stake.isFinite()) return null
+            val value = (leg.profit / leg.stake) * 100.0
+            return value.takeIf { it.isFinite() }
+        }
+
+        val currentPercent = percent(position) ?: return
+        val peerPercent = percent(peer) ?: return
+
+        // A +50% profit on either contract activates protection on BOTH legs.
+        // Keep this activation sticky once it has occurred.
+        val alreadyActivated = pair.any { it.trailingActivated }
+        if (currentPercent >= 50.0 || peerPercent >= 50.0 || alreadyActivated) {
+            pair.forEach { leg ->
+                if (!leg.trailingActivated) {
+                    val legPercent = percent(leg) ?: return@forEach
+                    leg.trailingActivated = true
+                    if (legPercent >= 50.0) {
+                        // Winning contract: start with a +30% protected level.
+                        leg.losingRecoveryTrail = false
+                        leg.trailingPeakPercent = legPercent
+                        leg.trailingStopPercent = 30.0
+                    } else {
+                        // Paired losing contract: allow the elastic loss band
+                        // from -20% down to -30%, then close.
+                        leg.losingRecoveryTrail = true
+                        leg.trailingPeakPercent = legPercent.coerceAtLeast(0.0)
+                        leg.trailingStopPercent = -30.0
+                    }
+                }
             }
+        }
 
-            if (position.trailingActivated && currentPercent <= position.trailingStopPercent) {
-                requestAutomaticTrailingClose(position, "Winning-leg trailing stop reached ${formatPercent(position.trailingStopPercent)}.")
+        if (!position.trailingActivated) return
+
+        if (position.losingRecoveryTrail) {
+            // -20% is the loss-protection threshold; -30% is the hard
+            // boundary of the elastic range.
+            position.trailingStopPercent = -30.0
+            if (currentPercent <= -30.0) {
+                requestAutomaticTrailingClose(
+                    position,
+                    "Loss protection reached -30% after entering the -20% loss band."
+                )
             }
             return
         }
 
-        // Stage 2: once the winner has closed, manage only the remaining original leg.
-        val closedWinner = pair.firstOrNull {
-            it.status == "CLOSED" && it.profit > 0.0
-        } ?: return
+        // Winning side: initial stop +30%; raise it by 20 points for each
+        // additional 20-point increase in the maximum profit.
+        if (currentPercent > position.trailingPeakPercent) {
+            position.trailingPeakPercent = currentPercent
+            val stages = kotlin.math.floor(
+                (position.trailingPeakPercent - 50.0) / 20.0
+            ).toInt().coerceAtLeast(0)
+            position.trailingStopPercent = 30.0 + stages * 20.0
+        }
 
-        if (position.localId != closedWinner.localId) {
-            // This position is the surviving leg. Its recovery trail starts only
-            // after its own loss has recovered to -20%.
-            if (!position.losingRecoveryTrail) {
-                if (currentPercent < -20.0) return
-                position.trailingActivated = true
-                position.losingRecoveryTrail = true
-                position.trailingPeakPercent = currentPercent.coerceAtLeast(0.0)
-                position.trailingStopPercent = -30.0
-            }
-
-            if (currentPercent >= 0.0) {
-                if (position.trailingStopPercent < 0.0) {
-                    position.trailingStopPercent = 0.0
-                    position.trailingPeakPercent = currentPercent
-                } else if (currentPercent > position.trailingPeakPercent) {
-                    position.trailingPeakPercent = currentPercent
-                }
-                val stages = kotlin.math.floor(position.trailingPeakPercent / 20.0)
-                    .toInt().coerceAtLeast(0)
-                position.trailingStopPercent = ((stages - 1).coerceAtLeast(0)) * 20.0
-            }
-
-            val lossBoundaryReached = position.trailingStopPercent == -30.0 && currentPercent <= -30.0
-            val protectedLevelBreached = position.trailingStopPercent >= 0.0 &&
-                currentPercent < position.trailingStopPercent
-            if (lossBoundaryReached || protectedLevelBreached) {
-                requestAutomaticTrailingClose(
-                    position,
-                    "Remaining-leg trailing stop reached ${formatPercent(position.trailingStopPercent)}."
-                )
-            }
+        if (currentPercent <= position.trailingStopPercent) {
+            requestAutomaticTrailingClose(
+                position,
+                "Winning-leg trailing stop reached ${formatPercent(position.trailingStopPercent)}."
+            )
         }
     }
 
