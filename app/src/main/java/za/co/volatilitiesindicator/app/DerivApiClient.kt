@@ -234,7 +234,8 @@ class DerivApiClient(
     private var marketDataTimeout: java.util.concurrent.ScheduledFuture<*>? = null
     private var marketDataReconnectFuture: ScheduledFuture<*>? = null
     private val marketDataEndpoints = listOf(
-        "wss://ws.derivws.com/websockets/v3?app_id=1089"
+        "wss://ws.binaryws.com/websockets/v3?app_id=1089",
+        "wss://ws.binaryws.com/websockets/v3"
     )
 
 private var marketDataRequestId = 1000
