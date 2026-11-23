@@ -1206,8 +1206,8 @@ fun requestHistoricalCandles() {
     if (marketDataSocket != null) return
     if (marketDataReconnectFuture?.isDone == false) return
 
-    val endpoint = "wss://api.derivws.com/trading/v1/options/ws/public"
-    android.util.Log.i("DerivCandles", "Connecting to official Deriv public market-data WebSocket: $endpoint")
+    val endpoint = "wss://ws.derivws.com/websockets/v3?app_id=1089"
+    android.util.Log.i("DerivCandles", "Connecting to Deriv classic public market-data WebSocket: $endpoint")
     val request = Request.Builder().url(endpoint).build()
 
     val socket = webSocketClient.newWebSocket(request, object : WebSocketListener() {
@@ -1271,7 +1271,10 @@ fun requestHistoricalCandles() {
                     if (apiError != null) {
                         val message = "${apiError.optString("code", "DerivError")}: ${apiError.optString("message", "Market-data request rejected") }"
                         android.util.Log.e("DerivCandles", "Unmatched public market-data error: $message")
-                        callback.onError("Deriv market-data error: $message")
+                        candleIndexes.forEach { symbol ->
+                            callback.onCandleFeedError(symbol, "DAILY", "Deriv market-data error: $message")
+                            callback.onCandleFeedError(symbol, "M15", "Deriv market-data error: $message")
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -1308,8 +1311,13 @@ fun requestHistoricalCandles() {
                 "Deriv public market-data WebSocket failed: ${t.message ?: "network error"}"
             }
             android.util.Log.e("DerivCandles", message, t)
+            // Keep public market-data failures on the candle-feed diagnostics;
+            // do not report them as authenticated account connection failures.
             reportPendingCandleFailure(message)
-            callback.onError(message)
+            candleIndexes.forEach { symbol ->
+                callback.onCandleFeedError(symbol, "DAILY", message)
+                callback.onCandleFeedError(symbol, "M15", message)
+            }
             scheduleMarketDataReconnect()
         }
     })
