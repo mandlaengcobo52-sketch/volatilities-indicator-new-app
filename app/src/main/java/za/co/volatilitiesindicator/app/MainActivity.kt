@@ -50,6 +50,7 @@ import java.util.Locale
 import java.util.Calendar
 import java.util.TimeZone
 import org.json.JSONArray
+import kotlin.math.abs
 
 class MainActivity : Activity(), DerivApiClient.Callback {
 
@@ -197,6 +198,25 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val pendingRequests = mutableMapOf<Int, String>()
     private val originalSweepStatus = mutableMapOf<String, String>()
     private val candlesByIndex = mutableMapOf<String, List<DerivApiClient.Candle>>()
+    private data class EngineZone(val low: Double, val high: Double, val epoch: Long, val direction: String)
+    private val bullishOb = mutableMapOf<String, EngineZone>()
+    private val bearishOb = mutableMapOf<String, EngineZone>()
+    private val bullishLiquidity = mutableMapOf<String, Double>()
+    private val bearishLiquidity = mutableMapOf<String, Double>()
+    private val bullishFvg = mutableMapOf<String, EngineZone>()
+    private val bearishFvg = mutableMapOf<String, EngineZone>()
+    private val bullishFvgFilled = mutableMapOf<String, Boolean>()
+    private val bearishFvgFilled = mutableMapOf<String, Boolean>()
+    private val bullishObStartDistance = mutableMapOf<String, Double>()
+    private val bearishObStartDistance = mutableMapOf<String, Double>()
+    private val bullishLiquidityStartDistance = mutableMapOf<String, Double>()
+    private val bearishLiquidityStartDistance = mutableMapOf<String, Double>()
+    private val bullishObProximity = mutableMapOf<String, Double>()
+    private val bearishObProximity = mutableMapOf<String, Double>()
+    private val bullishLiquidityProximity = mutableMapOf<String, Double>()
+    private val bearishLiquidityProximity = mutableMapOf<String, Double>()
+    private val lastM5QualificationEpoch = mutableMapOf<String, Long>()
+    private val strategyStatusViews = mutableMapOf<String, TextView>()
     private val originalTriggered = mutableSetOf<String>()
     private val recoveryWaiting = mutableSetOf<String>()
     private val recoveryMss = mutableMapOf<String, String>()
@@ -920,7 +940,6 @@ indexStatusViews[symbol]?.apply {
         if (candles.isNotEmpty()) {
             marketFeedConnected = true
             candlesByIndex[symbol] = candles.sortedBy { it.epoch }
-            evaluateNewTradingSignal(symbol, candles)
             val lastClose = candles.last().close
             if (!latestPrices.containsKey(symbol)) latestPrices[symbol] = lastClose
             runOnUiThread {
@@ -991,6 +1010,9 @@ indexStatusViews[symbol]?.apply {
             }
 
         savePositions()
+        // Entry qualification is evaluated separately on completed M5 candles.
+        // The trailing-stop block above is intentionally left unchanged.
+        evaluateM5OrderBlockLiquidityStrategy(symbol, completed)
     }
 
     override fun onMarketDataError(symbol: String, message: String) {
@@ -1432,7 +1454,7 @@ indexStatusViews[symbol]?.apply {
             !mss.isNullOrBlank() && mss == choch -> "MSS + CHOCH confirmed ${mss}. Waiting for retest."
             !mss.isNullOrBlank() -> "MSS confirmed ${mss}. Waiting for matching CHOCH."
             !choch.isNullOrBlank() -> "CHOCH confirmed ${choch}. Waiting for matching MSS."
-            else -> "Waiting for MSS + CHOCH confirmation on a closed H1 candle."
+            else -> "Waiting for OB, liquidity proximity, a fully closed FVG, and M5 MSS + CHOCH."
         }
     }
 
@@ -1444,7 +1466,7 @@ indexStatusViews[symbol]?.apply {
             !mss.isNullOrBlank() && mss == choch -> "MSS + CHOCH confirmed ${mss}. Waiting for retest."
             !mss.isNullOrBlank() -> "MSS confirmed ${mss}. Waiting for matching CHOCH."
             !choch.isNullOrBlank() -> "CHOCH confirmed ${choch}. Waiting for matching MSS."
-            else -> "Waiting for MSS + CHOCH confirmation on a closed H1 candle."
+            else -> "Waiting for OB, liquidity proximity, a fully closed FVG, and M5 MSS + CHOCH."
         }
     }
 
@@ -1805,6 +1827,169 @@ indexStatusViews[symbol]?.apply {
         accountTotalPlView?.apply {
             text = "TOTAL TRADE P/L: ${formatMoney(pl.third)}"
             setTextColor(if (pl.third >= 0.0) green else red)
+        }
+    }
+
+    private fun zoneDistance(price: Double, low: Double, high: Double): Double = when {
+        price < low -> low - price
+        price > high -> price - high
+        else -> 0.0
+    }
+
+    // Percentage means remaining distance as a percentage of the distance
+    // recorded when the zone was first identified. Touch/penetration = 0%.
+    private fun remainingProximity(price: Double, low: Double, high: Double, start: Double): Double {
+        if (price in low..high) return 0.0
+        if (start <= 0.0 || !start.isFinite()) return 100.0
+        return ((zoneDistance(price, low, high) / start) * 100.0).coerceIn(0.0, 100.0)
+    }
+
+    private fun strategyDisplayText(symbol: String): String {
+        val bullOb = bullishOb[symbol]
+        val bearOb = bearishOb[symbol]
+        val bullLiq = bullishLiquidity[symbol]
+        val bearLiq = bearishLiquidity[symbol]
+        val bullFvg = bullishFvg[symbol]
+        val bearFvg = bearishFvg[symbol]
+        val bullFvgText = if (bullFvg == null) "NOT FOUND" else "${formatPrice(bullFvg.low)}–${formatPrice(bullFvg.high)} · ${if (bullishFvgFilled[symbol] == true) "CLOSED" else "OPEN"}"
+        val bearFvgText = if (bearFvg == null) "NOT FOUND" else "${formatPrice(bearFvg.low)}–${formatPrice(bearFvg.high)} · ${if (bearishFvgFilled[symbol] == true) "CLOSED" else "OPEN"}"
+        return buildString {
+            append("BULL OB: "); append(if (bullOb == null) "WAITING" else "${formatPrice(bullOb.low)}–${formatPrice(bullOb.high)} · ${"%.1f".format(Locale.US, bullishObProximity[symbol] ?: 100.0)}%")
+            append("\nBEAR OB: "); append(if (bearOb == null) "WAITING" else "${formatPrice(bearOb.low)}–${formatPrice(bearOb.high)} · ${"%.1f".format(Locale.US, bearishObProximity[symbol] ?: 100.0)}%")
+            append("\nBULL LIQUIDITY: "); append(if (bullLiq == null) "WAITING" else "${formatPrice(bullLiq)} · ${"%.1f".format(Locale.US, bullishLiquidityProximity[symbol] ?: 100.0)}%")
+            append("\nBEAR LIQUIDITY: "); append(if (bearLiq == null) "WAITING" else "${formatPrice(bearLiq)} · ${"%.1f".format(Locale.US, bearishLiquidityProximity[symbol] ?: 100.0)}%")
+            append("\nBULL FVG: "); append(bullFvgText); append("  |  BEAR FVG: "); append(bearFvgText)
+            append("\nPROXIMITY QUALIFIES AT 10% OR LESS · TOUCH/PENETRATION = 0%")
+        }
+    }
+
+    private fun evaluateM5OrderBlockLiquidityStrategy(symbol: String, completed: List<DerivApiClient.Candle>) {
+        if (symbol !in indexes || completed.size < 12) return
+        val data = completed.sortedBy { it.epoch }
+        val last = data.last()
+        if (last.epoch <= (lastM5QualificationEpoch[symbol] ?: 0L)) return
+        lastM5QualificationEpoch[symbol] = last.epoch
+        val prior = data.dropLast(1)
+        val price = latestPrices[symbol] ?: last.close
+        if (!price.isFinite() || price <= 0.0) return
+
+        // Confirmed fractal swing points; the newest candle is closed.
+        val highs = mutableListOf<Pair<Int, Double>>()
+        val lows = mutableListOf<Pair<Int, Double>>()
+        for (i in 1 until prior.lastIndex) {
+            if (prior[i].high > prior[i - 1].high && prior[i].high > prior[i + 1].high) highs.add(i to prior[i].high)
+            if (prior[i].low < prior[i - 1].low && prior[i].low < prior[i + 1].low) lows.add(i to prior[i].low)
+        }
+        val recentHigh = highs.lastOrNull()?.second
+        val recentLow = lows.lastOrNull()?.second
+
+        // Sell-side liquidity below confirmed lows supports bullish reversals;
+        // buy-side liquidity above confirmed highs supports bearish reversals.
+        if (recentLow != null && bullishLiquidity[symbol] != recentLow) {
+            bullishLiquidity[symbol] = recentLow
+            bullishLiquidityStartDistance[symbol] = abs(price - recentLow).coerceAtLeast(0.00000001)
+        }
+        if (recentHigh != null && bearishLiquidity[symbol] != recentHigh) {
+            bearishLiquidity[symbol] = recentHigh
+            bearishLiquidityStartDistance[symbol] = abs(price - recentHigh).coerceAtLeast(0.00000001)
+        }
+
+        // Detect a displacement through the latest confirmed swing and locate
+        // the last opposite-colour candle as the corresponding order block.
+        val priorClose = prior.last().close
+        val bullishBreak = recentHigh != null && priorClose <= recentHigh && last.close > recentHigh && last.close > last.open
+        val bearishBreak = recentLow != null && priorClose >= recentLow && last.close < recentLow && last.close < last.open
+        if (bullishBreak) {
+            val ob = data.dropLast(1).takeLast(12).lastOrNull { it.close < it.open }
+            if (ob != null) {
+                bullishOb[symbol] = EngineZone(ob.low, ob.high, last.epoch, "RISE")
+                bullishObStartDistance[symbol] = zoneDistance(price, ob.low, ob.high).coerceAtLeast(0.00000001)
+            }
+        }
+        if (bearishBreak) {
+            val ob = data.dropLast(1).takeLast(12).lastOrNull { it.close > it.open }
+            if (ob != null) {
+                bearishOb[symbol] = EngineZone(ob.low, ob.high, last.epoch, "FALL")
+                bearishObStartDistance[symbol] = zoneDistance(price, ob.low, ob.high).coerceAtLeast(0.00000001)
+            }
+        }
+
+        // Three-candle fair-value gaps. A bullish gap is fully filled only
+        // after a later candle reaches its lower boundary; bearish is inverse.
+        if (data.size >= 3) {
+            val a = data[data.lastIndex - 2]
+            val c = data.last()
+            if (c.low > a.high) {
+                bullishFvg[symbol] = EngineZone(a.high, c.low, c.epoch, "RISE")
+                bullishFvgFilled[symbol] = false
+            }
+            if (c.high < a.low) {
+                bearishFvg[symbol] = EngineZone(c.high, a.low, c.epoch, "FALL")
+                bearishFvgFilled[symbol] = false
+            }
+        }
+        bullishFvg[symbol]?.let { zone ->
+            if (last.epoch > zone.epoch && last.low <= zone.low) bullishFvgFilled[symbol] = true
+        }
+        bearishFvg[symbol]?.let { zone ->
+            if (last.epoch > zone.epoch && last.high >= zone.high) bearishFvgFilled[symbol] = true
+        }
+
+        val bullOb = bullishOb[symbol]
+        val bearOb = bearishOb[symbol]
+        val bullLiq = bullishLiquidity[symbol]
+        val bearLiq = bearishLiquidity[symbol]
+        val bullObPct = bullOb?.let { remainingProximity(price, it.low, it.high, bullishObStartDistance[symbol] ?: 0.0) } ?: 100.0
+        val bearObPct = bearOb?.let { remainingProximity(price, it.low, it.high, bearishObStartDistance[symbol] ?: 0.0) } ?: 100.0
+        val bullLiqPct = bullLiq?.let { remainingProximity(price, it, it, bullishLiquidityStartDistance[symbol] ?: 0.0) } ?: 100.0
+        val bearLiqPct = bearLiq?.let { remainingProximity(price, it, it, bearishLiquidityStartDistance[symbol] ?: 0.0) } ?: 100.0
+        bullishObProximity[symbol] = bullObPct
+        bearishObProximity[symbol] = bearObPct
+        bullishLiquidityProximity[symbol] = bullLiqPct
+        bearishLiquidityProximity[symbol] = bearLiqPct
+
+        val bullLiquidityTouched = bullLiq != null && (last.low <= bullLiq && last.close > bullLiq || bullLiqPct <= 10.0)
+        val bearLiquidityTouched = bearLiq != null && (last.high >= bearLiq && last.close < bearLiq || bearLiqPct <= 10.0)
+        val bullObQualified = bullOb != null && bullObPct <= 10.0
+        val bearObQualified = bearOb != null && bearObPct <= 10.0
+
+        // Both structure confirmations are based exclusively on the same
+        // completed M5 break candle, with bullish/bearish candle direction.
+        val mssDirection = when { bullishBreak -> "RISE"; bearishBreak -> "FALL"; else -> "" }
+        val chochDirection = when { bullishBreak -> "RISE"; bearishBreak -> "FALL"; else -> "" }
+        recoveryMss[symbol] = mssDirection
+        recoveryChoch[symbol] = chochDirection
+        recoveryMssEpoch[symbol] = if (mssDirection.isNotBlank()) last.epoch else 0L
+        recoveryChochEpoch[symbol] = if (chochDirection.isNotBlank()) last.epoch else 0L
+        val bullReady = bullLiquidityTouched && bullObQualified && bullishFvgFilled[symbol] == true && mssDirection == "RISE" && chochDirection == "RISE"
+        val bearReady = bearLiquidityTouched && bearObQualified && bearishFvgFilled[symbol] == true && mssDirection == "FALL" && chochDirection == "FALL"
+
+        runOnUiThread {
+            updateMasterDecisionViews(symbol)
+            updateRecoveryStatusView(symbol)
+            strategyStatusViews[symbol]?.text = strategyDisplayText(symbol)
+            strategyStatusViews[symbol]?.setTextColor(if (bullReady || bearReady) green else amber)
+        }
+        if (!bullReady && !bearReady) return
+        if (!autoTradingEnabled || !accountConnected || dailyCapital <= 0.0) return
+        if (lastExecutedSignalEpoch[symbol] == last.epoch) return
+        val direction = if (bullReady) "RISE" else "FALL"
+        val active = positions.values.any {
+            it.symbol == symbol && it.status !in setOf("CLOSED", "BUY FAILED", "PROPOSAL FAILED") && !it.status.startsWith("ERROR")
+        }
+        if (active) return
+        val stake = roundStake(dailyCapital * 0.10)
+        val available = (availableBalance - reservedRecoveryCapital()).coerceAtLeast(0.0)
+        if (stake <= 0.0 || available + 0.000001 < stake) return
+        if (openPosition(symbol, direction, "MASTER", stake,
+                qualificationMssEpoch = last.epoch,
+                qualificationChochEpoch = last.epoch,
+                qualificationRetestEpoch = last.epoch,
+                qualificationChochLevel = if (direction == "RISE") (recentHigh ?: 0.0) else (recentLow ?: 0.0))) {
+            lastExecutedSignalEpoch[symbol] = last.epoch
+            tradePrefs.edit().putLong("last_executed_signal_epoch_$symbol", last.epoch).apply()
+            addNotification("Trade", "${displayIndexName(symbol)} $direction signal submitted",
+                "M5 MSS + CHOCH confirmed; matching order block and liquidity reached 10% proximity or less; matching FVG fully closed. Stake: ${formatMoney(stake)}.")
         }
     }
 
@@ -2401,6 +2586,7 @@ indexStatusViews[symbol]?.apply {
         mssStatusViews.clear()
         chochStatusViews.clear()
         retestStatusViews.clear()
+        strategyStatusViews.clear()
         tradeStatusViews.clear()
         tradeProfitViews.clear()
         tradeTargetViews.clear()
@@ -2580,13 +2766,18 @@ indexStatusViews[symbol]?.apply {
             )
             retestStatusViews[symbol] = retestView
             indexCard.addView(retestView)
+            indexCard.addView(space(7))
+            indexCard.addView(text("OB · LIQUIDITY · FVG (M5)", 10f, whiteText, true))
+            val strategyView = text(strategyDisplayText(symbol), 10f, amber)
+            strategyStatusViews[symbol] = strategyView
+            indexCard.addView(strategyView)
             content.addView(indexCard)
             content.addView(space(9))
         }
     }
 
     private fun showTrade() {
-        pageHeading("RUNNING TRADES", "Contracts opened after confirmed MSS + CHOCH + RETEST.")
+        pageHeading("RUNNING TRADES", "Contracts opened after OB + liquidity + fully filled FVG + M5 MSS/CHOCH confirmation.")
         content.addView(autoTradingButton())
         content.addView(space(10))
         val summary = card()
