@@ -1570,9 +1570,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             position.status = "OPEN"
         }
 
-        // Each original pair manages its winning and losing contracts independently.
-        // The losing-leg trail is not armed until the winning leg is confirmed closed.
-        if (position.status == "OPEN" && position.role in setOf("ORIGINAL", "EXISTING")) {
+        // Re-evaluate on OPEN updates and on Deriv's confirmed CLOSED update.
+        // The confirmed winner closure is what unlocks the losing-leg trail.
+        if (position.role in setOf("ORIGINAL", "EXISTING")) {
             evaluatePairTrailingStops(position)
         }
 
@@ -1617,7 +1617,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
      * - Close when P/L reaches or crosses the currently protected stop.
      */
     private fun evaluatePairTrailingStops(position: Position) {
-        if (position.status != "OPEN" || position.stake <= 0.0 || !position.stake.isFinite()) return
+        // A CLOSED position must still be evaluated: its confirmed closure may
+        // be the event that permits the opposite contract to start recovery.
+        if (position.status !in setOf("OPEN", "CLOSED") ||
+            position.stake <= 0.0 || !position.stake.isFinite()) return
 
         val pair = if (position.originalId.isNotBlank()) {
             positions.values.filter {
@@ -1643,9 +1646,14 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             it.trailingActivated && !it.losingRecoveryTrail
         }
         if (winner == null) {
-            val candidate = if (currentPercent >= peerPercent) position else peer
-            val candidatePercent = if (candidate.localId == position.localId) currentPercent else peerPercent
-            if (candidate.status == "OPEN" && candidatePercent >= 50.0) {
+            // Only an OPEN contract can become the winning leg. Do not select
+            // a closed leg merely because its last P/L is higher.
+            val candidate = pair
+                .filter { it.status == "OPEN" }
+                .maxByOrNull { it.profit / it.stake }
+            val candidatePercent = candidate?.let { (it.profit / it.stake) * 100.0 }
+            if (candidate != null && candidatePercent != null &&
+                candidatePercent.isFinite() && candidatePercent >= 50.0) {
                 candidate.trailingActivated = true
                 candidate.losingRecoveryTrail = false
                 candidate.trailingPeakPercent = candidatePercent
@@ -1678,7 +1686,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         // Mandatory sequence gate: the losing leg stays completely unarmed
         // until the winning contract is confirmed CLOSED after activation.
         if (activeWinner.status != "CLOSED" || !activeWinner.trailingActivated ||
-            activeWinner.losingRecoveryTrail || activeWinner.profit <= 0.0) return
+            activeWinner.losingRecoveryTrail) return
 
         val loser = pair.firstOrNull { it.localId != activeWinner.localId } ?: return
         if (loser.status != "OPEN") return
@@ -2391,7 +2399,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                             val trailType = if (p.losingRecoveryTrail) "LOSS PROTECTION" else "WINNING TRAIL"
                             "TRAILING STOP: ACTIVE · $trailType · P/L ${formatPnlPercent(currentPercent)} · STOP ${formatPercent(p.trailingStopPercent)}"
                         } else {
-                            "TRAILING STOP: MONITORING · P/L ${formatPnlPercent(currentPercent)} · WIN ARMS AT +50% / LOSS ARMS AT -20%"
+                            "TRAILING STOP: MONITORING · P/L ${formatPnlPercent(currentPercent)} · WIN ARMS AT +50% · LOSS WAITS FOR WINNER CLOSE, THEN -20%"
                         }
                         val trailView = text(trailDescription, 12f, if (p.trailingActivated) amber else blue, true)
                         tradeTrailingViews[p.localId] = trailView
@@ -2491,7 +2499,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 val label = if (position.losingRecoveryTrail) "LOSS PROTECTION" else "WINNING TRAIL"
                 "TRAILING STOP: ACTIVE · $label · P/L ${formatPnlPercent(currentPercent)} · STOP ${formatPercent(position.trailingStopPercent)}"
             } else {
-                "TRAILING STOP: MONITORING · P/L ${formatPnlPercent(currentPercent)} · WIN ARMS AT +50% / LOSS ARMS AT -20%"
+                "TRAILING STOP: MONITORING · P/L ${formatPnlPercent(currentPercent)} · WIN ARMS AT +50% · LOSS WAITS FOR WINNER CLOSE, THEN -20%"
             }
             view.setTextColor(if (position.trailingActivated) amber else blue)
         }
