@@ -179,6 +179,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private var dailyCapital = 0.0
     private var accountCurrency = "USD"
     private var tradingDayKey = ""
+    private var dailyCapitalStartedAt = 0L
     private var tradeStatusView: TextView? = null
     private val tradeStatusViews = mutableMapOf<String, TextView>()
     private val tradeProfitViews = mutableMapOf<String, TextView>()
@@ -248,6 +249,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         tradingDayKey = tradePrefs.getString("day_key", "").orEmpty()
         dailyCapital = tradePrefs.getFloat("daily_capital", 0f).toDouble()
+        dailyCapitalStartedAt = tradePrefs.getLong("daily_capital_started_at", 0L)
         loadPositions()
         indexes.forEach { symbol ->
             tradePrefs.getString("signal_mss_$symbol", null)?.let { recoveryMss[symbol] = it }
@@ -723,14 +725,32 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         availableBalance = balance
         accountBalanceLabel = String.format(Locale.US, "%.2f %s", balance, currency)
         accountCurrency = currency
-        val today = utcDayKey(System.currentTimeMillis() / 1000L)
-        if (tradingDayKey != today) {
-            tradingDayKey = today
+        val now = System.currentTimeMillis()
+        val windowMillis = 24L * 60L * 60L * 1000L
+
+        // Keep the first balance snapshot fixed for a complete 24-hour window.
+        // Later balance growth or reduction must not resize either original leg.
+        if (dailyCapitalStartedAt <= 0L && dailyCapital > 0.0) {
+            // Migrate an existing saved daily-capital snapshot without changing it.
+            dailyCapitalStartedAt = now
+            if (tradingDayKey.isBlank()) tradingDayKey = now.toString()
+            tradePrefs.edit()
+                .putLong("daily_capital_started_at", dailyCapitalStartedAt)
+                .putString("day_key", tradingDayKey)
+                .apply()
+        } else if (dailyCapital <= 0.0 || dailyCapitalStartedAt <= 0L ||
+            now - dailyCapitalStartedAt >= windowMillis) {
+            // Start a new fixed-capital window only after the previous 24 hours expire.
             dailyCapital = balance
+            dailyCapitalStartedAt = now
+            tradingDayKey = now.toString()
             originalTriggered.clear()
-            tradePrefs.edit().putString("day_key", today).putFloat("daily_capital", balance.toFloat()).apply()
-        } else if (dailyCapital <= 0.0) {
-            dailyCapital = tradePrefs.getFloat("daily_capital", balance.toFloat()).toDouble()
+            tradePrefs.edit()
+                .putString("day_key", tradingDayKey)
+                .putFloat("daily_capital", dailyCapital.toFloat())
+                .putLong("daily_capital_started_at", dailyCapitalStartedAt)
+                .putStringSet("triggered_$tradingDayKey", emptySet())
+                .apply()
         }
         runOnUiThread {
             accountBalanceView?.text = accountBalanceLabel
@@ -1344,10 +1364,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private fun evaluateOriginalEntries(symbol: String, quote: Double) {
         if (!autoTradingEnabled || !accountConnected || dailyCapital <= 0.0 || !quote.isFinite()) return
         val levels = dailyLevels[symbol] ?: return
-        val today = utcDayKey(System.currentTimeMillis() / 1000L)
-        val pairKey = "$today|$symbol|PAIR"
-        val legacyRiseKey = "$today|$symbol|RISE"
-        val legacyFallKey = "$today|$symbol|FALL"
+        val capitalWindowKey = tradingDayKey.ifBlank { dailyCapitalStartedAt.toString() }
+        val pairKey = "$capitalWindowKey|$symbol|PAIR"
+        val legacyRiseKey = "$capitalWindowKey|$symbol|RISE"
+        val legacyFallKey = "$capitalWindowKey|$symbol|FALL"
         if (pairKey in originalTriggered || legacyRiseKey in originalTriggered || legacyFallKey in originalTriggered) return
 
         // Preserve the original working entry trigger: a live quote reaching
@@ -1363,8 +1383,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (indexAlreadyActive) return
         if (activeTradeGroupIds().size >= 2) return
 
-        val stake = roundStake(dailyCapital * 0.25)
-        val requiredForPair = roundStake(stake * 2.0)
+        // Each simultaneous leg is exactly 5% of the fixed 24-hour capital snapshot.
+        // The RISE + FALL cycle therefore reserves exactly 10% of that snapshot.
+        val riseStake = roundStake(dailyCapital * 0.05)
+        val fallStake = roundStake(dailyCapital * 0.05)
+        val requiredForPair = roundStake(riseStake + fallStake)
         val unreservedBalance = (availableBalance - reservedRecoveryCapital()).coerceAtLeast(0.0)
         if (unreservedBalance + 0.000001 < requiredForPair) {
             if (insufficientFundsNotified.add(pairKey)) {
@@ -1373,9 +1396,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             return
         }
 
-        val pairId = "PAIR-${today}-${symbol}-${UUID.randomUUID()}"
-        val riseQueued = openPosition(symbol, "RISE", "ORIGINAL", stake, pairId)
-        val fallQueued = riseQueued && openPosition(symbol, "FALL", "ORIGINAL", stake, pairId)
+        val pairId = "PAIR-${capitalWindowKey}-${symbol}-${UUID.randomUUID()}"
+        val riseQueued = openPosition(symbol, "RISE", "ORIGINAL", riseStake, pairId)
+        val fallQueued = riseQueued && openPosition(symbol, "FALL", "ORIGINAL", fallStake, pairId)
         if (!riseQueued || !fallQueued) {
             addNotification("Trade", "${displayIndexName(symbol)} pair not submitted", "The original RISE/FALL pair was blocked before both requests could be sent. The signal remains available for retry.")
             return
@@ -1383,8 +1406,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         originalTriggered.add(pairKey)
         originalTriggered.add(legacyRiseKey)
         originalTriggered.add(legacyFallKey)
-        tradePrefs.edit().putStringSet("triggered_$today", originalTriggered.toSet()).apply()
-        addNotification("Trade", "${displayIndexName(symbol)} original pair submitted", "Both RISE and FALL proposal requests were sent to Deriv with the same stake of ${formatMoney(stake)} each. Waiting for Deriv acceptance.")
+        tradePrefs.edit().putStringSet("triggered_$capitalWindowKey", originalTriggered.toSet()).apply()
+        addNotification("Trade", "${displayIndexName(symbol)} original pair submitted", "RISE stake: ${formatMoney(riseStake)} (5% of fixed 24-hour daily capital); FALL stake: ${formatMoney(fallStake)} (5%). Total cycle allocation: ${formatMoney(requiredForPair)} (10%). Waiting for Deriv acceptance.")
     }
 
     private fun roundStake(value: Double): Double =
