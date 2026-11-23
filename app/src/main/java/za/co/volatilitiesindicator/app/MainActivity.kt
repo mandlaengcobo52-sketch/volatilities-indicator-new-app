@@ -1055,6 +1055,21 @@ indexStatusViews[symbol]?.apply {
         savePositions()
     }
 
+    override fun onCandleFeedError(symbol: String, timeframe: String, message: String) {
+        if (symbol !in indexes) return
+        val status = "$timeframe FEED ERROR: $message"
+        when (timeframe.uppercase(Locale.US)) {
+            "DAILY" -> dailyCandleFeedStatus[symbol] = status
+            "M15" -> m15CandleFeedStatus[symbol] = status
+        }
+        android.util.Log.e("DerivCandles", "$symbol $status")
+        runOnUiThread {
+            updateCandleFeedStatusView(symbol)
+            updateDailyReferenceView(symbol)
+            updateM15RecordViews(symbol)
+        }
+    }
+
     override fun onMarketDataError(symbol: String, message: String) {
         runOnUiThread {
             indexStatusViews[symbol]?.apply {
