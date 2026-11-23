@@ -158,6 +158,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var recoveryEligible: Boolean = false,
         var recoveryUsed: Boolean = false,
         var closedAt: Long = 0L,
+        var expiryEpoch: Long = 0L,
         var recoveryAfterEpoch: Long = 0L,
         var pairedLoss: Double = 0.0
     )
@@ -182,6 +183,14 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private var tradeStatusView: TextView? = null
     private val tradeStatusViews = mutableMapOf<String, TextView>()
     private val tradeProfitViews = mutableMapOf<String, TextView>()
+    private val tradeCountdownViews = mutableMapOf<String, TextView>()
+    private val countdownHandler = Handler(Looper.getMainLooper())
+    private val countdownTask = object : Runnable {
+        override fun run() {
+            updateRunningTradeCountdowns()
+            countdownHandler.postDelayed(this, 1_000L)
+        }
+    }
     private val insufficientFundsNotified = mutableSetOf<String>()
 
     private val tradePrefs by lazy { getSharedPreferences("vi_trade_engine", MODE_PRIVATE) }
@@ -677,6 +686,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     override fun onDestroy() {
         candleRefreshHandler.removeCallbacks(candleRefreshTask)
+        countdownHandler.removeCallbacks(countdownTask)
         derivService?.detachActivity(this)
         if (serviceBound) {
             try { unbindService(serviceConnection) } catch (_: Exception) {}
@@ -901,6 +911,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
                     if (existing != null) {
                         existing.direction = direction
+                        existing.expiryEpoch = c.optLong("date_expiry", existing.expiryEpoch)
                         if (existing.status != "CLOSING") {
                             existing.status = "OPEN"
                         }
@@ -914,6 +925,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                         )
 
                         restored.contractId = id
+                        restored.expiryEpoch = c.optLong("date_expiry", 0L)
                         restored.status = "OPEN"
                         positions[restored.localId] = restored
                     }
@@ -1488,6 +1500,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 stake = stake
             )
             restored.contractId = contractId
+            restored.expiryEpoch = contract.optLong("date_expiry", 0L)
             restored.status = "OPEN"
             positions[restored.localId] = restored
             foundPosition = restored
@@ -1496,6 +1509,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         val position = foundPosition ?: return
         val wasAlreadyClosed = position.status == "CLOSED"
+        position.expiryEpoch = contract.optLong("date_expiry", position.expiryEpoch)
 
         when (contract.optString("contract_type").uppercase(Locale.US)) {
             "CALL" -> position.direction = "RISE"
@@ -1944,6 +1958,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         chochStatusViews.clear()
         tradeStatusViews.clear()
         tradeProfitViews.clear()
+        tradeCountdownViews.clear()
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -2123,6 +2138,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     private fun showTrade() {
+        countdownHandler.removeCallbacks(countdownTask)
+        countdownHandler.post(countdownTask)
         pageHeading("RUNNING TRADES", "Original and recovery contracts.")
         content.addView(autoTradingButton())
         content.addView(space(10))
@@ -2170,6 +2187,15 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                         if (p.status == "OPEN") green else amber, true)
                     tradeStatusViews[p.localId] = statusView
                     c.addView(statusView)
+
+                    if (p.status == "OPEN") {
+                        val countdownView = text(
+                            "TIME REMAINING: ${formatContractCountdown(p.expiryEpoch)}",
+                            13f, blue, true
+                        )
+                        tradeCountdownViews[p.localId] = countdownView
+                        c.addView(countdownView)
+                    }
 
                     val profitView = text("Profit / Loss: ${formatMoney(p.profit)}", 14f,
                         if (p.profit >= 0.0) green else red, true)
@@ -2224,6 +2250,34 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
         tradeStatusView = text(if (accountConnected) "EXECUTION CONNECTED" else "CONNECT A DERIV ACCOUNT TO ENABLE EXECUTION", 12f, if (accountConnected) green else amber, true)
         content.addView(tradeStatusView)
+    }
+
+    private fun formatContractCountdown(expiryEpoch: Long): String {
+        if (expiryEpoch <= 0L) return "Waiting for Deriv expiry time"
+        val remainingSeconds = (expiryEpoch - System.currentTimeMillis() / 1000L)
+            .coerceAtLeast(0L)
+        val hours = remainingSeconds / 3600L
+        val minutes = (remainingSeconds % 3600L) / 60L
+        val seconds = remainingSeconds % 60L
+        val days = hours / 24L
+        val remainingHours = hours % 24L
+        return if (days > 0L) {
+            String.format(Locale.US, "%dd %02d:%02d:%02d", days, remainingHours, minutes, seconds)
+        } else {
+            String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, seconds)
+        }
+    }
+
+    private fun updateRunningTradeCountdowns() {
+        if (selectedTab != "Trade") return
+        tradeCountdownViews.forEach { (localId, view) ->
+            val position = positions[localId]
+            if (position == null || position.status != "OPEN") {
+                view.text = "TIME REMAINING: --"
+            } else {
+                view.text = "TIME REMAINING: ${formatContractCountdown(position.expiryEpoch)}"
+            }
+        }
     }
 
     private fun updateTradePositionViews(position: Position) {
