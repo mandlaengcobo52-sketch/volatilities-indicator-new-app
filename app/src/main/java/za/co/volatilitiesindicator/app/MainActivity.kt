@@ -1637,23 +1637,24 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (position.status !in setOf("OPEN", "CLOSED") ||
             position.stake <= 0.0 || !position.stake.isFinite()) return
 
+        // Resolve the pair when it is available, but do not block the winning
+        // contract's own trailing stop merely because its opposite leg has not
+        // yet been restored into the local position list. Restored Deriv
+        // contracts can have role labels different from locally-created legs.
         val pair = if (position.originalId.isNotBlank()) {
             positions.values.filter {
-                it.originalId == position.originalId && it.role == position.role
+                it.originalId == position.originalId &&
+                    it.role in setOf("ORIGINAL", "EXISTING")
             }
         } else {
             positions.values.filter {
-                it.role == "EXISTING" && it.symbol == position.symbol
+                it.symbol == position.symbol &&
+                    it.role in setOf("ORIGINAL", "EXISTING")
             }
-        }
-        if (pair.size != 2) return
-
-        val peer = pair.firstOrNull { it.localId != position.localId } ?: return
-        if (peer.direction == position.direction || peer.stake <= 0.0 || !peer.stake.isFinite()) return
+        }.distinctBy { it.contractId.takeIf { id -> id > 0L } ?: it.localId }
 
         val currentPercent = contractProfitPercent(position)
-        val peerPercent = contractProfitPercent(peer)
-        if (!currentPercent.isFinite() || !peerPercent.isFinite()) return
+        if (!currentPercent.isFinite()) return
 
         // Find the already-armed winning leg, or arm the better-performing
         // OPEN leg only when it reaches +50%.
@@ -1703,7 +1704,14 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (activeWinner.status != "CLOSED" || !activeWinner.trailingActivated ||
             activeWinner.losingRecoveryTrail) return
 
-        val loser = pair.firstOrNull { it.localId != activeWinner.localId } ?: return
+        // The losing-side trail requires the actual opposite contract and
+        // remains gated by confirmed winner closure. The winning-side trail
+        // above does not depend on the peer being locally present.
+        val loser = pair.firstOrNull {
+            it.localId != activeWinner.localId &&
+                it.direction != activeWinner.direction &&
+                it.stake > 0.0 && it.stake.isFinite()
+        } ?: return
         if (loser.status != "OPEN") return
 
         val loserPercent = contractProfitPercent(loser)
