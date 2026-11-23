@@ -48,14 +48,22 @@ class DerivApiClient(
             symbol: String,
             candles: List<Candle>
         ) {
-            // Optional callback for historical H1 qualification data.
+            // Legacy H1 history callback; no longer used for entry qualification.
+        }
+
+        fun onDailyCandles(symbol: String, candles: List<Candle>) {
+            // Daily high/low reference levels for entry qualification.
+        }
+
+        fun onM15Candles(symbol: String, candles: List<Candle>) {
+            // Closed M15 reversal, MSS and CHOCH qualification.
         }
 
         fun onM5Candles(
             symbol: String,
             candles: List<Candle>
         ) {
-            // Optional callback for M5 trailing-stop confirmation data.
+            // M5 trailing-stop confirmation data.
         }
 
         fun onMarketDataError(symbol: String, message: String) {
@@ -249,6 +257,8 @@ class DerivApiClient(
 private var marketDataRequestId = 1000
 private val candleRequestSymbols = java.util.concurrent.ConcurrentHashMap<Int, String>()
 private val m5CandleRequestSymbols = java.util.concurrent.ConcurrentHashMap<Int, String>()
+private val dailyCandleRequestSymbols = java.util.concurrent.ConcurrentHashMap<Int, String>()
+private val m15CandleRequestSymbols = java.util.concurrent.ConcurrentHashMap<Int, String>()
 
 private val candleIndexes = listOf(
     "R_10",
@@ -1196,6 +1206,34 @@ private fun connectMarketDataEndpoint() {
                 }
                 webSocket.send(message.toString())
             }
+            // Daily candles supply current-day and previous-day high/low references.
+            for (symbol in candleIndexes) {
+                val requestId = marketDataRequestId++
+                dailyCandleRequestSymbols[requestId] = symbol
+                val message = JSONObject().apply {
+                    put("ticks_history", symbol)
+                    put("count", 3)
+                    put("end", "latest")
+                    put("style", "candles")
+                    put("granularity", 86400)
+                    put("req_id", requestId)
+                }
+                webSocket.send(message.toString())
+            }
+            // M15 candles confirm the reversal, MSS and CHOCH for entry qualification.
+            for (symbol in candleIndexes) {
+                val requestId = marketDataRequestId++
+                m15CandleRequestSymbols[requestId] = symbol
+                val message = JSONObject().apply {
+                    put("ticks_history", symbol)
+                    put("count", 300)
+                    put("end", "latest")
+                    put("style", "candles")
+                    put("granularity", 900)
+                    put("req_id", requestId)
+                }
+                webSocket.send(message.toString())
+            }
             // Separate M5 history feed for trailing-stop reversal confirmation.
             for (symbol in candleIndexes) {
                 val requestId = marketDataRequestId++
@@ -1227,10 +1265,14 @@ private fun connectMarketDataEndpoint() {
                 val echoRequest = json.optJSONObject("echo_req")
                 val requestId = json.optInt("req_id", -1)
                 val m5SymbolForRequest = m5CandleRequestSymbols.remove(requestId)
+                val dailySymbolForRequest = dailyCandleRequestSymbols.remove(requestId)
+                val m15SymbolForRequest = m15CandleRequestSymbols.remove(requestId)
                 val isM5 = m5SymbolForRequest != null
+                val isDaily = dailySymbolForRequest != null
+                val isM15 = m15SymbolForRequest != null
 
                 if (apiError != null) {
-                    val failedSymbol = m5SymbolForRequest ?: (
+                    val failedSymbol = m5SymbolForRequest ?: dailySymbolForRequest ?: m15SymbolForRequest ?: (
                         echoRequest?.optString("ticks_history", "")
                             ?.takeIf { it in candleIndexes }
                             ?: candleRequestSymbols.remove(requestId).orEmpty()
@@ -1244,8 +1286,8 @@ private fun connectMarketDataEndpoint() {
                         "Endpoint $endpoint returned API error: ${apiError.optString("code")} - $message"
                     )
                     // M5 failures must not mark the H1 qualification feed as failed.
-                    if (isM5) {
-                        android.util.Log.e("DerivCandles", "M5 request failed for $failedSymbol: $message")
+                    if (isM5 || isDaily || isM15) {
+                        android.util.Log.e("DerivCandles", "Auxiliary ${if (isM5) "M5" else if (isDaily) "Daily" else "M15"} request failed for $failedSymbol: $message")
                     } else {
                         if (failedSymbol in candleIndexes) {
                             callback.onMarketDataError(failedSymbol, message)
@@ -1271,7 +1313,7 @@ private fun connectMarketDataEndpoint() {
                     }
                 }
 
-                val symbol = m5SymbolForRequest ?: (
+                val symbol = m5SymbolForRequest ?: dailySymbolForRequest ?: m15SymbolForRequest ?: (
                     echoRequest?.optString("ticks_history", "")
                         ?.takeIf { it in candleIndexes }
                         ?: candleRequestSymbols.remove(requestId).orEmpty()
@@ -1281,8 +1323,8 @@ private fun connectMarketDataEndpoint() {
                 val candlesJson = json.optJSONArray("candles")
                     ?: json.optJSONObject("history")?.optJSONArray("candles")
                 if (candlesJson == null) {
-                    if (isM5) {
-                        android.util.Log.e("DerivCandles", "Deriv returned no M5 candles for $symbol.")
+                    if (isM5 || isDaily || isM15) {
+                        android.util.Log.e("DerivCandles", "Deriv returned no ${if (isM5) "M5" else if (isDaily) "Daily" else "M15"} candles for $symbol.")
                     } else {
                         callback.onMarketDataError(symbol, "Deriv returned no H1 candles for $symbol.")
                     }
@@ -1314,21 +1356,24 @@ private fun connectMarketDataEndpoint() {
 
                 if (candles.isNotEmpty()) {
                     val sortedCandles = candles.sortedBy { it.epoch }
-                    if (isM5) {
-                        callback.onM5Candles(symbol, sortedCandles)
-                    } else {
+                    when {
+                        isM5 -> callback.onM5Candles(symbol, sortedCandles)
+                        isDaily -> callback.onDailyCandles(symbol, sortedCandles)
+                        isM15 -> callback.onM15Candles(symbol, sortedCandles)
+                        else -> {
                         candleRequestSymbols.remove(requestId)
                         callback.onCandles(symbol, sortedCandles)
-                        // Keep the timeout active until all five H1 histories have replied.
+                        // Keep the initial-load timeout active until all five legacy H1 histories reply.
                         if (candleRequestSymbols.isEmpty()) {
                             marketDataTimeout?.cancel(false)
                             marketDataTimeout = null
                         }
+                        }
                     }
-                } else if (isM5) {
+                } else if (isM5 || isDaily || isM15) {
                     android.util.Log.e(
                         "DerivCandles",
-                        "Deriv returned an M5 response, but no valid candles could be read for $symbol."
+                        "Deriv returned an auxiliary candle response, but no valid candles could be read for $symbol."
                     )
                 } else {
                     callback.onMarketDataError(
@@ -1349,6 +1394,8 @@ private fun connectMarketDataEndpoint() {
             marketDataTimeout = null
             candleRequestSymbols.clear()
             m5CandleRequestSymbols.clear()
+            dailyCandleRequestSymbols.clear()
+            m15CandleRequestSymbols.clear()
             if (manuallyDisconnected) return
             if (marketDataAttempt < marketDataEndpoints.size - 1) {
                 marketDataAttempt++
@@ -1371,6 +1418,8 @@ private fun connectMarketDataEndpoint() {
             marketDataTimeout = null
             candleRequestSymbols.clear()
             m5CandleRequestSymbols.clear()
+            dailyCandleRequestSymbols.clear()
+            m15CandleRequestSymbols.clear()
             if (manuallyDisconnected) return
             if (code == 1011 && marketDataAttempt < marketDataEndpoints.size - 1) {
                 marketDataAttempt++
@@ -1435,10 +1484,23 @@ fun refreshHistoricalCandles() {
         }
     }
 
-    android.util.Log.d(
-        "DerivCandles",
-        "Historical H1 candle refresh requested for all indexes"
-    )
+    for (symbol in candleIndexes) {
+        val dailyId = marketDataRequestId++
+        dailyCandleRequestSymbols[dailyId] = symbol
+        socket.send(JSONObject().apply {
+            put("ticks_history", symbol); put("count", 3); put("end", "latest")
+            put("style", "candles"); put("granularity", 86400); put("req_id", dailyId)
+        }.toString())
+
+        val m15Id = marketDataRequestId++
+        m15CandleRequestSymbols[m15Id] = symbol
+        socket.send(JSONObject().apply {
+            put("ticks_history", symbol); put("count", 300); put("end", "latest")
+            put("style", "candles"); put("granularity", 900); put("req_id", m15Id)
+        }.toString())
+    }
+
+    android.util.Log.d("DerivCandles", "Daily, M15 and legacy H1 histories refreshed for all indexes")
 }
 
 fun refreshM5Candles() {
