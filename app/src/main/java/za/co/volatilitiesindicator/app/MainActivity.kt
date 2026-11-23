@@ -1912,8 +1912,8 @@ indexStatusViews[symbol]?.apply {
     }
 
     private fun dailyReferenceText(symbol: String): String {
-        val daily = dailyCandlesByIndex[symbol]?.sortedBy { it.epoch } ?: return
-            "TODAY HIGH: --\nTODAY LOW: --\nPREVIOUS HIGH: --\nPREVIOUS LOW: --"
+        val daily = dailyCandlesByIndex[symbol]?.sortedBy { it.epoch}
+            ?: return "TODAY HIGH: --\nTODAY LOW: --\nPREVIOUS HIGH: --\nPREVIOUS LOW: --"
         if (daily.isEmpty()) return "TODAY HIGH: --\nTODAY LOW: --\nPREVIOUS HIGH: --\nPREVIOUS LOW: --"
         val now = System.currentTimeMillis() / 1000L
         val todayStart = utcDayStart(now)
