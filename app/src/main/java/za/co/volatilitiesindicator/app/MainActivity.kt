@@ -158,10 +158,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var recoveryEligible: Boolean = false,
         var recoveryUsed: Boolean = false,
         var closedAt: Long = 0L,
-        var peakProfit: Double = 0.0,
-        var trailingActivated: Boolean = false,
-        var lockedProfitPercent: Int = 0,
-        var pairExitTriggered: Boolean = false,
         var recoveryAfterEpoch: Long = 0L,
         var pairedLoss: Double = 0.0
     )
@@ -1222,7 +1218,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     !it.status.startsWith("ERROR")
             }
             return if (originalRunning) {
-                "MSS and CHOCH are monitored for a fresh reversal. Recovery waits until the winning original leg's trailing stop has closed both legs of the pair."
+                "MSS and CHOCH are monitored for a fresh reversal. Recovery waits until both original RISE and FALL contracts have closed."
             } else {
                 "No qualifying winning original closure. Recovery is not eligible."
             }
@@ -1556,60 +1552,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         } else if (position.status != "CLOSING") {
             position.status = "OPEN"
         }
-        // TRAILING STOP IS PER CONTRACT, NEVER THE COMBINED RISE + FALL P/L.
-        // Deriv's profit field is this contract's NET profit (stake excluded).
-        // Activate at 20% NET profit on this contract's own stake.
-        // Lock 20% at activation, then raise the protected NET-profit floor
-        // in 10-percentage-point stages: 30%, 40%, 50%, and so on.
-        if (!isSold && position.status == "OPEN" &&
-            position.role != "EXISTING" && position.stake > 0.0) {
-
-            val activationProfit = roundStake(position.stake * 0.20)
-
-            // Never use account P/L, index combined P/L, or the paired leg's profit.
-            if (position.profit >= activationProfit) {
-                position.trailingActivated = true
-            }
-
-            // Each Position stores and updates only its own highest NET profit.
-            if (position.trailingActivated && position.profit > position.peakProfit) {
-                position.peakProfit = position.profit
-            }
-
-            if (position.trailingActivated) {
-                // The lock is a NET-profit percentage of this contract's own stake.
-                val peakProfitPercent = (position.peakProfit / position.stake * 100.0).toInt()
-                val newLock = (peakProfitPercent / 10) * 10
-                if (newLock >= 20 && newLock > position.lockedProfitPercent) {
-                    position.lockedProfitPercent = newLock
-                }
-            }
-
-            // Convert the protected NET-profit percentage into this contract's currency.
-            val lockedNetProfit = roundStake(
-                position.stake * position.lockedProfitPercent.coerceAtLeast(0) / 100.0
-            )
-            val reversedToLock = position.trailingActivated &&
-                position.lockedProfitPercent >= 20 &&
-                position.peakProfit >= activationProfit &&
-                position.profit < position.peakProfit &&
-                position.profit <= lockedNetProfit
-
-            if (reversedToLock) {
-                if (position.role == "ORIGINAL" && !position.pairExitTriggered) {
-                    // One leg's own trailing stop triggers closure of both original legs.
-                    closeOriginalPairAfterTrailing(position)
-                } else if (position.role == "RECOVERY" && position.canSell &&
-                    position.contractId > 0L) {
-                    closeRunningPosition(position)
-                }
-            } else if (position.role == "ORIGINAL" && position.pairExitTriggered &&
-                position.status == "OPEN" && position.canSell && position.contractId > 0L) {
-                // Retry closing this leg if Deriv made it sellable after its paired leg.
-                closeRunningPosition(position)
-            }
-        }
-
         savePositions()
         runOnUiThread {
             updateMasterDecisionViews(position.symbol)
@@ -1623,26 +1565,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
         if (position.recoveryEligible && !position.recoveryUsed) {
             candlesByIndex[position.symbol]?.let { evaluateRecoverySignals(position.symbol, it) }
-        }
-    }
-
-    private fun closeOriginalPairAfterTrailing(winningPosition: Position) {
-        if (winningPosition.role != "ORIGINAL" || winningPosition.pairExitTriggered) return
-        val pair = positions.values.filter {
-            it.role == "ORIGINAL" && it.originalId == winningPosition.originalId
-        }
-        if (pair.size != 2) return
-        pair.forEach { it.pairExitTriggered = true }
-        savePositions()
-        addNotification(
-            "Trade",
-            "${displayIndexName(winningPosition.symbol)} pair trailing stop",
-            "Contract net profit reversed to the ${winningPosition.lockedProfitPercent}% protected level. Closing both RISE and FALL contracts."
-        )
-        pair.forEach { leg ->
-            if (leg.status == "OPEN" && leg.canSell && leg.contractId > 0L) {
-                closeRunningPosition(leg)
-            }
         }
     }
 
@@ -1804,10 +1726,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 .put("recoveryEligible", p.recoveryEligible)
                 .put("recoveryUsed", p.recoveryUsed)
                 .put("closedAt", p.closedAt)
-                .put("peakProfit", p.peakProfit)
-                .put("trailingActivated", p.trailingActivated)
-                .put("lockedProfitPercent", p.lockedProfitPercent)
-                .put("pairExitTriggered", p.pairExitTriggered)
                 .put("recoveryAfterEpoch", p.recoveryAfterEpoch)
                 .put("pairedLoss", p.pairedLoss))
         }
@@ -1828,21 +1746,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 p.recoveryEligible = o.optBoolean("recoveryEligible", false)
                 p.recoveryUsed = o.optBoolean("recoveryUsed", false)
                 p.closedAt = o.optLong("closedAt", 0L)
-                p.peakProfit = o.optDouble("peakProfit", p.profit.coerceAtLeast(0.0))
-                p.trailingActivated = o.optBoolean(
-                    "trailingActivated",
-                    p.stake > 0.0 && p.peakProfit >= p.stake * 0.20
-                )
-                val savedLockPercent = o.optInt("lockedProfitPercent", 0)
-                // Older builds stored the protected level as total return (140, 150, ...).
-                // Convert those values to NET-profit percentages (40, 50, ...) without
-                // lowering protection already earned by an open contract.
-                p.lockedProfitPercent = if (savedLockPercent >= 100) {
-                    savedLockPercent - 100
-                } else {
-                    savedLockPercent
-                }
-                p.pairExitTriggered = o.optBoolean("pairExitTriggered", false)
                 p.recoveryAfterEpoch = o.optLong("recoveryAfterEpoch", p.closedAt)
                 p.pairedLoss = o.optDouble("pairedLoss", 0.0)
                 if (p.recoveryEligible && !p.recoveryUsed) recoveryWaiting.add(p.localId)
