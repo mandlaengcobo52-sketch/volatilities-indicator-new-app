@@ -1,2497 +1,3814 @@
 package za.co.volatilitiesindicator.app
 
+import android.app.Activity
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.pm.PackageManager
+import android.Manifest
+import android.content.ComponentName
+import android.content.Intent
+import android.net.Uri
+import android.util.Base64
+import android.app.AlertDialog
+import android.widget.EditText
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
-import okhttp3.WebSocket
-import okhttp3.WebSocketListener
-import org.json.JSONArray
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.IOException
+import java.security.MessageDigest
+import java.security.SecureRandom
+import java.util.UUID
+import java.math.BigDecimal
+import java.math.RoundingMode
+import android.content.ServiceConnection
+import android.os.Build
+import android.os.Bundle
+import android.os.IBinder
+import android.os.Handler
+import android.os.Looper
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.view.Gravity
+import android.view.View
+import android.widget.Button
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.RadioButton
+import android.widget.RadioGroup
+import android.widget.TextView
 import org.json.JSONObject
-import java.util.concurrent.ScheduledExecutorService
-import java.util.concurrent.ScheduledFuture
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
+import java.util.Locale
+import java.util.Calendar
+import java.util.TimeZone
+import org.json.JSONArray
 
-class DerivApiClient(
-    private val callback: Callback
-) {
+class MainActivity : Activity(), DerivApiClient.Callback {
 
-        data class Candle(
-        val epoch: Long,
-        val open: Double,
-        val high: Double,
-        val low: Double,
-        val close: Double
+    private var darkInterface = true
+    private val ink: Int get() = if (darkInterface) Color.rgb(242, 246, 244) else Color.rgb(28, 39, 51)
+    private val muted: Int get() = if (darkInterface) Color.WHITE else Color.rgb(28, 39, 51)
+    private val whiteText: Int get() = if (darkInterface) Color.WHITE else ink
+    private val green = Color.rgb(0, 200, 83)
+    private val red = Color.rgb(244, 67, 54)
+    private val amber = Color.rgb(255, 214, 0)
+    private val gold = Color.rgb(255, 214, 0)
+    private val blue = Color.rgb(33, 150, 243)
+    private val pageColor: Int get() = if (darkInterface) Color.rgb(0, 7, 5) else Color.rgb(245, 247, 250)
+    private val cardColor: Int get() = if (darkInterface) Color.rgb(5, 25, 18) else Color.WHITE
+    private val lineColor: Int get() = if (darkInterface) Color.rgb(25, 91, 62) else Color.rgb(190, 225, 205)
+
+    private lateinit var content: LinearLayout
+    private var selectedTab = "Home"
+    private var renderedTab = ""
+    private var pageScrollView: ScrollView? = null
+    private val scrollPositions = mutableMapOf<String, Int>()
+    private val settingsPrefs by lazy { getSharedPreferences("vi_settings", MODE_PRIVATE) }
+    // Auto trading defaults ON to preserve the existing automatic execution behaviour.
+    // OFF pauses new original/recovery entries but does not affect open contracts.
+    private var autoTradingEnabled = true
+    // Trailing protection is mandatory for every executed contract; there is no user toggle.
+
+    private val indexes = listOf("R_10", "R_25", "R_50", "R_75", "R_100")
+    private val latestPrices = mutableMapOf<String, Double>()
+    private val priceViews = mutableMapOf<String, TextView>()
+    private val indexStatusViews = mutableMapOf<String, TextView>()
+    private val marketStatusViews = mutableMapOf<String, TextView>()
+    private val masterDecisionViews = mutableMapOf<String, TextView>()
+    private val levelStatusViews = mutableMapOf<String, TextView>()
+    private val recoveryStatusViews = mutableMapOf<String, TextView>()
+    private val mssStatusViews = mutableMapOf<String, TextView>()
+    private val chochStatusViews = mutableMapOf<String, TextView>()
+    private val retestStatusViews = mutableMapOf<String, TextView>()
+
+    private data class AppNotification(
+        val id: Long,
+        val page: String,
+        val title: String,
+        val message: String,
+        val timestamp: Long,
+        var read: Boolean = false
     )
 
-    interface Callback {
+    private val appNotifications = mutableListOf<AppNotification>()
+    private val notificationPrefs by lazy {
+        getSharedPreferences("vi_notifications", MODE_PRIVATE)
+    }
+    private val notificationChannelId = "vi_app_alerts"
+    private val notificationPermissionRequest = 9001
+    private val paymentProofPickerRequest = 9107
 
-        fun onConnecting(message: String)
+    private var marketFeedConnected = false
+    private var accountConnected = false
+    private var accountLabel = "Not connected"
+    private var accountBalanceLabel = "Balance unavailable"
+    private var availableBalance = 0.0
+    private var executionMode = "DEMO"
+    // Position ledgers are isolated by the authenticated Deriv account ID.
+    private var currentDerivAccountId = ""
+    private var accountStatusView: TextView? = null
+    private var accountOpenPlView: TextView? = null
+    private var accountClosedPlView: TextView? = null
+    private var accountTotalPlView: TextView? = null
+    private var accountBalanceView: TextView? = null
+    private var accountIdView: TextView? = null
+    private val prefs by lazy { getSharedPreferences("deriv_oauth", MODE_PRIVATE) }
+    private val httpClient = OkHttpClient()
+    private val platformPrefs by lazy { getSharedPreferences("vi_platform_auth", MODE_PRIVATE) }
+    private val platformAuthUrl = "https://www.volatilitiesindicator.org.za/mobile-auth.php"
+    private val investmentApiUrl = "https://www.volatilitiesindicator.org.za/investment-api.php"
+    private var platformAuthToken = ""
+    private var platformAuthenticated = false
+    private var platformAuthBusy = false
+    private var platformUserName = ""
+    private var platformUserRole = "user"
+    private val accountGatePending = mutableSetOf<String>()
+    private var platformUser = JSONObject()
 
-        fun onConnected(
-            accountId: String,
-            accountType: String
-        )
+    // Deriv credentials are isolated by the authenticated Volatilities Indicator user ID.
+    private val platformUserId: String
+        get() = platformUser.optString("id").trim()
+            .ifBlank { platformPrefs.getString("active_user_id", "").orEmpty() }
 
-        fun onBalance(
-            balance: Double,
-            currency: String
-        )
+    private fun derivTokenKey(mode: String, userId: String = platformUserId): String =
+        "user_${userId}_${if (mode.equals("REAL", true)) "real" else "demo"}_token"
 
-        fun onTick(
-            symbol: String,
-            quote: Double,
-            epoch: Long
-        )
+    private fun derivModeKey(userId: String = platformUserId): String =
+        "user_${userId}_oauth_mode"
+    private var oauthState = ""
+    private var codeVerifier = ""
+    private var feedPillView: TextView? = null
+    private var notificationBellView: TextView? = null
 
-        fun onCandles(
-            symbol: String,
-            candles: List<Candle>
-        ) {
-            // Legacy H1 history callback; no longer used for entry qualification.
+    private var derivService: DerivConnectionService? = null
+    private var serviceBound = false
+    private val candleRefreshHandler = Handler(Looper.getMainLooper())
+    private val candleRefreshTask = object : Runnable {
+        override fun run() {
+            derivService?.client?.refreshHistoricalCandles()
+            derivService?.client?.refreshM5Candles()
+            candleRefreshHandler.postDelayed(this, 60_000L)
         }
-
-        fun onDailyCandles(symbol: String, candles: List<Candle>) {
-            // Daily high/low reference levels for entry qualification.
-        }
-
-        fun onM15Candles(symbol: String, candles: List<Candle>) {
-            // Closed M15 reversal, MSS and CHOCH qualification.
-        }
-
-        fun onM5Candles(
-            symbol: String,
-            candles: List<Candle>
-        ) {
-            // M5 trailing-stop confirmation data.
-        }
-
-        fun onMarketDataError(symbol: String, message: String) {
-            // Optional callback for public market-data errors.
-        }
-
-        fun onError(message: String)
-        
-                fun onTradeData(json: JSONObject) {
-            // Optional callback for open trades and trade history.
-                }
-
-        fun onDisconnected()
     }
 
-    companion object {
-
-        /*
-         * CURRENT DERIV API
-         *
-         * REST base:
-         * https://api.derivws.com
-         *
-         * Authenticated WebSocket URL is obtained
-         * through the OTP endpoint.
-         */
-        private const val API_BASE_URL =
-            "https://api.derivws.com"
-
-        private const val ACCOUNTS_URL =
-            "$API_BASE_URL/trading/v1/options/accounts"
-
-        private const val OTP_URL =
-            "$API_BASE_URL/trading/v1/options/accounts"
-
-        /*
-         * Current OAuth token endpoint.
-         */
-        const val OAUTH_TOKEN_URL =
-            "https://auth.deriv.com/oauth2/token"
-
-        /*
-         * Current OAuth authorization endpoint.
-         *
-         * IMPORTANT:
-         * It is /oauth2/auth
-         * NOT /oauth2/authorize
-         */
-        const val OAUTH_AUTH_URL =
-            "https://auth.deriv.com/oauth2/auth"
-
-        /*
-         * This redirect URI must remain exactly the
-         * URI registered against the OAuth application.
-         */
-        const val OAUTH_REDIRECT_URI =
-            "https://volatilitiesindicator.org.za/accounts/account-callback.php"
-
-        /*
-         * The application requests trading access.
-         */
-        const val OAUTH_SCOPE =
-            "trade"
-
-        /*
-         * Existing OAuth client IDs from the project.
-         *
-         * These are preserved from the ZIP.
-         */
-        private const val DEMO_CLIENT_ID =
-            "34fz6VSRiNSQnELXjApVH"
-
-        private const val REAL_CLIENT_ID =
-    "34fz9hcgpdwSzNCVeUgMR"
-
-        /*
-         * Return the client ID selected by the
-         * application execution mode.
-         */
-        fun clientId(
-            mode: String
-        ): String {
-
-            return if (
-                mode.equals(
-                    "REAL",
-                    ignoreCase = true
-                )
-            ) {
-
-                REAL_CLIENT_ID
-
-            } else {
-
-                DEMO_CLIENT_ID
-            }
-        }
-
-        /*
-         * Current REST API base.
-         */
-        const val API_BASE =
-            API_BASE_URL
-    }
-
-    /*
-     * HTTP client.
-     *
-     * Used for:
-     *
-     * 1. Getting the user's Options accounts.
-     * 2. Getting the authenticated WebSocket OTP.
-     */
-    private val httpClient =
-        OkHttpClient.Builder()
-            .connectTimeout(
-                30,
-                TimeUnit.SECONDS
-            )
-            .readTimeout(
-                30,
-                TimeUnit.SECONDS
-            )
-            .writeTimeout(
-                30,
-                TimeUnit.SECONDS
-            )
-            .retryOnConnectionFailure(true)
-            .build()
-
-    /*
-     * WebSocket client.
-     *
-     * The actual authenticated WebSocket URL is supplied
-     * by Deriv's OTP endpoint.
-     */
-    private val webSocketClient =
-        OkHttpClient.Builder()
-            .pingInterval(
-                20,
-                TimeUnit.SECONDS
-            )
-            .connectTimeout(
-                30,
-                TimeUnit.SECONDS
-            )
-            .readTimeout(
-                0,
-                TimeUnit.MILLISECONDS
-            )
-            .writeTimeout(
-                30,
-                TimeUnit.SECONDS
-            )
-            .retryOnConnectionFailure(true)
-            .build()
-
-    /*
-     * Scheduler for:
-     *
-     * - application heartbeat
-     * - automatic recovery
-     */
-    private val scheduler:
-        ScheduledExecutorService =
-        Executors.newSingleThreadScheduledExecutor()
-
-    private var heartbeatFuture:
-        ScheduledFuture<*>? = null
-
-    private var reconnectFuture:
-        ScheduledFuture<*>? = null
-
-    private var webSocket:
-        WebSocket? = null
-
-    @Volatile
-    private var lastAuthenticatedMessageAt: Long = 0L
-
-    private var marketDataSocket: WebSocket? = null
-    private var marketDataEndpointIndex = 0
-    private var marketDataAttempt = 0
-    private var marketDataTimeout: java.util.concurrent.ScheduledFuture<*>? = null
-    private var marketDataReconnectFuture: ScheduledFuture<*>? = null
-    private val marketDataEndpoints = listOf(
-        "wss://ws.binaryws.com/websockets/v3?app_id=1089",
-        "wss://ws.binaryws.com/websockets/v3",
-        "wss://api.derivws.com/trading/v1/options/ws/public"
+    private data class Position(
+        val localId: String,
+        val symbol: String,
+        var direction: String,
+        val role: String,
+        var stake: Double,
+        val originalId: String = "",
+        var contractId: Long = 0L,
+        var profit: Double = 0.0,
+        var status: String = "PROPOSAL",
+        var canSell: Boolean = false,
+        var recoveryEligible: Boolean = false,
+        var recoveryUsed: Boolean = false,
+        var closedAt: Long = 0L,
+        var pairExitTriggered: Boolean = false,
+        var recoveryAfterEpoch: Long = 0L,
+        var pairedLoss: Double = 0.0,
+        var entryBarrier: Double = 0.0,
+        var expiryAt: Long = 0L,
+        var openedAt: Long = 0L,
+        var closeReason: String = "",
+        var qualificationMssEpoch: Long = 0L,
+        var qualificationChochEpoch: Long = 0L,
+        var qualificationRetestEpoch: Long = 0L,
+        var qualificationChochLevel: Double = 0.0,
+        var trailingPeakProfitPct: Double = 0.0,
+        var trailingPeakInitialized: Boolean = false,
+        var trailingExtremePrice: Double = 0.0,
+        var trailingLastMarketPrice: Double = 0.0,
+        var trailingLastM5Epoch: Long = 0L
     )
 
-private var marketDataRequestId = 1000
-private val candleRequestSymbols = java.util.concurrent.ConcurrentHashMap<Int, String>()
-private val m5CandleRequestSymbols = java.util.concurrent.ConcurrentHashMap<Int, String>()
-private val dailyCandleRequestSymbols = java.util.concurrent.ConcurrentHashMap<Int, String>()
-private val m15CandleRequestSymbols = java.util.concurrent.ConcurrentHashMap<Int, String>()
+    private val positions = linkedMapOf<String, Position>()
+    // Serializes the per-index reservation check and insertion across callbacks.
+    private val positionExecutionLock = Any()
+    private val pendingRequests = mutableMapOf<Int, String>()
+    private val originalSweepStatus = mutableMapOf<String, String>()
+    private val candlesByIndex = mutableMapOf<String, List<DerivApiClient.Candle>>()
+    private val dailyCandlesByIndex = mutableMapOf<String, List<DerivApiClient.Candle>>()
+    private val m15CandlesByIndex = mutableMapOf<String, List<DerivApiClient.Candle>>()
+    private data class DailyApproachState(
+        val level: Double,
+        val levelType: String,
+        val direction: String,
+        val zoneBoundary: Double,
+        val startedAtEpoch: Long,
+        var enteredZone: Boolean = false,
+        var enteredAtEpoch: Long = 0L
+    )
+    private val dailyApproachByIndex = mutableMapOf<String, DailyApproachState>()
+    private val lastTickByIndex = mutableMapOf<String, Pair<Double, Long>>()
+    private val originalTriggered = mutableSetOf<String>()
+    private val recoveryWaiting = mutableSetOf<String>()
+    private val recoveryMss = mutableMapOf<String, String>()
+    private val recoveryChoch = mutableMapOf<String, String>()
+    // Candle epochs are retained so a pre-existing qualification cannot trigger
+    // recovery before a fresh new direction change is confirmed.
+    private val recoveryMssEpoch = mutableMapOf<String, Long>()
+    private val recoveryChochEpoch = mutableMapOf<String, Long>()
+    // A confirmed CHOCH remains pending until a later closed candle retests its exact level.
+    private val pendingChochDirection = mutableMapOf<String, String>()
+    private val pendingChochLevel = mutableMapOf<String, Double>()
+    private val pendingChochEpoch = mutableMapOf<String, Long>()
+    // 0 = waiting for first retest candle; 1 = first retest candle failed and
+    // the immediately following closed candle is the final confirmation attempt.
+    private val pendingChochRetestAttempt = mutableMapOf<String, Int>()
+    private val pendingChochRetestFirstEpoch = mutableMapOf<String, Long>()
+    private var requestCounter = 7000
+    private var dailyCapital = 0.0
+    private var accountCurrency = "USD"
+    private var tradingDayKey = ""
+    private var tradeStatusView: TextView? = null
+    private val tradeStatusViews = mutableMapOf<String, TextView>()
+    private val tradeProfitViews = mutableMapOf<String, TextView>()
+    private val tradeTargetViews = mutableMapOf<String, TextView>()
+    private val tradeEntryBarrierViews = mutableMapOf<String, TextView>()
+    private val tradeExpiryViews = mutableMapOf<String, TextView>()
+    private val tradeCountdownViews = mutableMapOf<String, TextView>()
+    private val tradeCountdownHandler = Handler(Looper.getMainLooper())
+    private val tradeCountdownTask = object : Runnable {
+        override fun run() {
+            if (selectedTab != "Trade") return
 
-private val candleIndexes = listOf(
-    "R_10",
-    "R_25",
-    "R_50",
-    "R_75",
-    "R_100"
-)
-
-    private var accessToken:
-        String? = null
-
-    // Invalidates in-flight HTTP/OTP/WebSocket callbacks when accounts are switched.
-    @Volatile
-    private var connectionGeneration: Long = 0L
-
-    private var accountType:
-        String =
-        "DEMO"
-
-    private var accountId:
-        String? = null
-
-    private var connected =
-        false
-
-    private var connecting =
-        false
-
-    /*
-     * TRUE only when the user deliberately
-     * disconnected.
-     */
-    private var manuallyDisconnected =
-        false
-
-    private var reconnectScheduled =
-        false
-    private var reconnectAttempt = 0
-
-    /*
-     * Connect after OAuth succeeds.
-     */
-    fun connectWithAccessToken(
-        token: String,
-        accountType: String
-    ) {
-
-        val cleanToken =
-            token.trim()
-
-        if (
-            cleanToken.isEmpty()
-        ) {
-
-            callback.onError(
-                "Deriv access token is empty."
-            )
-
-            return
-        }
-
-        val generation = ++connectionGeneration
-        accessToken =
-            cleanToken
-
-        this.accountType =
-            if (
-                accountType.equals(
-                    "REAL",
-                    ignoreCase = true
-                )
-            ) {
-
-                "REAL"
-
-            } else {
-
-                "DEMO"
-            }
-
-        manuallyDisconnected =
-            false
-
-        marketDataReconnectFuture?.cancel(false)
-        marketDataReconnectFuture = null
-        cancelReconnect()
-
-        stopHeartbeat()
-
-        closeSocketOnly()
-
-        callback.onConnecting(
-            "Connecting to Deriv account..."
-        )
-
-        /*
-         * First obtain the account belonging to
-         * the requested mode.
-         */
-        loadAccountsAndConnect(generation)
-    }
-
-    /*
-     * Compatibility method retained because existing
-     * MainActivity may call connect(token).
-     */
-    fun connect(
-        token: String
-    ) {
-
-        connectWithAccessToken(
-            token,
-            "DEMO"
-        )
-    }
-
-    /*
-     * Get all Options accounts associated with
-     * the OAuth token.
-     *
-     * Current Deriv endpoint:
-     *
-     * GET
-     * /trading/v1/options/accounts
-     */
-    private fun loadAccountsAndConnect(generation: Long) {
-        if (generation != connectionGeneration || manuallyDisconnected) return
-
-        val token =
-            accessToken
-
-        if (
-            token.isNullOrBlank()
-        ) {
-
-            callback.onError(
-                "No Deriv access token available."
-            )
-
-            return
-        }
-
-        if (
-            manuallyDisconnected
-        ) {
-
-            return
-        }
-
-        callback.onConnecting(
-            "Loading Deriv ${accountType.lowercase()} account..."
-        )
-
-        val request =
-            Request.Builder()
-                .url(
-                    ACCOUNTS_URL
-                )
-                .addHeader(
-                    "Authorization",
-                    "Bearer $token"
-                )
-                .get()
-                .build()
-
-        httpClient
-            .newCall(
-                request
-            )
-            .enqueue(
-                object :
-                    okhttp3.Callback {
-
-                    override fun onFailure(
-                        call: okhttp3.Call,
-                        e: java.io.IOException
-                    ) {
-                        if (generation != connectionGeneration || manuallyDisconnected) return
-                        if (
-                            manuallyDisconnected
-                        ) {
-
-                            return
-                        }
-
-                        callback.onError(
-                            "Unable to load Deriv accounts: ${
-                                e.message
-                                    ?: "network error"
-                            }"
+            val now = System.currentTimeMillis() / 1000L
+            tradeCountdownViews.forEach { (localId, view) ->
+                val position = positions[localId]
+                when {
+                    position == null || position.status == "CLOSED" -> {
+                        view.text = "TIME REMAINING: CLOSED"
+                    }
+                    position.expiryAt <= 0L -> {
+                        view.text = "TIME REMAINING: Awaiting Deriv expiry"
+                    }
+                    else -> {
+                        val remaining = (position.expiryAt - now).coerceAtLeast(0L)
+                        val hours = remaining / 3600L
+                        val minutes = (remaining % 3600L) / 60L
+                        val seconds = remaining % 60L
+                        view.text = String.format(
+                            Locale.US,
+                            "TIME REMAINING: %02d:%02d:%02d",
+                            hours, minutes, seconds
                         )
-
-                        scheduleReconnect()
-                    }
-
-                    override fun onResponse(
-                        call: okhttp3.Call,
-                        response: Response
-                    ) {
-                        if (generation != connectionGeneration || manuallyDisconnected) {
-                            response.close()
-                            return
-                        }
-                        val body =
-                            response.body
-                                ?.string()
-                                .orEmpty()
-
-                        if (
-                            !response.isSuccessful
-                        ) {
-
-                            val message =
-                                formatApiError(
-                                    response.code,
-                                    body
-                                )
-
-                            callback.onError(
-                                "Deriv account request failed: $message"
-                            )
-
-                            /*
-                             * Do not continuously retry invalid/expired
-                             * credentials.
-                             */
-                            if (
-                                response.code != 400 &&
-                                response.code != 401 &&
-                                response.code != 403
-                            ) {
-
-                                scheduleReconnect()
-                            }
-
-                            return
-                        }
-
-                        try {
-
-                            val json =
-                                JSONObject(
-                                    body
-                                )
-
-                            handleAccountsResponse(
-                                json,
-                                generation
-                            )
-
-                        } catch (
-                            e: Exception
-                        ) {
-
-                            callback.onError(
-                                "Invalid Deriv accounts response: ${
-                                    e.message
-                                        ?: "invalid response"
-                                }"
-                            )
-
-                            scheduleReconnect()
-                        }
                     }
                 }
-            )
+            }
+            tradeCountdownHandler.postDelayed(this, 1000L)
+        }
+    }
+    private val insufficientFundsNotified = mutableSetOf<String>()
+    private val lastExecutedSignalEpoch = mutableMapOf<String, Long>()
+
+    private val tradePrefs by lazy { getSharedPreferences("vi_trade_engine", MODE_PRIVATE) }
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            val service = (binder as? DerivConnectionService.LocalBinder)?.getService()
+                ?: return
+            derivService = service
+            service.attachActivity(this@MainActivity)
+            // Bind the persistent Deriv client to this platform user's identity before
+            // reading connection state. A different owner forces the old socket closed.
+            val ownerId = if (platformAuthenticated) platformUserId else ""
+            service.setPlatformUser(ownerId)
+            // Public market feed remains available independently of account authentication.
+            service.client.requestHistoricalCandles()
+            candleRefreshHandler.removeCallbacks(candleRefreshTask)
+            candleRefreshHandler.postDelayed(candleRefreshTask, 60_000L)
+            executionMode = if (ownerId.isNotBlank() && prefs.getString(derivModeKey(ownerId), "DEMO").equals("REAL", true)) "REAL" else "DEMO"
+            val savedToken = if (ownerId.isNotBlank()) prefs.getString(derivTokenKey(executionMode, ownerId), "").orEmpty() else ""
+
+            // The foreground service owns the Deriv client, so an Activity recreation
+            // (including device rotation) must restore the UI from the existing socket
+            // instead of treating the account as disconnected.
+            if (service.client.isConnected()) {
+                val activeAccountId = service.client.getAccountId()
+                if (!activeAccountId.isNullOrBlank()) {
+                    accountConnected = true
+                    executionMode = service.client.getAccountType()
+                    accountLabel = "$activeAccountId ($executionMode)"
+                    service.client.requestBalance()
+                    service.client.requestOpenTrades()
+                    runOnUiThread {
+                        accountStatusView?.text = "CONNECTED"
+                        accountStatusView?.setTextColor(green)
+                        accountIdView?.text = accountLabel
+                        render()
+                    }
+                }
+            } else if (savedToken.isNotBlank()) {
+                service.client.ensureConnectedOnResume(savedToken, executionMode)
+            }
+            runOnUiThread { updateConnectionLabels("Connecting to live market feed…") }
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            derivService?.detachActivity(this@MainActivity)
+            derivService = null
+            serviceBound = false
+            marketFeedConnected = false
+            runOnUiThread { updateConnectionLabels("Market feed disconnected") }
+        }
     }
 
-    /*
-     * Process the current Deriv account response.
-     */
-    private fun handleAccountsResponse(
-        json: JSONObject,
-        generation: Long
-    ) {
-        if (generation != connectionGeneration || manuallyDisconnected) return
-
-        /*
-         * Deriv returns the account collection in data.
-         *
-         * Depending on the API response/version, data can be
-         * an array or a single object. Handle both safely.
-         */
-
-        val accounts = mutableListOf<JSONObject>()
-
-        val dataArray =
-            json.optJSONArray("data")
-
-        if (dataArray != null) {
-
-            for (
-                index in 0 until dataArray.length()
-            ) {
-
-                dataArray.optJSONObject(index)
-                    ?.let { accounts.add(it) }
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        window.statusBarColor = pageColor
+        window.navigationBarColor = Color.WHITE
+        window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
+                View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        darkInterface = settingsPrefs.getBoolean("dark_interface", true)
+        autoTradingEnabled = settingsPrefs.getBoolean("auto_trading_enabled", true)
+        window.statusBarColor = pageColor
+        window.navigationBarColor = if (darkInterface) Color.rgb(19, 25, 33) else Color.WHITE
+        window.decorView.systemUiVisibility = if (darkInterface) 0 else
+            View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        tradingDayKey = ""
+        dailyCapital = 0.0
+        // Trade positions are loaded only after Deriv confirms the active account.
+        indexes.forEach { symbol ->
+            tradePrefs.getString("signal_mss_$symbol", null)?.let { recoveryMss[symbol] = it }
+            tradePrefs.getString("signal_choch_$symbol", null)?.let { recoveryChoch[symbol] = it }
+            val mssEpoch = tradePrefs.getLong("signal_mss_epoch_$symbol", 0L)
+            val chochEpoch = tradePrefs.getLong("signal_choch_epoch_$symbol", 0L)
+            if (mssEpoch > 0L) recoveryMssEpoch[symbol] = mssEpoch
+            if (chochEpoch > 0L) recoveryChochEpoch[symbol] = chochEpoch
+            val pendingDirection = tradePrefs.getString("pending_choch_direction_$symbol", "").orEmpty()
+            val pendingLevel = java.lang.Double.longBitsToDouble(
+                tradePrefs.getLong("pending_choch_level_bits_$symbol", 0L)
+            )
+            val pendingEpoch = tradePrefs.getLong("pending_choch_epoch_$symbol", 0L)
+            if (pendingDirection in setOf("RISE", "FALL") && pendingLevel.isFinite() && pendingLevel != 0.0 && pendingEpoch > 0L) {
+                pendingChochDirection[symbol] = pendingDirection
+                pendingChochLevel[symbol] = pendingLevel
+                pendingChochEpoch[symbol] = pendingEpoch
+                val retestAttempt = tradePrefs.getInt("pending_choch_retest_attempt_$symbol", 0).coerceIn(0, 1)
+                val firstRetestEpoch = tradePrefs.getLong("pending_choch_retest_first_epoch_$symbol", 0L)
+                if (retestAttempt == 1 && firstRetestEpoch > pendingEpoch) {
+                    pendingChochRetestAttempt[symbol] = 1
+                    pendingChochRetestFirstEpoch[symbol] = firstRetestEpoch
+                }
             }
-
+            val executedEpoch = tradePrefs.getLong("last_executed_signal_epoch_$symbol", 0L)
+            if (executedEpoch > 0L) lastExecutedSignalEpoch[symbol] = executedEpoch
+        }
+        loadNotifications()
+        createNotificationChannel()
+        requestNotificationPermissionIfNeeded()
+        handleNotificationIntent(intent, false)
+        platformAuthToken = platformPrefs.getString("token", "").orEmpty()
+        if (platformAuthToken.isNotBlank()) {
+            verifyPlatformSession()
         } else {
-
-            json.optJSONObject("data")
-                ?.let { accounts.add(it) }
+            showPlatformAuthScreen(false)
         }
-
-        if (accounts.isEmpty()) {
-
-            callback.onError(
-                "No Deriv trading accounts were returned."
-            )
-
-            return
-        }
-
-        var selectedAccount: JSONObject? = null
-
-        for (
-            item in accounts
-        ) {
-
-            val type =
-                item.optString(
-                    "account_type",
-                    ""
-                ).trim()
-
-            if (
-                type.equals(
-                    accountType,
-                    ignoreCase = true
-                )
-            ) {
-
-                selectedAccount =
-                    item
-
-                break
-            }
-        }
-
-        if (selectedAccount == null) {
-
-            val available =
-                accounts.joinToString(", ") {
-                    it.optString(
-                        "account_type",
-                        "unknown"
-                    )
-                }
-
-            callback.onError(
-                "No ${accountType.lowercase()} Deriv account was found. Available account types: $available"
-            )
-
-            return
-        }
-
-        val selectedId =
-            selectedAccount
-                ?.optString(
-                    "account_id",
-                    ""
-                )
-                ?.trim()
-                .orEmpty()
-
-        if (selectedId.isEmpty()) {
-
-            callback.onError(
-                "Deriv returned a ${accountType.lowercase()} account without an account ID."
-            )
-
-            return
-        }
-
-        accountId =
-            selectedId
-
-        callback.onConnecting(
-            "Opening authenticated Deriv ${accountType.lowercase()} connection..."
-        )
-
-        requestWebSocketOtp(
-            selectedId,
-            generation
-        )
     }
 
-    private fun requestWebSocketOtp(
-        selectedAccountId: String,
-        generation: Long
-    ) {
-        if (generation != connectionGeneration || manuallyDisconnected) return
-
-        val token =
-            accessToken
-
-        if (
-            token.isNullOrBlank()
-        ) {
-
-            callback.onError(
-                "No Deriv access token available for WebSocket authentication."
-            )
-
-            return
-        }
-
-        val url =
-            "$OTP_URL/$selectedAccountId/otp"
-        val request =
-            Request.Builder()
-                .url(
-                    url
-                )
-                .addHeader(
-                    "Authorization",
-                    "Bearer $token"
-                    )
-                .post(
-                    okhttp3.FormBody.Builder()
-                        .build()
-                )
-                .build()
-
-        httpClient
-            .newCall(
-                request
-            )
-            .enqueue(
-                object :
-                    okhttp3.Callback {
-
-                    override fun onFailure(
-                        call: okhttp3.Call,
-                        e: java.io.IOException
-                    ) {
-                        if (generation != connectionGeneration || manuallyDisconnected) return
-
-                        if (
-                            manuallyDisconnected
-                        ) {
-
-                            return
-                        }
-
-                        callback.onError(
-                            "Unable to obtain Deriv WebSocket OTP: ${
-                                e.message
-                                    ?: "network error"
-                            }"
-                        )
-
-                        scheduleReconnect()
-                    }
-
-                    override fun onResponse(
-                        call: okhttp3.Call,
-                        response: Response
-                    ) {
-                        if (generation != connectionGeneration || manuallyDisconnected) {
-                            response.close()
-                            return
-                        }
-                        val body =
-                            response.body
-                                ?.string()
-                                .orEmpty()
-
-                        if (
-                            !response.isSuccessful
-                        ) {
-
-                            val message =
-                                formatApiError(
-                                    response.code,
-                                    body
-                                )
-
-                            callback.onError(
-                                "Deriv WebSocket authentication failed: $message"
-                            )
-
-                            /*
-                             * Authentication/account errors should not
-                             * hammer the API with automatic retries.
-                             */
-                            if (
-                                response.code != 400 &&
-                                response.code != 401 &&
-                                response.code != 403
-                            ) {
-
-                                scheduleReconnect()
-                            }
-
-                            return
-                        }
-
-                        try {
-                            val json =
-                                JSONObject(
-                                    body
-                                )
-
-                            val websocketUrl =
-                                extractWebSocketUrl(
-                                    json
-                                )
-                                     if (
-                                websocketUrl.isNullOrBlank()
-                            ) {
-
-                                callback.onError(
-                                    "Deriv did not return a WebSocket URL."
-                                )
-
-                                scheduleReconnect()
-
-                                return
-                            }
-
-                            openAuthenticatedWebSocket(
-                                websocketUrl,
-                                generation
-                            )
-
-                        } catch (
-                            e: Exception
-                        ) {
-
-                            callback.onError(
-                                "Invalid Deriv OTP response: ${
-                                    e.message
-                                        ?: "invalid response"
-                                }"
-                            )
-
-                            scheduleReconnect()
-                        }
-                    }
+    private fun verifyPlatformSession() {
+        platformAuthBusy = true
+        val request = Request.Builder()
+            .url(platformAuthUrl)
+            .header("Authorization", "Bearer $platformAuthToken")
+            .post(FormBody.Builder().add("action", "profile").build())
+            .build()
+        httpClient.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                runOnUiThread {
+                    platformAuthBusy = false
+                    showPlatformAuthScreen(false, "Unable to verify your account. Check your internet connection and try again.")
                 }
-            )
-    }
-
-    /*
-     * Extract the WebSocket URL.
-     *
-     * Deriv may return the URL in the data object.
-     * We check the common response structures rather
-     * than assuming only one JSON layout.
-     */
-    private fun extractWebSocketUrl(
-        json: JSONObject
-    ): String? {
-
-        val direct =
-            json.optString(
-                "websocket_url",
-                ""
-            ).trim()
-
-        if (
-            direct.isNotEmpty()
-        ) {
-
-            return direct
-        }
-
-        val data =
-            json.optJSONObject(
-                "data"
-            )
-
-        if (
-            data != null
-        ) {
-
-            val url =
-                data.optString(
-                    "url",
-                    ""
-                ).trim()
-
-            if (
-                url.isNotEmpty()
-            ) {
-
-                return url
             }
-
-            val websocketUrl =
-                data.optString(
-                    "websocket_url",
-                    ""
-                   ).trim()
-
-            if (
-                websocketUrl.isNotEmpty()
-               ) {
-                return websocketUrl
-            }
-
-            val websocket =
-                data.optString(
-                    "websocket",
-                    ""
-                ).trim()
-                if (
-                websocket.isNotEmpty()
-            ) {
-
-                return websocket
-            }
-        }
-
-        /*
-         * Keep a fallback for an unusual response where
-         * data itself is represented as a string URL.
-         */
-        val dataString =
-            json.optString(
-                "data",
-                ""
-            ).trim()
-
-        if (
-            dataString.startsWith("ws://") ||
-            dataString.startsWith("wss://")
-        ) {
-
-            return dataString
-        }
-
-        return null
-    }
-
-    /*
-     * Open the authenticated WebSocket returned by
-     * Deriv's OTP endpoint.
-     */
-    private fun openAuthenticatedWebSocket(
-        websocketUrl: String,
-        generation: Long
-    ) {
-
-        if (generation != connectionGeneration || manuallyDisconnected) return
-
-        if (
-            manuallyDisconnected
-        ) {
-
-            return
-        }
-
-        connecting =
-            true
-
-        connected =
-            false
-
-        callback.onConnecting(
-            "Connecting to authenticated Deriv WebSocket..."
-        )
-
-        val request =
-            Request.Builder()
-                .url(
-                    websocketUrl
-                )
-                .build()
-
-        webSocket =
-            webSocketClient
-                .newWebSocket(
-                    request,
-                    object :
-                        WebSocketListener() {
-
-                        override fun onOpen(
-                            socket: WebSocket,
-                            response: Response
-                        ) {
-
-                            if (generation != connectionGeneration || webSocket !== socket || manuallyDisconnected) {
-                                socket.close(1000, "Obsolete account session")
-                                return
-                            }
-
-                            connecting =
-                                false
-
-                            connected =
-                                true
-                            lastAuthenticatedMessageAt = System.currentTimeMillis()
-
-                            reconnectScheduled =
-                                false
-                            reconnectAttempt = 0
-
-                            callback.onConnected(
-                                accountId
-                                    ?: "",
-                                accountType
-                            )
-                            subscribeToLiveTicks()
-
-                            startHeartbeat()
-
-                            requestBalance(
-                                socket
-                            )
-
-                            // connectWithAccessToken() closes both sockets before reconnecting.
-                            // Restore the separate public market-data socket after the
-                            // authenticated session is back, so live prices/candles resume too.
-                            requestHistoricalCandles()
-
-                            /*
-                             * Immediately request the current
-                             * account balance after connection.
-                             */
+            override fun onResponse(call: Call, response: Response) {
+                val raw = response.body?.string().orEmpty()
+                val json = try { JSONObject(raw) } catch (_: Exception) { JSONObject() }
+                runOnUiThread {
+                    platformAuthBusy = false
+                    if (response.isSuccessful && json.optBoolean("ok")) {
+                        platformAuthenticated = true
+                        platformUser = json.optJSONObject("user") ?: JSONObject()
+                        val verifiedUserId = platformUser.optString("id").trim()
+                        if (verifiedUserId.isNotBlank()) {
+                            platformPrefs.edit().putString("active_user_id", verifiedUserId).apply()
+                            derivService?.setPlatformUser(verifiedUserId)
                         }
-                        override fun onMessage(
-                            socket: WebSocket,
-                            text: String
-                        ) {
-
-                            /*
-                             * Ignore messages from an obsolete
-                             * WebSocket.
-                             */
-                            if (
-                                webSocket !== socket
-                            ) {
-
-                                return
-                            }
-
-                            lastAuthenticatedMessageAt = System.currentTimeMillis()
-                            handleWebSocketMessage(
-                                text
-                            )
+                        platformUserName = platformUser.optString("full_name")
+                        platformUserRole = platformUser.optString("role", "user").lowercase(Locale.US)
+                        when (platformUserRole) {
+                            "admin" -> showDerivRequiredScreen()
+                            "investor" -> showInvestorDerivScreen()
+                            else -> openUserProfile()
                         }
-
-                        override fun onClosing(
-                            socket: WebSocket,
-                            code: Int,
-                            reason: String
-                        ) {
-
-                            if (
-                                webSocket !== socket
-                            ) {
-
-                                return
-                            }
-
-                            connected =
-                                false
-
-                            connecting =
-                                false
-
-                            stopHeartbeat()
-                        }
-
-                        override fun onClosed(
-                            socket: WebSocket,
-                            code: Int,
-                            reason: String
-                        ) {
-
-                            /*
-                             * IMPORTANT:
-                             *
-                             * An old socket can finish closing after
-                             * a replacement socket has already been
-                             * created.
-                             *
-                             * Never let that old callback disconnect
-                             * the new socket.
-                             */
-                            if (
-                                webSocket !== socket
-                            ) {
-
-                                return
-                            }
-
-                            connected =
-                                false
-
-                            connecting =
-                                false
-
-                            stopHeartbeat()
-
-                            webSocket =
-                                null
-
-                            callback.onDisconnected()
-
-                            if (
-                                !manuallyDisconnected
-                            ) {
-
-                                scheduleReconnect()
-                            }
-                        }
-
-                        override fun onFailure(
-                            socket: WebSocket,
-                            t: Throwable,
-                            response: Response?
-                        ) {
-
-                            /*
-                             * Ignore failures from an obsolete socket.
-                             */
-                            if (
-                                webSocket !== socket
-                            ) {
-
-                                return
-                            }
-
-                            connected =
-                                false
-
-                            connecting =
-                                false
-
-                            stopHeartbeat()
-
-                            webSocket =
-                                null
-
-                            val message =
-                                t.message
-                                    ?.takeIf {
-                                        it.isNotBlank()
-                                    }
-                                    ?: "WebSocket connection failed"
-
-                            callback.onError(
-                                "Deriv WebSocket error: $message"
-                            )
-
-                            callback.onDisconnected()
-
-                            if (
-                                !manuallyDisconnected
-                            ) {
-
-                                scheduleReconnect()
-                            }
-                        }
-                    }
-                )
-
-        /*
-         * Keep the newly created socket as the active socket.
-         */
-        webSocket =
-            webSocket
-    }
-
-    /*
-     * Process messages received from Deriv.
-     */
-     // =============================================================
-// LIVE INDEX PRICE SUBSCRIPTIONS
-// =============================================================
-
-private val liveIndexes = listOf(
-    "R_10",
-    "R_25",
-    "R_50",
-    "R_75",
-    "R_100"
-)
-
-fun subscribeToLiveTicks() {
-
-    if (!connected) {
-        callback.onError(
-            "Cannot subscribe to prices: Deriv is not connected."
-        )
-        return
-    }
-    for (symbol in liveIndexes) {
-
-        val request = JSONObject().apply {
-            put("ticks", symbol)
-            put("subscribe", 1)
-        }
-
-        send(request)
-    }
-}
-// =============================================================
-// HISTORICAL CANDLE CONNECTION
-// =============================================================
-
-fun requestHistoricalCandles() {
-    if (marketDataSocket != null) return
-    connectMarketDataEndpoint()
-}
-
-private fun connectMarketDataEndpoint() {
-    if (marketDataSocket != null) return
-
-    val endpoint = marketDataEndpoints[marketDataEndpointIndex]
-    android.util.Log.i("DerivCandles", "Connecting market data endpoint ${marketDataEndpointIndex + 1}/${marketDataEndpoints.size}: $endpoint")
-    val request = Request.Builder().url(endpoint).build()
-
-    val socket = webSocketClient.newWebSocket(request, object : WebSocketListener() {
-        override fun onOpen(webSocket: WebSocket, response: Response) {
-            if (marketDataSocket != null && marketDataSocket !== webSocket) {
-                webSocket.close(1000, "Superseded market-data socket")
-                return
-            }
-            marketDataSocket = webSocket
-            marketDataAttempt = 0
-            marketDataTimeout?.cancel(false)
-            marketDataTimeout = scheduler.schedule({
-                if (marketDataSocket === webSocket) {
-                    android.util.Log.e("DerivCandles", "Market-data endpoint opened but did not complete candle loading within 20 seconds: $endpoint")
-                    try { webSocket.close(1011, "Market-data response timeout") } catch (_: Exception) {}
-                }
-            }, 20, java.util.concurrent.TimeUnit.SECONDS)
-
-            for (symbol in candleIndexes) {
-                val requestId = marketDataRequestId++
-                candleRequestSymbols[requestId] = symbol
-                val message = JSONObject().apply {
-                    put("ticks_history", symbol)
-                    put("count", 1000)
-                    put("end", "latest")
-                    put("style", "candles")
-                    put("granularity", 3600)
-                    put("req_id", requestId)
-                }
-                webSocket.send(message.toString())
-            }
-            // Daily candles supply current-day and previous-day high/low references.
-            for (symbol in candleIndexes) {
-                val requestId = marketDataRequestId++
-                dailyCandleRequestSymbols[requestId] = symbol
-                val message = JSONObject().apply {
-                    put("ticks_history", symbol)
-                    put("count", 3)
-                    put("end", "latest")
-                    put("style", "candles")
-                    put("granularity", 86400)
-                    put("req_id", requestId)
-                }
-                webSocket.send(message.toString())
-            }
-            // M15 candles confirm the reversal, MSS and CHOCH for entry qualification.
-            for (symbol in candleIndexes) {
-                val requestId = marketDataRequestId++
-                m15CandleRequestSymbols[requestId] = symbol
-                val message = JSONObject().apply {
-                    put("ticks_history", symbol)
-                    put("count", 300)
-                    put("end", "latest")
-                    put("style", "candles")
-                    put("granularity", 900)
-                    put("req_id", requestId)
-                }
-                webSocket.send(message.toString())
-            }
-            // Separate M5 history feed for trailing-stop reversal confirmation.
-            for (symbol in candleIndexes) {
-                val requestId = marketDataRequestId++
-                m5CandleRequestSymbols[requestId] = symbol
-                val message = JSONObject().apply {
-                    put("ticks_history", symbol)
-                    put("count", 100)
-                    put("end", "latest")
-                    put("style", "candles")
-                    put("granularity", 300)
-                    put("req_id", requestId)
-                }
-                webSocket.send(message.toString())
-            }
-            for (symbol in candleIndexes) {
-                val tickRequest = JSONObject().apply {
-                    put("ticks", symbol)
-                    put("subscribe", 1)
-                    put("req_id", marketDataRequestId++)
-                }
-                webSocket.send(tickRequest.toString())
-            }
-        }
-
-        override fun onMessage(webSocket: WebSocket, text: String) {
-            try {
-                val json = JSONObject(text)
-                val apiError = json.optJSONObject("error")
-                val echoRequest = json.optJSONObject("echo_req")
-                val requestId = json.optInt("req_id", -1)
-                val m5SymbolForRequest = m5CandleRequestSymbols.remove(requestId)
-                val dailySymbolForRequest = dailyCandleRequestSymbols.remove(requestId)
-                val m15SymbolForRequest = m15CandleRequestSymbols.remove(requestId)
-                val isM5 = m5SymbolForRequest != null
-                val isDaily = dailySymbolForRequest != null
-                val isM15 = m15SymbolForRequest != null
-
-                if (apiError != null) {
-                    val failedSymbol = m5SymbolForRequest ?: dailySymbolForRequest ?: m15SymbolForRequest ?: (
-                        echoRequest?.optString("ticks_history", "")
-                            ?.takeIf { it in candleIndexes }
-                            ?: candleRequestSymbols.remove(requestId).orEmpty()
-                    )
-                    val message = apiError.optString(
-                        "message",
-                        "Deriv market-data request failed"
-                    )
-                    android.util.Log.e(
-                        "DerivCandles",
-                        "Endpoint $endpoint returned API error: ${apiError.optString("code")} - $message"
-                    )
-                    // M5 failures must not mark the H1 qualification feed as failed.
-                    if (isM5 || isDaily || isM15) {
-                        android.util.Log.e("DerivCandles", "Auxiliary ${if (isM5) "M5" else if (isDaily) "Daily" else "M15"} request failed for $failedSymbol: $message")
+                        handleOAuthCallback(intent)
                     } else {
-                        if (failedSymbol in candleIndexes) {
-                            callback.onMarketDataError(failedSymbol, message)
-                        }
-                        if (failedSymbol in candleIndexes &&
-                            marketDataEndpointIndex < marketDataEndpoints.lastIndex
-                        ) {
-                            try {
-                                webSocket.close(1011, "Endpoint does not support candle request")
-                            } catch (_: Exception) {}
-                        }
+                        derivService?.setPlatformUser("")
+                        platformPrefs.edit().remove("token").remove("active_user_id").apply()
+                        platformAuthToken = ""
+                        platformAuthenticated = false
+                        showPlatformAuthScreen(false, json.optString("message", "Please sign in again."))
                     }
-                    return
+                    response.close()
                 }
-
-                val tick = json.optJSONObject("tick")
-                if (tick != null) {
-                    val tickSymbol = tick.optString("symbol", "")
-                    val quote = tick.optDouble("quote", Double.NaN)
-                    val epoch = tick.optLong("epoch", 0L)
-                    if (tickSymbol in candleIndexes && quote.isFinite()) {
-                        callback.onTick(tickSymbol, quote, epoch)
-                    }
-                }
-
-                val symbol = m5SymbolForRequest ?: dailySymbolForRequest ?: m15SymbolForRequest ?: (
-                    echoRequest?.optString("ticks_history", "")
-                        ?.takeIf { it in candleIndexes }
-                        ?: candleRequestSymbols.remove(requestId).orEmpty()
-                )
-                if (symbol !in candleIndexes) return
-
-                val candlesJson = json.optJSONArray("candles")
-                    ?: json.optJSONObject("history")?.optJSONArray("candles")
-                if (candlesJson == null) {
-                    if (isM5 || isDaily || isM15) {
-                        android.util.Log.e("DerivCandles", "Deriv returned no ${if (isM5) "M5" else if (isDaily) "Daily" else "M15"} candles for $symbol.")
-                    } else {
-                        callback.onMarketDataError(symbol, "Deriv returned no H1 candles for $symbol.")
-                    }
-                    return
-                }
-
-                val candles = mutableListOf<Candle>()
-                for (i in 0 until candlesJson.length()) {
-                    val item = candlesJson.optJSONObject(i) ?: continue
-                    val epoch = item.optLong("epoch", 0L)
-                    val open = item.optDouble("open", Double.NaN)
-                    val high = item.optDouble("high", Double.NaN)
-                    val low = item.optDouble("low", Double.NaN)
-                    val close = item.optDouble("close", Double.NaN)
-                    if (epoch > 0L && open.isFinite() && high.isFinite() &&
-                        low.isFinite() && close.isFinite()
-                    ) {
-                        candles.add(
-                            Candle(
-                                epoch = epoch,
-                                open = open,
-                                high = high,
-                                low = low,
-                                close = close
-                            )
-                        )
-                    }
-                }
-
-                if (candles.isNotEmpty()) {
-                    val sortedCandles = candles.sortedBy { it.epoch }
-                    when {
-                        isM5 -> callback.onM5Candles(symbol, sortedCandles)
-                        isDaily -> callback.onDailyCandles(symbol, sortedCandles)
-                        isM15 -> callback.onM15Candles(symbol, sortedCandles)
-                        else -> {
-                        candleRequestSymbols.remove(requestId)
-                        callback.onCandles(symbol, sortedCandles)
-                        // Keep the initial-load timeout active until all five legacy H1 histories reply.
-                        if (candleRequestSymbols.isEmpty()) {
-                            marketDataTimeout?.cancel(false)
-                            marketDataTimeout = null
-                        }
-                        }
-                    }
-                } else if (isM5 || isDaily || isM15) {
-                    android.util.Log.e(
-                        "DerivCandles",
-                        "Deriv returned an auxiliary candle response, but no valid candles could be read for $symbol."
-                    )
-                } else {
-                    callback.onMarketDataError(
-                        symbol,
-                        "Deriv returned a candle response, but no valid candles could be read."
-                    )
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("DerivCandles", "Candle response parsing failed: ${e.message}; response=$text", e)
             }
+        })
+    }
+
+    private fun submitPlatformAuth(isRegister: Boolean, fields: List<EditText>, status: TextView, submit: Button, selectedRole: String = "user") {
+        if (platformAuthBusy) return
+        val values = fields.map { it.text.toString().trim() }
+        val body = FormBody.Builder().add("action", if (isRegister) "register" else "login")
+        if (isRegister) {
+            if (values.size != 6 || values.any { it.isBlank() }) { status.text = "Please complete every field."; return }
+            body.add("first_name", values[0]).add("surname", values[1]).add("email", values[2])
+                .add("phone", values[3]).add("password", values[4]).add("password_confirm", values[5])
+                .add("role", selectedRole)
+        } else {
+            if (values.size != 2 || values.any { it.isBlank() }) { status.text = "Enter your email and password."; return }
+            body.add("email", values[0]).add("password", values[1])
+        }
+        platformAuthBusy = true
+        submit.isEnabled = false
+        status.text = if (isRegister) "Submitting registration…" else "Signing in…"
+        val request = Request.Builder().url(platformAuthUrl).post(body.build()).build()
+        httpClient.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                runOnUiThread { platformAuthBusy = false; submit.isEnabled = true; status.text = "Connection failed. Please try again." }
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val raw = response.body?.string().orEmpty()
+                val json = try { JSONObject(raw) } catch (_: Exception) { JSONObject() }
+                runOnUiThread {
+                    platformAuthBusy = false
+                    submit.isEnabled = true
+                    val message = json.optString("message", "The request could not be completed.")
+                    if (response.isSuccessful && json.optBoolean("ok")) {
+                        if (isRegister) {
+                            status.text = message
+                            fields.forEach { it.text.clear() }
+                        } else {
+                            platformAuthToken = json.optString("token")
+                            platformPrefs.edit().putString("token", platformAuthToken).apply()
+                            platformAuthenticated = platformAuthToken.isNotBlank()
+                            platformUser = json.optJSONObject("user") ?: JSONObject()
+                            val loggedInUserId = platformUser.optString("id").trim()
+                            if (loggedInUserId.isNotBlank()) {
+                                platformPrefs.edit().putString("active_user_id", loggedInUserId).apply()
+                                derivService?.setPlatformUser(loggedInUserId)
+                            }
+                            platformUserName = platformUser.optString("full_name")
+                            platformUserRole = platformUser.optString("role", "user").lowercase(Locale.US)
+                            if (platformAuthenticated) {
+                                when (platformUserRole) {
+                                    "admin" -> showDerivRequiredScreen()
+                                    "investor" -> showInvestorDerivScreen()
+                                    else -> openUserProfile()
+                                }
+                            } else status.text = "Login did not return a valid session."
+                        }
+                    } else status.text = message
+                    response.close()
+                }
+            }
+        })
+    }
+
+    private fun showPlatformAuthScreen(register: Boolean, message: String = "") {
+        platformAuthenticated = false
+
+        // Keep authentication screens consistent with the Volatilities Indicator website.
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            setPadding(dp(20), dp(18), dp(20), dp(20))
+            setBackgroundColor(Color.rgb(0, 7, 5))
+        }
+        val scroll = ScrollView(this).apply { isFillViewport = true }
+        val page = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
         }
 
-        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-            if (marketDataSocket !== webSocket) return
-            android.util.Log.e("DerivCandles", "Market-data endpoint failed: $endpoint; HTTP=${response?.code}; ${t.message}")
-            marketDataSocket = null
-            marketDataTimeout?.cancel(false)
-            marketDataTimeout = null
-            candleRequestSymbols.clear()
-            m5CandleRequestSymbols.clear()
-            dailyCandleRequestSymbols.clear()
-            m15CandleRequestSymbols.clear()
-            if (manuallyDisconnected) return
-            if (marketDataAttempt < marketDataEndpoints.size - 1) {
-                marketDataAttempt++
-                marketDataEndpointIndex = (marketDataEndpointIndex + 1) % marketDataEndpoints.size
-                scheduleMarketDataReconnect(700L)
+        // Required branded logo resource: app/src/main/res/drawable/volatilities_logo.png
+        page.addView(ImageView(this).apply {
+            setImageResource(R.drawable.volatilities_logo)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            adjustViewBounds = true
+            contentDescription = "Volatilities Indicator logo"
+        }, LinearLayout.LayoutParams(dp(154), dp(154)).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            bottomMargin = dp(8)
+        })
+
+        page.addView(TextView(this).apply {
+            text = "VOLATILITIES INDICATOR"
+            textSize = 25f
+            setTextColor(Color.rgb(0, 230, 118))
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setPadding(0, dp(4), 0, dp(22))
+        })
+
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(22), dp(20), dp(22))
+            background = GradientDrawable().apply {
+                setColor(Color.rgb(3, 22, 14))
+                setCornerRadius(dp(22).toFloat())
+                setStroke(dp(2), Color.rgb(0, 230, 118))
+            }
+        }
+        panel.addView(TextView(this).apply {
+            text = if (register) "CREATE YOUR PROFILE" else "ACCOUNT LOGIN"
+            textSize = 21f
+            setTextColor(Color.rgb(0, 230, 118))
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, dp(12))
+        })
+        val status = TextView(this).apply {
+            text = message
+            textSize = 13f
+            setTextColor(amber)
+            setPadding(0, dp(4), 0, dp(10))
+        }
+        panel.addView(status)
+
+        fun field(hint: String, password: Boolean = false): EditText {
+            val edit = EditText(this).apply {
+                this.hint = hint
+                textSize = 16f
+                setTextColor(Color.WHITE)
+                setHintTextColor(Color.rgb(170, 190, 180))
+                setSingleLine(true)
+                if (password) {
+                    inputType = android.text.InputType.TYPE_CLASS_TEXT
+                    transformationMethod = android.text.method.PasswordTransformationMethod.getInstance()
+                }
+                backgroundTintList = android.content.res.ColorStateList.valueOf(Color.rgb(0, 230, 118))
+            }
+            val fieldParams = LinearLayout.LayoutParams(-1, dp(58)).apply {
+                bottomMargin = dp(7)
+            }
+            if (password) {
+                val passwordRow = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                }
+                passwordRow.addView(edit, LinearLayout.LayoutParams(0, dp(58), 1f))
+                var passwordVisible = false
+                val eye = TextView(this).apply {
+                    text = "SHOW"
+                    textSize = 12f
+                    typeface = Typeface.DEFAULT_BOLD
+                    gravity = Gravity.CENTER
+                    setTextColor(Color.rgb(0, 230, 118))
+                    setPadding(dp(10), 0, dp(4), 0)
+                    contentDescription = "Show password"
+                    isClickable = true
+                    isFocusable = true
+                    setOnClickListener {
+                        val selection = edit.selectionStart.coerceAtLeast(0)
+                        passwordVisible = !passwordVisible
+                        edit.transformationMethod = if (passwordVisible) {
+                            android.text.method.HideReturnsTransformationMethod.getInstance()
+                        } else {
+                            android.text.method.PasswordTransformationMethod.getInstance()
+                        }
+                        edit.setSelection(selection.coerceAtMost(edit.text.length))
+                        text = if (passwordVisible) "HIDE" else "SHOW"
+                        contentDescription = if (passwordVisible) "Hide password" else "Show password"
+                    }
+                }
+                passwordRow.addView(eye, LinearLayout.LayoutParams(dp(58), dp(58)))
+                panel.addView(passwordRow, fieldParams)
             } else {
-                for (symbol in candleIndexes) {
-                    callback.onMarketDataError(symbol, "Market-data connection failed; retrying automatically. Last HTTP=${response?.code ?: "unknown"}; ${t.message ?: "network error"}")
-                }
-                marketDataAttempt = 0
-                marketDataEndpointIndex = 0
-                scheduleMarketDataReconnect(5000L)
+                panel.addView(edit, fieldParams)
             }
+            return edit
         }
 
-        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-            if (marketDataSocket !== webSocket) return
-            marketDataSocket = null
-            marketDataTimeout?.cancel(false)
-            marketDataTimeout = null
-            candleRequestSymbols.clear()
-            m5CandleRequestSymbols.clear()
-            dailyCandleRequestSymbols.clear()
-            m15CandleRequestSymbols.clear()
-            if (manuallyDisconnected) return
-            if (code == 1011 && marketDataAttempt < marketDataEndpoints.size - 1) {
-                marketDataAttempt++
-                marketDataEndpointIndex = (marketDataEndpointIndex + 1) % marketDataEndpoints.size
-                scheduleMarketDataReconnect(700L)
-            } else {
-                // A normal/remote close can also leave the index monitor stuck; reconnect it.
-                marketDataAttempt = 0
-                if (code == 1011) marketDataEndpointIndex = 0
-                scheduleMarketDataReconnect(2000L)
+        var selectedRegistrationRole = "user"
+        if (register) {
+            panel.addView(TextView(this).apply {
+                text = "SELECT ACCOUNT TYPE"
+                textSize = 14f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.WHITE)
+                setPadding(0, dp(8), 0, dp(6))
+            })
+            val roleChoices = RadioGroup(this).apply {
+                orientation = RadioGroup.VERTICAL
+                setPadding(dp(4), 0, 0, dp(10))
             }
-        }
-    })
-    // Keep the pending socket reference so repeated calls don't create parallel connections.
-    marketDataSocket = socket
-}
-
-private fun scheduleMarketDataReconnect(delayMs: Long) {
-    if (manuallyDisconnected) return
-    marketDataReconnectFuture?.cancel(false)
-    marketDataReconnectFuture = scheduler.schedule({
-        if (!manuallyDisconnected && marketDataSocket == null) {
-            connectMarketDataEndpoint()
-        }
-    }, delayMs, TimeUnit.MILLISECONDS)
-}
-
-// =============================================================
-// REFRESH HISTORICAL CANDLES
-// =============================================================
-
-fun refreshHistoricalCandles() {
-
-    val socket = marketDataSocket
-
-    if (socket == null) {
-        requestHistoricalCandles()
-        return
-    }
-
-    for (symbol in candleIndexes) {
-
-        val requestId = marketDataRequestId++
-        candleRequestSymbols[requestId] = symbol
-
-        val message = JSONObject().apply {
-            put("ticks_history", symbol)
-            put("count", 1000)
-            put("end", "latest")
-            put("style", "candles")
-            put("granularity", 3600)
-            put("req_id", requestId)
+            val userChoice = RadioButton(this).apply {
+                id = View.generateViewId()
+                text = "USER — Standard platform account"
+                textSize = 14f
+                setTextColor(Color.WHITE)
+                isChecked = true
+                buttonTintList = android.content.res.ColorStateList.valueOf(Color.rgb(0, 230, 118))
+            }
+            val investorChoice = RadioButton(this).apply {
+                id = View.generateViewId()
+                text = "INVESTOR — Deriv trading account"
+                textSize = 14f
+                setTextColor(Color.WHITE)
+                buttonTintList = android.content.res.ColorStateList.valueOf(Color.rgb(0, 230, 118))
+            }
+            roleChoices.addView(userChoice)
+            roleChoices.addView(investorChoice)
+            roleChoices.setOnCheckedChangeListener { _, checkedId ->
+                selectedRegistrationRole = if (checkedId == investorChoice.id) "investor" else "user"
+            }
+            panel.addView(roleChoices)
         }
 
-        val sent = socket.send(message.toString())
-
-        if (!sent) {
-            android.util.Log.e(
-                "DerivCandles",
-                "Failed to request refreshed candles for $symbol"
-            )
-        }
-    }
-
-    for (symbol in candleIndexes) {
-        val dailyId = marketDataRequestId++
-        dailyCandleRequestSymbols[dailyId] = symbol
-        socket.send(JSONObject().apply {
-            put("ticks_history", symbol); put("count", 3); put("end", "latest")
-            put("style", "candles"); put("granularity", 86400); put("req_id", dailyId)
-        }.toString())
-
-        val m15Id = marketDataRequestId++
-        m15CandleRequestSymbols[m15Id] = symbol
-        socket.send(JSONObject().apply {
-            put("ticks_history", symbol); put("count", 300); put("end", "latest")
-            put("style", "candles"); put("granularity", 900); put("req_id", m15Id)
-        }.toString())
-    }
-
-    android.util.Log.d("DerivCandles", "Daily, M15 and legacy H1 histories refreshed for all indexes")
-}
-
-fun refreshM5Candles() {
-    val socket = marketDataSocket
-    if (socket == null) {
-        requestHistoricalCandles()
-        return
-    }
-
-    for (symbol in candleIndexes) {
-        val requestId = marketDataRequestId++
-        m5CandleRequestSymbols[requestId] = symbol
-        val message = JSONObject().apply {
-            put("ticks_history", symbol)
-            put("count", 100)
-            put("end", "latest")
-            put("style", "candles")
-            put("granularity", 300)
-            put("req_id", requestId)
-        }
-        if (!socket.send(message.toString())) {
-            m5CandleRequestSymbols.remove(requestId)
-            android.util.Log.e(
-                "DerivCandles",
-                "Failed to request refreshed M5 candles for $symbol"
-            )
-        }
-    }
-}
-
-    private fun handleWebSocketMessage(
-        text: String
-    ) {
-
-        try {
-
-            val json =
-                JSONObject(
-                    text
-                )
-                android.util.Log.d(
-    "DerivLiveFeed",
-    "WebSocket response: $text"
-)
-                // =============================================================
-// PROCESS LIVE TICK RESPONSES
-// =============================================================
-
-val tick = json.optJSONObject("tick")
-
-if (tick != null) {
-
-    val symbol = tick.optString("symbol", "")
-    val quote = tick.optDouble("quote", Double.NaN)
-    val epoch = tick.optLong("epoch", 0L)
-
-    if (
-        symbol in liveIndexes &&
-        !quote.isNaN() &&
-        quote.isFinite()
-    ) {
-        callback.onTick(
-            symbol,
-            quote,
-            epoch
+        val fields = if (register) listOf(
+            field("First name"),
+            field("Surname"),
+            field("Email address").apply { inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS },
+            field("Contact number").apply { inputType = android.text.InputType.TYPE_CLASS_PHONE },
+            field("Password", true),
+            field("Confirm password", true)
+        ) else listOf(
+            field("Email address").apply { inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS },
+            field("Password", true)
         )
+
+        val submit = Button(this).apply {
+            text = if (register) "CREATE ACCOUNT" else "LOGIN"
+            textSize = 16f
+            isAllCaps = false
+            setTextColor(Color.BLACK)
+            background = rounded(Color.rgb(0, 230, 118), Color.rgb(0, 230, 118), 10)
+            setOnClickListener { submitPlatformAuth(register, fields, status, this, selectedRegistrationRole) }
+        }
+        panel.addView(submit, LinearLayout.LayoutParams(-1, dp(54)).apply {
+            topMargin = dp(10)
+        })
+
+        panel.addView(TextView(this).apply {
+            text = if (register) "Already registered? Login" else "New user? Register here"
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(0, 230, 118))
+            setPadding(0, dp(20), 0, dp(8))
+            textSize = 16f
+            setOnClickListener { showPlatformAuthScreen(!register) }
+        })
+
+        page.addView(panel, LinearLayout.LayoutParams(-1, -2))
+        scroll.addView(page)
+        root.addView(scroll, LinearLayout.LayoutParams(-1, -1))
+        setContentView(root)
     }
-}
-            val tradeMessageType = json.optString("msg_type", "")
 
-            /*
-             * Forward every response needed by the trade execution state machine.
-             * Proposal and buy responses are essential: MainActivity matches their
-             * req_id values to pending orders and advances PROPOSAL -> BUY -> OPEN.
-             * Deriv error responses also need to reach that handler so it can release
-             * the correct index lock instead of waiting for the proposal timeout.
-             */
-            if (
-                tradeMessageType == "portfolio" ||
-                tradeMessageType == "profit_table" ||
-                tradeMessageType == "proposal_open_contract" ||
-                tradeMessageType == "proposal" ||
-                tradeMessageType == "buy" ||
-                json.has("error")
-            ) {
-                callback.onTradeData(json)
+    private fun showDerivRequiredScreen() {
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(dp(24), dp(24), dp(24), dp(24)); setBackgroundColor(pageColor) }
+        val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(24), dp(20), dp(24)); background = GradientDrawable().apply { setColor(cardColor); setCornerRadius(dp(16).toFloat()); setStroke(dp(1), lineColor) } }
+        panel.addView(TextView(this).apply { text = "PLATFORM ACCOUNT APPROVED"; textSize = 19f; typeface = Typeface.DEFAULT_BOLD; gravity = Gravity.CENTER; setTextColor(green) })
+        panel.addView(TextView(this).apply { text = "Welcome${if (platformUserName.isNotBlank()) ", $platformUserName" else ""}. Connect your Deriv account to unlock the application."; textSize = 14f; gravity = Gravity.CENTER; setTextColor(ink); setPadding(0, dp(16), 0, dp(16)) })
+        panel.addView(Button(this).apply { text = "CONNECT DERIV ACCOUNT"; setOnClickListener { startMarketFeedService(); showAccountModeDialog() } }, LinearLayout.LayoutParams(-1, dp(52)))
+        panel.addView(TextView(this).apply { text = "Sign out"; gravity = Gravity.CENTER; setTextColor(red); setPadding(0, dp(18), 0, dp(8)); setOnClickListener { signOutPlatform() } })
+        root.addView(panel, LinearLayout.LayoutParams(-1, -2))
+        setContentView(root)
+    }
+
+    private fun showInvestorDerivScreen() {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(24), dp(24), dp(24), dp(24))
+            setBackgroundColor(pageColor)
+        }
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(24), dp(20), dp(24))
+            background = GradientDrawable().apply {
+                setColor(cardColor)
+                setCornerRadius(dp(16).toFloat())
+                setStroke(dp(1), lineColor)
             }
+        }
+        panel.addView(TextView(this).apply {
+            text = "INVESTOR ACCOUNT APPROVED"
+            textSize = 19f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(green)
+        })
+        panel.addView(TextView(this).apply {
+            text = "Welcome${if (platformUserName.isNotBlank()) ", $platformUserName" else ""}. Continue to Deriv to register a free account or log in to your existing account. After successful Deriv login, you will enter the Investor trading area."
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setTextColor(ink)
+            setPadding(0, dp(16), 0, dp(16))
+        })
+        panel.addView(Button(this).apply {
+            text = "REGISTER / LOGIN WITH DERIV"
+            setOnClickListener { showAccountModeDialog() }
+        }, LinearLayout.LayoutParams(-1, dp(52)))
+        panel.addView(TextView(this).apply {
+            text = "Sign out"
+            gravity = Gravity.CENTER
+            setTextColor(red)
+            setPadding(0, dp(18), 0, dp(8))
+            setOnClickListener { signOutPlatform() }
+        })
+        root.addView(panel, LinearLayout.LayoutParams(-1, -2))
+        setContentView(root)
+    }
 
-            /*
-             * Deriv WebSocket error. Forwarding above allows the pending trade
- Forwarding above allows the pending trade
-             * request to be resolved; this callback preserves general error reporting.
-             */
-            if (json.has("error")) {
-                val error = json.optJSONObject("error")
-                val message = error
-                ?.optString("message", "")
-                    ?.takeIf { it.isNotBlank() }
-                    ?: "Unknown Deriv WebSocket error"
+    private fun signOutPlatform() {
+        val request = Request.Builder().url(platformAuthUrl).header("Authorization", "Bearer $platformAuthToken")
+            .post(FormBody.Builder().add("action", "logout").build()).build()
+        httpClient.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) { }
+            override fun onResponse(call: Call, response: Response) { response.close() }
+        })
+        // Close the current user's live connection before removing the active identity.
+        derivService?.setPlatformUser("")
+        platformPrefs.edit().clear().apply()
+        platformAuthToken = ""; platformAuthenticated = false
+        platformUser = JSONObject(); platformUserName = ""; platformUserRole = "user"
+        accountConnected = false
+        accountLabel = "Not connected"
+        accountBalanceLabel = "Balance unavailable"
+        availableBalance = 0.0
+        // Remove legacy device-wide credentials; they cannot safely be assigned to a user.
+        prefs.edit()
+            .remove("demo_token").remove("real_token")
+            .remove("oauth_state").remove("code_verifier").remove("oauth_user_id")
+            .apply()
+        showPlatformAuthScreen(false, "You have signed out.")
+    }
 
-                callback.onError("Deriv: $message")
-                return
-            }
-
-            /*
-             * Balance response.
-             */
-            if (
-                json.optString(
-                    "msg_type",
-                    ""
-                ).equals(
-                    "balance",
-                    ignoreCase = true
-                )
-            ) {
-
-                handleBalanceMessage(
-                    json
-                )
-
-                return
-            }
-
-            /*
-             * Fallback for responses containing balance
-             * without the expected msg_type.
-             */
-            if (
-                json.has(
-                    "balance"
-                )
-            ) {
-
-                handleBalanceMessage(
-                    json
-                )
-            }
-
-        } catch (
-            e: Exception
-        ) {
-
-            callback.onError(
-                "Invalid Deriv WebSocket message: ${
-                    e.message
-                        ?: "invalid message"
-                }"
-            )
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleNotificationIntent(intent)
+        if (platformAuthenticated) {
+            handleOAuthCallback(intent)
+        } else if (platformAuthToken.isNotBlank()) {
+            verifyPlatformSession()
         }
     }
 
-    /*
-     * Process the balance response.
-     */
-    private fun handleBalanceMessage(
-        json: JSONObject
-    ) {
+    override fun onPause() {
+        pageScrollView?.let { scrollPositions[selectedTab] = it.scrollY }
+        // Flush the complete trade ledger whenever the activity leaves the foreground.
+        savePositions()
+        saveNotifications()
+        tradeCountdownHandler.removeCallbacks(tradeCountdownTask)
+        super.onPause()
+    }
 
-        val balanceObject =
-            json.optJSONObject(
-                "balance"
-            )
-
-        if (
-            balanceObject != null
-        ) {
-
-            val balance =
-                balanceObject.optDouble(
-                    "balance",
-                    Double.NaN
-                )
-
-            val currency =
-                balanceObject.optString(
-                    "currency",
-                    ""
-                ).trim()
-
-            if (
-                !balance.isNaN()
-            ) {
-
-                callback.onBalance(
-                    balance,
-                    currency
-                )
-            }
-
-            return
+    override fun onResume() {
+        super.onResume()
+        if (selectedTab == "Trade" && tradeCountdownViews.isNotEmpty()) {
+            tradeCountdownHandler.removeCallbacks(tradeCountdownTask)
+            tradeCountdownHandler.post(tradeCountdownTask)
         }
-
-        /*
-         * Fallback if balance is returned directly.
-         */
-        val directBalance =
-            json.optDouble(
-                "balance",
-                Double.NaN
-            )
-
-        if (
-            !directBalance.isNaN()
+        if (!platformAuthenticated) return
+        val previousMode = executionMode
+        val ownerId = platformUserId
+        if (ownerId.isBlank()) return
+        executionMode = if (prefs.getString(derivModeKey(ownerId), "DEMO").equals("REAL", true)) "REAL" else "DEMO"
+        if (previousMode != executionMode && ::content.isInitialized && accountConnected) render()
+        derivService?.setPlatformUser(ownerId)
+        val savedToken = prefs.getString(derivTokenKey(executionMode, ownerId), "").orEmpty()
+        if (savedToken.isNotBlank() && derivService != null &&
+            derivService?.client?.isConnected() != true &&
+            derivService?.client?.isConnecting() != true
         ) {
-
-            val currency =
-                json.optString(
-                    "currency",
-                    ""
-                ).trim()
-                callback.onBalance(
-                directBalance,
-                currency
-            )
+            derivService?.client?.ensureConnectedOnResume(savedToken, executionMode)
         }
     }
 
-    /*
-     * Internal balance request used by the active
-     * WebSocket callbacks and heartbeat.
-     */
-    private fun requestBalance(
-        socket: WebSocket
-    ) {
-
-        if (
-            !connected
-        ) {
-
-            return
+    private fun startMarketFeedService() {
+        if (serviceBound) return
+        val intent = Intent(this, DerivConnectionService::class.java).apply {
+            putExtra(DerivConnectionService.EXTRA_PLATFORM_USER_ID, if (platformAuthenticated) platformUserId else "")
         }
         try {
-
-            val request =
-                JSONObject()
-
-            request.put(
-                "balance",
-                1
-            )
-
-            request.put(
-                "req_id",
-                System.currentTimeMillis()
-                    .toInt()
-            )
-
-            socket.send(
-                request.toString()
-            )
-
-        } catch (
-            e: Exception
-        ) {
-
-            callback.onError(
-                "Unable to request Deriv balance: ${
-                    e.message
-                        ?: "request failed"
-                }"
-            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+            serviceBound = bindService(intent, serviceConnection, BIND_AUTO_CREATE)
+            if (!serviceBound) updateConnectionLabels("Unable to bind market feed service")
+        } catch (e: Exception) {
+            updateConnectionLabels("Market feed unavailable: ${e.message ?: "service error"}")
         }
     }
 
-    /*
-     * PUBLIC balance refresh.
-     *
-     * MainActivity calls this method without supplying
-     * a WebSocket.
-     *
-     * This is deliberately PUBLIC.
-     */
-    fun requestBalance() {
-
-        if (
-            !connected
-        ) {
-
-            callback.onError(
-                "Deriv is not connected."
-            )
-
-            return
+    override fun onDestroy() {
+        candleRefreshHandler.removeCallbacks(candleRefreshTask)
+        tradeCountdownHandler.removeCallbacks(tradeCountdownTask)
+        derivService?.detachActivity(this)
+        if (serviceBound) {
+            try { unbindService(serviceConnection) } catch (_: Exception) {}
+            serviceBound = false
         }
-
-        val socket =
-            webSocket
-
-        if (
-            socket == null
-        ) {
-
-            callback.onError(
-                "Deriv WebSocket is unavailable."
-            )
-
-            return
-        }
-
-        requestBalance(
-            socket
-        )
+        super.onDestroy()
     }
 
-    /*
-     * Start the application heartbeat.
-     */
-    private fun startHeartbeat() {
-        stopHeartbeat()
-        heartbeatFuture = scheduler.scheduleAtFixedRate(
-            {
-                try {
-                    if (manuallyDisconnected || !connected) {
-                        return@scheduleAtFixedRate
-                    }
-                    val socket = webSocket ?: run {
-                        scheduleReconnect()
-                        return@scheduleAtFixedRate
-                    }
-                    val now = System.currentTimeMillis()
-                    val lastMessage = lastAuthenticatedMessageAt
-                    if (lastMessage > 0L && now - lastMessage > 65_000L) {
-                        // A half-open network can leave OkHttp's socket reference present without useful traffic.
-                        connected = false
-                        connecting = false
-                        stopHeartbeat()
-                        try { socket.cancel() } catch (_: Exception) {}
-                        if (webSocket === socket) webSocket = null
-                        callback.onDisconnected()
-                        scheduleReconnect()
-                        return@scheduleAtFixedRate
-                    }
-                    requestBalance(socket)
-                } catch (_: Exception) {
-                    // The WebSocket listener or stale-connection watchdog will retry safely.
+    override fun onConnecting(message: String) {
+        runOnUiThread {
+            accountConnected = false
+            accountBalanceLabel = "Balance loading…"
+            availableBalance = 0.0
+            accountBalanceView?.text = accountBalanceLabel
+            accountStatusView?.text = message
+            accountStatusView?.setTextColor(amber)
+            if (selectedTab == "Accounts") render()
+        }
+    }
+
+    override fun onConnected(accountId: String, accountType: String) {
+        if (!platformAuthenticated || platformUserId.isBlank() || derivService?.getPlatformUserId() != platformUserId) {
+            derivService?.client?.disconnectAccount()
+            accountConnected = false
+            runOnUiThread { showPlatformAuthScreen(false, "Please sign in to your Volatilities Indicator account first.") }
+            return
+        }
+        val previousAccountKey = "${executionMode}:${currentDerivAccountId}"
+        executionMode = if (accountType.equals("REAL", true)) "REAL" else "DEMO"
+        currentDerivAccountId = accountId.trim()
+        val connectedAccountKey = "${executionMode}:${currentDerivAccountId}"
+        accountConnected = true
+        accountLabel = "$accountId ($accountType)"
+        if (previousAccountKey != connectedAccountKey || positions.isEmpty()) {
+            // Each Deriv mode/account gets its own ledger. Never retain the other mode's UI state.
+            positions.clear()
+            recoveryWaiting.clear()
+            loadPositions()
+            val accountDayKey = tradePrefs.getString(accountDayKeyPref(), "").orEmpty()
+            tradingDayKey = accountDayKey
+            dailyCapital = tradePrefs.getFloat(accountDailyCapitalPref(), 0f).toDouble()
+            originalTriggered.clear()
+            if (tradingDayKey.isNotBlank()) {
+                originalTriggered.addAll(tradePrefs.getStringSet(accountTriggeredPref(tradingDayKey), emptySet()) ?: emptySet())
+            }
+        }
+        addNotification("Accounts", "Deriv account connected", "$accountLabel is connected.")
+        // Clear the previous account's displayed balance until this account responds.
+        accountBalanceLabel = "Balance loading…"
+        availableBalance = 0.0
+        accountBalanceView?.text = accountBalanceLabel
+        derivService?.client?.requestBalance()
+        derivService?.client?.requestOpenTrades()
+        // Re-check already-qualified MSS/CHOCH against any waiting closed original
+        // immediately after the execution account reconnects.
+        m15CandlesByIndex.forEach { (symbol, candles) -> evaluateNewTradingSignal(symbol, candles) }
+        runOnUiThread {
+            if (platformUserRole == "investor") selectedTab = "Trade"
+            accountIdView?.text = accountLabel
+            accountStatusView?.text = "CONNECTED"
+            accountStatusView?.setTextColor(green)
+            toast("Deriv $executionMode account connected.")
+            render()
+        }
+    }
+
+    override fun onBalance(balance: Double, currency: String) {
+        availableBalance = balance
+        accountBalanceLabel = String.format(Locale.US, "%.2f %s", balance, currency)
+        accountCurrency = currency
+        val today = utcDayKey(System.currentTimeMillis() / 1000L)
+        if (tradingDayKey != today) {
+            tradingDayKey = today
+            dailyCapital = balance
+            originalTriggered.clear()
+            tradePrefs.edit().putString(accountDayKeyPref(), today)
+                .putFloat(accountDailyCapitalPref(), balance.toFloat()).apply()
+        } else if (dailyCapital <= 0.0) {
+            dailyCapital = tradePrefs.getFloat(accountDailyCapitalPref(), balance.toFloat()).toDouble()
+        }
+        runOnUiThread {
+            accountBalanceView?.text = accountBalanceLabel
+            if (selectedTab == "Accounts") {
+                render()
+            } else {
+                renderIfHome()
+            }
+        }
+    }
+
+    override fun onTick(symbol: String, quote: Double, epoch: Long) {
+        if (symbol !in indexes || !quote.isFinite()) return
+        latestPrices[symbol] = quote
+        updateDailyApproachFromTick(symbol, quote, epoch)
+        marketFeedConnected = true
+        runOnUiThread {
+            feedPillView?.apply {
+    text = "LIVE"
+    setTextColor(Color.BLACK)
+    background = rounded(green, green, 20)
+}
+
+indexStatusViews[symbol]?.apply {
+    text = "LIVE"
+    setTextColor(Color.BLACK)
+    background = rounded(green, green, 20)
+}
+            updateMasterDecisionViews(symbol)
+        }
+    }
+
+
+    override fun onCandles(symbol: String, candles: List<DerivApiClient.Candle>) {
+        if (symbol !in indexes) return
+        if (candles.isNotEmpty()) {
+            marketFeedConnected = true
+            candlesByIndex[symbol] = candles.sortedBy { it.epoch }
+            val lastClose = candles.last().close
+            if (!latestPrices.containsKey(symbol)) latestPrices[symbol] = lastClose
+            runOnUiThread {
+                feedPillView?.text = "LIVE"
+                feedPillView?.setTextColor(green)
+                priceViews[symbol]?.text = formatPrice(latestPrices[symbol] ?: lastClose)
+                indexStatusViews[symbol]?.apply {
+                    text = "LIVE"
+                    setTextColor(green)
                 }
-            },
-            20,
-            20,
-            TimeUnit.SECONDS
-            )
-    }
-
-    /*
-     * Stop the application heartbeat.
-     */
-    private fun stopHeartbeat() {
-        heartbeatFuture?.cancel(true)
-        heartbeatFuture = null
-    }
-
-    /*
-     * Format an HTTP error returned by Deriv.
-     *
-     * Current Deriv REST errors use:
-     *
-     * {
-     *     "errors": [
-     *         {
-     *             "status": 401,
-     *             "code": "Unauthorized",
-     *             "message": "..."
-     *         }
-     *     ]
-     * }
-     */
-    private fun formatApiError(
-        statusCode: Int,
-        body: String
-    ): String {
-
-        if (
-            body.isBlank()
-        ) {
-
-            return "HTTP $statusCode"
+                updateMasterDecisionViews(symbol)
+                updateRecoveryStatusView(symbol)
+            }
+            if (selectedTab == "Home") runOnUiThread { updateMasterDecisionViews(symbol); updateRecoveryStatusView(symbol) }
         }
+    }
 
-        return try {
+    override fun onDailyCandles(symbol: String, candles: List<DerivApiClient.Candle>) {
+        if (symbol !in indexes || candles.isEmpty()) return
+        dailyCandlesByIndex[symbol] = candles.sortedBy { it.epoch }
+        val quote = latestPrices[symbol]
+        val epoch = System.currentTimeMillis() / 1000L
+        if (quote != null) updateDailyApproachFromTick(symbol, quote, epoch, forceRefresh = true)
+        runOnUiThread { updateMasterDecisionViews(symbol); updateRecoveryStatusView(symbol) }
+    }
 
-            val json =
-                JSONObject(
-                    body
-                )
+    override fun onM15Candles(symbol: String, candles: List<DerivApiClient.Candle>) {
+        if (symbol !in indexes || candles.size < 8) return
+        m15CandlesByIndex[symbol] = candles.sortedBy { it.epoch }
+        evaluateNewTradingSignal(symbol, candles)
+    }
 
-            val errors =
-                json.optJSONArray(
-                    "errors"
-                )
+    override fun onM5Candles(
+        symbol: String,
+        candles: List<DerivApiClient.Candle>
+    ) {
+        if (symbol !in indexes || candles.size < 3) return
 
-            if (
-                errors != null &&
-                errors.length() > 0
-            ) {
-                val first =
-                    errors.optJSONObject(
-                        0
-                    )
+        // Deriv includes the currently forming candle as the newest candle.
+        // Only fully completed M5 candles may confirm a reversal.
+        val completed = candles.sortedBy { it.epoch }.dropLast(1)
+        if (completed.size < 2) return
 
-                if (
-                    first != null
+        val previous = completed[completed.lastIndex - 1]
+        val latest = completed.last()
+        if (latest.epoch <= previous.epoch) return
+
+        positions.values
+            .filter {
+                it.symbol == symbol &&
+                    it.status == "OPEN" &&
+                    it.contractId > 0L &&
+                    it.canSell
+            }
+            .forEach { position ->
+                if (position.stake <= 0.0) return@forEach
+                if (latest.epoch <= position.trailingLastM5Epoch) return@forEach
+                // Do not use an M5 candle that began before this contract was opened.
+                if (position.openedAt > 0L && latest.epoch < position.openedAt) {
+                    position.trailingLastM5Epoch = latest.epoch
+                    return@forEach
+                }
+
+                position.trailingLastM5Epoch = latest.epoch
+                val protectedPct = trailingCloseLevel(position.trailingPeakProfitPct)
+                val currentProfitPct = (position.profit / position.stake) * 100.0
+
+                val reversalConfirmed = when (position.direction) {
+                    "RISE" -> latest.close < previous.low
+                    "FALL" -> latest.close > previous.high
+                    else -> false
+                }
+
+                if (protectedPct > 0.0 &&
+                    currentProfitPct <= protectedPct &&
+                    reversalConfirmed
                 ) {
-
-                    val code =
-                        first.optString(
-                            "code",
-                            ""
-                        )
-
-                    val message =
-                        first.optString(
-                            "message",
-                            ""
-                        )
-
-                    when {
-
-                        code.isNotBlank() &&
-                            message.isNotBlank() ->
-                            "$code: $message"
-
-                        message.isNotBlank() ->
-                            message
-
-                        code.isNotBlank() ->
-                            code
-
-                        else ->
-                            "HTTP $statusCode"
-                    }
-
-                } else {
-
-                    "HTTP $statusCode"
+                    closeRunningPosition(
+                        position,
+                        "TRAILING STOP (${protectedPct.toInt()}% OF STAKE) · CONFIRMED M5 REVERSAL"
+                    )
                 }
+            }
 
+        savePositions()
+    }
+
+    override fun onMarketDataError(symbol: String, message: String) {
+        runOnUiThread {
+            indexStatusViews[symbol]?.apply {
+                text = "FEED ERROR"
+                setTextColor(red)
+            }
+            marketStatusViews[symbol]?.text = message
+            addNotification("Home", "Market data error · ${displayIndexName(symbol)}", message)
+            updateConnectionLabels("Market data error: $symbol")
+        }
+    }
+
+    override fun onError(message: String) {
+        runOnUiThread {
+            addNotification("Accounts", "Deriv connection issue", message)
+            if (accountConnected) {
+                toast(message)
             } else {
+                accountLabel = "Connection failed"
+                accountBalanceLabel = message
+                accountStatusView?.text = "CONNECTION FAILED"
+                accountStatusView?.setTextColor(red)
+                accountIdView?.text = accountLabel
+                accountBalanceView?.text = message
+                if (selectedTab == "Accounts") render()
+            }
+        }
+    }
 
-                val error =
-                    json.optJSONObject(
-                        "error"
+    override fun onTradeData(json: JSONObject) {
+        val reqId = json.optInt("req_id", -1)
+        val localId = pendingRequests[reqId]
+        val error = json.optJSONObject("error")
+        if (error != null) {
+            if (localId != null) {
+                pendingRequests.remove(reqId)
+                val failedPosition = positions[localId]
+                if (failedPosition != null) {
+                    failedPosition.status = if (failedPosition.contractId > 0L) "OPEN" else "ERROR: ${error.optString("message", "Deriv request failed")}"
+                    addNotification("Trade", "${displayIndexName(failedPosition.symbol)} trade request failed", error.optString("message", "Deriv request failed"))
+                }
+                savePositions()
+                runOnUiThread { if (selectedTab == "Trade") render() }
+            }
+            return
+        }
+        when (json.optString("msg_type")) {
+            "proposal" -> {
+                if (localId == null) return
+                pendingRequests.remove(reqId)
+                val proposal = json.optJSONObject("proposal") ?: return
+                val proposalId = proposal.optString("id", "")
+                val position = positions[localId] ?: return
+                if (proposalId.isBlank()) { position.status = "PROPOSAL FAILED"; return }
+                position.status = "BUYING"
+                val buyReq = nextRequestId()
+                pendingRequests[buyReq] = localId
+                val buy = JSONObject().put("buy", proposalId).put("price", roundStake(position.stake)).put("req_id", buyReq)
+                derivService?.client?.send(buy)
+            }
+            "buy" -> {
+                if (localId == null) return
+                pendingRequests.remove(reqId)
+                val buy = json.optJSONObject("buy") ?: return
+                val position = positions[localId] ?: return
+                position.contractId = buy.optLong("contract_id", 0L)
+                position.openedAt = buy.optLong("purchase_time", System.currentTimeMillis() / 1000L)
+                if (position.contractId <= 0L) { position.status = "BUY FAILED"; return }
+                position.status = "OPEN"
+                position.closeReason = ""
+                position.trailingPeakProfitPct = (position.profit / position.stake) * 100.0
+                position.trailingPeakInitialized = true
+                savePositions()
+                addNotification(
+                    "Trade",
+                    "${displayIndexName(position.symbol)} ${position.role.lowercase(Locale.US)} opened",
+                    "${position.direction} contract opened. Stake: ${formatMoney(position.stake)}. Automatic trailing protection is active from execution and is tracked independently for this contract."
+                )
+                subscribePosition(position.contractId)
+                runOnUiThread {
+                    updateMasterDecisionViews(position.symbol)
+                    if (selectedTab == "Trade") render()
+                }
+            }
+            "sell" -> {
+                if (localId == null) return
+                pendingRequests.remove(reqId)
+                val closingPosition = positions[localId] ?: return
+                closingPosition.status = "CLOSING"
+                savePositions()
+                runOnUiThread { if (selectedTab == "Trade") render() }
+            }
+            "proposal_open_contract" -> handleOpenContract(json.optJSONObject("proposal_open_contract") ?: return)
+            "portfolio" -> {
+                val list = json.optJSONObject("portfolio")
+                    ?.optJSONArray("contracts") ?: return
+
+                for (i in 0 until list.length()) {
+                    val c = list.optJSONObject(i) ?: continue
+
+                    val id = c.optLong("contract_id", 0L)
+                    if (id <= 0L) continue
+
+                    val symbol = c.optString(
+                        "underlying_symbol",
+                        c.optString("symbol", "")
                     )
 
-                if (
-                    error != null
-                ) {
+                    if (symbol !in indexes) continue
 
-                    val code =
-                        error.optString(
-                            "code",
-                            ""
-                        )
+                    val contractType = c.optString("contract_type", "")
+                        .uppercase(Locale.US)
 
-                    val message =
-                        error.optString(
-                            "message",
-                            ""
-                        )
-
-                    when {
-
-                        code.isNotBlank() &&
-                            message.isNotBlank() ->
-                            "$code: $message"
-
-                        message.isNotBlank() ->
-                            message
-
-                        code.isNotBlank() ->
-                            code
-
-                        else ->
-                            "HTTP $statusCode"
+                    val direction = when (contractType) {
+                        "CALL" -> "RISE"
+                        "PUT" -> "FALL"
+                        else -> continue
                     }
 
-                } else {
+                    val stake = c.optDouble(
+                        "buy_price",
+                        c.optDouble("purchase_price", 0.0)
+                    )
 
-                    val message =
-                        json.optString(
-                            "message",
-                            ""
+                    val existing = positions.values.firstOrNull {
+                        it.contractId == id
+                    }
+
+                    if (existing != null) {
+                        existing.direction = direction
+                        if (existing.status != "CLOSING") {
+                            existing.status = "OPEN"
+                        }
+                    } else {
+                        val restored = Position(
+                            localId = "DERIV-$id",
+                            symbol = symbol,
+                            direction = direction,
+                            role = "EXISTING",
+                            stake = stake
                         )
 
-                    if (
-                        message.isNotBlank()
-                    ) {
+                        restored.contractId = id
+                        restored.status = "OPEN"
+                        positions[restored.localId] = restored
+                    }
 
-                        message
+                    // The contract must exist locally before its updates arrive.
+                    subscribePosition(id)
+                }
 
-                    } else {
+                savePositions()
 
-                        "HTTP $statusCode"
+                runOnUiThread {
+                    updateAccountProfitLossViews()
+
+                    indexes.forEach { symbol ->
+                        updateMasterDecisionViews(symbol)
+                    }
+
+                    if (selectedTab == "Trade") {
+                        render()
                     }
                 }
             }
-
-        } catch (
-            _: Exception
-        ) {
-
-            "HTTP $statusCode"
         }
     }
 
-    /*
-     * Schedule an automatic reconnect.
-     *
-     * Automatic reconnection is disabled when the user
-     * deliberately disconnects.
-     */
-    private fun scheduleReconnect() {
-
-        if (
-            manuallyDisconnected
-        ) {
-            return
+    override fun onDisconnected() {
+        val wasConnected = accountConnected
+        accountConnected = false
+        if (wasConnected) addNotification("Accounts", "Deriv account disconnected", "The authenticated Deriv account connection was lost.")
+        accountLabel = "Not connected"
+        accountBalanceLabel = "Balance unavailable"
+        runOnUiThread {
+            accountStatusView?.text = "ACCOUNT NOT CONNECTED"
+            accountStatusView?.setTextColor(red)
+            renderIfHome()
         }
+    }
 
-        if (
-            reconnectScheduled
-        ) {
 
-            return
+    private fun handleNotificationIntent(intent: Intent?, shouldRender: Boolean = true) {
+        if (intent == null) return
+        val page = intent.getStringExtra("notification_page")
+        val notificationId = intent.getLongExtra("notification_id", -1L)
+        if (!page.isNullOrBlank() && page in listOf("Home", "Trade", "Accounts", "Settings")) {
+            selectedTab = if (platformUserRole == "investor" && page !in listOf("Trade", "Accounts")) "Trade" else page
         }
-
-        reconnectScheduled = true
-        // Back off repeated resets instead of hammering the OAuth/account/WebSocket flow.
-        // Delay sequence: 5s, 10s, 20s, then 30s maximum. Successful connection resets it.
-        val delaySeconds = minOf(30L, 5L shl reconnectAttempt.coerceAtMost(3))
-        reconnectAttempt = (reconnectAttempt + 1).coerceAtMost(4)
-        reconnectFuture = scheduler.schedule({
-            reconnectScheduled = false
-            if (manuallyDisconnected) return@schedule
-
-            val token = accessToken
-            if (token.isNullOrBlank()) {
-                callback.onError("Cannot reconnect: Deriv access token is unavailable.")
-                return@schedule
+        if (notificationId > 0L) {
+            appNotifications.firstOrNull { it.id == notificationId }?.let { item ->
+                item.read = true
+                cancelAndroidNotification(item)
             }
-
-            connectWithAccessToken(token, accountType)
-        }, delaySeconds, TimeUnit.SECONDS)
+            saveNotifications()
+            updateNotificationBadge()
+        }
+        intent.removeExtra("notification_page")
+        intent.removeExtra("notification_id")
+        if (shouldRender && !page.isNullOrBlank()) render()
     }
 
-    /*
-     * Cancel a pending automatic reconnect.
-     */
-    private fun cancelReconnect() {
-
-        reconnectFuture
-            ?.cancel(
-                true
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(
+                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                notificationPermissionRequest
             )
-
-        reconnectFuture =
-            null
-
-        reconnectScheduled =
-            false
-    }
-
-    /*
-     * Close only the current WebSocket.
-     *
-     * This does NOT mean the user deliberately
-     * disconnected.
-     */
-    private fun closeSocketOnly() {
-
-        try {
-
-            webSocket
-                ?.close(
-                    1000,
-                    "Reconnecting"
-                )
-
-        } catch (
-            _: Exception
-        ) {
         }
-
-        webSocket =
-            null
-
-        try { marketDataSocket?.close(1000, "Client disconnected") } catch (_: Exception) {}
-        marketDataSocket = null
-        marketDataTimeout?.cancel(false)
-        marketDataTimeout = null
-
-        connected =
-            false
-        lastAuthenticatedMessageAt = 0L
-
-        connecting =
-            false
     }
 
-    /*
-     * Manual disconnect.
-     *
-     * Automatic reconnection is deliberately disabled
-     * until connectWithAccessToken() is called again.
-     */
-    fun disconnect() {
-
-        ++connectionGeneration
-        manuallyDisconnected =
-            true
-        accessToken = null
-
-        cancelReconnect()
-        marketDataReconnectFuture?.cancel(false)
-        marketDataReconnectFuture = null
-
-        stopHeartbeat()
-
-        try {
-
-            webSocket
-                ?.close(
-                    1000,
-                    "Manual disconnect"
-                )
-
-        } catch (
-            _: Exception
-        ) {
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                notificationChannelId,
+                "Volatilities Indicator Alerts",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply {
+                description = "Market, trading, recovery and account notifications"
+            }
+            val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+            manager.createNotificationChannel(channel)
         }
-
-        webSocket =
-            null
-try {
-    marketDataSocket?.close(1000, "Manual disconnect")
-} catch (_: Exception) {
-}
-
-marketDataSocket = null
-
-marketDataTimeout?.cancel(false)
-marketDataTimeout = null
-
-candleRequestSymbols.clear()
-m5CandleRequestSymbols.clear()
-        connected =
-            false
-
-        connecting =
-            false
-
-        accountId =
-            null
-
-        callback.onDisconnected()
     }
 
-    /**
-     * Disconnect only the authenticated trading account.
-     * The public market-data socket remains active for the index monitor.
-     * In-flight account HTTP/OTP/WebSocket callbacks are invalidated.
-     */
-    fun disconnectAccount() {
-        ++connectionGeneration
-        accessToken = null
-        cancelReconnect()
-        stopHeartbeat()
+    private fun addNotification(page: String, title: String, message: String) {
+        runOnUiThread {
+            val duplicate = appNotifications.any {
+                it.page == page && it.title == title && it.message == message && !it.read
+            }
+            if (duplicate) return@runOnUiThread
 
+            val now = System.currentTimeMillis()
+            val item = AppNotification(now, page, title, message, now)
+            appNotifications.add(0, item)
+            while (appNotifications.size > 250) appNotifications.removeAt(appNotifications.lastIndex)
+            saveNotifications()
+            showAndroidNotification(item)
+            updateNotificationBadge()
+        }
+    }
+
+    private fun showAndroidNotification(item: AppNotification) {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+
+        val tapIntent = Intent(this, MainActivity::class.java).apply {
+            putExtra("notification_page", item.page)
+            putExtra("notification_id", item.id)
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            item.id.hashCode(),
+            tapIntent,
+    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, notificationChannelId)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this).setPriority(Notification.PRIORITY_DEFAULT)
+        }
+        builder.setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle(item.title)
+            .setContentText(item.message)
+            .setStyle(Notification.BigTextStyle().bigText(item.message))
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+
+        val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(item.id.hashCode(), builder.build())
+    }
+
+    private fun saveNotifications() {
+        val array = JSONArray()
+        appNotifications.forEach { item ->
+            array.put(JSONObject()
+                .put("id", item.id)
+                .put("page", item.page)
+                .put("title", item.title)
+                .put("message", item.message)
+                .put("timestamp", item.timestamp)
+                .put("read", item.read))
+        }
+        notificationPrefs.edit().putString("items", array.toString()).commit()
+    }
+
+    private fun loadNotifications() {
+        appNotifications.clear()
+        val raw = notificationPrefs.getString("items", "") ?: return
         try {
-            webSocket?.close(1000, "Platform user changed")
+            val array = JSONArray(raw)
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                val title = obj.optString("title")
+                val message = obj.optString("message")
+                val obsoleteLevelNotice = listOf(title, message).any {
+                    it.contains("previous day", true) ||
+                        it.contains("reference level", true) ||
+                        it.contains("previous completed-day", true)
+                }
+                if (!obsoleteLevelNotice) {
+                    appNotifications.add(AppNotification(
+                        obj.optLong("id"),
+                        obj.optString("page", "Home"),
+                        title,
+                        message,
+                        obj.optLong("timestamp"),
+                        obj.optBoolean("read", false)
+                    ))
+                }
+            }
+            saveNotifications()
         } catch (_: Exception) {
+            appNotifications.clear()
         }
-        webSocket = null
-        connected = false
-        connecting = false
-        accountId = null
-        callback.onDisconnected()
     }
 
-    /*
-     * Return whether the authenticated WebSocket
-     * is currently connected.
-     */
-    fun isConnected(): Boolean {
-
-        return connected
+    private fun notificationBar(): View {
+        val row = horizontal()
+        row.addView(text(selectedTab.uppercase(Locale.US), 13f, gold, true),
+            LinearLayout.LayoutParams(0, -2, 1f))
+        val unread = appNotifications.count { !it.read }
+        val bell = TextView(this).apply {
+            text = if (unread > 0) "🔔 $unread" else "🔔"
+            textSize = 16f
+            gravity = Gravity.CENTER
+            setTextColor(gold)
+            setPadding(dp(13), dp(8), dp(13), dp(8))
+            background = rounded(Color.BLACK, lineColor, 22)
+            contentDescription = "$unread unread notifications"
+            setOnClickListener { showNotificationsDialog() }
+        }
+        notificationBellView = bell
+        row.addView(bell)
+        return row
     }
 
-    /**
-     * Recheck the authenticated Deriv connection when the Activity returns to
-     * the foreground. A socket can appear connected after Android has suspended
-     * the app/network, so also check the age of the last authenticated message.
-     * This does not reconnect after an intentional manual disconnect.
-     */
-    fun ensureConnectedOnResume(token: String, selectedAccountType: String) {
-        if (manuallyDisconnected || token.isBlank() || connecting) return
-
-        val socket = webSocket
-        val lastMessageAt = lastAuthenticatedMessageAt
-        val stale = lastMessageAt > 0L &&
-            System.currentTimeMillis() - lastMessageAt > 65_000L
-
-        if (connected && socket != null && !stale) return
-
-        // Resume recovery should not wait behind a delayed retry scheduled while
-        // the app was backgrounded. connectWithAccessToken cancels old work safely.
-        cancelReconnect()
-        connectWithAccessToken(token, selectedAccountType)
+    private fun updateNotificationBadge() {
+        val unread = appNotifications.count { !it.read }
+        notificationBellView?.text = if (unread > 0) "🔔 $unread" else "🔔"
+        notificationBellView?.setTextColor(gold)
+        notificationBellView?.contentDescription = "$unread unread notifications"
     }
 
-    /*
-     * Return whether the client is currently trying
-     * to establish a connection.
-     */
-    fun isConnecting(): Boolean {
-
-        return connecting
-    }
-
-    /*
-     * Return the currently selected Deriv account ID.
-     */
-    fun getAccountId(): String? {
-
-        return accountId
-    }
-
-    /*
-     * Return the current execution account type.
-     */
-    fun getAccountType(): String {
-
-        return accountType
-    }
-
-    /*
-     * Return whether the disconnect was deliberately
-     * requested by the user.
-     */
-     fun isManuallyDisconnected(): Boolean {
-
-        return manuallyDisconnected
-    }
-    /*
-     * Change between DEMO and REAL.
-     *
-     * The account-specific OTP must be requested again.
-     */
-    fun switchAccount(
-        newAccountType: String
-    ) {
-
-        val normalized =
-            if (
-                newAccountType.equals(
-                    "REAL",
-                    ignoreCase = true
-                )
-            ) {
-
-                "REAL"
-
-            } else {
-
-                "DEMO"
+    private fun showNotificationsDialog() {
+        if (appNotifications.isEmpty()) {
+            AlertDialog.Builder(this)
+                .setTitle("ALL NOTIFICATIONS")
+                .setMessage("There are no notifications.")
+                .setPositiveButton("CLOSE", null)
+                .show()
+            return
+        }
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(10), dp(16), dp(10))
+            setBackgroundColor(Color.BLACK)
+        }
+        val scroll = ScrollView(this)
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.BLACK)
+        }
+        appNotifications.forEach { item ->
+            val entry = TextView(this).apply {
+                val state = if (item.read) "READ" else "UNREAD"
+                val time = java.text.DateFormat.getDateTimeInstance().format(java.util.Date(item.timestamp))
+                text = "$state · ${item.page.uppercase(Locale.US)} · ${item.title}\n${item.message}\n$time"
+                textSize = 14f
+                setTextColor(gold)
+                setPadding(dp(8), dp(12), dp(8), dp(12))
+                setBackgroundColor(Color.BLACK)
+                setOnClickListener {
+                    item.read = true
+                    cancelAndroidNotification(item)
+                    saveNotifications()
+                    updateNotificationBadge()
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle(item.title)
+                        .setMessage("${item.page}\n\n${item.message}")
+                        .setPositiveButton("CLOSE", null)
+                        .show()
+                }
             }
-
-        if (
-            normalized == accountType &&
-            connected
-        ) {
-
-            return
+            list.addView(entry)
+            val separator = View(this).apply { setBackgroundColor(lineColor) }
+            list.addView(separator, LinearLayout.LayoutParams(-1, dp(1)))
         }
-
-        val token =
-            accessToken
-
-        if (
-            token.isNullOrBlank()
-        ) {
-
-            callback.onError(
-                "Cannot switch account: Deriv access token is unavailable."
-            )
-
-            return
-        }
-
-        val generation = ++connectionGeneration
-        accountType =
-            normalized
-
-        manuallyDisconnected =
-            false
-
-        marketDataReconnectFuture?.cancel(false)
-        marketDataReconnectFuture = null
-        cancelReconnect()
-
-        stopHeartbeat()
-
-        closeSocketOnly()
-
-        callback.onConnecting(
-            "Switching to Deriv $accountType account..."
-        )
-
-        loadAccountsAndConnect(generation)
+        scroll.addView(list)
+        panel.addView(scroll, LinearLayout.LayoutParams(-1, dp(360)))
+        val unread = appNotifications.count { !it.read }
+        AlertDialog.Builder(this)
+            .setTitle("ALL NOTIFICATIONS ($unread UNREAD)")
+            .setView(panel)
+            .setNeutralButton("MARK ALL READ") { _, _ ->
+                appNotifications.forEach {
+                    it.read = true
+                    cancelAndroidNotification(it)
+                }
+                saveNotifications()
+                updateNotificationBadge()
+            }
+            .setNegativeButton("CLOSE", null)
+            .show()
     }
 
-    /*
-     * Send a raw WebSocket request.
-     *
-     * Retained for the existing trading layer.
-     */
-    fun send(
-        request: JSONObject
+    private fun cancelAndroidNotification(item: AppNotification) {
+        val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        manager.cancel(item.id.hashCode())
+    }
+
+    private fun runningDirectionText(symbol: String): String? {
+        val running = positions.values.filter {
+            it.symbol == symbol && it.contractId > 0L &&
+                it.status !in setOf("CLOSED") && !it.status.startsWith("ERROR") &&
+                it.status !in setOf("BUY FAILED", "PROPOSAL FAILED")
+        }
+        if (running.isEmpty()) return null
+        val directions = running.map { it.direction }.distinct()
+        return "TRADE RUNNING · " + directions.joinToString(" + ")
+    }
+
+    private fun masterDecisionText(symbol: String): String {
+        runningDirectionText(symbol)?.let { return "$it. Contract is active on Deriv." }
+        if (!marketFeedConnected || latestPrices[symbol] == null) return "Waiting for live market price data."
+        val approach = dailyApproachByIndex[symbol]
+        if (approach == null) return "Waiting for price to approach the nearest current-day or previous-day Daily High/Low."
+        if (!approach.enteredZone) return "Approaching ${approach.levelType}. Waiting to enter the frozen 20% proximity zone."
+        val mss = recoveryMss[symbol]
+        val choch = recoveryChoch[symbol]
+        return when {
+            !mss.isNullOrBlank() && mss == choch -> "Daily-level reversal and M15 MSS + CHOCH confirmed ${mss}."
+            else -> "Daily-level proximity zone entered. Waiting for a closed M15 reversal with M15 MSS + CHOCH."
+        }
+    }
+
+    private fun recoveryStatusText(symbol: String): String {
+        val approach = dailyApproachByIndex[symbol]
+            ?: return "Waiting for approach to the nearest current-day or previous-day Daily High/Low."
+        if (!approach.enteredZone) return "Frozen 20% proximity zone for ${approach.levelType}; waiting for price to enter."
+        return "Price entered ${approach.levelType} proximity zone. Waiting for closed M15 reversal, MSS and CHOCH."
+    }
+
+    private fun updateMasterDecisionViews(symbol: String) {
+        val running = runningDirectionText(symbol)
+        masterDecisionViews[symbol]?.apply {
+            text = running ?: "WAITING"
+            setTextColor(if (running != null) green else amber)
+        }
+        marketStatusViews[symbol]?.text = masterDecisionText(symbol)
+    }
+
+    private fun signalQualificationText(signal: String?): String {
+        return if (signal.isNullOrBlank()) "NOT QUALIFIED" else "QUALIFIED · $signal"
+    }
+
+    // Keep the exact numeric CHOCH break level visible alongside its direction.
+    private fun chochQualificationDisplay(symbol: String): String {
+        val direction = recoveryChoch[symbol]
+        if (direction.isNullOrBlank()) return "NOT QUALIFIED"
+        val level = pendingChochLevel[symbol]
+            ?: positions.values
+                .filter { it.symbol == symbol && it.qualificationChochLevel > 0.0 }
+                .maxByOrNull { it.openedAt }
+                ?.qualificationChochLevel
+        return if (level != null && level.isFinite() && level > 0.0) {
+            "QUALIFIED · $direction\nCHOCH LEVEL: ${formatPrice(level)}"
+        } else {
+            "QUALIFIED · $direction\nCHOCH LEVEL: WAITING FOR LEVEL"
+        }
+    }
+
+    private fun updateRecoveryStatusView(symbol: String) {
+        recoveryStatusViews[symbol]?.text = recoveryStatusText(symbol)
+        mssStatusViews[symbol]?.apply {
+            text = signalQualificationText(recoveryMss[symbol])
+            setTextColor(if (recoveryMss[symbol].isNullOrBlank()) amber else green)
+        }
+        chochStatusViews[symbol]?.apply {
+            text = chochQualificationDisplay(symbol)
+            setTextColor(if (recoveryChoch[symbol].isNullOrBlank()) amber else green)
+        }
+        retestStatusViews[symbol]?.apply {
+            val direction = pendingChochDirection[symbol]
+            text = when {
+                direction.isNullOrBlank() -> "NOT QUALIFIED"
+                (pendingChochRetestAttempt[symbol] ?: 0) == 1 -> "FINAL CANDLE WAITING · $direction"
+                else -> "WAITING FOR FIRST RETEST · $direction"
+            }
+            setTextColor(if (direction.isNullOrBlank()) amber else amber)
+        }
+    }
+
+    private fun formatMoney(value: Double): String =
+        String.format(Locale.US, "%.2f %s", value, accountCurrency)
+
+    private fun nextRequestId(): Int = ++requestCounter
+
+    private fun utcDayKey(epochSeconds: Long): String {
+        val c = Calendar.getInstance(TimeZone.getTimeZone("UTC"), Locale.US)
+        c.timeInMillis = epochSeconds * 1000L
+        return String.format(Locale.US, "%04d-%02d-%02d", c.get(Calendar.YEAR), c.get(Calendar.MONTH) + 1, c.get(Calendar.DAY_OF_MONTH))
+    }
+
+    // Recovery capital reservation is retired in the replacement trading plan.
+    private fun reservedRecoveryCapital(): Double = 0.0
+
+    // Legacy tick/boundary entry is disabled. New entries are candle-close driven
+    // exclusively by evaluateNewTradingSignal().
+    private fun evaluateOriginalEntries(symbol: String, quote: Double) {
+        // Intentionally no-op: previous-day high/low paired entries are retired.
+    }
+
+    private fun roundStake(value: Double): Double =
+        BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP).toDouble()
+
+    private fun openPosition(
+        symbol: String,
+        direction: String,
+        role: String,
+        stake: Double,
+        originalId: String = "",
+        accountGatePassed: Boolean = false,
+        qualificationMssEpoch: Long = 0L,
+        qualificationChochEpoch: Long = 0L,
+        qualificationRetestEpoch: Long = 0L,
+        qualificationChochLevel: Double = 0.0
     ): Boolean {
-
-        if (
-            !connected
-        ) {
-
-            callback.onError(
-                "Deriv is not connected."
-            )
-
+        if (platformAuthenticated && platformUserRole in setOf("user", "investor") && !accountGatePassed) {
+            if (!accountGatePending.add(symbol)) return false
+            platformRequest("account_trade_gate", mapOf("daily_capital" to dailyCapital.toString()), onResult = {
+                accountGatePending.remove(symbol)
+                openPosition(
+                    symbol, direction, role, stake, originalId, true,
+                    qualificationMssEpoch, qualificationChochEpoch,
+                    qualificationRetestEpoch, qualificationChochLevel
+                )
+            }, onError = { accountGatePending.remove(symbol) })
+            return true
+        }
+        if (platformAuthenticated && platformUserRole == "investor") {
+            val today = java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US).format(java.util.Date())
+            val subscriptionActive = platformUser.optString("subscription_status") == "approved" &&
+                platformUser.optString("subscription_expiry_date") >= today
+            val planActive = platformUser.optString("investor_plan_status") == "approved" &&
+                platformUser.optString("investor_plan_expiry_date") >= today
+            if (!subscriptionActive || !planActive) {
+                addNotification("Account", "Investor execution blocked", "An active approved subscription and an approved, unexpired Investor plan are required before trading.")
+                runOnUiThread { toast("Trading requires an approved active subscription and Investor plan.") }
+                return false
+            }
+        }
+        val roundedStake = roundStake(stake)
+        if (!accountConnected || !roundedStake.isFinite() || roundedStake <= 0.0) return false
+        val localId = UUID.randomUUID().toString()
+        val p = Position(localId, symbol, direction, role, roundedStake, originalId).apply {
+            this.qualificationMssEpoch = qualificationMssEpoch
+            this.qualificationChochEpoch = qualificationChochEpoch
+            this.qualificationRetestEpoch = qualificationRetestEpoch
+            this.qualificationChochLevel = qualificationChochLevel
+        }
+        // The only concurrency limit is one live/pending contract per index.
+        // Different indexes may execute simultaneously; there is no global
+        // trade-count limit and no two-cycle/two-lifecycle execution cap.
+        val reserved = synchronized(positionExecutionLock) {
+            val indexBusy = positions.values.any {
+                it.symbol == symbol && it.status !in setOf("CLOSED", "BUY FAILED", "PROPOSAL FAILED") &&
+                    !it.status.startsWith("ERROR")
+            }
+            if (indexBusy) {
+                false
+            } else {
+                positions[localId] = p
+                true
+            }
+        }
+        if (!reserved) return false
+        val req = nextRequestId()
+        pendingRequests[req] = localId
+        // Deriv contract types: CALL = Rise, PUT = Fall.
+        val contractType = if (direction == "RISE") "CALL" else "PUT"
+        val proposal = JSONObject()
+            .put("proposal", 1)
+            .put("amount", roundStake(roundedStake))
+            .put("basis", "stake")
+            .put("contract_type", contractType)
+            .put("currency", accountCurrency)
+            .put("duration", 12)
+            .put("duration_unit", "h")
+            .put("underlying_symbol", symbol)
+            .put("req_id", req)
+        p.status = "REQUESTING PROPOSAL"
+        val client = derivService?.client
+        if (client == null) {
+            pendingRequests.remove(req)
+            positions.remove(localId)
+            addNotification("Trade", "${displayIndexName(symbol)} execution failed", "Deriv trading connection is unavailable. The qualifying MSS + CHOCH signal remains available for retry.")
             return false
         }
+        client.send(proposal)
+        savePositions()
+        runOnUiThread { if (selectedTab == "Trade") render() }
+        return true
+    }
+    private fun subscribePosition(contractId: Long) {
+        val req = JSONObject().put("proposal_open_contract", 1).put("contract_id", contractId).put("subscribe", 1)
+        derivService?.client?.send(req)
+    }
 
-        val socket =
-            webSocket
+    private fun handleOpenContract(contract: JSONObject) {
+        val contractId = contract.optLong("contract_id", 0L)
+        if (contractId <= 0L) return
 
-        if (
-            socket == null
-        ) {
+        // Deriv can stream an open contract before the portfolio response has
+        // populated the local list. Restore that contract instead of discarding it.
+        var foundPosition = positions.values.firstOrNull { it.contractId == contractId }
+        var wasRestored = false
 
-            callback.onError(
-                "Deriv WebSocket is unavailable."
+        if (foundPosition == null) {
+            val symbol = contract.optString(
+                "underlying_symbol",
+                contract.optString("symbol", "")
             )
+            val direction = when (
+                contract.optString("contract_type", "").uppercase(Locale.US)
+            ) {
+                "CALL" -> "RISE"
+                "PUT" -> "FALL"
+                else -> return
+            }
 
-            return false
+            if (symbol !in indexes) return
+
+            val stake = contract.optDouble("buy_price", 0.0)
+            val restored = Position(
+                localId = "DERIV-$contractId",
+                symbol = symbol,
+                direction = direction,
+                role = "EXISTING",
+                stake = stake
+            )
+            restored.contractId = contractId
+            restored.openedAt = contract.optLong("date_start", contract.optLong("purchase_time", System.currentTimeMillis() / 1000L))
+            restored.status = "OPEN"
+            positions[restored.localId] = restored
+            foundPosition = restored
+            wasRestored = true
         }
 
-        return try {
+        val position = foundPosition ?: return
+        val wasAlreadyClosed = position.status == "CLOSED"
 
-            socket.send(
-                request.toString()
-            )
+        when (contract.optString("contract_type").uppercase(Locale.US)) {
+            "CALL" -> position.direction = "RISE"
+            "PUT" -> position.direction = "FALL"
+        }
 
-        } catch (
-            e: Exception
-        ) {
+        // Use this contract's own purchase price and P/L from Deriv.
+        // Daily/account capital is not used by this contract's P/L or profit target.
+        val contractStake = contract.optDouble("buy_price", 0.0)
+        if (contractStake > 0.0) {
+            position.stake = contractStake
+        }
+        position.profit = contract.optDouble("profit", position.profit)
+        position.entryBarrier = contract.optDouble(
+            "entry_tick",
+            contract.optDouble("entry_spot", contract.optDouble("barrier", position.entryBarrier))
+        )
+        position.expiryAt = contract.optLong("date_expiry", position.expiryAt)
+        if (position.openedAt <= 0L) {
+            position.openedAt = contract.optLong("date_start", contract.optLong("purchase_time", System.currentTimeMillis() / 1000L))
+        }
 
-            callback.onError(
-                "Unable to send Deriv request: ${
-                    e.message
-                        ?: "send failed"
-                }"
-            )
+        val validToSell = contract.opt("is_valid_to_sell")
+        position.canSell = when (validToSell) {
+            is Boolean -> validToSell
+            is Number -> validToSell.toInt() == 1
+            is String -> validToSell.equals("true", true) || validToSell == "1"
+            else -> false
+        }
 
-            false
+        val soldValue = contract.opt("is_sold")
+        val expiredValue = contract.opt("is_expired")
+        val isSold = listOf(soldValue, expiredValue).any { value ->
+            when (value) {
+                is Boolean -> value
+                is Number -> value.toInt() == 1
+                is String -> value.equals("true", true) || value == "1"
+                else -> false
+            }
+        }
+
+        if (isSold) {
+            position.status = "CLOSED"
+            position.canSell = false
+            position.closedAt = contract.optLong("sell_time", 0L).takeIf { it > 0L }
+                ?: contract.optLong("date_expiry", 0L).takeIf { it > 0L }
+                ?: System.currentTimeMillis() / 1000L
+            if (position.closeReason.isBlank()) {
+                position.closeReason = when {
+                    listOf(soldValue, expiredValue).any { value ->
+                        when (value) {
+                            is Boolean -> value
+                            is Number -> value.toInt() == 1
+                            is String -> value.equals("true", true) || value == "1"
+                            else -> false
+                        }
+                    } && expiredValue.let { value ->
+                        when (value) {
+                            is Boolean -> value
+                            is Number -> value.toInt() == 1
+                            is String -> value.equals("true", true) || value == "1"
+                            else -> false
+                        }
+                    } -> "CONTRACT EXPIRY"
+                    else -> "CLOSED BY DERIV (trigger not reported)"
+                }
+            }
+            if (!wasAlreadyClosed) {
+                addNotification(
+                    "Trade",
+                    "${displayIndexName(position.symbol)} trade closed",
+                    "Closed by: ${position.closeReason}. ${position.role} ${position.direction}. Final P/L: ${formatMoney(position.profit)}."
+                )
+                if (platformAuthenticated && platformUserRole in setOf("user", "investor") && position.contractId > 0L) {
+                    platformRequest("account_trade_result", mapOf(
+                        "trade_id" to position.contractId.toString(),
+                        "profit" to position.profit.toString()
+                    )) { }
+                }
+            }
+        } else if (position.status != "CLOSING") {
+            position.status = "OPEN"
+        }
+        // Each contract is managed against its own purchase stake and live Deriv P/L.
+        if (!isSold && position.status == "OPEN" && position.stake > 0.0 &&
+            position.canSell && position.contractId > 0L) {
+            evaluateTrailingProfit(position)
+        }
+
+        savePositions()
+        runOnUiThread {
+            updateMasterDecisionViews(position.symbol)
+            updateRecoveryStatusView(position.symbol)
+            updateTradePositionViews(position)
+            if (selectedTab == "Trade" && (wasRestored || (!wasAlreadyClosed && position.status == "CLOSED"))) {
+                render()
+            }
+            updateAccountProfitLossViews()
+        }
+
+    }
+
+    private fun closeRunningPosition(position: Position, reason: String = "MANUAL CLOSE") {
+        if (!accountConnected) {
+            toast("Connect the Deriv trading account before closing this contract.")
+            return
+        }
+        if (position.contractId <= 0L || !position.canSell || position.status != "OPEN") {
+            toast("Deriv has not made this contract available for sale yet. Please wait for the next contract update.")
+            return
+        }
+        position.closeReason = reason
+        position.status = "CLOSING"
+        savePositions()
+        val req = nextRequestId()
+        pendingRequests[req] = position.localId
+        val request = JSONObject().put("sell", position.contractId).put("price", 0).put("req_id", req)
+        val sent = derivService?.client?.send(request) == true
+        if (!sent) {
+            pendingRequests.remove(req)
+            position.status = "OPEN"
+            savePositions()
+            toast("Could not send the close request. The contract remains open.")
+        } else {
+            toast("Close request sent to Deriv.")
+        }
+        if (selectedTab == "Trade") render()
+    }
+
+    private fun accountProfitLoss(): Triple<Double, Double, Double> {
+        val open = positions.values.filter { it.status != "CLOSED" && it.contractId > 0L }.sumOf { it.profit }
+        val closed = positions.values.filter { it.status == "CLOSED" }.sumOf { it.profit }
+        return Triple(open, closed, open + closed)
+    }
+
+
+    private fun updateAccountProfitLossViews() {
+        val pl = accountProfitLoss()
+        accountOpenPlView?.apply {
+            text = "OPEN TRADE P/L: ${formatMoney(pl.first)}"
+            setTextColor(if (pl.first >= 0.0) green else red)
+        }
+        accountClosedPlView?.apply {
+            text = "CLOSED TRADE P/L: ${formatMoney(pl.second)}"
+            setTextColor(if (pl.second >= 0.0) green else red)
+        }
+        accountTotalPlView?.apply {
+            text = "TOTAL TRADE P/L: ${formatMoney(pl.third)}"
+            setTextColor(if (pl.third >= 0.0) green else red)
         }
     }
 
-    /*
-     * Request a fresh balance manually.
-     */
-     fun requestTradeHistory() {
-    val request = JSONObject()
-        .put("profit_table", 1)
-        .put("limit", 50)
-        .put("sort", "DESC")
-        .put("description", 1)
-
-    send(request)
-     }
-         fun requestOpenTrades() {
-    if (!connected) {
-        callback.onError("Cannot request open trades: Deriv is not connected.")
-        return
+    private fun updateDailyApproachFromTick(
+        symbol: String,
+        quote: Double,
+        epoch: Long,
+        forceRefresh: Boolean = false
+    ) {
+        if (symbol !in indexes || !quote.isFinite() || epoch <= 0L) return
+        val daily = dailyCandlesByIndex[symbol]?.sortedBy { it.epoch } ?: return
+        if (daily.size < 2) return
+        val todayStart = utcDayStart(epoch)
+        val currentDay = daily.lastOrNull { it.epoch >= todayStart } ?: daily.last()
+        val previousDay = daily.lastOrNull { it.epoch < todayStart } ?: daily.getOrNull(daily.lastIndex - 1) ?: return
+        val candidates = listOf(
+            Triple(currentDay.high, "TODAY HIGH", "FALL"),
+            Triple(currentDay.low, "TODAY LOW", "RISE"),
+            Triple(previousDay.high, "PREVIOUS DAY HIGH", "FALL"),
+            Triple(previousDay.low, "PREVIOUS DAY LOW", "RISE")
+        ).filter { (level, _, direction) ->
+            level.isFinite() && level > 0.0 &&
+                if (direction == "FALL") level > quote else level < quote
+        }
+        val selected = candidates.minByOrNull { kotlin.math.abs(it.first - quote) }
+        val previousTick = lastTickByIndex[symbol]
+        lastTickByIndex[symbol] = quote to epoch
+        if (selected == null) {
+            if (forceRefresh) dailyApproachByIndex.remove(symbol)
+            return
+        }
+        val (level, type, direction) = selected
+        val existing = dailyApproachByIndex[symbol]
+        if (existing != null && existing.levelType == type && existing.level == level) {
+            if (!existing.enteredZone) {
+                val withinZone = if (direction == "FALL") quote >= existing.zoneBoundary else quote <= existing.zoneBoundary
+                if (withinZone) {
+                    existing.enteredZone = true
+                    existing.enteredAtEpoch = epoch
+                    addNotification("Master Decision", "${displayIndexName(symbol)} entered daily-level zone", "$type proximity zone entered. Waiting for a closed M15 reversal with MSS and CHOCH confirmation.")
+                }
+            }
+            return
+        }
+        val approaching = previousTick == null || forceRefresh ||
+            if (direction == "FALL") quote > previousTick.first else quote < previousTick.first
+        if (!approaching) return
+        val distance = kotlin.math.abs(level - quote)
+        if (distance <= 0.0) return
+        // Freeze the final 20% proximity boundary at the first observed approach tick.
+        val boundary = if (direction == "FALL") quote + distance * 0.80 else quote - distance * 0.80
+        dailyApproachByIndex[symbol] = DailyApproachState(
+            level, type, direction, boundary, epoch
+        )
     }
 
-    val request = JSONObject()
-        .put("portfolio", 1)
+    private fun utcDayStart(epoch: Long): Long = (epoch / 86400L) * 86400L
 
-    send(request)
+    private fun evaluateNewTradingSignal(symbol: String, candles: List<DerivApiClient.Candle>) {
+        if (symbol !in indexes || candles.size < 8) return
+        val state = dailyApproachByIndex[symbol] ?: return
+        if (!state.enteredZone) return
 
-    val liveRequest = JSONObject()
-        .put("proposal_open_contract", 1)
-        .put("subscribe", 1)
+        // Deriv includes the live M15 candle last; only completed M15 candles qualify.
+        val closed = candles.sortedBy { it.epoch }.dropLast(1)
+        if (closed.size < 7) return
+        val last = closed.last()
+        val candleCloseEpoch = last.epoch + 900L
+        val now = System.currentTimeMillis() / 1000L
+        if (candleCloseEpoch > now || now - candleCloseEpoch > 1800L) return
+        if (candleCloseEpoch <= state.enteredAtEpoch) return
 
-    send(liveRequest)
-         }
-    fun refreshBalance() {
+        val busy = positions.values.any {
+            it.symbol == symbol && it.status !in setOf("CLOSED", "BUY FAILED", "PROPOSAL FAILED") &&
+                !it.status.startsWith("ERROR")
+        }
+        if (busy) return
 
-        if (
-            !connected
-        ) {
+        val prior = closed.dropLast(1)
+        val swingHighs = mutableListOf<Double>()
+        val swingLows = mutableListOf<Double>()
+        for (i in 1 until prior.lastIndex) {
+            if (prior[i].high > prior[i - 1].high && prior[i].high > prior[i + 1].high) swingHighs.add(prior[i].high)
+            if (prior[i].low < prior[i - 1].low && prior[i].low < prior[i + 1].low) swingLows.add(prior[i].low)
+        }
+        val lastHigh = swingHighs.lastOrNull()
+        val lastLow = swingLows.lastOrNull()
+        val previousClose = prior.last().close
 
-            callback.onError(
-                "Deriv is not connected."
-            )
+        // Daily High reversal is bearish; Daily Low reversal is bullish.
+        val reversal = when (state.direction) {
+            "FALL" -> last.close < last.open && last.close < previousClose
+            "RISE" -> last.close > last.open && last.close > previousClose
+            else -> false
+        }
+        if (!reversal) return
 
+        // MSS and CHOCH are both confirmed from M15 swing structure on this closed candle.
+        val mssDirection = when {
+            state.direction == "RISE" && lastHigh != null && previousClose <= lastHigh && last.close > lastHigh -> "RISE"
+            state.direction == "FALL" && lastLow != null && previousClose >= lastLow && last.close < lastLow -> "FALL"
+            else -> ""
+        }
+        val chochDirection = when {
+            state.direction == "RISE" && lastHigh != null && previousClose <= lastHigh && last.close > lastHigh && last.close > last.open -> "RISE"
+            state.direction == "FALL" && lastLow != null && previousClose >= lastLow && last.close < lastLow && last.close < last.open -> "FALL"
+            else -> ""
+        }
+        recoveryMss[symbol] = mssDirection
+        recoveryChoch[symbol] = chochDirection
+        recoveryMssEpoch[symbol] = if (mssDirection.isNotBlank()) last.epoch else 0L
+        recoveryChochEpoch[symbol] = if (chochDirection.isNotBlank()) last.epoch else 0L
+        tradePrefs.edit()
+            .putString("signal_mss_$symbol", mssDirection)
+            .putString("signal_choch_$symbol", chochDirection)
+            .putLong("signal_mss_epoch_$symbol", recoveryMssEpoch[symbol] ?: 0L)
+            .putLong("signal_choch_epoch_$symbol", recoveryChochEpoch[symbol] ?: 0L)
+            .apply()
+        runOnUiThread { updateMasterDecisionViews(symbol); updateRecoveryStatusView(symbol) }
+
+        if (mssDirection.isBlank() || mssDirection != chochDirection) return
+        if (mssDirection != state.direction) return
+        if (!autoTradingEnabled || !accountConnected || dailyCapital <= 0.0) return
+        if (lastExecutedSignalEpoch[symbol] == last.epoch) return
+
+        val stake = roundStake(dailyCapital * 0.10)
+        val available = (availableBalance - reservedRecoveryCapital()).coerceAtLeast(0.0)
+        if (stake <= 0.0 || available + 0.000001 < stake) return
+        if (openPosition(
+                symbol, state.direction, "MASTER", stake,
+                qualificationMssEpoch = last.epoch,
+                qualificationChochEpoch = last.epoch,
+                qualificationRetestEpoch = candleCloseEpoch,
+                qualificationChochLevel = state.level
+            )) {
+            lastExecutedSignalEpoch[symbol] = last.epoch
+            dailyApproachByIndex.remove(symbol)
+            addNotification("Trade", "${displayIndexName(symbol)} ${state.direction} signal submitted",
+                "Daily level proximity reversal confirmed by a closed M15 candle with M15 MSS and CHOCH. Reference: ${state.levelType}. Stake: ${formatMoney(stake)}.")
+        }
+    }
+
+    private fun accountStorageSuffix(): String = "${executionMode}_${currentDerivAccountId}"
+        .trim()
+        .replace(Regex("[^A-Za-z0-9_-]"), "_")
+
+    private fun accountPositionsKey(): String = "positions_account_${accountStorageSuffix()}"
+    private fun accountHistoryKey(): String = "trade_history_account_${accountStorageSuffix()}"
+    private fun accountDayKeyPref(): String = "day_key_account_${accountStorageSuffix()}"
+    private fun accountDailyCapitalPref(): String = "daily_capital_account_${accountStorageSuffix()}"
+    private fun accountTriggeredPref(day: String): String = "triggered_account_${accountStorageSuffix()}_$day"
+
+    private fun positionToJson(p: Position): JSONObject = JSONObject()
+        .put("id", p.localId).put("ownerAccountId", currentDerivAccountId)
+        .put("symbol", p.symbol).put("direction", p.direction)
+        .put("role", p.role).put("stake", p.stake).put("original", p.originalId)
+        .put("contract", p.contractId).put("profit", p.profit).put("status", p.status)
+        .put("recoveryEligible", p.recoveryEligible).put("recoveryUsed", p.recoveryUsed)
+        .put("closedAt", p.closedAt).put("pairExitTriggered", p.pairExitTriggered)
+        .put("recoveryAfterEpoch", p.recoveryAfterEpoch).put("pairedLoss", p.pairedLoss)
+        .put("entryBarrier", p.entryBarrier).put("expiryAt", p.expiryAt)
+        .put("openedAt", p.openedAt).put("closeReason", p.closeReason)
+        .put("qualificationMssEpoch", p.qualificationMssEpoch)
+        .put("qualificationChochEpoch", p.qualificationChochEpoch)
+        .put("qualificationRetestEpoch", p.qualificationRetestEpoch)
+        .put("qualificationChochLevel", p.qualificationChochLevel)
+        .put("trailingPeakProfitPct", p.trailingPeakProfitPct)
+        .put("trailingPeakInitialized", p.trailingPeakInitialized)
+        .put("trailingExtremePrice", p.trailingExtremePrice)
+        .put("trailingLastMarketPrice", p.trailingLastMarketPrice)
+        .put("trailingLastM5Epoch", p.trailingLastM5Epoch)
+
+    private fun positionFromJson(o: JSONObject): Position {
+        val p = Position(
+            localId = o.optString("id"), symbol = o.optString("symbol"),
+            direction = o.optString("direction"), role = o.optString("role"),
+            stake = o.optDouble("stake", 0.0), originalId = o.optString("original", "")
+        )
+        p.contractId = o.optLong("contract", 0L)
+        p.profit = o.optDouble("profit", 0.0)
+        p.status = o.optString("status", "OPEN")
+        p.recoveryEligible = o.optBoolean("recoveryEligible", false)
+        p.recoveryUsed = o.optBoolean("recoveryUsed", false)
+        p.closedAt = o.optLong("closedAt", 0L)
+        p.pairExitTriggered = o.optBoolean("pairExitTriggered", false)
+        p.recoveryAfterEpoch = o.optLong("recoveryAfterEpoch", p.closedAt)
+        p.pairedLoss = o.optDouble("pairedLoss", 0.0)
+        p.entryBarrier = o.optDouble("entryBarrier", 0.0)
+        p.expiryAt = o.optLong("expiryAt", 0L)
+        p.openedAt = o.optLong("openedAt", 0L)
+        p.closeReason = o.optString("closeReason", "")
+        p.qualificationMssEpoch = o.optLong("qualificationMssEpoch", 0L)
+        p.qualificationChochEpoch = o.optLong("qualificationChochEpoch", 0L)
+        p.qualificationRetestEpoch = o.optLong("qualificationRetestEpoch", 0L)
+        p.qualificationChochLevel = o.optDouble("qualificationChochLevel", 0.0)
+        p.trailingPeakProfitPct = o.optDouble("trailingPeakProfitPct", 0.0)
+        p.trailingPeakInitialized = o.optBoolean("trailingPeakInitialized", false)
+        p.trailingExtremePrice = o.optDouble("trailingExtremePrice", 0.0)
+        p.trailingLastMarketPrice = o.optDouble("trailingLastMarketPrice", 0.0)
+        p.trailingLastM5Epoch = o.optLong("trailingLastM5Epoch", 0L)
+        return p
+    }
+
+    private fun savePositions() {
+        // Do not write anything until Deriv has identified the active account.
+        if (currentDerivAccountId.isBlank()) return
+        val all = JSONArray()
+        positions.values.forEach { all.put(positionToJson(it)) }
+        val completedArchive = JSONArray()
+        positions.values.filter { it.status == "CLOSED" }
+            .sortedByDescending { it.closedAt }
+            .forEach { completedArchive.put(positionToJson(it)) }
+        // Each Deriv account has its own independent active ledger and history archive.
+        tradePrefs.edit()
+            .putString(accountPositionsKey(), all.toString())
+            .putString(accountHistoryKey(), completedArchive.toString())
+            .commit()
+    }
+
+    private fun loadPositions() {
+        if (currentDerivAccountId.isBlank()) return
+        val loaded = linkedMapOf<String, Position>()
+        fun readArray(key: String, completedOnly: Boolean = false) {
+            val legacyAccountKey = if (key == accountPositionsKey())
+                "positions_account_${currentDerivAccountId.trim().replace(Regex("[^A-Za-z0-9_-]"), "_")}"
+            else key
+            // Migrate the previous account-ID-only ledger into the new mode + account namespace.
+            val raw = tradePrefs.getString(key, "").orEmpty()
+                .ifBlank { tradePrefs.getString(legacyAccountKey, "").orEmpty() }
+            if (raw.isBlank()) return
+            try {
+                val array = JSONArray(raw)
+                for (i in 0 until array.length()) {
+                    val obj = array.optJSONObject(i) ?: continue
+                    // Reject records explicitly owned by another Deriv account.
+                    val owner = obj.optString("ownerAccountId", currentDerivAccountId)
+                    if (owner.isNotBlank() && owner != currentDerivAccountId) continue
+                    val p = positionFromJson(obj)
+                    if (p.localId.isBlank() || p.symbol.isBlank()) continue
+                    if (completedOnly && p.status != "CLOSED") continue
+                    loaded[p.localId] = p
+                }
+            } catch (_: Exception) { }
+        }
+        // Intentionally do not import the old unscoped "positions" / history keys:
+        // they have no reliable account ownership and may contain Demo contracts.
+        readArray(accountPositionsKey())
+        val ledgerIds = loaded.keys.toSet()
+        val archive = linkedMapOf<String, Position>()
+        val legacyHistoryKey = "trade_history_account_${currentDerivAccountId.trim().replace(Regex("[^A-Za-z0-9_-]"), "_")}"
+        val rawArchive = tradePrefs.getString(accountHistoryKey(), "").orEmpty()
+            .ifBlank { tradePrefs.getString(legacyHistoryKey, "").orEmpty() }
+        if (rawArchive.isNotBlank()) {
+            try {
+                val array = JSONArray(rawArchive)
+                for (i in 0 until array.length()) {
+                    val obj = array.optJSONObject(i) ?: continue
+                    val owner = obj.optString("ownerAccountId", currentDerivAccountId)
+                    if (owner.isNotBlank() && owner != currentDerivAccountId) continue
+                    val p = positionFromJson(obj)
+                    if (p.status == "CLOSED" && p.localId.isNotBlank()) archive[p.localId] = p
+                }
+            } catch (_: Exception) { }
+        }
+        archive.forEach { (id, position) -> if (id !in ledgerIds) loaded[id] = position }
+        positions.clear()
+        positions.putAll(loaded)
+        // Automatically attach trailing protection to every already-running contract.
+        // Preserve a recorded peak; initialise only legacy/missing peak data from its saved P/L.
+        positions.values.filter { it.status == "OPEN" && it.contractId > 0L && it.stake > 0.0 }.forEach { position ->
+            if (!position.trailingPeakInitialized) {
+                position.trailingPeakProfitPct = (position.profit / position.stake) * 100.0
+                position.trailingPeakInitialized = true
+            }
+        }
+        recoveryWaiting.clear()
+        positions.values.forEach { position ->
+            if (position.recoveryEligible && !position.recoveryUsed) recoveryWaiting.add(position.localId)
+            if (position.contractId > 0L && position.status != "CLOSED") subscribePosition(position.contractId)
+        }
+        savePositions()
+    }
+
+    private fun deleteHistoryRecord(position: Position) {
+        if (position.status != "CLOSED") return
+        AlertDialog.Builder(this)
+            .setTitle("DELETE TRADE HISTORY")
+            .setMessage("Permanently delete the completed history record for ${displayIndexName(position.symbol)} contract ${position.contractId}? This will not close or change any open Deriv contract.")
+            .setNegativeButton("CANCEL", null)
+            .setPositiveButton("DELETE") { _, _ ->
+                positions.remove(position.localId)
+                recoveryWaiting.remove(position.localId)
+                savePositions()
+                render()
+            }
+            .show()
+    }
+
+    private fun deleteAllTradeHistory() {
+        val completedCount = positions.values.count { it.status == "CLOSED" }
+        if (completedCount == 0) return
+        AlertDialog.Builder(this)
+            .setTitle("DELETE ALL TRADE HISTORY")
+            .setMessage("Permanently delete all $completedCount completed trade history records? Running trades and open Deriv contracts will not be closed or changed.")
+            .setNegativeButton("CANCEL", null)
+            .setPositiveButton("DELETE ALL") { _, _ ->
+                positions.entries.removeAll { it.value.status == "CLOSED" }
+                savePositions()
+                render()
+            }
+            .show()
+    }
+
+    private fun showAccountModeDialog() {
+        val modes = arrayOf("DEMO ACCOUNT", "REAL ACCOUNT")
+        AlertDialog.Builder(this)
+            .setTitle("Connect Deriv account")
+            .setItems(modes) { _, which ->
+                val requestedMode = if (which == 1) "REAL" else "DEMO"
+                if (requestedMode != executionMode) {
+                    // Hide the old account's figures immediately while the selected account connects.
+                    executionMode = requestedMode
+                    accountConnected = false
+                    currentDerivAccountId = ""
+                    accountLabel = "Connecting $executionMode account…"
+                    accountBalanceLabel = "Balance loading…"
+                    availableBalance = 0.0
+                    dailyCapital = 0.0
+                    tradingDayKey = ""
+                    positions.clear()
+                    recoveryWaiting.clear()
+                    originalTriggered.clear()
+                }
+                val ownerId = platformUserId
+                if (ownerId.isNotBlank()) prefs.edit().putString(derivModeKey(ownerId), executionMode).apply()
+                render()
+                beginDerivConnection()
+            }
+            .setNegativeButton("CANCEL", null)
+            .show()
+    }
+
+    private fun beginDerivConnection() {
+        val ownerId = platformUserId
+        if (!platformAuthenticated || ownerId.isBlank()) {
+            toast("Sign in to your Volatilities Indicator account first.")
+            return
+        }
+        prefs.edit().remove("user_${ownerId}_manually_disconnected").apply()
+        derivService?.setPlatformUser(ownerId)
+        val savedToken = prefs.getString(derivTokenKey(executionMode, ownerId), "").orEmpty()
+        if (savedToken.isNotBlank()) {
+            connectWithToken(savedToken)
+        } else {
+            startDerivOAuth()
+        }
+    }
+
+    private fun startDerivOAuth() {
+        val ownerId = platformUserId
+        if (!platformAuthenticated || ownerId.isBlank()) {
+            toast("Sign in to your Volatilities Indicator account first.")
+            return
+        }
+        oauthState = "android-" + UUID.randomUUID().toString()
+        codeVerifier = generateCodeVerifier()
+        prefs.edit()
+            .putString("oauth_state", oauthState)
+            .putString("code_verifier", codeVerifier)
+            .putString("oauth_mode", executionMode)
+            .putString(derivModeKey(ownerId), executionMode)
+            .putString("oauth_user_id", ownerId)
+            .apply()
+
+        val challenge = generateCodeChallenge(codeVerifier)
+        val authorizationUrl = Uri.parse(DerivApiClient.OAUTH_AUTH_URL).buildUpon()
+            .appendQueryParameter("response_type", "code")
+            .appendQueryParameter("client_id", DerivApiClient.clientId(executionMode))
+            .appendQueryParameter("redirect_uri", DerivApiClient.OAUTH_REDIRECT_URI)
+            .appendQueryParameter("scope", DerivApiClient.OAUTH_SCOPE)
+            .appendQueryParameter("state", oauthState)
+            .appendQueryParameter("code_challenge", challenge)
+            .appendQueryParameter("code_challenge_method", "S256")
+            .build()
+
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, authorizationUrl))
+        } catch (e: Exception) {
+            toast("Unable to open Deriv login: ${e.message ?: "browser unavailable"}")
+        }
+    }
+
+    private fun handleOAuthCallback(callbackIntent: Intent?) {
+        val data = callbackIntent?.data ?: return
+        if (data.scheme != "volatilitiesindicator" || data.host != "oauth-callback") return
+
+        val error = data.getQueryParameter("error")
+        if (!error.isNullOrBlank()) {
+            toast("Deriv authorization failed: $error")
             return
         }
 
-        webSocket
-            ?.let {
-                requestBalance(
-                    it
-                )
-            }
+        val code = data.getQueryParameter("code")
+        val returnedState = data.getQueryParameter("state")
+        val expectedState = prefs.getString("oauth_state", "").orEmpty()
+        val oauthOwnerId = prefs.getString("oauth_user_id", "").orEmpty()
+        val activeOwnerId = platformPrefs.getString("active_user_id", "").orEmpty()
+        if (!platformAuthenticated || oauthOwnerId.isBlank() || activeOwnerId.isBlank() ||
+            oauthOwnerId != activeOwnerId || oauthOwnerId != platformUserId) {
+            toast("Deriv sign-in cancelled: the platform user who started this connection is no longer signed in.")
+            return
+        }
+        if (code.isNullOrBlank() || expectedState.isBlank() || returnedState != expectedState) {
+            toast("Deriv sign-in failed: authorization code or security state is invalid.")
+            return
+        }
+
+        executionMode = if (prefs.getString(derivModeKey(oauthOwnerId), "DEMO").equals("REAL", true)) "REAL" else "DEMO"
+        exchangeOAuthCode(code)
     }
-        /*
-     * Release all resources when the client is permanently
-     * no longer required.
-     */
-    fun destroy() {
 
-        manuallyDisconnected =
-            true
+    private fun exchangeOAuthCode(code: String) {
+        val ownerId = prefs.getString("oauth_user_id", "").orEmpty()
+        val exchangeMode = executionMode
+        if (ownerId.isBlank() || ownerId != platformPrefs.getString("active_user_id", "").orEmpty()) {
+            toast("Deriv sign-in cancelled because the platform account changed.")
+            return
+        }
+        val verifier = prefs.getString("code_verifier", "").orEmpty()
+        if (verifier.isBlank()) {
+            toast("Deriv sign-in failed: PKCE verifier is missing.")
+            return
+        }
 
-        cancelReconnect()
-        marketDataReconnectFuture?.cancel(false)
-        marketDataReconnectFuture = null
+        val body = FormBody.Builder()
+            .add("grant_type", "authorization_code")
+            .add("code", code)
+            .add("client_id", DerivApiClient.clientId(exchangeMode))
+            .add("redirect_uri", DerivApiClient.OAUTH_REDIRECT_URI)
+            .add("code_verifier", verifier)
+            .build()
 
-        stopHeartbeat()
+        val request = Request.Builder()
+            .url(DerivApiClient.OAUTH_TOKEN_URL)
+            .post(body)
+            .build()
 
+        httpClient.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                runOnUiThread { toast("Deriv sign-in failed: ${e.message ?: "network error"}") }
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                val responseText = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    runOnUiThread { toast("Deriv token exchange failed (HTTP ${response.code}).") }
+                    return
+                }
+                val token = try {
+                    JSONObject(responseText).optString("access_token", "")
+                } catch (_: Exception) { "" }
+
+                if (token.isBlank()) {
+                    runOnUiThread { toast("Deriv did not return an access token.") }
+                    return
+                }
+
+                if (ownerId != platformPrefs.getString("active_user_id", "").orEmpty()) {
+                    runOnUiThread { toast("Deriv token was not saved because the platform user changed during authorization.") }
+                    return
+                }
+                val tokenKey = derivTokenKey(exchangeMode, ownerId)
+                prefs.edit()
+                    .putString(tokenKey, token)
+                    .remove("oauth_state")
+                    .remove("code_verifier")
+                    .remove("oauth_user_id")
+                    .apply()
+
+                runOnUiThread {
+                    if (ownerId == platformUserId && platformAuthenticated) {
+                        executionMode = exchangeMode
+                        connectWithToken(token)
+                    }
+                }
+            }
+        })
+    }
+
+    private fun connectWithToken(token: String) {
+        val ownerId = platformUserId
+        if (!platformAuthenticated || ownerId.isBlank()) {
+            toast("Sign in to your Volatilities Indicator account first.")
+            return
+        }
+        if (token.isBlank()) {
+            toast("Deriv access token is empty.")
+            return
+        }
+        val service = derivService
+        if (service == null) {
+            toast("Deriv service is starting. Please try Connect again.")
+            startMarketFeedService()
+            return
+        }
+
+        service.setPlatformUser(ownerId)
+        accountConnected = false
+        accountLabel = "Connecting…"
+        accountBalanceLabel = "Balance loading…"
+        render()
+        service.client.connectWithAccessToken(token, executionMode)
+    }
+
+    private fun disconnectDerivAccount() {
+        val ownerId = platformUserId
+        if (ownerId.isNotBlank()) {
+            prefs.edit()
+                .remove(derivTokenKey(executionMode, ownerId))
+                .putBoolean("user_${ownerId}_manually_disconnected", true)
+                .apply()
+        }
+        try { derivService?.client?.disconnectAccount() } catch (_: Exception) {}
+        accountConnected = false
+        accountLabel = "Not connected"
+        accountBalanceLabel = "Balance unavailable"
+        addNotification("Accounts", "Deriv account disconnected", "The Deriv account was disconnected from the application.")
+        render()
+        toast("Deriv account disconnected.")
+    }
+    private fun generateCodeVerifier(): String {
+        val bytes = ByteArray(32)
+        SecureRandom().nextBytes(bytes)
+        return Base64.encodeToString(
+            bytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
+        )
+    }
+
+    private fun generateCodeChallenge(verifier: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val hash = digest.digest(verifier.toByteArray(Charsets.US_ASCII))
+        return Base64.encodeToString(
+            hash, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
+        )
+    }
+
+    private fun render() {
+        if (platformUserRole == "investor" && selectedTab !in listOf("Trade", "Accounts", "Profile")) selectedTab = "Trade"
+        pageScrollView?.let { oldScroll ->
+            if (renderedTab.isNotBlank()) scrollPositions[renderedTab] = oldScroll.scrollY
+        }
+        priceViews.clear()
+        indexStatusViews.clear()
+        marketStatusViews.clear()
+        masterDecisionViews.clear()
+        levelStatusViews.clear()
+        recoveryStatusViews.clear()
+        mssStatusViews.clear()
+        chochStatusViews.clear()
+        retestStatusViews.clear()
+        tradeStatusViews.clear()
+        tradeProfitViews.clear()
+        tradeTargetViews.clear()
+        tradeEntryBarrierViews.clear()
+        tradeExpiryViews.clear()
+        tradeCountdownViews.clear()
+        tradeCountdownHandler.removeCallbacks(tradeCountdownTask)
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(pageColor)
+        }
+        val restoreScrollY = scrollPositions[selectedTab] ?: 0
+        // Keep the tab heading and notification bell outside the scrolling content.
+        root.addView(notificationBar())
+        root.addView(space(8))
+        val tabForThisScrollView = selectedTab
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            overScrollMode = View.OVER_SCROLL_NEVER
+            setOnScrollChangeListener { _, _, scrollY, _, _ ->
+                scrollPositions[tabForThisScrollView] = scrollY
+            }
+        }
+        pageScrollView = scroll
+        content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(16), dp(18), dp(22))
+        }
+        scroll.addView(content)
+        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        if (platformUserRole == "admin" || platformUserRole == "investor") root.addView(bottomNavigation())
+        setContentView(root)
+        renderedTab = selectedTab
+
+        content.addView(space(8))
+
+        when (selectedTab) {
+            "Home" -> showHome()
+            "Trade" -> showTrade()
+            "Accounts" -> showAccounts()
+            "Profile" -> showInvestorProfile()
+            "Settings" -> showSettings()
+        }
+        val restoreListener = object : android.view.ViewTreeObserver.OnGlobalLayoutListener {
+            override fun onGlobalLayout() {
+                if (scroll.viewTreeObserver.isAlive) {
+                    scroll.viewTreeObserver.removeOnGlobalLayoutListener(this)
+                }
+                val maxScroll = (content.height - scroll.height).coerceAtLeast(0)
+                scroll.scrollTo(0, restoreScrollY.coerceAtMost(maxScroll))
+            }
+        }
+        scroll.viewTreeObserver.addOnGlobalLayoutListener(restoreListener)
+    }
+
+    private fun showHome() {
+        val brand = horizontal()
+        val logo = ImageView(this).apply {
+            setImageResource(R.drawable.volatilities_logo)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            contentDescription = "Volatilities Indicator logo"
+        }
+        brand.addView(logo, LinearLayout.LayoutParams(dp(58), dp(58)))
+        val brandText = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), 0, 0, 0)
+        }
+        brandText.addView(text("VOLATILITIES", 19f, green, true))
+        brandText.addView(text("INDICATOR", 19f, green, true))
+        brand.addView(brandText)
+        content.addView(brand)
+        content.addView(space(3))
+        content.addView(text("Market monitor", 13f, green))
+        content.addView(space(18))
+        val status = horizontal()
+        status.addView(text("DERIV MARKET FEED", 12f, green, true),
+            LinearLayout.LayoutParams(0, -2, 1f))
+        val feedPill = pill(if (marketFeedConnected) "LIVE" else "CONNECTING", if (marketFeedConnected) green else amber)
+        feedPillView = feedPill
+        status.addView(feedPill)
+        content.addView(status)
+        content.addView(space(10))
+        content.addView(autoTradingButton())
+        content.addView(space(12))
+        val account = card()
+        account.addView(text("TRADING ACCOUNT", 12f, green, true))
+        account.addView(space(8))
+        val accountName = text(if (accountConnected) accountLabel else "Not connected", 17f, whiteText, true)
+        accountIdView = accountName
+        account.addView(accountName)
+        account.addView(text("Account mode: $executionMode", 12f, if (executionMode == "REAL") blue else red, true))
+        val balanceText = text(accountBalanceLabel, 13f, blue)
+        accountBalanceView = balanceText
+        account.addView(balanceText)
+        val homePl = accountProfitLoss()
+        accountOpenPlView = text("OPEN TRADE P/L: ${formatMoney(homePl.first)}", 12f, if (homePl.first >= 0) green else red, true)
+        accountClosedPlView = text("CLOSED TRADE P/L: ${formatMoney(homePl.second)}", 12f, if (homePl.second >= 0) green else red, true)
+        accountTotalPlView = text("TOTAL TRADE P/L: ${formatMoney(homePl.third)}", 12f, if (homePl.third >= 0) green else red, true)
+        account.addView(accountOpenPlView)
+        account.addView(accountClosedPlView)
+        account.addView(accountTotalPlView)
+        val statusText = text(if (accountConnected) "CONNECTED" else "ACCOUNT NOT CONNECTED", 12f,
+            if (accountConnected) green else red, true)
+        accountStatusView = statusText
+        account.addView(statusText)
+        account.addView(space(12))
+        account.addView(actionButton(if (accountConnected) "ACCOUNT OPTIONS" else "CONNECT DERIV ACCOUNT") {
+            if (accountConnected) openTab("Accounts") else showAccountModeDialog()
+        })
+        content.addView(account)
+        content.addView(space(18))
+
+        content.addView(text("INDEX MONITOR", 16f, green, true))
+        content.addView(text("Live Deriv prices for all five synthetic indices.", 12f, whiteText))
+        content.addView(space(10))
+
+        indexes.forEach { symbol ->
+            val indexCard = card(indexNameColor(symbol))
+            val row = horizontal()
+            row.addView(text(displayIndexName(symbol), 15f, indexNameColor(symbol), true),
+                LinearLayout.LayoutParams(0, -2, 1f))
+            val statusView = pill(
+                if (latestPrices.containsKey(symbol)) "LIVE" else "CONNECTING",
+                if (latestPrices.containsKey(symbol)) green else amber
+            )
+            indexStatusViews[symbol] = statusView
+            row.addView(statusView)
+            indexCard.addView(row)
+            indexCard.addView(space(10))
+
+            val priceRow = horizontal()
+            priceRow.addView(text("LIVE PRICE", 11f, whiteText),
+                LinearLayout.LayoutParams(0, -2, 1f))
+            val priceView = text(latestPrices[symbol]?.let { formatPrice(it) } ?: "--", 17f, blue, true)
+            priceViews[symbol] = priceView
+            priceRow.addView(priceView)
+            indexCard.addView(priceRow)
+            indexCard.addView(space(8))
+            indexCard.addView(divider())
+            indexCard.addView(space(8))
+            indexCard.addView(text("MASTER DECISION", 11f, Color.WHITE, true))
+            val decisionView = text(runningDirectionText(symbol) ?: "WAITING", 12f,
+                if (runningDirectionText(symbol) != null) green else amber, true)
+            masterDecisionViews[symbol] = decisionView
+            indexCard.addView(decisionView)
+            indexCard.addView(space(6))
+            val feedDetail = text(masterDecisionText(symbol), 11f, Color.WHITE)
+            marketStatusViews[symbol] = feedDetail
+            indexCard.addView(text("WAITING FOR", 10f, Color.WHITE, true))
+            indexCard.addView(feedDetail)
+            indexCard.addView(space(8))
+            indexCard.addView(divider())
+            indexCard.addView(space(8))
+            indexCard.addView(text("MSS QUALIFICATION", 10f, whiteText, true))
+            val mssView = text(signalQualificationText(recoveryMss[symbol]), 11f,
+                if (recoveryMss[symbol].isNullOrBlank()) amber else green, true)
+            mssStatusViews[symbol] = mssView
+            indexCard.addView(mssView)
+            indexCard.addView(space(5))
+            indexCard.addView(text("CHOCH QUALIFICATION", 10f, whiteText, true))
+            val chochView = text(chochQualificationDisplay(symbol), 11f,
+                if (recoveryChoch[symbol].isNullOrBlank()) amber else green, true)
+            chochStatusViews[symbol] = chochView
+            indexCard.addView(chochView)
+            indexCard.addView(space(5))
+            indexCard.addView(text("RETEST QUALIFICATION", 10f, whiteText, true))
+            val retestDirection = pendingChochDirection[symbol]
+            val retestView = text(
+                when {
+                    retestDirection.isNullOrBlank() -> "NOT QUALIFIED"
+                    (pendingChochRetestAttempt[symbol] ?: 0) == 1 -> "FINAL CANDLE WAITING · $retestDirection"
+                    else -> "WAITING FOR FIRST RETEST · $retestDirection"
+                },
+                11f, amber, true
+            )
+            retestStatusViews[symbol] = retestView
+            indexCard.addView(retestView)
+            content.addView(indexCard)
+            content.addView(space(9))
+        }
+    }
+
+    private fun showTrade() {
+        pageHeading("RUNNING TRADES", "Contracts opened after confirmed MSS + CHOCH + RETEST.")
+        content.addView(autoTradingButton())
+        content.addView(space(10))
+        val summary = card()
+        summary.addView(text("DAILY STARTING CAPITAL", 12f, gold, true))
+        summary.addView(text(String.format(Locale.US, "%.2f %s", dailyCapital, accountCurrency), 18f, blue, true))
+        summary.addView(text("ACCOUNT MODE: $executionMode", 12f, if (executionMode == "REAL") blue else red, true))
+        content.addView(summary)
+        content.addView(space(16))
+
+        val activePositions = positions.values.filter { it.status != "CLOSED" }
+        val closedPositions = positions.values.filter { it.status == "CLOSED" }.sortedByDescending { it.closedAt }
+
+        content.addView(text("RUNNING TRADES", 17f, gold, true))
+        content.addView(space(8))
+        if (activePositions.isEmpty()) {
+            val empty = card()
+            empty.addView(text("NO RUNNING TRADES", 15f, ink, true))
+            empty.addView(text("No trade is currently open.", 13f, muted))
+            content.addView(empty)
+        } else {
+            // Keep one card per index, with each running contract displayed
+            // independently inside that card.
+            activePositions.groupBy { it.symbol }.forEach { (symbol, indexPositions) ->
+                val c = card(indexNameColor(symbol))
+                c.addView(text("${displayIndexName(symbol)} · RUNNING POSITIONS", 14f,
+                    indexNameColor(symbol), true))
+                c.addView(space(8))
+
+                indexPositions.forEachIndexed { index, p ->
+                    if (index > 0) {
+                        c.addView(space(8))
+                        c.addView(divider())
+                        c.addView(space(8))
+                    }
+
+                    c.addView(text("${p.role} · ${p.direction}", 14f,
+                        if (p.direction == "RISE") green else red, true))
+                    val hasFullQualification = p.qualificationMssEpoch > 0L &&
+                        p.qualificationChochEpoch > 0L && p.qualificationRetestEpoch > p.qualificationChochEpoch
+                    val qualificationDetails = if (hasFullQualification) {
+                        val mssTime = java.text.DateFormat.getDateTimeInstance().format(
+                            java.util.Date(p.qualificationMssEpoch * 1000L))
+                        val chochTime = java.text.DateFormat.getDateTimeInstance().format(
+                            java.util.Date(p.qualificationChochEpoch * 1000L))
+                        val retestTime = java.text.DateFormat.getDateTimeInstance().format(
+                            java.util.Date(p.qualificationRetestEpoch * 1000L))
+                        "QUALIFICATION: CONFIRMED\nMSS: CONFIRMED · $mssTime\nCHOCH: CONFIRMED · $chochTime\nRETEST: TOUCH / PENETRATION CONFIRMED\nCHOCH LEVEL: ${formatPrice(p.qualificationChochLevel)}\nRETEST CANDLE: $retestTime"
+                    } else {
+                        "QUALIFICATION: NOT RECORDED FOR THIS TRADE"
+                    }
+                    c.addView(text(qualificationDetails, 12f,
+                        if (hasFullQualification) green else amber, true))
+                    c.addView(text("Contract: ${if (p.contractId > 0L) p.contractId.toString() else "Pending"}",
+                        12f, Color.WHITE))
+                    val entryBarrierView = text(
+                        "ENTRY BARRIER: ${if (p.entryBarrier > 0.0) formatPrice(p.entryBarrier) else "Awaiting Deriv entry price"}",
+                        12f, blue, true
+                    )
+                    tradeEntryBarrierViews[p.localId] = entryBarrierView
+                    c.addView(entryBarrierView)
+                    val expiryText = if (p.expiryAt > 0L) {
+                        java.text.DateFormat.getDateTimeInstance().format(java.util.Date(p.expiryAt * 1000L))
+                    } else {
+                        "Awaiting Deriv expiry"
+                    }
+                    val expiryView = text("EXPIRY: $expiryText", 12f, blue, true)
+                    tradeExpiryViews[p.localId] = expiryView
+                    c.addView(expiryView)
+
+                    val countdownView = text("TIME REMAINING: Calculating…", 15f, gold, true)
+                    tradeCountdownViews[p.localId] = countdownView
+                    c.addView(countdownView)
+
+                    c.addView(text("Stake: ${formatMoney(p.stake)}", 13f, gold))
+
+                    val statusView = text("Status: ${p.status}", 13f,
+                        if (p.status == "OPEN") green else amber, true)
+                    tradeStatusViews[p.localId] = statusView
+                    c.addView(statusView)
+
+                    val profitView = text("Profit / Loss: ${formatMoney(p.profit)}", 14f,
+                        if (p.profit >= 0.0) green else red, true)
+                    tradeProfitViews[p.localId] = profitView
+                    c.addView(profitView)
+
+                    val currentProfitPct = if (p.stake > 0.0) (p.profit / p.stake) * 100.0 else 0.0
+                    val protectedExitPct = trailingCloseLevel(p.trailingPeakProfitPct)
+                    val targetLabel = "AUTOMATIC TRAILING STOP · CURRENT ${String.format(Locale.US, "%+.2f", currentProfitPct)}% · PEAK ${String.format(Locale.US, "%+.2f", p.trailingPeakProfitPct)}% · PROTECT ${if (protectedExitPct > 0.0) "${protectedExitPct.toInt()}%" else "WAITING FOR 50% PEAK"}"
+                    val targetView = text(targetLabel, 12f, amber, true)
+                    tradeTargetViews[p.localId] = targetView
+                    c.addView(targetView)
+
+                    if (p.contractId > 0L && p.status == "OPEN") {
+                        c.addView(space(6))
+                        c.addView(actionButton("CLOSE THIS ${p.direction} TRADE", primary = false) {
+                            AlertDialog.Builder(this)
+                                .setTitle("CONFIRM TRADE CLOSURE")
+                                .setMessage("Are you sure you want to close this ${p.direction} contract on ${displayIndexName(p.symbol)}?")
+                                .setNegativeButton("CANCEL", null)
+                                .setPositiveButton("CONFIRM CLOSE") { _, _ -> closeRunningPosition(p) }
+                                .show()
+                        })
+                    }
+                }
+
+                content.addView(c)
+                content.addView(space(8))
+            }
+        }
+
+        content.addView(space(10))
+        content.addView(divider())
+        content.addView(space(14))
+        content.addView(text("TRADE HISTORY", 17f, Color.WHITE, true))
+        content.addView(text("Completed contracts. Saved separately from running positions.", 12f, whiteText))
+        content.addView(space(8))
+        if (closedPositions.isNotEmpty()) {
+            content.addView(actionButton("DELETE ALL TRADE HISTORY", false) { deleteAllTradeHistory() })
+            content.addView(space(8))
+        }
+        if (closedPositions.isEmpty()) {
+            content.addView(text("No completed trades yet.", 12f, muted))
+        } else {
+            closedPositions.forEach { p ->
+                val c = card(indexNameColor(p.symbol))
+                c.addView(text("${displayIndexName(p.symbol)} · ${p.role}", 14f, indexNameColor(p.symbol), true))
+                c.addView(text("DIRECTION: ${p.direction}", 14f, if (p.direction == "RISE") green else red, true))
+                val historyFullyQualified = p.qualificationMssEpoch > 0L &&
+                    p.qualificationChochEpoch > 0L && p.qualificationRetestEpoch > p.qualificationChochEpoch
+                c.addView(text(
+                    if (historyFullyQualified)
+                        "QUALIFICATION: MSS + CHOCH + RETEST CONFIRMED · TOUCH / PENETRATION · LEVEL ${formatPrice(p.qualificationChochLevel)}"
+                    else "QUALIFICATION: NOT RECORDED FOR THIS TRADE",
+                    12f, if (historyFullyQualified) green else amber, true
+                ))
+                c.addView(text("Stake: ${formatMoney(p.stake)}", 13f, Color.WHITE))
+                c.addView(text("FINAL P/L: ${formatMoney(p.profit)}", 14f, if (p.profit >= 0.0) green else red, true))
+                val closedText = if (p.closedAt > 0L) java.text.DateFormat.getDateTimeInstance().format(java.util.Date(p.closedAt * 1000L)) else "Time unavailable"
+                c.addView(text("Closed: $closedText", 11f, Color.WHITE))
+                c.addView(space(8))
+                c.addView(actionButton("DELETE THIS HISTORY RECORD", false) { deleteHistoryRecord(p) })
+                content.addView(c)
+                content.addView(space(8))
+            }
+        }
+        tradeStatusView = text(if (accountConnected) "EXECUTION CONNECTED" else "CONNECT A DERIV ACCOUNT TO ENABLE EXECUTION", 12f, if (accountConnected) green else amber, true)
+        content.addView(tradeStatusView)
+        tradeCountdownHandler.removeCallbacks(tradeCountdownTask)
+        tradeCountdownHandler.post(tradeCountdownTask)
+    }
+
+    private fun updateTradePositionViews(position: Position) {
+        tradeEntryBarrierViews[position.localId]?.text =
+            "ENTRY BARRIER: ${if (position.entryBarrier > 0.0) formatPrice(position.entryBarrier) else "Awaiting Deriv entry price"}"
+        tradeExpiryViews[position.localId]?.text = "EXPIRY: " + if (position.expiryAt > 0L) {
+            java.text.DateFormat.getDateTimeInstance().format(java.util.Date(position.expiryAt * 1000L))
+        } else {
+            "Awaiting Deriv expiry"
+        }
+        tradeStatusViews[position.localId]?.apply {
+            text = "Status: ${position.status}"
+            setTextColor(if (position.status == "OPEN") green else amber)
+        }
+        tradeProfitViews[position.localId]?.apply {
+            text = "Profit / Loss: ${formatMoney(position.profit)}"
+            setTextColor(if (position.profit >= 0.0) green else red)
+        }
+        tradeTargetViews[position.localId]?.apply {
+            val currentProfitPct = if (position.stake > 0.0)
+                (position.profit / position.stake) * 100.0 else 0.0
+            val protectedExitPct = trailingCloseLevel(position.trailingPeakProfitPct)
+            text = "AUTOMATIC TRAILING STOP · CURRENT ${String.format(Locale.US, "%+.2f", currentProfitPct)}% · PEAK ${String.format(Locale.US, "%+.2f", position.trailingPeakProfitPct)}% · PROTECT ${if (protectedExitPct > 0.0) "${protectedExitPct.toInt()}%" else "WAITING FOR 50% PEAK"}"
+            setTextColor(amber)
+        }
+    }
+
+    private fun showAccounts() {
+        pageHeading("ACCOUNTS", "Account access and connection settings.")
+        val deriv = card()
+        deriv.addView(text("DERIV ACCOUNT", 15f, gold, true))
+        deriv.addView(space(6))
+        deriv.addView(text("Account mode: $executionMode", 13f, if (executionMode == "REAL") blue else red, true))
+        deriv.addView(text(if (accountConnected) accountLabel else "Connection: Disconnected", 13f, Color.WHITE))
+        accountBalanceView = text(accountBalanceLabel, 13f, blue)
+        deriv.addView(accountBalanceView)
+        val pl = accountProfitLoss()
+        accountOpenPlView = text("OPEN TRADE P/L: ${formatMoney(pl.first)}", 13f, if (pl.first >= 0) green else red, true)
+        accountClosedPlView = text("CLOSED TRADE P/L: ${formatMoney(pl.second)}", 13f, if (pl.second >= 0) green else red, true)
+        accountTotalPlView = text("TOTAL TRADE P/L: ${formatMoney(pl.third)}", 13f, if (pl.third >= 0) green else red, true)
+        deriv.addView(accountOpenPlView)
+        deriv.addView(accountClosedPlView)
+        deriv.addView(accountTotalPlView)
+        deriv.addView(space(12))
+        deriv.addView(actionButton(if (accountConnected) "SWITCH / CONNECT ACCOUNT" else "CONNECT DERIV") {
+            showAccountModeDialog()
+        })
+        deriv.addView(space(8))
+        deriv.addView(actionButton("DISCONNECT DERIV", false) {
+            disconnectDerivAccount()
+        })
+        content.addView(deriv)
+        content.addView(space(12))
+
+        if (platformUserRole != "investor") {
+        val users = card()
+        users.addView(text("USER ACCOUNT", 15f, green, true))
+        users.addView(text(if (platformAuthenticated) platformUserName.ifBlank { "Signed-in account" } else "Sign in to view your profile", 13f, muted))
+        users.addView(space(10))
+        users.addView(actionButton("USER ACCOUNT", false) { openUserProfile() })
+        content.addView(users)
+        content.addView(space(12))
+
+        val admin = card()
+        admin.addView(text("ADMIN ACCOUNT", 15f, green, true))
+        admin.addView(text(if (platformUserRole == "admin") "Administrator dashboard and registered-user management." else "Administrator access only.", 13f, muted))
+        admin.addView(space(10))
+        admin.addView(actionButton("ADMIN ACCOUNT", false) { openAdminDashboard() })
+        content.addView(admin)
+        }
+    }
+
+    // All account-management requests use the existing authenticated mobile-auth.php session.
+    private fun platformRequest(action: String, values: Map<String, String> = emptyMap(), onError: () -> Unit = {}, onResult: (JSONObject) -> Unit) {
+        if (!platformAuthenticated || platformAuthToken.isBlank()) {
+            toast("Please sign in to your Volatilities Indicator account first.")
+            showPlatformAuthScreen(false, "Please sign in to continue.")
+            return
+        }
+        val form = FormBody.Builder().add("action", action)
+        values.forEach { (key, value) -> form.add(key, value) }
+        val request = Request.Builder().url(platformAuthUrl)
+            .header("Authorization", "Bearer $platformAuthToken")
+            .post(form.build()).build()
+        httpClient.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                runOnUiThread { toast("Unable to contact the account server. Check your connection."); onError() }
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val raw = response.body?.string().orEmpty()
+                val result = try { JSONObject(raw) } catch (_: Exception) { JSONObject() }
+                response.close()
+                runOnUiThread {
+                    if (!result.optBoolean("ok")) {
+                        val message = result.optString("message", "The account request could not be completed.")
+                        toast(message)
+                        if (response.code == 401) signOutPlatform()
+                        onError()
+                    } else onResult(result)
+                }
+            }
+        })
+    }
+
+    private fun accountSubPage(title: String, subtitle: String): LinearLayout {
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(pageColor) }
+        val heading = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(16), dp(18), dp(12)) }
+        heading.addView(text(title, 21f, gold, true))
+        heading.addView(text(subtitle, 13f, Color.WHITE))
+        val scroll = ScrollView(this).apply { isFillViewport = true }
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(12), dp(18), dp(20)) }
+        scroll.addView(body)
+        root.addView(heading)
+        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(actionButton("BACK TO ACCOUNTS", false) { selectedTab = "Accounts"; render() },
+            LinearLayout.LayoutParams(-1, dp(52)).apply { setMargins(dp(18), dp(8), dp(18), dp(12)) })
+        setContentView(root)
+        return body
+    }
+
+    private fun addProfileField(target: LinearLayout, label: String, value: String) {
+        val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(9), 0, dp(9)) }
+        row.addView(text(label.uppercase(Locale.US), 11f, green, true))
+        row.addView(text(value.ifBlank { "Not provided" }, 15f, ink))
+        target.addView(row)
+        target.addView(divider())
+    }
+
+    private fun openUserProfile() {
+        if (!platformAuthenticated) {
+            showPlatformAuthScreen(false, "Sign in to view your user profile.")
+            return
+        }
+        platformRequest("profile") { result ->
+            platformUser = result.optJSONObject("user") ?: platformUser
+            platformUserName = platformUser.optString("full_name", platformUserName)
+            platformUserRole = platformUser.optString("role", platformUserRole).lowercase(Locale.US)
+            if (platformUserRole == "investor") showInvestorDerivScreen() else showUserProfile(platformUser)
+        }
+    }
+
+    private fun showUserProfile(user: JSONObject) {
+        val body = accountSubPage("USER PROFILE", "Your personal Volatilities Indicator account.")
+        val panel = card()
+        panel.addView(text(user.optString("full_name", platformUserName), 18f, green, true))
+        panel.addView(space(8))
+        addProfileField(panel, "Account role", user.optString("role", "user").uppercase(Locale.US))
+        addProfileField(panel, "Account status", user.optString("status", "unknown").uppercase(Locale.US))
+        addProfileField(panel, "Email address", user.optString("email"))
+        addProfileField(panel, "Contact number", user.optString("phone"))
+        addProfileField(panel, "Registration date", user.optString("created_at"))
+        addProfileField(panel, "Subscription", "R500 · ${if (user.optString("subscription_status") == "approved" && user.optString("subscription_expiry_date") < java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US).format(java.util.Date())) "EXPIRED" else user.optString("subscription_status", "pending").uppercase(Locale.US)}")
+        addProfileField(panel, "Subscription inception", user.optString("subscription_inception_date", "Not approved"))
+        addProfileField(panel, "Subscription expiry", user.optString("subscription_expiry_date", "Not approved"))
+        addProfileField(panel, "Proof of payment", if (user.optString("payment_proof_name").isNotBlank()) "Uploaded: ${user.optString("payment_proof_name")}" else "Not uploaded")
+        body.addView(panel)
+        body.addView(space(12))
+        body.addView(actionButton("UPLOAD SUBSCRIPTION PROOF OF PAYMENT", true) { openPaymentProofPicker("subscription") })
+        body.addView(space(8))
+        body.addView(actionButton("UPLOAD INVESTMENT PROOF OF PAYMENT", false) { openPaymentProofPicker("investment") })
+        body.addView(space(8))
+        body.addView(actionButton("VIEW INVESTMENT PLANS", true) { loadInvestmentPlans(false) })
+        body.addView(space(8))
+        body.addView(actionButton("MY INVESTMENT PROFILE", false) { loadMyInvestments() })
+        body.addView(space(8))
+        body.addView(actionButton("SIGN OUT", false) { signOutPlatform() })
+    }
+
+    private fun showInvestorProfile() {
+        if (!platformAuthenticated) {
+            showPlatformAuthScreen(false, "Sign in to view your investor profile.")
+            return
+        }
+        platformRequest("profile") { result ->
+            val user = result.optJSONObject("user") ?: platformUser
+            platformUser = user
+            platformUserName = user.optString("full_name", platformUserName)
+            platformUserRole = user.optString("role", platformUserRole).lowercase(Locale.US)
+            if (platformUserRole != "investor") {
+                selectedTab = "Trade"
+                render()
+                return@platformRequest
+            }
+            val body = accountSubPage("INVESTOR PROFILE", "Your Volatilities Indicator investor account.")
+            val panel = card()
+            panel.addView(text(user.optString("full_name", platformUserName), 18f, green, true))
+            panel.addView(space(8))
+            addProfileField(panel, "Account type", "INVESTOR")
+            addProfileField(panel, "Account status", user.optString("status", "unknown").uppercase(Locale.US))
+            addProfileField(panel, "Email address", user.optString("email"))
+            addProfileField(panel, "Contact number", user.optString("phone"))
+            addProfileField(panel, "Registration date", user.optString("created_at"))
+            addProfileField(panel, "Subscription proof", if (user.optString("subscription_proof_name", user.optString("payment_proof_name")).isNotBlank()) "Uploaded" else "Not uploaded")
+            addProfileField(panel, "Investment proof", if (user.optString("investment_proof_name").isNotBlank()) "Uploaded" else "Not uploaded")
+            addProfileField(panel, "Subscription", "R500 · ${user.optString("subscription_status", "pending").uppercase(Locale.US)}")
+            addProfileField(panel, "Subscription inception", user.optString("subscription_inception_date", "Not approved"))
+            addProfileField(panel, "Subscription expiry", user.optString("subscription_expiry_date", "Not approved"))
+            addProfileField(panel, "Selected trading plan", when(user.optString("investor_plan")) { "A" -> "Plan A · 50% target · 15 days"; "B" -> "Plan B · 100% target · 30 days"; else -> "Not selected" })
+            addProfileField(panel, "Plan approval", user.optString("investor_plan_status", "not_selected").replace('_',' ').uppercase(Locale.US))
+            val planStartDate = user.optString("investor_plan_start_date").takeUnless { it.isBlank() || it == "null" } ?: "Not approved"
+            val planExpiryDate = user.optString("investor_plan_expiry_date").takeUnless { it.isBlank() || it == "null" } ?: "Not approved"
+            addProfileField(panel, "Investor plan start date", planStartDate)
+            addProfileField(panel, "Investor plan expiry date", planExpiryDate)
+            body.addView(panel)
+            body.addView(space(12))
+            body.addView(actionButton("UPLOAD SUBSCRIPTION PROOF OF PAYMENT", true) { openPaymentProofPicker("subscription") })
+            body.addView(space(8))
+            body.addView(actionButton("UPLOAD INVESTMENT PROOF OF PAYMENT", false) { openPaymentProofPicker("investment") })
+            body.addView(space(8))
+            body.addView(actionButton("SELECT INVESTOR TRADING PLAN", true) { showInvestorPlanSelection() })
+            body.addView(space(8))
+            body.addView(actionButton("SIGN OUT", false) { signOutPlatform() })
+        }
+    }
+
+    private fun showInvestorPlanSelection() {
+        val current = platformUser.optString("investor_plan")
+        val options = arrayOf("Plan A — 50% in 15 days", "Plan B — 100% in 30 days")
+        val selected = if (current == "B") 1 else 0
+        AlertDialog.Builder(this).setTitle("Choose Investor Trading Plan")
+            .setSingleChoiceItems(options, selected, null)
+            .setNegativeButton("CANCEL", null)
+            .setPositiveButton("SUBMIT SELECTION") { dialog, _ ->
+                val index = (dialog as AlertDialog).listView.checkedItemPosition
+                val plan = if (index == 1) "B" else "A"
+                platformRequest("investor_select_plan", mapOf("plan" to plan)) {
+                    toast(it.optString("message", "Plan selection submitted."))
+                    showInvestorProfile()
+                }
+            }.show()
+    }
+
+    private var selectedProofType: String = "subscription"
+
+    private fun openPaymentProofPicker(proofType: String) {
+        selectedProofType = if (proofType == "investment") "investment" else "subscription"
+        if (!platformAuthenticated || platformAuthToken.isBlank()) {
+            toast("Please sign in before uploading proof of payment.")
+            return
+        }
+        val picker = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/pdf", "image/jpeg", "image/png"))
+        }
+        startActivityForResult(picker, paymentProofPickerRequest)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != paymentProofPickerRequest || resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        val mimeType = contentResolver.getType(uri)?.lowercase(Locale.US).orEmpty()
+        if (mimeType !in listOf("application/pdf", "image/jpeg", "image/png")) {
+            toast("Please select a PDF, JPG or PNG proof of payment.")
+            return
+        }
         try {
+            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            if (bytes == null || bytes.isEmpty()) {
+                toast("The selected file could not be read.")
+                return
+            }
+            if (bytes.size > 5 * 1024 * 1024) {
+                toast("The proof of payment must not exceed 5 MB.")
+                return
+            }
+            val extension = when (mimeType) {
+                "application/pdf" -> "pdf"
+                "image/jpeg" -> "jpg"
+                else -> "png"
+            }
+            uploadPaymentProof(bytes, mimeType, "proof_of_payment.$extension", selectedProofType)
+        } catch (_: Exception) {
+            toast("Unable to read the selected proof of payment.")
+        }
+    }
 
-            webSocket
-                ?.close(
-                    1000,
-                    "Client destroyed"
+    private fun uploadPaymentProof(bytes: ByteArray, mimeType: String, fileName: String, proofType: String) {
+        if (!platformAuthenticated || platformAuthToken.isBlank()) {
+            toast("Please sign in before uploading proof of payment.")
+            return
+        }
+        val body = okhttp3.MultipartBody.Builder()
+            .setType(okhttp3.MultipartBody.FORM)
+            .addFormDataPart("action", "upload_payment_proof")
+            .addFormDataPart("proof_type", proofType)
+            .addFormDataPart("proof", fileName,
+                bytes.toRequestBody(mimeType.toMediaType()))
+            .build()
+        val request = Request.Builder().url(platformAuthUrl)
+            .header("Authorization", "Bearer $platformAuthToken")
+            .post(body).build()
+        httpClient.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                runOnUiThread { toast("Proof of payment could not be uploaded. Check your connection.") }
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val code = response.code
+                val raw = response.body?.string().orEmpty()
+                response.close()
+                val result = try { JSONObject(raw) } catch (_: Exception) { JSONObject() }
+                runOnUiThread {
+                    if (result.optBoolean("ok")) {
+                        toast(result.optString("message", "Proof of payment uploaded successfully."))
+                        if (platformUserRole == "investor") showInvestorProfile() else openUserProfile()
+                    } else {
+                        val message = result.optString("message").ifBlank { "Upload failed (HTTP $code). Check server upload limits and mobile-auth.php response." }
+                        toast(message)
+                        if (code == 401) signOutPlatform()
+                    }
+                }
+            }
+        })
+    }
+
+    private fun openAdminDashboard() {
+        if (!platformAuthenticated) {
+            showPlatformAuthScreen(false, "Sign in with an administrator account to continue.")
+            return
+        }
+        if (platformUserRole != "admin") {
+            toast("Administrator access is required.")
+            return
+        }
+        platformRequest("admin_users") { result -> showAdminDashboard(result.optJSONArray("users") ?: JSONArray()) }
+    }
+
+    private fun showAdminDashboard(users: JSONArray) {
+        val body = accountSubPage("ADMIN DASHBOARD", "Administrator profile and registered-user management.")
+        val adminCard = card()
+        adminCard.addView(text("ADMINISTRATOR PROFILE", 15f, green, true))
+        adminCard.addView(space(6))
+        addProfileField(adminCard, "Name", platformUser.optString("full_name", platformUserName))
+        addProfileField(adminCard, "Email", platformUser.optString("email"))
+        addProfileField(adminCard, "Role", "ADMIN")
+        body.addView(adminCard)
+        body.addView(space(14))
+        body.addView(text("PENDING APPROVALS", 17f, gold, true))
+        body.addView(space(8))
+        var pendingCount = 0
+        for (i in 0 until users.length()) {
+            val pendingUser = users.optJSONObject(i) ?: continue
+            val uid = pendingUser.optString("id")
+            val name = pendingUser.optString("full_name", "User")
+            val subProof = pendingUser.optString("subscription_proof_name", pendingUser.optString("payment_proof_name"))
+            val invProof = pendingUser.optString("investment_proof_name")
+            if (subProof.isNotBlank() && pendingUser.optString("subscription_status", "pending") != "approved") {
+                pendingCount++
+                body.addView(text("$name · SUBSCRIPTION PAYMENT", 14f, ink, true))
+                body.addView(actionButton("VIEW SUBSCRIPTION PROOF", false) { adminViewPaymentProof(uid, "subscription") })
+                body.addView(actionButton("APPROVE SUBSCRIPTION", true) { adminDecision("admin_subscription_decision", uid, "approve") })
+                body.addView(actionButton("REJECT SUBSCRIPTION", false) { adminDecision("admin_subscription_decision", uid, "reject") })
+                body.addView(space(8))
+            }
+            if (invProof.isNotBlank() && pendingUser.optString("investment_payment_status", "pending") == "pending") {
+                pendingCount++
+                body.addView(text("$name · INVESTMENT PAYMENT", 14f, ink, true))
+                body.addView(actionButton("VIEW INVESTMENT PROOF", false) { adminViewPaymentProof(uid, "investment") })
+                body.addView(actionButton("APPROVE INVESTMENT PAYMENT", true) { adminDecision("admin_investment_payment_decision", uid, "approve") })
+                body.addView(actionButton("REJECT INVESTMENT PAYMENT", false) { adminDecision("admin_investment_payment_decision", uid, "reject") })
+                body.addView(space(8))
+            }
+            if (pendingUser.optString("role").equals("investor", true) && pendingUser.optString("investor_plan_status") == "pending" && pendingUser.optString("investor_plan").isNotBlank()) {
+                pendingCount++
+                body.addView(text("$name · INVESTOR PLAN ${pendingUser.optString("investor_plan")}", 14f, ink, true))
+                body.addView(actionButton("APPROVE INVESTOR PLAN", true) { adminDecision("admin_investor_plan_decision", uid, "approve") })
+                body.addView(actionButton("REJECT INVESTOR PLAN", false) { adminDecision("admin_investor_plan_decision", uid, "reject") })
+                body.addView(space(8))
+            }
+        }
+        if (pendingCount == 0) body.addView(text("No pending subscription, investment payment or investor plan approvals.", 13f, muted))
+        body.addView(space(14))
+        body.addView(text("INVESTMENT ADMINISTRATION", 17f, gold, true))
+        body.addView(space(8))
+        body.addView(actionButton("MANAGE SUBSCRIPTIONS", true) { loadAdminSubscriptions() })
+        body.addView(space(8))
+        body.addView(actionButton("MANAGE INVESTMENT PLANS", true) { loadInvestmentPlans(true) })
+        body.addView(space(8))
+        body.addView(actionButton("VIEW INVESTMENT REQUESTS", false) { loadAdminInvestments() })
+        body.addView(space(18))
+        val heading = horizontal()
+        val registeredUserCount = (0 until users.length()).count { index ->
+            users.optJSONObject(index)?.optString("role", "user")?.equals("admin", true) != true
+        }
+        heading.addView(text("REGISTERED USERS", 17f, gold, true), LinearLayout.LayoutParams(0, -2, 1f))
+        heading.addView(text("$registeredUserCount total", 12f, ink))
+        body.addView(heading)
+        body.addView(space(8))
+        if (registeredUserCount == 0) {
+            body.addView(text("No registered users were returned by the server.", 14f, muted))
+        }
+        for (i in 0 until users.length()) {
+            val user = users.optJSONObject(i) ?: continue
+            if (user.optString("role", "user").equals("admin", true)) continue
+            val item = card()
+            item.addView(text(user.optString("full_name", "Unnamed user"), 15f, green, true))
+            item.addView(text(user.optString("email"), 13f, ink))
+            item.addView(space(4))
+            val statusRow = horizontal()
+            statusRow.addView(text("Status: ${user.optString("status", "unknown").uppercase(Locale.US)}", 12f,
+                if (user.optString("status") == "approved") green else amber, true), LinearLayout.LayoutParams(0, -2, 1f))
+            statusRow.addView(text("ACCOUNT TYPE: ${user.optString("role", "user").uppercase(Locale.US)}", 11f, muted))
+            item.addView(statusRow)
+            item.addView(space(8))
+            item.addView(actionButton("OPEN USER PROFILE", false) { showAdminUserProfile(user) })
+            body.addView(item)
+            body.addView(space(9))
+        }
+        body.addView(actionButton("REFRESH REGISTERED USERS", true) { openAdminDashboard() })
+    }
+
+    // Investment-plan screens are additive: the existing trading engine and account dashboard remain unchanged.
+    private fun investmentRequest(action: String, values: Map<String, String> = emptyMap(), onResult: (JSONObject) -> Unit) {
+        if (!platformAuthenticated || platformAuthToken.isBlank()) {
+            toast("Please sign in to your Volatilities Indicator account first.")
+            showPlatformAuthScreen(false, "Please sign in to continue.")
+            return
+        }
+        val form = FormBody.Builder().add("action", action)
+        values.forEach { (key, value) -> form.add(key, value) }
+        val request = Request.Builder().url(investmentApiUrl)
+            .header("Authorization", "Bearer $platformAuthToken")
+            .post(form.build()).build()
+        httpClient.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                runOnUiThread { toast("Unable to contact the investment server. Check your connection.") }
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val statusCode = response.code
+                val raw = response.body?.string().orEmpty()
+                val result = try { JSONObject(raw) } catch (_: Exception) { JSONObject() }
+                response.close()
+                runOnUiThread {
+                    if (!result.optBoolean("ok")) {
+                        toast(result.optString("message", "Investment request could not be completed."))
+                        if (statusCode == 401) signOutPlatform()
+                    } else onResult(result)
+                }
+            }
+        })
+    }
+
+    private fun loadInvestmentPlans(admin: Boolean) {
+        investmentRequest(if (admin) "admin_plans" else "plans") { result ->
+            showInvestmentPlans(result.optJSONArray("plans") ?: JSONArray(), admin)
+        }
+    }
+
+    private fun showInvestmentPlans(plans: JSONArray, admin: Boolean) {
+        val body = accountSubPage(if (admin) "MANAGE INVESTMENT PLANS" else "INVESTMENT PLANS",
+            if (admin) "Administrator controls for plan terms and availability." else "Choose an available plan and enter an amount between R1,000 and R5,000.")
+        if (plans.length() == 0) body.addView(text("No plans are currently available.", 14f, muted))
+        for (i in 0 until plans.length()) {
+            val plan = plans.optJSONObject(i) ?: continue
+            val item = card()
+            item.addView(text(plan.optString("name"), 17f, green, true))
+            item.addView(space(6))
+            addProfileField(item, "Plan duration", "${plan.optInt("duration_days")} days")
+            addProfileField(item, "Total projected growth", "${plan.optDouble("total_growth_percent").toInt()}% simple growth")
+            addProfileField(item, "Investment range", "R${moneyText(plan.optDouble("min_amount"))} – R${moneyText(plan.optDouble("max_amount"))}")
+            if (admin) {
+                addProfileField(item, "Availability", if (plan.optBoolean("enabled", true)) "ENABLED" else "DISABLED")
+                item.addView(actionButton("EDIT PLAN", true) { showEditInvestmentPlanDialog(plan) })
+            } else {
+                item.addView(actionButton("SELECT PLAN", true) { showSelectInvestmentPlanDialog(plan) })
+            }
+            body.addView(item)
+            body.addView(space(10))
+        }
+        if (admin) body.addView(actionButton("ADD NEW PLAN", false) { showEditInvestmentPlanDialog(JSONObject()) })
+    }
+
+    private fun moneyText(value: Double): String = String.format(Locale.US, "%,.2f", value)
+
+    private fun showSelectInvestmentPlanDialog(plan: JSONObject) {
+        val amountInput = EditText(this).apply {
+            hint = "Investment amount (R1,000 – R5,000)"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            setTextColor(ink)
+        }
+        val wrap = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(22), dp(8), dp(22), 0) }
+        wrap.addView(text("${plan.optString("name")} · ${plan.optInt("duration_days")} days", 14f, green, true))
+        wrap.addView(space(8)); wrap.addView(amountInput)
+        AlertDialog.Builder(this).setTitle("Select investment plan").setView(wrap)
+            .setNegativeButton("CANCEL", null)
+            .setPositiveButton("CONTINUE") { _, _ ->
+                val amount = amountInput.text.toString().trim().toDoubleOrNull()
+                if (amount == null) { toast("Enter a valid investment amount."); return@setPositiveButton }
+                investmentRequest("select_plan", mapOf("plan_id" to plan.optString("plan_id"), "amount" to amount.toString())) {
+                    toast(it.optString("message", "Plan selected.")); loadMyInvestments()
+                }
+            }.show()
+    }
+
+    private fun loadMyInvestments() {
+        investmentRequest("profile") { result -> showMyInvestments(result.optJSONArray("investments") ?: JSONArray()) }
+    }
+
+    private fun showMyInvestments(investments: JSONArray) {
+        val body = accountSubPage("MY INVESTMENTS", "Your selected plans and projected progress.")
+        if (investments.length() == 0) body.addView(text("You have not selected an investment plan yet.", 14f, muted))
+        for (i in 0 until investments.length()) {
+            val inv = investments.optJSONObject(i) ?: continue
+            val item = card()
+            item.addView(text(inv.optString("plan_name"), 17f, green, true))
+            addProfileField(item, "Status", friendlyInvestmentStatus(inv.optString("status")))
+            addProfileField(item, "Invested amount", "R${moneyText(inv.optDouble("invested_amount"))}")
+            addProfileField(item, "Plan duration", "${inv.optInt("duration_days")} days")
+            addProfileField(item, "Investment date", inv.optString("investment_date", "Pending approval"))
+            addProfileField(item, "Expiry date", inv.optString("expiry_date", "Pending approval"))
+            addProfileField(item, "Daily projected growth", "R${moneyText(inv.optDouble("daily_growth_amount"))}")
+            addProfileField(item, "Projected growth to date", "R${moneyText(inv.optDouble("accrued_projected_growth"))}")
+            addProfileField(item, "Potential projected return", "R${moneyText(inv.optDouble("potential_return"))}")
+            val withdrawalStatus = inv.optString("withdrawal_status").trim().uppercase(Locale.US)
+            val investmentApproved = inv.optString("status").equals("DEMO_APPROVED", true)
+            val withdrawalEligible = investmentApproved && inv.optBoolean("withdrawal_available")
+            val noPreviousRequest = withdrawalStatus.isBlank()
+            val withdrawalButton = actionButton(
+                when {
+                    withdrawalStatus == "PENDING_DEMO_REVIEW" -> "WITHDRAWAL REQUEST UNDER REVIEW"
+                    withdrawalStatus == "DEMO_APPROVED_NOT_PAID" -> "WITHDRAWAL REVIEW APPROVED"
+                    withdrawalStatus == "DEMO_REJECTED" -> "WITHDRAWAL REVIEW REJECTED"
+                    withdrawalEligible -> "REQUEST WITHDRAWAL REVIEW"
+                    else -> "WITHDRAWAL AVAILABLE AFTER 50% OF DURATION"
+                }, false
+            ) { showWithdrawalRequestDialog(inv) }
+            withdrawalButton.isEnabled = withdrawalEligible && noPreviousRequest
+            withdrawalButton.alpha = if (withdrawalButton.isEnabled) 1.0f else 0.55f
+            item.addView(withdrawalButton)
+            body.addView(item); body.addView(space(10))
+        }
+    }
+
+    private fun friendlyInvestmentStatus(status: String): String = when (status.uppercase(Locale.US)) {
+        "PENDING_DEMO_DEPOSIT" -> "PENDING DEPOSIT REVIEW"
+        "DEMO_APPROVED" -> "APPROVED · GROWTH ACTIVE"
+        "PENDING_DEMO_REVIEW" -> "PENDING WITHDRAWAL REVIEW"
+        "DEMO_APPROVED_NOT_PAID" -> "WITHDRAWAL REVIEW APPROVED"
+        "DEMO_REJECTED" -> "WITHDRAWAL REVIEW REJECTED"
+        else -> status.replace("DEMO_", "").replace('_', ' ').uppercase(Locale.US)
+    }
+
+    private fun showWithdrawalRequestDialog(inv: JSONObject) {
+        val amount = EditText(this).apply { hint = "Requested amount"; inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL; setTextColor(ink) }
+        AlertDialog.Builder(this).setTitle("Request withdrawal review").setMessage("This submits a request for administrator review; it does not transfer money.")
+            .setView(amount).setNegativeButton("CANCEL", null).setPositiveButton("SUBMIT") { _, _ ->
+                val value = amount.text.toString().trim().toDoubleOrNull()
+                if (value == null || value <= 0) { toast("Enter a valid amount."); return@setPositiveButton }
+                investmentRequest("request_demo_withdrawal", mapOf("investment_id" to inv.optString("investment_id"), "amount" to value.toString())) {
+                    toast(it.optString("message", "Request submitted.")); loadMyInvestments()
+                }
+            }.show()
+    }
+
+    private fun showEditInvestmentPlanDialog(plan: JSONObject) {
+        val fields = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0) }
+        fun field(hint: String, value: String): EditText = EditText(this).apply { this.hint = hint; setText(value); setTextColor(ink); setSingleLine(true) }.also { fields.addView(it) }
+        val id = field("Plan ID", plan.optString("plan_id"))
+        val name = field("Plan name", plan.optString("name"))
+        val days = field("Duration in days", plan.optString("duration_days"))
+        val growth = field("Total projected growth (%)", plan.optString("total_growth_percent"))
+        val min = field("Minimum amount", plan.optString("min_amount", "1000"))
+        val max = field("Maximum amount", plan.optString("max_amount", "5000"))
+        val enabled = android.widget.CheckBox(this).apply { text = "Plan enabled"; setTextColor(ink); isChecked = plan.optBoolean("enabled", true) }
+        fields.addView(enabled)
+        AlertDialog.Builder(this).setTitle(if (plan.optString("plan_id").isBlank()) "Add investment plan" else "Edit investment plan")
+            .setView(fields).setNegativeButton("CANCEL", null).setPositiveButton("SAVE") { _, _ ->
+                val values = mapOf("plan_id" to id.text.toString().trim(), "name" to name.text.toString().trim(),
+                    "duration_days" to days.text.toString().trim(), "total_growth_percent" to growth.text.toString().trim(),
+                    "min_amount" to min.text.toString().trim(), "max_amount" to max.text.toString().trim(), "enabled" to if (enabled.isChecked) "1" else "0")
+                investmentRequest("admin_save_plan", values) { toast(it.optString("message", "Plan saved.")); loadInvestmentPlans(true) }
+            }.show()
+    }
+
+    private fun loadAdminSubscriptions() {
+        platformRequest("admin_users") { result ->
+            val users = result.optJSONArray("users") ?: JSONArray()
+            val body = accountSubPage("MANAGE SUBSCRIPTIONS", "Review subscription payments and subscription status.")
+            var count = 0
+            for (i in 0 until users.length()) {
+                val user = users.optJSONObject(i) ?: continue
+                val uid = user.optString("id")
+                val proofName = user.optString("subscription_proof_name", user.optString("payment_proof_name"))
+                val status = user.optString("subscription_status", "pending")
+                val item = card()
+                item.addView(text(user.optString("full_name", "User"), 16f, green, true))
+                addProfileField(item, "Email", user.optString("email"))
+                addProfileField(item, "Subscription", "R500")
+                addProfileField(item, "Status", status.replace('_', ' ').uppercase(Locale.US))
+                addProfileField(item, "Proof of payment", if (proofName.isBlank()) "Not uploaded" else proofName)
+                if (proofName.isNotBlank()) {
+                    item.addView(actionButton("VIEW SUBSCRIPTION PROOF", false) { adminViewPaymentProof(uid, "subscription") })
+                    if (status != "approved") {
+                        item.addView(actionButton("APPROVE SUBSCRIPTION", true) {
+                            adminDecision("admin_subscription_decision", uid, "approve")
+                        })
+                        item.addView(actionButton("REJECT SUBSCRIPTION", false) {
+                            adminDecision("admin_subscription_decision", uid, "reject")
+                        })
+                    }
+                }
+                body.addView(item)
+                body.addView(space(8))
+                count++
+            }
+            if (count == 0) body.addView(text("No registered accounts found.", 14f, muted))
+        }
+    }
+
+    private fun loadAdminInvestments() {
+        investmentRequest("admin_investments") { result -> showAdminInvestments(result.optJSONArray("investments") ?: JSONArray()) }
+    }
+
+    private fun showAdminInvestments(investments: JSONArray) {
+        val body = accountSubPage("INVESTMENT REQUESTS", "Administrator review of selected plans and requests.")
+        if (investments.length() == 0) body.addView(text("No investment requests found.", 14f, muted))
+        for (i in 0 until investments.length()) {
+            val inv = investments.optJSONObject(i) ?: continue
+            val item = card()
+            item.addView(text(inv.optString("plan_name"), 17f, green, true))
+            addProfileField(item, "User", inv.optString("user_email"))
+            addProfileField(item, "Amount", "R${moneyText(inv.optDouble("invested_amount"))}")
+            addProfileField(item, "Status", friendlyInvestmentStatus(inv.optString("status")))
+            if (inv.optString("status") == "PENDING_DEMO_DEPOSIT") {
+                item.addView(actionButton("APPROVE DEPOSIT", true) {
+                    investmentRequest("admin_demo_approve_deposit", mapOf("investment_id" to inv.optString("investment_id"))) {
+                        toast(it.optString("message", "Deposit review updated.")); loadAdminInvestments()
+                    }
+                })
+            }
+            if (inv.optString("withdrawal_status") == "PENDING_DEMO_REVIEW") {
+                item.addView(actionButton("APPROVE WITHDRAWAL REVIEW", true) { decideInvestmentWithdrawal(inv, "approve") })
+                item.addView(actionButton("REJECT WITHDRAWAL REVIEW", false) { decideInvestmentWithdrawal(inv, "reject") })
+            }
+            body.addView(item); body.addView(space(10))
+        }
+    }
+
+    private fun decideInvestmentWithdrawal(inv: JSONObject, decision: String) {
+        investmentRequest("admin_demo_withdrawal_decision", mapOf("investment_id" to inv.optString("investment_id"), "decision" to decision)) {
+            toast(it.optString("message", "Withdrawal review updated.")); loadAdminInvestments()
+        }
+    }
+
+    private fun showAdminUserProfile(user: JSONObject) {
+        val userId = user.optString("id")
+        val body = accountSubPage("USER PROFILE", "Administrator controls for this registered user.")
+        val panel = card()
+        panel.addView(text(user.optString("full_name"), 17f, green, true))
+        panel.addView(space(8))
+        addProfileField(panel, "Email", user.optString("email"))
+        addProfileField(panel, "Contact number", user.optString("phone"))
+        addProfileField(panel, "Role", user.optString("role", "user").uppercase(Locale.US))
+        addProfileField(panel, "Status", user.optString("status", "unknown").uppercase(Locale.US))
+        addProfileField(panel, "Registered", user.optString("created_at"))
+        addProfileField(panel, "Subscription proof", if (user.optString("subscription_proof_name", user.optString("payment_proof_name")).isNotBlank()) "Uploaded" else "Not uploaded")
+        addProfileField(panel, "Investment proof", if (user.optString("investment_proof_name").isNotBlank()) "Uploaded" else "Not uploaded")
+        addProfileField(panel, "Investment payment", user.optString("investment_payment_status", "pending").uppercase(Locale.US))
+        addProfileField(panel, "Subscription", user.optString("subscription_status", "pending").uppercase(Locale.US))
+        addProfileField(panel, "Subscription expiry", user.optString("subscription_expiry_date", "Not approved"))
+        addProfileField(panel, "Investor plan", when(user.optString("investor_plan")) { "A" -> "Plan A · 15 days"; "B" -> "Plan B · 30 days"; else -> "Not selected" })
+        addProfileField(panel, "Investor plan status", user.optString("investor_plan_status", "not_selected").replace('_',' ').uppercase(Locale.US))
+        val planStartDate = user.optString("investor_plan_start_date").takeUnless { it.isBlank() || it == "null" } ?: "Not approved"
+        val planExpiryDate = user.optString("investor_plan_expiry_date").takeUnless { it.isBlank() || it == "null" } ?: "Not approved"
+        addProfileField(panel, "Investor plan start date", planStartDate)
+        addProfileField(panel, "Investor plan expiry date", planExpiryDate)
+        body.addView(panel)
+        if (user.optString("subscription_proof_name", user.optString("payment_proof_name")).isNotBlank()) {
+            body.addView(actionButton("VIEW SUBSCRIPTION PROOF", true) { adminViewPaymentProof(userId, "subscription") })
+            body.addView(space(8))
+            body.addView(actionButton("APPROVE SUBSCRIPTION", true) { adminDecision("admin_subscription_decision", userId, "approve") })
+            body.addView(space(8))
+            body.addView(actionButton("REJECT SUBSCRIPTION", false) { adminDecision("admin_subscription_decision", userId, "reject") })
+        }
+        if (user.optString("investment_proof_name").isNotBlank()) {
+            body.addView(space(8))
+            body.addView(actionButton("VIEW INVESTMENT PROOF", true) { adminViewPaymentProof(userId, "investment") })
+            body.addView(space(8))
+            body.addView(actionButton("APPROVE INVESTMENT PAYMENT", true) { adminDecision("admin_investment_payment_decision", userId, "approve") })
+            body.addView(space(8))
+            body.addView(actionButton("REJECT INVESTMENT PAYMENT", false) { adminDecision("admin_investment_payment_decision", userId, "reject") })
+        }
+        if (user.optString("role").equals("investor", true) && user.optString("investor_plan_status") == "pending") {
+            body.addView(space(8))
+            body.addView(actionButton("APPROVE INVESTOR PLAN", true) { adminDecision("admin_investor_plan_decision", userId, "approve") })
+            body.addView(space(8))
+            body.addView(actionButton("REJECT INVESTOR PLAN", false) { adminDecision("admin_investor_plan_decision", userId, "reject") })
+        }
+        body.addView(space(12))
+        body.addView(actionButton("EDIT USER PROFILE", true) { showEditUserDialog(user) })
+        body.addView(space(8))
+        body.addView(actionButton("CHANGE ACCOUNT TYPE", false) {
+            val currentRole = user.optString("role", "user").lowercase(Locale.US)
+            val nextRole = if (currentRole == "investor") "user" else "investor"
+            AlertDialog.Builder(this)
+                .setTitle("Change account type?")
+                .setMessage("Change ${user.optString("full_name")} from ${currentRole.uppercase(Locale.US)} to ${nextRole.uppercase(Locale.US)}? The existing login and account history will be retained.")
+                .setNegativeButton("CANCEL", null)
+                .setPositiveButton("CHANGE") { _, _ ->
+                    platformRequest("admin_change_role", mapOf("user_id" to userId, "role" to nextRole)) {
+                        toast(it.optString("message", "Account type updated."))
+                        openAdminDashboard()
+                    }
+                }.show()
+        })
+        body.addView(space(8))
+
+        body.addView(space(8))
+        when (user.optString("status", "pending").lowercase(Locale.US)) {
+            "pending" -> body.addView(actionButton("APPROVE USER", true) { adminUserAction("admin_approve_user", userId) })
+            "suspended" -> body.addView(actionButton("REACTIVATE USER", true) { adminUserAction("admin_reactivate_user", userId) })
+            else -> body.addView(actionButton("SUSPEND USER", false) {
+                AlertDialog.Builder(this).setTitle("Suspend user?")
+                    .setMessage("This user will no longer be able to sign in.")
+                    .setNegativeButton("CANCEL", null)
+                    .setPositiveButton("SUSPEND") { _, _ -> adminUserAction("admin_suspend_user", userId) }.show()
+            })
+        }
+        body.addView(space(8))
+        body.addView(actionButton("DELETE USER", false) {
+            AlertDialog.Builder(this).setTitle("Delete user?")
+                .setMessage("This permanently deletes this user account. This action cannot be undone.")
+                .setNegativeButton("CANCEL", null)
+                .setPositiveButton("DELETE") { _, _ -> adminUserAction("admin_delete_user", userId) }.show()
+        })
+    }
+
+    private fun adminDecision(action: String, userId: String, decision: String) {
+        platformRequest(action, mapOf("user_id" to userId, "decision" to decision)) {
+            toast(it.optString("message", "Decision saved."))
+            openAdminDashboard()
+        }
+    }
+
+    private fun adminViewPaymentProof(userId: String, proofType: String) {
+        platformRequest("admin_get_payment_proof", mapOf("user_id" to userId, "proof_type" to proofType)) { result ->
+            try {
+                val bytes = android.util.Base64.decode(result.optString("content"), android.util.Base64.DEFAULT)
+                val mime = result.optString("mime", "application/octet-stream")
+                val extension = when (mime) { "application/pdf" -> "pdf"; "image/jpeg" -> "jpg"; "image/png" -> "png"; else -> "bin" }
+                val file = java.io.File(cacheDir, "payment-proof-$userId.$extension")
+                file.writeBytes(bytes)
+                val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+                val view = Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                startActivity(Intent.createChooser(view, "View proof of payment"))
+            } catch (_: Exception) { toast("No application is available to open this proof of payment.") }
+        }
+    }
+
+    private fun adminUserAction(action: String, userId: String) {
+        platformRequest(action, mapOf("user_id" to userId)) {
+            toast(it.optString("message", "User account updated."))
+            openAdminDashboard()
+        }
+    }
+
+    private fun showEditUserDialog(user: JSONObject) {
+        val fields = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0) }
+        fun edit(hint: String, value: String): EditText = EditText(this).apply {
+            this.hint = hint; setText(value); setTextColor(ink); setSingleLine(true)
+        }.also { fields.addView(it) }
+        val first = edit("First name", user.optString("first_name"))
+        val surname = edit("Surname", user.optString("surname"))
+        val email = edit("Email address", user.optString("email"))
+        val phone = edit("Contact number", user.optString("phone"))
+        val password = edit("New password (leave blank to keep current)", "")
+        password.inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        AlertDialog.Builder(this).setTitle("Edit user profile").setView(fields)
+            .setNegativeButton("CANCEL", null)
+            .setPositiveButton("SAVE") { _, _ ->
+                val values = mapOf(
+                    "user_id" to user.optString("id"), "first_name" to first.text.toString().trim(),
+                    "surname" to surname.text.toString().trim(), "email" to email.text.toString().trim(),
+                    "phone" to phone.text.toString().trim(), "password" to password.text.toString()
                 )
+                platformRequest("admin_edit_user", values) {
+                    toast(it.optString("message", "User details updated."))
+                    openAdminDashboard()
+                }
+            }.show()
+    }
 
-        } catch (
-           _: Exception
-        ) {
+    private fun trailingCloseLevel(peakPct: Double): Double = when {
+        peakPct >= 90.0 -> 70.0
+        peakPct >= 70.0 -> 50.0
+        peakPct >= 50.0 -> 30.0
+        else -> 0.0
+    }
+
+    private fun evaluateTrailingProfit(p: Position) {
+        if (p.status != "OPEN" ||
+            p.stake <= 0.0 ||
+            !p.canSell ||
+            p.contractId <= 0L
+        ) return
+
+        val profitPct = (p.profit / p.stake) * 100.0
+        if (!p.trailingPeakInitialized) {
+            // Initialize from the contract's actual P/L, including a negative value.
+            p.trailingPeakProfitPct = profitPct
+            p.trailingPeakInitialized = true
+        } else if (profitPct > p.trailingPeakProfitPct) {
+            // Keep the highest P/L percentage reached by this individual contract.
+            p.trailingPeakProfitPct = profitPct
         }
 
-        webSocket =
-            null
+        // P/L updates only maintain the high-water mark. A completed M5 candle
+        // must separately confirm the directional reversal before any close.
+        savePositions()
+    }
 
-        try { marketDataSocket?.close(1000, "Client destroyed") } catch (_: Exception) {}
-        marketDataSocket = null
-        marketDataTimeout?.cancel(false)
-        marketDataTimeout = null
+    private fun autoTradingButton(): View {
+        val button = actionButton(
+            if (autoTradingEnabled) "AUTO TRADING: ON" else "AUTO TRADING: OFF",
+            primary = autoTradingEnabled
+        ) { toggleAutoTrading() }
+        button.setTextColor(Color.WHITE)
+        button.background = rounded(
+            if (autoTradingEnabled) green else red,
+            if (autoTradingEnabled) green else red,
+            10
+        )
+        return button
+    }
 
-        connected =
-            false
-
-        connecting =
-            false
-
-        accountId =
-            null
-
-        try {
-
-            scheduler.shutdownNow()
-
-        } catch (
-            _: Exception
-        ) {
+    private fun toggleAutoTrading() {
+        autoTradingEnabled = !autoTradingEnabled
+        settingsPrefs.edit().putBoolean("auto_trading_enabled", autoTradingEnabled).apply()
+        addNotification(
+            "Settings",
+            "Auto trading ${if (autoTradingEnabled) "enabled" else "disabled"}",
+            if (autoTradingEnabled) "Automatic original and eligible recovery entries are enabled. Existing contracts remain managed by Deriv."
+            else "New automatic entries are paused. Existing contracts remain open until manually closed or they expire."
+        )
+        if (autoTradingEnabled && accountConnected) {
+            indexes.forEach { symbol ->
+                m15CandlesByIndex[symbol]?.let { evaluateNewTradingSignal(symbol, it) }
+                latestPrices[symbol]?.let { evaluateOriginalEntries(symbol, it) }
+            }
         }
+        render()
+    }
 
-        try {
+    private fun showSettings() {
+        pageHeading("SETTINGS", "Application preferences.")
+        val c = card()
+        c.addView(text("APPLICATION", 15f, gold, true))
+        c.addView(space(8))
+        c.addView(settingRow("Interface", if (darkInterface) "Dark" else "Light") {
+            showInterfaceDialog()
+        })
+        c.addView(divider())
+        c.addView(settingRow("Auto trading", if (autoTradingEnabled) "ON" else "OFF") {
+            toggleAutoTrading()
+        })
+        c.addView(divider())
+        c.addView(marketIndexSettingRow())
+        c.addView(divider())
+        c.addView(settingRow("Market feed", if (marketFeedConnected) "Connected" else "Connecting"))
+        c.addView(divider())
+        c.addView(settingRow("Trading account", "$executionMode · " + if (accountConnected) "Connected" else "Not connected"))
+        content.addView(c)
+    }
 
-            httpClient
-                .dispatcher
-                .executorService
-                .shutdown()
-
-        } catch (
-            _: Exception
-        ) {
+    private fun marketIndexSettingRow(): View {
+        val wrapper = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(12), 0, dp(12))
         }
-
-        try {
-
-            webSocketClient
-                .dispatcher
-                .executorService
-                .shutdown()
-
-        } catch (
-            _: Exception
-        ) {
+        wrapper.addView(text("Market indexes", 14f, green, true))
+        val indexRow = horizontal().apply { gravity = Gravity.CENTER_VERTICAL }
+        indexes.forEach { symbol ->
+            val item = text(displayIndexName(symbol), 10f, indexNameColor(symbol), true).apply {
+                gravity = Gravity.CENTER
+                setPadding(dp(2), dp(7), dp(2), dp(7))
+            }
+            indexRow.addView(item, LinearLayout.LayoutParams(0, -2, 1f))
         }
+        wrapper.addView(indexRow)
+        return wrapper
+    }
+
+    private fun updateConnectionLabels(message: String) {
+    if (selectedTab == "Home") {
+        val isLive = marketFeedConnected
+        feedPillView?.apply {
+            text = if (isLive) "LIVE" else "CONNECTING"
+            setTextColor(if (isLive) Color.BLACK else amber)
+            background = rounded(
+                if (isLive) green else Color.WHITE,
+                if (isLive) green else amber,
+                20
+            )
+        }
+    }
+    }
+
+    private fun renderIfHome() {
+        if (selectedTab == "Home") render()
+    }
+
+    private fun pageHeading(title: String, subtitle: String) {
+        content.addView(text(title, 21f, gold, true))
+        content.addView(text(subtitle, 13f, Color.WHITE))
+        content.addView(space(18))
+    }
+
+    private fun settingRow(label: String, value: String, action: (() -> Unit)? = null): View {
+        val row = horizontal()
+        row.gravity = Gravity.CENTER_VERTICAL
+        row.setPadding(0, dp(12), 0, dp(12))
+        row.addView(text(label, 14f, green, true),
+            LinearLayout.LayoutParams(0, -2, 1f))
+        val valueColor = if (label == "Trading account") {
+            if (executionMode == "REAL") blue else red
+        } else Color.WHITE
+        row.addView(text(value, 13f, valueColor))
+        if (action != null) {
+            row.isClickable = true
+            row.setOnClickListener { action() }
+            val selectable = android.util.TypedValue()
+            theme.resolveAttribute(android.R.attr.selectableItemBackground, selectable, true)
+            if (selectable.resourceId != 0) {
+                row.setBackgroundResource(selectable.resourceId)
+            }
+        }
+        return row
+    }
+
+    private fun showInterfaceDialog() {
+        val options = arrayOf("Light", "Dark")
+        AlertDialog.Builder(this)
+            .setTitle("Choose interface")
+            .setSingleChoiceItems(options, if (darkInterface) 1 else 0) { dialog, which ->
+                darkInterface = which == 1
+                settingsPrefs.edit().putBoolean("dark_interface", darkInterface).apply()
+                dialog.dismiss()
+                window.statusBarColor = pageColor
+                window.navigationBarColor = if (darkInterface) pageColor else Color.WHITE
+                window.decorView.systemUiVisibility = if (darkInterface) 0 else
+                    View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+                render()
+            }
+            .setNegativeButton("CANCEL", null)
+            .show()
+    }
+
+    private fun bottomNavigation(): View {
+        val nav = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setBackgroundColor(if (darkInterface) Color.rgb(0, 7, 5) else Color.WHITE)
+            setPadding(dp(6), dp(8), dp(6), dp(8))
+            elevation = dp(8).toFloat()
+        }
+        val tabs = if (platformUserRole == "investor") listOf("Trade", "Accounts", "Profile") else listOf("Home", "Trade", "Accounts", "Settings")
+        tabs.forEach { tab ->
+            val item = TextView(this).apply {
+                text = tab
+                textSize = 12f
+                gravity = Gravity.CENTER
+                setTypeface(null, if (selectedTab == tab) Typeface.BOLD else Typeface.NORMAL)
+                setTextColor(if (selectedTab == tab) green else gold)
+                setPadding(dp(4), dp(8), dp(4), dp(8))
+                setOnClickListener { openTab(tab) }
+            }
+            nav.addView(item, LinearLayout.LayoutParams(0, -2, 1f))
+        }
+        return nav
+    }
+
+    private fun openTab(tab: String) {
+        if (platformUserRole == "investor" && tab !in listOf("Trade", "Accounts", "Profile")) {
+            toast("Investor access is limited to Trade and Accounts.")
+            return
+        }
+        selectedTab = tab
+        render()
+    }
+
+    private fun card(accent: Int? = null): LinearLayout {
+        val fill = if (darkInterface && accent != null) {
+            val r = Color.red(accent) / 10
+            val g = Color.green(accent) / 10
+            val b = Color.blue(accent) / 10
+            Color.rgb(5 + r, 12 + g, 12 + b)
+        } else cardColor
+        val stroke = accent ?: lineColor
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(14), dp(14), dp(14))
+            background = rounded(fill, stroke, 14)
+            elevation = dp(1).toFloat()
+        }
+    }
+
+    private fun actionButton(label: String, primary: Boolean = true, action: () -> Unit): Button {
+        return Button(this).apply {
+            text = label
+            textSize = 12f
+            isAllCaps = false
+            setTextColor(if (primary) Color.WHITE else green)
+            background = rounded(if (primary) green else if (darkInterface) Color.rgb(8, 42, 28) else Color.rgb(235, 247, 241),
+                if (primary) green else if (darkInterface) lineColor else Color.rgb(210, 235, 222), 10)
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            setOnClickListener { action() }
+        }
+    }
+
+    private fun pill(label: String, color: Int): TextView {
+    val isLive = color == green
+    return TextView(this).apply {
+        text = label
+        textSize = 10f
+        setTypeface(null, Typeface.BOLD)
+        setTextColor(if (isLive) Color.BLACK else color)
+        setPadding(dp(9), dp(5), dp(9), dp(5))
+        background = rounded(
+            if (isLive) green else Color.WHITE,
+            if (isLive) green else color,
+            20
+        )
+    }
+    }
+
+    private fun text(value: String, size: Float, color: Int, bold: Boolean = false): TextView {
+        return TextView(this).apply {
+            text = value
+            textSize = size
+            setTextColor(
+    if (!darkInterface && color == green)
+        Color.rgb(0, 100, 45)
+    else color
+)
+            if (bold) setTypeface(null, Typeface.BOLD)
+        }
+    }
+
+    private fun horizontal() = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+    }
+
+    private fun divider() = View(this).apply {
+        setBackgroundColor(lineColor)
+        layoutParams = LinearLayout.LayoutParams(-1, dp(1))
+    }
+
+    private fun space(height: Int) = View(this).apply {
+        layoutParams = LinearLayout.LayoutParams(1, dp(height))
+    }
+
+    private fun rounded(fill: Int, stroke: Int, radius: Int): GradientDrawable {
+        return GradientDrawable().apply {
+            setColor(fill)
+            setCornerRadius(dp(radius).toFloat())
+            setStroke(dp(1), stroke)
+        }
+    }
+
+
+    private fun indexNameColor(symbol: String): Int = when (symbol) {
+        "R_10" -> blue
+        "R_25" -> green
+        "R_50" -> gold
+        "R_75" -> red
+        "R_100" -> Color.rgb(156, 39, 176)
+        else -> ink
+    }
+
+    private fun displayIndexName(symbol: String): String {
+        return when (symbol) {
+            "R_10" -> "VIX 10"
+            "R_25" -> "VIX 25"
+            "R_50" -> "VIX 50"
+            "R_75" -> "VIX 75"
+            "R_100" -> "VIX 100"
+            else -> symbol
+        }
+    }
+
+    private fun formatPrice(value: Double): String =
+        String.format(Locale.US, "%,.2f", value)
+
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).toInt()
+
+    private fun toast(message: String) {
+        android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show()
     }
 }
