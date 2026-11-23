@@ -1064,6 +1064,7 @@ private val candleIndexes = listOf(
 
                             webSocket =
                                 null
+                            if (marketDataSocket === socket) marketDataSocket = null
 
                             callback.onDisconnected()
 
@@ -1101,6 +1102,7 @@ private val candleIndexes = listOf(
 
                             webSocket =
                                 null
+                            if (marketDataSocket === socket) marketDataSocket = null
 
                             val message =
                                 t.message
@@ -1170,8 +1172,102 @@ fun subscribeToLiveTicks() {
 // =============================================================
 
 fun requestHistoricalCandles() {
-    if (marketDataSocket != null) return
-    connectMarketDataEndpoint()
+    // Reuse the authenticated Deriv WebSocket that already carries live ticks
+    // and trading messages. A second public WebSocket was failing its HTTP
+    // upgrade handshake (HTTP 520), preventing all candle callbacks.
+    val socket = webSocket
+    if (!connected || socket == null) {
+        android.util.Log.w("DerivCandles", "Cannot request candles: authenticated Deriv socket is not connected.")
+        return
+    }
+    marketDataSocket = socket
+    refreshHistoricalCandles()
+    refreshM5Candles()
+    marketDataTimeout?.cancel(false)
+    marketDataTimeout = scheduler.schedule({
+        if (marketDataSocket === socket) {
+            val pendingDaily = dailyCandleRequestSymbols.values.toSet()
+            val pendingM15 = m15CandleRequestSymbols.values.toSet()
+            val pendingH1 = candleRequestSymbols.values.toSet()
+            val pendingM5 = m5CandleRequestSymbols.values.toSet()
+            pendingDaily.forEach { callback.onCandleFeedError(it, "DAILY", "No Daily candle response received within 25 seconds on the connected Deriv session.") }
+            pendingM15.forEach { callback.onCandleFeedError(it, "M15", "No M15 candle response received within 25 seconds on the connected Deriv session.") }
+            pendingH1.forEach { callback.onMarketDataError(it, "No H1 candle response received within 25 seconds on the connected Deriv session.") }
+            pendingM5.forEach { android.util.Log.e("DerivCandles", "No M5 candle response received for $it within 25 seconds.") }
+        }
+    }, 25, java.util.concurrent.TimeUnit.SECONDS)
+}
+
+/** Route candle-history replies received on the authenticated WebSocket. */
+private fun handleCandleHistoryMessage(json: JSONObject) {
+    val echo = json.optJSONObject("echo_req")
+    val requestId = json.optInt("req_id", echo?.optInt("req_id", -1) ?: -1)
+    val h1Symbol = if (requestId >= 0) candleRequestSymbols.remove(requestId) else null
+    val m5Symbol = if (requestId >= 0) m5CandleRequestSymbols.remove(requestId) else null
+    val dailySymbol = if (requestId >= 0) dailyCandleRequestSymbols.remove(requestId) else null
+    val m15Symbol = if (requestId >= 0) m15CandleRequestSymbols.remove(requestId) else null
+    val granularity = echo?.optInt("granularity", -1) ?: -1
+    val symbol = h1Symbol ?: m5Symbol ?: dailySymbol ?: m15Symbol
+        ?: echo?.optString("ticks_history", "")?.takeIf { it in candleIndexes }
+        ?: return
+    val timeframe = when {
+        m5Symbol != null || granularity == 300 -> "M5"
+        dailySymbol != null || granularity == 86400 -> "DAILY"
+        m15Symbol != null || granularity == 900 -> "M15"
+        else -> "H1"
+    }
+
+    val apiError = json.optJSONObject("error")
+    if (apiError != null) {
+        val message = apiError.optString("message", "Deriv candle request failed")
+        android.util.Log.e("DerivCandles", "$timeframe request failed for $symbol: $message")
+        if (timeframe == "H1") callback.onMarketDataError(symbol, message)
+        else callback.onCandleFeedError(symbol, timeframe, message)
+        return
+    }
+
+    val array = json.optJSONArray("candles")
+        ?: json.optJSONObject("history")?.optJSONArray("candles")
+    if (array == null) {
+        val message = "Deriv returned no $timeframe candle array for $symbol."
+        if (timeframe == "H1") callback.onMarketDataError(symbol, message)
+        else callback.onCandleFeedError(symbol, timeframe, message)
+        return
+    }
+
+    val candles = ArrayList<Candle>(array.length())
+    for (i in 0 until array.length()) {
+        val item = array.optJSONObject(i) ?: continue
+        val epoch = item.optLong("epoch", 0L)
+        val open = item.optDouble("open", Double.NaN)
+        val high = item.optDouble("high", Double.NaN)
+        val low = item.optDouble("low", Double.NaN)
+        val close = item.optDouble("close", Double.NaN)
+        if (epoch > 0L && open.isFinite() && high.isFinite() && low.isFinite() && close.isFinite()) {
+            candles.add(Candle(epoch = epoch, open = open, high = high, low = low, close = close))
+        }
+    }
+
+    if (candles.isEmpty()) {
+        val message = "Deriv returned an empty or invalid $timeframe candle list for $symbol."
+        if (timeframe == "H1") callback.onMarketDataError(symbol, message)
+        else callback.onCandleFeedError(symbol, timeframe, message)
+        return
+    }
+
+    val sorted = candles.sortedBy { it.epoch }
+    when (timeframe) {
+        "M5" -> callback.onM5Candles(symbol, sorted)
+        "DAILY" -> callback.onDailyCandles(symbol, sorted)
+        "M15" -> callback.onM15Candles(symbol, sorted)
+        else -> callback.onCandles(symbol, sorted)
+    }
+
+    if (candleRequestSymbols.isEmpty() && dailyCandleRequestSymbols.isEmpty() &&
+        m15CandleRequestSymbols.isEmpty() && m5CandleRequestSymbols.isEmpty()) {
+        marketDataTimeout?.cancel(false)
+        marketDataTimeout = null
+    }
 }
 
 private fun connectMarketDataEndpoint() {
@@ -1600,6 +1696,10 @@ fun refreshM5Candles() {
                 JSONObject(
                     text
                 )
+            // Candle history replies share this authenticated socket now.
+            if (json.has("candles") || json.has("history") || json.has("echo_req")) {
+                handleCandleHistoryMessage(json)
+            }
                 android.util.Log.d(
     "DerivLiveFeed",
     "WebSocket response: $text"
