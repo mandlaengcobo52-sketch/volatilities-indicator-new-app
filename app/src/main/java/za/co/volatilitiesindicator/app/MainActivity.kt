@@ -198,7 +198,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
     private val insufficientFundsNotified = mutableSetOf<String>()
 
-    private val tradePrefs by lazy { getSharedPreferences("vi_trade_engine", MODE_PRIVATE) }
+    // Each Deriv environment has an independent ledger and capital store.
+    private val tradePrefs get() = getSharedPreferences(
+        "vi_trade_engine_${executionMode.lowercase(Locale.US)}", MODE_PRIVATE
+    )
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -256,23 +259,14 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         darkInterface = settingsPrefs.getBoolean("dark_interface", true)
         autoTradingEnabled = settingsPrefs.getBoolean("auto_trading_enabled", true)
+        executionMode = if (prefs.getString("oauth_mode", "DEMO").equals("REAL", true)) "REAL" else "DEMO"
         window.statusBarColor = pageColor
         window.navigationBarColor = if (darkInterface) Color.rgb(19, 25, 33) else Color.WHITE
         window.decorView.systemUiVisibility = if (darkInterface) 0 else
             View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
-        tradingDayKey = tradePrefs.getString("day_key", "").orEmpty()
-        dailyCapital = tradePrefs.getFloat("daily_capital", 0f).toDouble()
-        loadPositions()
-        indexes.forEach { symbol ->
-            tradePrefs.getString("signal_mss_$symbol", null)?.let { recoveryMss[symbol] = it }
-            tradePrefs.getString("signal_choch_$symbol", null)?.let { recoveryChoch[symbol] = it }
-            val mssEpoch = tradePrefs.getLong("signal_mss_epoch_$symbol", 0L)
-            val chochEpoch = tradePrefs.getLong("signal_choch_epoch_$symbol", 0L)
-            if (mssEpoch > 0L) recoveryMssEpoch[symbol] = mssEpoch
-            if (chochEpoch > 0L) recoveryChochEpoch[symbol] = chochEpoch
-        }
+        tradingDayKey = ""
+        activateAccountMode(executionMode)
         loadNotifications()
-        originalTriggered.addAll(tradePrefs.getStringSet("triggered_$tradingDayKey", emptySet()) ?: emptySet())
         createNotificationChannel()
         requestNotificationPermissionIfNeeded()
         handleNotificationIntent(intent, false)
@@ -713,9 +707,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     override fun onResume() {
         super.onResume()
         if (!platformAuthenticated) return
-        val previousMode = executionMode
-        executionMode = if (prefs.getString("oauth_mode", executionMode).equals("REAL", true)) "REAL" else "DEMO"
-        if (previousMode != executionMode && ::content.isInitialized && accountConnected) render()
+        val selectedMode = if (prefs.getString("oauth_mode", executionMode).equals("REAL", true)) "REAL" else "DEMO"
+        if (selectedMode != executionMode) {
+            activateAccountMode(selectedMode)
+            accountConnected = false
+            if (::content.isInitialized) render()
+        }
         val tokenKey = if (executionMode == "REAL") "real_token" else "demo_token"
         val savedToken = prefs.getString(tokenKey, "").orEmpty()
         if (savedToken.isNotBlank()) {
@@ -774,8 +771,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             runOnUiThread { showPlatformAuthScreen(false, "Please sign in to your Volatilities Indicator account first.") }
             return
         }
+        val connectedMode = if (accountType.equals("REAL", true)) "REAL" else "DEMO"
+        if (connectedMode != executionMode) activateAccountMode(connectedMode)
         accountConnected = true
-        executionMode = if (accountType.equals("REAL", true)) "REAL" else "DEMO"
         accountLabel = "$accountId ($accountType)"
         addNotification("Accounts", "Deriv account connected", "$accountLabel is connected.")
         derivService?.client?.requestOpenTrades()
@@ -1992,6 +1990,46 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         runOnUiThread { updateRecoveryStatusView(symbol) }
     }
 
+    /**
+     * Switch the in-memory trading ledger to the selected Deriv environment.
+     * DEMO and REAL use different SharedPreferences files; no legacy shared
+     * ledger is copied into either environment because its account ownership
+     * cannot be established safely.
+     */
+    private fun activateAccountMode(mode: String) {
+        val normalized = if (mode.equals("REAL", true)) "REAL" else "DEMO"
+        if (executionMode == normalized && tradingDayKey.isNotBlank()) return
+
+        // Persist the currently selected environment before changing the key.
+        if (tradingDayKey.isNotBlank()) savePositions()
+        executionMode = normalized
+
+        positions.clear()
+        recoveryWaiting.clear()
+        recoveryMss.clear()
+        recoveryChoch.clear()
+        recoveryMssEpoch.clear()
+        recoveryChochEpoch.clear()
+        originalTriggered.clear()
+
+        tradingDayKey = tradePrefs.getString("day_key", "").orEmpty()
+        dailyCapital = tradePrefs.getFloat("daily_capital", 0f).toDouble()
+        indexes.forEach { symbol ->
+            tradePrefs.getString("signal_mss_$symbol", null)?.let { recoveryMss[symbol] = it }
+            tradePrefs.getString("signal_choch_$symbol", null)?.let { recoveryChoch[symbol] = it }
+            val mssEpoch = tradePrefs.getLong("signal_mss_epoch_$symbol", 0L)
+            val chochEpoch = tradePrefs.getLong("signal_choch_epoch_$symbol", 0L)
+            if (mssEpoch > 0L) recoveryMssEpoch[symbol] = mssEpoch
+            if (chochEpoch > 0L) recoveryChochEpoch[symbol] = chochEpoch
+        }
+        loadPositions()
+        if (tradingDayKey.isNotBlank()) {
+            originalTriggered.addAll(
+                tradePrefs.getStringSet("triggered_$tradingDayKey", emptySet()) ?: emptySet()
+            )
+        }
+    }
+
     private fun savePositions() {
         val array = JSONArray()
         positions.values.forEach { p ->
@@ -2033,7 +2071,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 p.losingRecoveryTrail = o.optBoolean("losingRecoveryTrail", false)
                 if (p.recoveryEligible && !p.recoveryUsed) recoveryWaiting.add(p.localId)
                 positions[p.localId] = p
-                if (p.contractId > 0 && p.status != "CLOSED") subscribePosition(p.contractId)
+                // Never subscribe a restored contract against the other account's socket.
+                if (p.contractId > 0 && p.status != "CLOSED" && accountConnected &&
+                    derivService?.client?.getAccountType()?.equals(executionMode, true) == true
+                ) subscribePosition(p.contractId)
             }
             savePositions()
         } catch (_: Exception) { }
@@ -2044,8 +2085,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         AlertDialog.Builder(this)
             .setTitle("Connect Deriv account")
             .setItems(modes) { _, which ->
-                executionMode = if (which == 1) "REAL" else "DEMO"
+                val selectedMode = if (which == 1) "REAL" else "DEMO"
+                if (selectedMode != executionMode) activateAccountMode(selectedMode)
                 prefs.edit().putString("oauth_mode", executionMode).apply()
+                accountConnected = false
                 render()
                 beginDerivConnection()
             }
