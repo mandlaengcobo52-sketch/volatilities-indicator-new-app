@@ -85,6 +85,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val masterDecisionViews = mutableMapOf<String, TextView>()
     private val levelStatusViews = mutableMapOf<String, TextView>()
     private val recoveryStatusViews = mutableMapOf<String, TextView>()
+    private val dailyLevelsViews = mutableMapOf<String, TextView>()
     private val mssStatusViews = mutableMapOf<String, TextView>()
     private val chochStatusViews = mutableMapOf<String, TextView>()
     private val retestStatusViews = mutableMapOf<String, TextView>()
@@ -924,6 +925,7 @@ indexStatusViews[symbol]?.apply {
     setTextColor(Color.BLACK)
     background = rounded(green, green, 20)
 }
+            updateDailyLevelsView(symbol)
             updateMasterDecisionViews(symbol)
         }
     }
@@ -957,7 +959,7 @@ indexStatusViews[symbol]?.apply {
         val quote = latestPrices[symbol]
         val epoch = System.currentTimeMillis() / 1000L
         if (quote != null) updateDailyApproachFromTick(symbol, quote, epoch, forceRefresh = true)
-        runOnUiThread { updateMasterDecisionViews(symbol); updateRecoveryStatusView(symbol) }
+        runOnUiThread { updateDailyLevelsView(symbol); updateMasterDecisionViews(symbol); updateRecoveryStatusView(symbol) }
     }
 
     override fun onM15Candles(symbol: String, candles: List<DerivApiClient.Candle>) {
@@ -1447,6 +1449,32 @@ indexStatusViews[symbol]?.apply {
         return "TRADE RUNNING · " + directions.joinToString(" + ")
     }
 
+    private fun dailyLevelsDisplay(symbol: String): String {
+        val candles = dailyCandlesByIndex[symbol]?.sortedBy { it.epoch }.orEmpty()
+        if (candles.isEmpty()) return "TODAY HIGH: --\nTODAY LOW: --\nPREVIOUS HIGH: --\nPREVIOUS LOW: --"
+        val nowEpoch = System.currentTimeMillis() / 1000L
+        val todayStart = utcDayStart(nowEpoch)
+        val today = candles.lastOrNull { it.epoch >= todayStart } ?: candles.last()
+        val previous = candles.lastOrNull { it.epoch < todayStart }
+            ?: candles.getOrNull(candles.lastIndex - 1)
+        fun stamp(candle: DerivApiClient.Candle?): String = candle?.let {
+            java.text.SimpleDateFormat("dd MMM HH:mm 'UTC'", Locale.US).apply {
+                timeZone = java.util.TimeZone.getTimeZone("UTC")
+            }.format(java.util.Date(it.epoch * 1000L))
+        } ?: "--"
+        val approach = dailyApproachByIndex[symbol]
+        val nearest = approach?.let { "\nSELECTED LEVEL: ${it.levelType} · ${formatPrice(it.level)}" }
+            ?: "\nSELECTED LEVEL: WAITING"
+        return "TODAY HIGH: ${formatPrice(today.high)} · ${stamp(today)}\n" +
+            "TODAY LOW: ${formatPrice(today.low)} · ${stamp(today)}\n" +
+            "PREVIOUS HIGH: ${previous?.let { formatPrice(it.high) } ?: "--"} · ${stamp(previous)}\n" +
+            "PREVIOUS LOW: ${previous?.let { formatPrice(it.low) } ?: "--"} · ${stamp(previous)}" + nearest
+    }
+
+    private fun updateDailyLevelsView(symbol: String) {
+        dailyLevelsViews[symbol]?.text = dailyLevelsDisplay(symbol)
+    }
+
     private fun masterDecisionText(symbol: String): String {
         runningDirectionText(symbol)?.let { return "$it. Contract is active on Deriv." }
         if (!marketFeedConnected || latestPrices[symbol] == null) return "Waiting for live market price data."
@@ -1475,6 +1503,7 @@ indexStatusViews[symbol]?.apply {
             setTextColor(if (running != null) green else amber)
         }
         marketStatusViews[symbol]?.text = masterDecisionText(symbol)
+        updateDailyLevelsView(symbol)
     }
 
     private fun signalQualificationText(signal: String?): String {
@@ -1491,7 +1520,7 @@ indexStatusViews[symbol]?.apply {
                 .maxByOrNull { it.openedAt }
                 ?.qualificationChochLevel
         return if (level != null && level.isFinite() && level > 0.0) {
-            "QUALIFIED · $direction\nCHOCH LEVEL: ${formatPrice(level)}"
+            "QUALIFIED · $direction\nCHOCH LEVEL: ${formatPrice(level)}\nCHOCH CANDLE TIME: ${recoveryChochEpoch[symbol]?.takeIf { it > 0L }?.let { java.text.SimpleDateFormat("dd MMM yyyy HH:mm 'UTC'", Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.format(java.util.Date(it * 1000L)) } ?: "WAITING"}"
         } else {
             "QUALIFIED · $direction\nCHOCH LEVEL: WAITING FOR LEVEL"
         }
@@ -2382,6 +2411,7 @@ indexStatusViews[symbol]?.apply {
         masterDecisionViews.clear()
         levelStatusViews.clear()
         recoveryStatusViews.clear()
+        dailyLevelsViews.clear()
         mssStatusViews.clear()
         chochStatusViews.clear()
         retestStatusViews.clear()
@@ -2524,6 +2554,13 @@ indexStatusViews[symbol]?.apply {
             priceViews[symbol] = priceView
             priceRow.addView(priceView)
             indexCard.addView(priceRow)
+            indexCard.addView(space(8))
+            indexCard.addView(divider())
+            indexCard.addView(space(7))
+            indexCard.addView(text("DAILY HIGH / LOW REFERENCE LEVELS", 10f, Color.WHITE, true))
+            val dailyLevelsView = text(dailyLevelsDisplay(symbol), 10f, whiteText)
+            dailyLevelsViews[symbol] = dailyLevelsView
+            indexCard.addView(dailyLevelsView)
             indexCard.addView(space(8))
             indexCard.addView(divider())
             indexCard.addView(space(8))
@@ -3812,3 +3849,4 @@ indexStatusViews[symbol]?.apply {
         android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show()
     }
 }
+
