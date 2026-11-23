@@ -88,6 +88,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val recoveryStatusViews = mutableMapOf<String, TextView>()
     private val mssStatusViews = mutableMapOf<String, TextView>()
     private val chochStatusViews = mutableMapOf<String, TextView>()
+    private val chochDetailViews = mutableMapOf<String, TextView>()
+    private val recoveryChochLevel = mutableMapOf<String, Double>()
+    private val recoveryChochTimestamp = mutableMapOf<String, Long>()
 
     private data class AppNotification(
         val id: Long,
@@ -254,6 +257,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         indexes.forEach { symbol ->
             tradePrefs.getString("signal_mss_$symbol", null)?.let { recoveryMss[symbol] = it }
             tradePrefs.getString("signal_choch_$symbol", null)?.let { recoveryChoch[symbol] = it }
+            val savedChochLevel = tradePrefs.getFloat("signal_choch_level_$symbol", Float.NaN).toDouble()
+            val savedChochTimestamp = tradePrefs.getLong("signal_choch_epoch_$symbol", 0L)
+            if (savedChochLevel.isFinite()) recoveryChochLevel[symbol] = savedChochLevel
+            if (savedChochTimestamp > 0L) recoveryChochTimestamp[symbol] = savedChochTimestamp
             val mssEpoch = tradePrefs.getLong("signal_mss_epoch_$symbol", 0L)
             val chochEpoch = tradePrefs.getLong("signal_choch_epoch_$symbol", 0L)
             if (mssEpoch > 0L) recoveryMssEpoch[symbol] = mssEpoch
@@ -1223,7 +1230,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             return "Reference levels are available. Waiting for Deriv account connection before entry conditions can be evaluated."
         }
         return originalSweepStatus[symbol]
-            ?: "Waiting for a completed H1 candle to sweep and reclaim the previous-day high (${formatPrice(levels.first)}) or low (${formatPrice(levels.second)})."
+            ?: "Waiting for a completed 12-hour candle to sweep and reclaim the previous-day high (${formatPrice(levels.first)}) or low (${formatPrice(levels.second)})."
     }
 
     private fun recoveryStatusText(symbol: String): String {
@@ -1640,6 +1647,23 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
     }
 
+    private fun formatSignalTimestamp(epochSeconds: Long): String {
+        if (epochSeconds <= 0L) return "--"
+        val formatter = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
+        formatter.timeZone = TimeZone.getDefault()
+        return formatter.format(java.util.Date(epochSeconds * 1000L))
+    }
+
+    private fun chochDetailText(symbol: String): String {
+        val direction = recoveryChoch[symbol]
+        val level = recoveryChochLevel[symbol]
+        val epoch = recoveryChochTimestamp[symbol] ?: recoveryChochEpoch[symbol] ?: 0L
+        if (direction.isNullOrBlank() || level == null || epoch <= 0L) {
+            return "CHANGE LEVEL: --\\nTIMESTAMP: --"
+        }
+        return "DIRECTION: $direction\\nCHANGE LEVEL: ${formatPrice(level)}\\nTIMESTAMP: ${formatSignalTimestamp(epoch)}"
+    }
+
     private fun evaluateRecoverySignals(symbol: String, candles: List<DerivApiClient.Candle>) {
         if (candles.size < 5) return
         val closed = candles.sortedBy { it.epoch }.dropLast(1)
@@ -1678,12 +1702,22 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             else -> ""
         }
         if (chochDirection.isNotBlank()) {
+            val brokenLevel = if (chochDirection == "RISE") lastHigh else lastLow
             recoveryChochEpoch[symbol] = last.epoch
-            tradePrefs.edit().putLong("signal_choch_epoch_$symbol", last.epoch).apply()
+            recoveryChochTimestamp[symbol] = last.epoch
+            recoveryChochLevel[symbol] = brokenLevel
+            tradePrefs.edit()
+                .putLong("signal_choch_epoch_$symbol", last.epoch)
+                .putFloat("signal_choch_level_$symbol", brokenLevel.toFloat())
+                .putString("signal_choch_$symbol", chochDirection)
+                .apply()
             if (recoveryChoch[symbol] != chochDirection) {
                 recoveryChoch[symbol] = chochDirection
-                tradePrefs.edit().putString("signal_choch_$symbol", chochDirection).apply()
-                addNotification("Home", "${displayIndexName(symbol)} CHOCH qualified", "CHOCH qualified in the ${chochDirection.lowercase(Locale.US)} direction on a completed candle.")
+                addNotification(
+                    "Home",
+                    "${displayIndexName(symbol)} CHOCH qualified",
+                    "CHOCH ${chochDirection.lowercase(Locale.US)}. Broken swing level: ${formatPrice(brokenLevel)}. Candle close timestamp: ${formatSignalTimestamp(last.epoch)}."
+                )
             }
         }
 
@@ -1697,6 +1731,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 text = signalQualificationText(recoveryChoch[symbol])
                 setTextColor(if (recoveryChoch[symbol].isNullOrBlank()) amber else green)
             }
+            chochDetailViews[symbol]?.text = chochDetailText(symbol)
         }
 
         val mss = recoveryMss[symbol]
@@ -2135,6 +2170,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 if (recoveryChoch[symbol].isNullOrBlank()) amber else green, true)
             chochStatusViews[symbol] = chochView
             indexCard.addView(chochView)
+            val chochDetailView = text(chochDetailText(symbol), 10f, muted)
+            chochDetailViews[symbol] = chochDetailView
+            indexCard.addView(chochDetailView)
             indexCard.addView(space(8))
             indexCard.addView(divider())
             indexCard.addView(space(8))
