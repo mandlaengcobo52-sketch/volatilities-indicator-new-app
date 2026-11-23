@@ -1363,7 +1363,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (indexAlreadyActive) return
         if (activeTradeGroupIds().size >= 2) return
 
-        val stake = roundStake(dailyCapital * 0.25)
+        val stake = roundStake(dailyCapital * 0.05)
         val requiredForPair = roundStake(stake * 2.0)
         val unreservedBalance = (availableBalance - reservedRecoveryCapital()).coerceAtLeast(0.0)
         if (unreservedBalance + 0.000001 < requiredForPair) {
@@ -1430,10 +1430,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             .put("basis", "stake")
             .put("contract_type", contractType)
             .put("currency", accountCurrency)
-            .put("duration", if (platformAuthenticated && platformUserRole == "investor") {
-                if (platformUser.optString("investor_plan") == "A") 5 else 7
-            } else 3)
-            .put("duration_unit", "d")
+            .put("duration", 12)
+            .put("duration_unit", "h")
             .put("underlying_symbol", symbol)
             .put("req_id", req)
         p.status = "REQUESTING PROPOSAL"
@@ -2132,7 +2130,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         summary.addView(text("DAILY STARTING CAPITAL", 12f, gold, true))
         summary.addView(text(String.format(Locale.US, "%.2f %s", dailyCapital, accountCurrency), 18f, blue, true))
         summary.addView(text("ACCOUNT MODE: $executionMode", 12f, if (executionMode == "REAL") blue else red, true))
-        summary.addView(text("Stake per original contract: 25%", 12f, gold))
+        summary.addView(text("Stake per original contract: 5% · RISE 5% + FALL 5% = 10% per cycle", 12f, gold))
         content.addView(summary)
         content.addView(space(16))
 
