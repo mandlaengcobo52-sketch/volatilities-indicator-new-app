@@ -309,9 +309,28 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                         platformUser = json.optJSONObject("user") ?: JSONObject()
                         platformUserName = platformUser.optString("full_name")
                         platformUserRole = platformUser.optString("role", "user").lowercase(Locale.US)
+                        // Activity recreation (including screen rotation) runs
+                        // platform-session verification again. If a Deriv OAuth
+                        // token is already saved, rebind to the foreground service
+                        // that owns the socket instead of showing the first-connect
+                        // screen and waiting for the user to connect again.
+                        val savedMode = if (prefs.getString("oauth_mode", "DEMO").equals("REAL", true)) "REAL" else "DEMO"
+                        val savedTokenKey = if (savedMode == "REAL") "real_token" else "demo_token"
+                        val hasSavedDerivToken = prefs.getString(savedTokenKey, "").orEmpty().isNotBlank()
+                        if (hasSavedDerivToken) {
+                            executionMode = savedMode
+                            startMarketFeedService()
+                        }
+
                         when (platformUserRole) {
-                            "admin" -> showDerivRequiredScreen()
-                            "investor" -> showInvestorDerivScreen()
+                            "admin" -> {
+                                if (hasSavedDerivToken) showDerivRestoringScreen()
+                                else showDerivRequiredScreen()
+                            }
+                            "investor" -> {
+                                if (hasSavedDerivToken) showDerivRestoringScreen()
+                                else showInvestorDerivScreen()
+                            }
                             else -> openUserProfile()
                         }
                     } else {
@@ -570,6 +589,40 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         setContentView(root)
     }
 
+    private fun showDerivRestoringScreen() {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(24), dp(24), dp(24), dp(24))
+            setBackgroundColor(pageColor)
+        }
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(24), dp(20), dp(24))
+            background = GradientDrawable().apply {
+                setColor(cardColor)
+                setCornerRadius(dp(16).toFloat())
+                setStroke(dp(1), lineColor)
+            }
+        }
+        panel.addView(TextView(this).apply {
+            text = "RESTORING DERIV CONNECTION"
+            textSize = 19f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(green)
+        })
+        panel.addView(TextView(this).apply {
+            text = "Your saved Deriv session is being restored. Please wait; you do not need to connect again."
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setTextColor(ink)
+            setPadding(0, dp(16), 0, dp(8))
+        })
+        root.addView(panel, LinearLayout.LayoutParams(-1, -2))
+        setContentView(root)
+    }
+
     private fun showDerivRequiredScreen() {
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(dp(24), dp(24), dp(24), dp(24)); setBackgroundColor(pageColor) }
         val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(24), dp(20), dp(24)); background = GradientDrawable().apply { setColor(cardColor); setCornerRadius(dp(16).toFloat()); setStroke(dp(1), lineColor) } }
@@ -665,11 +718,16 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (previousMode != executionMode && ::content.isInitialized && accountConnected) render()
         val tokenKey = if (executionMode == "REAL") "real_token" else "demo_token"
         val savedToken = prefs.getString(tokenKey, "").orEmpty()
-        if (savedToken.isNotBlank() && derivService != null &&
-            derivService?.client?.isConnected() != true &&
-            derivService?.client?.isConnecting() != true
-        ) {
-            derivService?.client?.ensureConnectedOnResume(savedToken, executionMode)
+        if (savedToken.isNotBlank()) {
+            if (derivService == null) {
+                // Rebind after Activity recreation; the foreground service keeps
+                // the Deriv client/socket alive while this Activity is destroyed.
+                startMarketFeedService()
+            } else if (derivService?.client?.isConnected() != true &&
+                derivService?.client?.isConnecting() != true
+            ) {
+                derivService?.client?.ensureConnectedOnResume(savedToken, executionMode)
+            }
         }
     }
 
