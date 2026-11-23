@@ -2390,16 +2390,22 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     tradeProfitViews[p.localId] = profitView
                     c.addView(profitView)
 
-                    if (p.trailingActivated && p.status != "CLOSED") {
-                        val trailDescription = if (p.losingRecoveryTrail) {
-                            "REMAINING-LEG TRAIL · STOP ${formatPercent(p.trailingStopPercent)}"
-                        } else {
-                            "WINNING-LEG TRAIL · STOP ${formatPercent(p.trailingStopPercent)}"
-                        }
-                        val trailView = text(trailDescription, 12f, amber, true)
-                        tradeTrailingViews[p.localId] = trailView
-                        c.addView(trailView)
+                    // Always create the trailing-stop view so later state updates
+                    // can reveal it when the existing engine activates the trail.
+                    val trailDescription = if (p.losingRecoveryTrail) {
+                        "REMAINING-LEG TRAIL · STOP ${formatPercent(p.trailingStopPercent)}"
+                    } else {
+                        "WINNING-LEG TRAIL · STOP ${formatPercent(p.trailingStopPercent)}"
                     }
+                    val trailView = text(trailDescription, 12f, amber, true).apply {
+                        visibility = if (p.trailingActivated && p.status != "CLOSED") {
+                            View.VISIBLE
+                        } else {
+                            View.GONE
+                        }
+                    }
+                    tradeTrailingViews[p.localId] = trailView
+                    c.addView(trailView)
 
                     if (p.contractId > 0L && p.status == "OPEN") {
                         c.addView(space(6))
@@ -2489,11 +2495,15 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             setTextColor(if (position.profit >= 0.0) green else red)
         }
         tradeTrailingViews[position.localId]?.let { view ->
-            view.text = if (position.trailingActivated) {
-                val label = if (position.losingRecoveryTrail) "REMAINING-LEG TRAIL" else "WINNING-LEG TRAIL"
-                "$label · STOP ${formatPercent(position.trailingStopPercent)}"
+            view.text = if (position.losingRecoveryTrail) {
+                "REMAINING-LEG TRAIL · STOP ${formatPercent(position.trailingStopPercent)}"
             } else {
-                ""
+                "WINNING-LEG TRAIL · STOP ${formatPercent(position.trailingStopPercent)}"
+            }
+            view.visibility = if (position.trailingActivated && position.status != "CLOSED") {
+                View.VISIBLE
+            } else {
+                View.GONE
             }
         }
     }
