@@ -1659,9 +1659,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
      * Sequential trailing-stop lifecycle for an original RISE/FALL pair.
      *
      * WINNER:
-     * - Activates at +50%; initial protected stop is +40%.
+     * - Activates at +150% profit on stake; initial protected stop is +140% profit on stake.
      * - Each new +10 percentage-point peak advances the stop by +10 points:
-     *   +60 peak -> +50 stop, +70 -> +60, and so on.
+     *   +160 peak -> +150 stop, +170 -> +160, and so on.
      * - The stop follows the winning P/L peak, representing the bullish RISE
      *   move's top or bearish FALL move's bottom.
      *
@@ -1715,7 +1715,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (!currentPercent.isFinite()) return
 
         // Find the already-armed winning leg, or arm the better-performing
-        // OPEN leg only when it reaches +50%.
+        // OPEN leg only when it reaches +150% profit on stake.
         var winner = pair.firstOrNull {
             it.trailingActivated && !it.losingRecoveryTrail
         }
@@ -1727,17 +1727,17 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 .maxByOrNull { contractProfitPercent(it) }
             val candidatePercent = candidate?.let { contractProfitPercent(it) }
             if (candidate != null && candidatePercent != null &&
-                candidatePercent.isFinite() && candidatePercent >= 50.0) {
+                candidatePercent.isFinite() && candidatePercent >= 150.0) {
                 candidate.trailingActivated = true
                 candidate.losingRecoveryTrail = false
                 candidate.trailingPeakPercent = candidatePercent
-                candidate.trailingStopPercent = 40.0
+                candidate.trailingStopPercent = 140.0
                 winner = candidate
             }
         }
 
         // Manage the winner first. Stop is peak minus 10 percentage points:
-        // +50 -> +40, +60 -> +50, +70 -> +60, etc.
+        // +150 -> +140, +160 -> +150, +170 -> +160, etc.
         winner?.let { winningPosition ->
             val winningPercent = contractProfitPercent(winningPosition)
             if (winningPercent.isFinite() && winningPercent > winningPosition.trailingPeakPercent) {
@@ -2478,9 +2478,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                         val currentPercent = contractProfitPercent(p).takeIf { it.isFinite() } ?: 0.0
                         val trailDescription = if (p.trailingActivated) {
                             val trailType = if (p.losingRecoveryTrail) "LOSS PROTECTION" else "WINNING TRAIL"
-                            "TRAILING STOP: ACTIVE · $trailType · P/L ${formatPnlPercent(currentPercent)} OF STAKE · PROTECTED PROFIT ${formatMoney(protectedProfitAmount(p))} (${formatPercent(p.trailingStopPercent)})"
+                            "TRAILING STOP: ACTIVE · $trailType · PROFIT ON STAKE ${formatPnlPercent(currentPercent)} · PROTECTED PROFIT ON STAKE ${formatMoney(protectedProfitAmount(p))} (${formatPercent(p.trailingStopPercent)})"
                         } else {
-                            "TRAILING STOP: MONITORING · P/L ${formatPnlPercent(currentPercent)} OF STAKE · WIN ARMS AT +50% · LOSS WAITS FOR WINNER CLOSE, THEN -20%"
+                            "TRAILING STOP: MONITORING · P/L ${formatPnlPercent(currentPercent)} OF STAKE · WIN ARMS AT +150% · LOSS WAITS FOR WINNER CLOSE, THEN -20%"
                         }
                         val trailView = text(trailDescription, 12f, if (p.trailingActivated) amber else blue, true)
                         tradeTrailingViews[p.localId] = trailView
@@ -2578,9 +2578,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             val currentPercent = contractProfitPercent(position).takeIf { it.isFinite() } ?: 0.0
             view.text = if (position.trailingActivated) {
                 val label = if (position.losingRecoveryTrail) "LOSS PROTECTION" else "WINNING TRAIL"
-                "TRAILING STOP: ACTIVE · $label · P/L ${formatPnlPercent(currentPercent)} OF STAKE · PROTECTED PROFIT ${formatMoney(protectedProfitAmount(position))} (${formatPercent(position.trailingStopPercent)})"
+                "TRAILING STOP: ACTIVE · $label · PROFIT ON STAKE ${formatPnlPercent(currentPercent)} · PROTECTED PROFIT ON STAKE ${formatMoney(protectedProfitAmount(position))} (${formatPercent(position.trailingStopPercent)})"
             } else {
-                "TRAILING STOP: MONITORING · P/L ${formatPnlPercent(currentPercent)} OF STAKE · WIN ARMS AT +50% · LOSS WAITS FOR WINNER CLOSE, THEN -20%"
+                "TRAILING STOP: MONITORING · P/L ${formatPnlPercent(currentPercent)} OF STAKE · WIN ARMS AT +150% · LOSS WAITS FOR WINNER CLOSE, THEN -20%"
             }
             view.setTextColor(if (position.trailingActivated) amber else blue)
         }
