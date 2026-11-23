@@ -1265,7 +1265,7 @@ fun requestHistoricalCandles() {
             pendingM5.forEach { (id, symbol) -> m5CandleRequestSymbols.remove(id) }
             android.util.Log.e(
                 "DerivCandles",
-                "Authenticated-socket candle timeout. Pending Daily=${pendingDaily.map { it.second }}, M15=${pendingM15.map { it.second }}, H1=${pendingH1.map { it.second }}, M5=${pendingM5.map { it.second }}"
+                "Authenticated-socket candle timeout. Pending Daily=${pendingDaily.map { entry -> entry.value }}, M15=${pendingM15.map { entry -> entry.value }}, H1=${pendingH1.map { entry -> entry.value }}, M5=${pendingM5.map { entry -> entry.value }}"
             )
         }
     }, 25, TimeUnit.SECONDS)
