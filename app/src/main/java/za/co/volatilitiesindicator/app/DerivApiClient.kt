@@ -253,9 +253,9 @@ class DerivApiClient(
     private var marketDataTimeout: java.util.concurrent.ScheduledFuture<*>? = null
     private var marketDataReconnectFuture: ScheduledFuture<*>? = null
     private val marketDataEndpoints = listOf(
+        "wss://ws.derivws.com/websockets/v3?app_id=1089",
         "wss://ws.binaryws.com/websockets/v3?app_id=1089",
-        "wss://ws.binaryws.com/websockets/v3",
-        "wss://api.derivws.com/trading/v1/options/ws/public"
+        "wss://ws.binaryws.com/websockets/v3"
     )
 
 private var marketDataRequestId = 1000
@@ -1192,7 +1192,23 @@ private fun connectMarketDataEndpoint() {
             marketDataTimeout?.cancel(false)
             marketDataTimeout = scheduler.schedule({
                 if (marketDataSocket === webSocket) {
-                    android.util.Log.e("DerivCandles", "Market-data endpoint opened but did not complete candle loading within 20 seconds: $endpoint")
+                    val pendingDaily = dailyCandleRequestSymbols.values.toSet()
+                    val pendingM15 = m15CandleRequestSymbols.values.toSet()
+                    val pendingH1 = candleRequestSymbols.values.toSet()
+                    val pendingM5 = m5CandleRequestSymbols.values.toSet()
+                    android.util.Log.e(
+                        "DerivCandles",
+                        "Market-data response timeout at $endpoint. Pending H1=$pendingH1; Daily=$pendingDaily; M15=$pendingM15; M5=$pendingM5"
+                    )
+                    for (symbol in pendingDaily) {
+                        callback.onCandleFeedError(symbol, "DAILY", "No Daily candle response received within 20 seconds.")
+                    }
+                    for (symbol in pendingM15) {
+                        callback.onCandleFeedError(symbol, "M15", "No M15 candle response received within 20 seconds.")
+                    }
+                    for (symbol in pendingH1) {
+                        callback.onMarketDataError(symbol, "No H1 candle response received within 20 seconds.")
+                    }
                     try { webSocket.close(1011, "Market-data response timeout") } catch (_: Exception) {}
                 }
             }, 20, java.util.concurrent.TimeUnit.SECONDS)
@@ -1390,11 +1406,23 @@ private fun connectMarketDataEndpoint() {
                         candleRequestSymbols.remove(requestId)
                         callback.onCandles(symbol, sortedCandles)
                         // Keep the initial-load timeout active until all five legacy H1 histories reply.
-                        if (candleRequestSymbols.isEmpty()) {
+                        if (candleRequestSymbols.isEmpty() &&
+                            dailyCandleRequestSymbols.isEmpty() &&
+                            m15CandleRequestSymbols.isEmpty() &&
+                            m5CandleRequestSymbols.isEmpty()
+                        ) {
                             marketDataTimeout?.cancel(false)
                             marketDataTimeout = null
                         }
                         }
+                    }
+                    if (candleRequestSymbols.isEmpty() &&
+                        dailyCandleRequestSymbols.isEmpty() &&
+                        m15CandleRequestSymbols.isEmpty() &&
+                        m5CandleRequestSymbols.isEmpty()
+                    ) {
+                        marketDataTimeout?.cancel(false)
+                        marketDataTimeout = null
                     }
                 } else if (isM5 || isDaily || isM15) {
                     val timeframe = if (isM5) "M5" else if (isDaily) "DAILY" else "M15"
