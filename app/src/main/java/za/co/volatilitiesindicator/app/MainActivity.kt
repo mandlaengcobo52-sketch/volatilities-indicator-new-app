@@ -88,7 +88,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val recoveryStatusViews = mutableMapOf<String, TextView>()
     private val mssStatusViews = mutableMapOf<String, TextView>()
     private val chochStatusViews = mutableMapOf<String, TextView>()
-    private val retestStatusViews = mutableMapOf<String, TextView>()
 
     private data class AppNotification(
         val id: Long,
@@ -215,7 +214,18 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val bearishObProximity = mutableMapOf<String, Double>()
     private val bullishLiquidityProximity = mutableMapOf<String, Double>()
     private val bearishLiquidityProximity = mutableMapOf<String, Double>()
+    private val bullishObTouched = mutableMapOf<String, Boolean>()
+    private val bearishObTouched = mutableMapOf<String, Boolean>()
+    private val bullishLiquiditySwept = mutableMapOf<String, Boolean>()
+    private val bearishLiquiditySwept = mutableMapOf<String, Boolean>()
     private val lastM5QualificationEpoch = mutableMapOf<String, Long>()
+    // Structure state is per index. CHOCH and MSS are deliberately separate
+    // events on different completed M5 candles.
+    private val marketTrendByIndex = mutableMapOf<String, String>()
+    private val pendingMssDirection = mutableMapOf<String, String>()
+    private val pendingMssLevel = mutableMapOf<String, Double>()
+    private val pendingMssAfterEpoch = mutableMapOf<String, Long>()
+    private val chochBreakLevel = mutableMapOf<String, Double>()
     private val strategyStatusViews = mutableMapOf<String, TextView>()
     private val originalTriggered = mutableSetOf<String>()
     private val recoveryWaiting = mutableSetOf<String>()
@@ -931,6 +941,7 @@ indexStatusViews[symbol]?.apply {
     background = rounded(green, green, 20)
 }
             updateMasterDecisionViews(symbol)
+            refreshStrategyProximity(symbol)
         }
     }
 
@@ -1443,18 +1454,15 @@ indexStatusViews[symbol]?.apply {
 
     private fun masterDecisionText(symbol: String): String {
         runningDirectionText(symbol)?.let { return "$it. Contract is active on Deriv." }
-        if (!marketFeedConnected || latestPrices[symbol] == null) {
-            return "Waiting for live market price data."
-        }
+        if (!marketFeedConnected || latestPrices[symbol] == null) return "Waiting for live market price data."
         if (!accountConnected) return "Waiting for Deriv account connection."
         val mss = recoveryMss[symbol]
         val choch = recoveryChoch[symbol]
         return when {
-            !pendingChochDirection[symbol].isNullOrBlank() -> if ((pendingChochRetestAttempt[symbol] ?: 0) == 1) "First retest candle did not close on the required side. Waiting for the immediately following candle to close correctly." else "MSS + CHOCH confirmed ${pendingChochDirection[symbol]}. Waiting for the first retest candle to touch the CHOCH level and close on the required side."
-            !mss.isNullOrBlank() && mss == choch -> "MSS + CHOCH confirmed ${mss}. Waiting for retest."
-            !mss.isNullOrBlank() -> "MSS confirmed ${mss}. Waiting for matching CHOCH."
-            !choch.isNullOrBlank() -> "CHOCH confirmed ${choch}. Waiting for matching MSS."
-            else -> "Waiting for OB, liquidity proximity, a fully closed FVG, and M5 MSS + CHOCH."
+            !choch.isNullOrBlank() && mss.isNullOrBlank() -> "M5 CHOCH confirmed ${choch}. Waiting for a separate M5 MSS candle."
+            !mss.isNullOrBlank() && choch.isNullOrBlank() -> "M5 MSS confirmed ${mss}. Waiting for matching M5 CHOCH."
+            !mss.isNullOrBlank() && mss == choch -> "M5 CHOCH + MSS confirmed ${mss}. Checking OB, liquidity and fully filled FVG."
+            else -> "Waiting for OB, liquidity proximity, fully filled FVG, and independent M5 CHOCH + MSS."
         }
     }
 
@@ -1462,11 +1470,10 @@ indexStatusViews[symbol]?.apply {
         val mss = recoveryMss[symbol]
         val choch = recoveryChoch[symbol]
         return when {
-            !pendingChochDirection[symbol].isNullOrBlank() -> if ((pendingChochRetestAttempt[symbol] ?: 0) == 1) "First retest candle did not close on the required side. Waiting for the immediately following candle to close correctly." else "MSS + CHOCH confirmed ${pendingChochDirection[symbol]}. Waiting for the first retest candle to touch the CHOCH level and close on the required side."
-            !mss.isNullOrBlank() && mss == choch -> "MSS + CHOCH confirmed ${mss}. Waiting for retest."
-            !mss.isNullOrBlank() -> "MSS confirmed ${mss}. Waiting for matching CHOCH."
-            !choch.isNullOrBlank() -> "CHOCH confirmed ${choch}. Waiting for matching MSS."
-            else -> "Waiting for OB, liquidity proximity, a fully closed FVG, and M5 MSS + CHOCH."
+            !mss.isNullOrBlank() && mss == choch -> "M5 CHOCH + MSS confirmed ${mss}. Waiting for OB, liquidity and fully filled FVG conditions."
+            !choch.isNullOrBlank() && mss.isNullOrBlank() -> "M5 CHOCH confirmed ${choch}. Waiting for a separate M5 MSS confirmation."
+            !mss.isNullOrBlank() -> "M5 MSS confirmed ${mss}. Waiting for matching M5 CHOCH."
+            else -> "Waiting for OB, liquidity proximity, fully filled FVG, and independent M5 CHOCH + MSS."
         }
     }
 
@@ -1477,26 +1484,19 @@ indexStatusViews[symbol]?.apply {
             setTextColor(if (running != null) green else amber)
         }
         marketStatusViews[symbol]?.text = masterDecisionText(symbol)
+        refreshStrategyProximity(symbol)
     }
 
-    private fun signalQualificationText(signal: String?): String {
-        return if (signal.isNullOrBlank()) "NOT QUALIFIED" else "QUALIFIED · $signal"
-    }
+    private fun signalQualificationText(signal: String?): String =
+        if (signal.isNullOrBlank()) "NOT QUALIFIED" else "QUALIFIED · $signal"
 
-    // Keep the exact numeric CHOCH break level visible alongside its direction.
     private fun chochQualificationDisplay(symbol: String): String {
         val direction = recoveryChoch[symbol]
         if (direction.isNullOrBlank()) return "NOT QUALIFIED"
-        val level = pendingChochLevel[symbol]
-            ?: positions.values
-                .filter { it.symbol == symbol && it.qualificationChochLevel > 0.0 }
-                .maxByOrNull { it.openedAt }
-                ?.qualificationChochLevel
-        return if (level != null && level.isFinite() && level > 0.0) {
+        val level = chochBreakLevel[symbol]
+        return if (level != null && level.isFinite() && level > 0.0)
             "QUALIFIED · $direction\nCHOCH LEVEL: ${formatPrice(level)}"
-        } else {
-            "QUALIFIED · $direction\nCHOCH LEVEL: WAITING FOR LEVEL"
-        }
+        else "QUALIFIED · $direction"
     }
 
     private fun updateRecoveryStatusView(symbol: String) {
@@ -1508,15 +1508,6 @@ indexStatusViews[symbol]?.apply {
         chochStatusViews[symbol]?.apply {
             text = chochQualificationDisplay(symbol)
             setTextColor(if (recoveryChoch[symbol].isNullOrBlank()) amber else green)
-        }
-        retestStatusViews[symbol]?.apply {
-            val direction = pendingChochDirection[symbol]
-            text = when {
-                direction.isNullOrBlank() -> "NOT QUALIFIED"
-                (pendingChochRetestAttempt[symbol] ?: 0) == 1 -> "FINAL CANDLE WAITING · $direction"
-                else -> "WAITING FOR FIRST RETEST · $direction"
-            }
-            setTextColor(if (direction.isNullOrBlank()) amber else amber)
         }
     }
 
@@ -1844,6 +1835,21 @@ indexStatusViews[symbol]?.apply {
         return ((zoneDistance(price, low, high) / start) * 100.0).coerceIn(0.0, 100.0)
     }
 
+    private fun refreshStrategyProximity(symbol: String) {
+        val price = latestPrices[symbol] ?: return
+        bullishOb[symbol]?.let {
+            bullishObProximity[symbol] = remainingProximity(price, it.low, it.high, bullishObStartDistance[symbol] ?: 0.0)
+            if (price in it.low..it.high) bullishObTouched[symbol] = true
+        }
+        bearishOb[symbol]?.let {
+            bearishObProximity[symbol] = remainingProximity(price, it.low, it.high, bearishObStartDistance[symbol] ?: 0.0)
+            if (price in it.low..it.high) bearishObTouched[symbol] = true
+        }
+        bullishLiquidity[symbol]?.let { bullishLiquidityProximity[symbol] = remainingProximity(price, it, it, bullishLiquidityStartDistance[symbol] ?: 0.0) }
+        bearishLiquidity[symbol]?.let { bearishLiquidityProximity[symbol] = remainingProximity(price, it, it, bearishLiquidityStartDistance[symbol] ?: 0.0) }
+        strategyStatusViews[symbol]?.text = strategyDisplayText(symbol)
+    }
+
     private fun strategyDisplayText(symbol: String): String {
         val bullOb = bullishOb[symbol]
         val bearOb = bearishOb[symbol]
@@ -1864,7 +1870,7 @@ indexStatusViews[symbol]?.apply {
     }
 
     private fun evaluateM5OrderBlockLiquidityStrategy(symbol: String, completed: List<DerivApiClient.Candle>) {
-        if (symbol !in indexes || completed.size < 12) return
+        if (symbol !in indexes || completed.size < 20) return
         val data = completed.sortedBy { it.epoch }
         val last = data.last()
         if (last.epoch <= (lastM5QualificationEpoch[symbol] ?: 0L)) return
@@ -1873,49 +1879,98 @@ indexStatusViews[symbol]?.apply {
         val price = latestPrices[symbol] ?: last.close
         if (!price.isFinite() || price <= 0.0) return
 
-        // Confirmed fractal swing points; the newest candle is closed.
+        // A swing is confirmed only after two candles have closed to its right.
         val highs = mutableListOf<Pair<Int, Double>>()
         val lows = mutableListOf<Pair<Int, Double>>()
-        for (i in 1 until prior.lastIndex) {
-            if (prior[i].high > prior[i - 1].high && prior[i].high > prior[i + 1].high) highs.add(i to prior[i].high)
-            if (prior[i].low < prior[i - 1].low && prior[i].low < prior[i + 1].low) lows.add(i to prior[i].low)
+        for (i in 2 until prior.size - 2) {
+            val h = prior[i].high
+            val l = prior[i].low
+            if ((i-2..i+2).all { j -> j == i || h > prior[j].high }) highs.add(i to h)
+            if ((i-2..i+2).all { j -> j == i || l < prior[j].low }) lows.add(i to l)
         }
         val recentHigh = highs.lastOrNull()?.second
         val recentLow = lows.lastOrNull()?.second
+        val lastTwoHighs = highs.takeLast(2)
+        val lastTwoLows = lows.takeLast(2)
+        val inferredTrend = when {
+            lastTwoHighs.size == 2 && lastTwoLows.size == 2 &&
+                lastTwoHighs[1].second > lastTwoHighs[0].second && lastTwoLows[1].second > lastTwoLows[0].second -> "RISE"
+            lastTwoHighs.size == 2 && lastTwoLows.size == 2 &&
+                lastTwoHighs[1].second < lastTwoHighs[0].second && lastTwoLows[1].second < lastTwoLows[0].second -> "FALL"
+            else -> marketTrendByIndex[symbol] ?: ""
+        }
+        if (inferredTrend.isNotBlank()) marketTrendByIndex[symbol] = inferredTrend
 
-        // Sell-side liquidity below confirmed lows supports bullish reversals;
-        // buy-side liquidity above confirmed highs supports bearish reversals.
+        // Liquidity pools are the latest confirmed swing low/high. A setup can
+        // qualify by a sweep-and-reclaim OR by the explicitly requested <=10% proximity.
         if (recentLow != null && bullishLiquidity[symbol] != recentLow) {
             bullishLiquidity[symbol] = recentLow
-            bullishLiquidityStartDistance[symbol] = abs(price - recentLow).coerceAtLeast(0.00000001)
+            bullishLiquidityStartDistance[symbol] = zoneDistance(price, recentLow, recentLow).coerceAtLeast(1e-8)
         }
         if (recentHigh != null && bearishLiquidity[symbol] != recentHigh) {
             bearishLiquidity[symbol] = recentHigh
-            bearishLiquidityStartDistance[symbol] = abs(price - recentHigh).coerceAtLeast(0.00000001)
+            bearishLiquidityStartDistance[symbol] = zoneDistance(price, recentHigh, recentHigh).coerceAtLeast(1e-8)
         }
 
-        // Detect a displacement through the latest confirmed swing and locate
-        // the last opposite-colour candle as the corresponding order block.
         val priorClose = prior.last().close
-        val bullishBreak = recentHigh != null && priorClose <= recentHigh && last.close > recentHigh && last.close > last.open
-        val bearishBreak = recentLow != null && priorClose >= recentLow && last.close < recentLow && last.close < last.open
-        if (bullishBreak) {
-            val ob = data.dropLast(1).takeLast(12).lastOrNull { it.close < it.open }
-            if (ob != null) {
+        val bullishChoch = inferredTrend == "FALL" && recentHigh != null && priorClose <= recentHigh && last.close > recentHigh
+        val bearishChoch = inferredTrend == "RISE" && recentLow != null && priorClose >= recentLow && last.close < recentLow
+        if (bullishChoch) {
+            recoveryChoch[symbol] = "RISE"
+            chochBreakLevel[symbol] = recentHigh!!
+            recoveryChochEpoch[symbol] = last.epoch
+            pendingMssDirection[symbol] = "RISE"
+            pendingMssLevel[symbol] = last.high
+            pendingMssAfterEpoch[symbol] = last.epoch
+            // Bullish OB: last bearish candle preceding the CHOCH displacement.
+            data.dropLast(1).takeLast(20).lastOrNull { it.close < it.open }?.let { ob ->
                 bullishOb[symbol] = EngineZone(ob.low, ob.high, last.epoch, "RISE")
-                bullishObStartDistance[symbol] = zoneDistance(price, ob.low, ob.high).coerceAtLeast(0.00000001)
+                bullishObStartDistance[symbol] = zoneDistance(price, ob.low, ob.high).coerceAtLeast(1e-8)
+                bullishObTouched[symbol] = false
             }
-        }
-        if (bearishBreak) {
-            val ob = data.dropLast(1).takeLast(12).lastOrNull { it.close > it.open }
-            if (ob != null) {
+            marketTrendByIndex[symbol] = "RISE"
+        } else if (bearishChoch) {
+            recoveryChoch[symbol] = "FALL"
+            chochBreakLevel[symbol] = recentLow!!
+            recoveryChochEpoch[symbol] = last.epoch
+            pendingMssDirection[symbol] = "FALL"
+            pendingMssLevel[symbol] = last.low
+            pendingMssAfterEpoch[symbol] = last.epoch
+            // Bearish OB: last bullish candle preceding the CHOCH displacement.
+            data.dropLast(1).takeLast(20).lastOrNull { it.close > it.open }?.let { ob ->
                 bearishOb[symbol] = EngineZone(ob.low, ob.high, last.epoch, "FALL")
-                bearishObStartDistance[symbol] = zoneDistance(price, ob.low, ob.high).coerceAtLeast(0.00000001)
+                bearishObStartDistance[symbol] = zoneDistance(price, ob.low, ob.high).coerceAtLeast(1e-8)
+                bearishObTouched[symbol] = false
+            }
+            marketTrendByIndex[symbol] = "FALL"
+        }
+
+        // MSS is an independent later closed candle: after CHOCH, price must
+        // displace beyond the CHOCH candle's extreme in the same direction.
+        val pendingDirection = pendingMssDirection[symbol]
+        val pendingLevel = pendingMssLevel[symbol]
+        val pendingEpoch = pendingMssAfterEpoch[symbol] ?: Long.MAX_VALUE
+        if (!pendingDirection.isNullOrBlank() && pendingLevel != null && last.epoch > pendingEpoch) {
+            val body = kotlin.math.abs(last.close - last.open)
+            val averageBody = prior.takeLast(10).map { kotlin.math.abs(it.close - it.open) }.average().coerceAtLeast(1e-10)
+            val displacement = body >= averageBody * 1.2
+            val mssConfirmed = displacement && when (pendingDirection) {
+                "RISE" -> last.close > pendingLevel && last.close > last.open
+                "FALL" -> last.close < pendingLevel && last.close < last.open
+                else -> false
+            }
+            if (mssConfirmed) {
+                recoveryMss[symbol] = pendingDirection
+                recoveryMssEpoch[symbol] = last.epoch
+                pendingMssDirection.remove(symbol)
+                pendingMssLevel.remove(symbol)
+                pendingMssAfterEpoch.remove(symbol)
             }
         }
 
-        // Three-candle fair-value gaps. A bullish gap is fully filled only
-        // after a later candle reaches its lower boundary; bearish is inverse.
+        // Keep the latest detected FVG of each direction and track its full fill.
+        // Bullish FVG: candle C low above candle A high; filled at/below lower edge.
+        // Bearish FVG: candle C high below candle A low; filled at/above upper edge.
         if (data.size >= 3) {
             val a = data[data.lastIndex - 2]
             val c = data.last()
@@ -1928,12 +1983,8 @@ indexStatusViews[symbol]?.apply {
                 bearishFvgFilled[symbol] = false
             }
         }
-        bullishFvg[symbol]?.let { zone ->
-            if (last.epoch > zone.epoch && last.low <= zone.low) bullishFvgFilled[symbol] = true
-        }
-        bearishFvg[symbol]?.let { zone ->
-            if (last.epoch > zone.epoch && last.high >= zone.high) bearishFvgFilled[symbol] = true
-        }
+        bullishFvg[symbol]?.let { z -> if (last.epoch > z.epoch && last.low <= z.low) bullishFvgFilled[symbol] = true }
+        bearishFvg[symbol]?.let { z -> if (last.epoch > z.epoch && last.high >= z.high) bearishFvgFilled[symbol] = true }
 
         val bullOb = bullishOb[symbol]
         val bearOb = bearishOb[symbol]
@@ -1948,21 +1999,22 @@ indexStatusViews[symbol]?.apply {
         bullishLiquidityProximity[symbol] = bullLiqPct
         bearishLiquidityProximity[symbol] = bearLiqPct
 
-        val bullLiquidityTouched = bullLiq != null && (last.low <= bullLiq && last.close > bullLiq || bullLiqPct <= 10.0)
-        val bearLiquidityTouched = bearLiq != null && (last.high >= bearLiq && last.close < bearLiq || bearLiqPct <= 10.0)
-        val bullObQualified = bullOb != null && bullObPct <= 10.0
-        val bearObQualified = bearOb != null && bearObPct <= 10.0
-
-        // Both structure confirmations are based exclusively on the same
-        // completed M5 break candle, with bullish/bearish candle direction.
-        val mssDirection = when { bullishBreak -> "RISE"; bearishBreak -> "FALL"; else -> "" }
-        val chochDirection = when { bullishBreak -> "RISE"; bearishBreak -> "FALL"; else -> "" }
-        recoveryMss[symbol] = mssDirection
-        recoveryChoch[symbol] = chochDirection
-        recoveryMssEpoch[symbol] = if (mssDirection.isNotBlank()) last.epoch else 0L
-        recoveryChochEpoch[symbol] = if (chochDirection.isNotBlank()) last.epoch else 0L
-        val bullReady = bullLiquidityTouched && bullObQualified && bullishFvgFilled[symbol] == true && mssDirection == "RISE" && chochDirection == "RISE"
-        val bearReady = bearLiquidityTouched && bearObQualified && bearishFvgFilled[symbol] == true && mssDirection == "FALL" && chochDirection == "FALL"
+        val bullSweep = bullLiq != null && last.low < bullLiq && last.close > bullLiq
+        val bearSweep = bearLiq != null && last.high > bearLiq && last.close < bearLiq
+        if (bullSweep) bullishLiquiditySwept[symbol] = true
+        if (bearSweep) bearishLiquiditySwept[symbol] = true
+        if (bullOb != null && last.low <= bullOb.high && last.high >= bullOb.low) bullishObTouched[symbol] = true
+        if (bearOb != null && last.low <= bearOb.high && last.high >= bearOb.low) bearishObTouched[symbol] = true
+        val bullLiquidityQualified = bullLiq != null && (bullishLiquiditySwept[symbol] == true || bullLiqPct <= 10.0)
+        val bearLiquidityQualified = bearLiq != null && (bearishLiquiditySwept[symbol] == true || bearLiqPct <= 10.0)
+        val bullObQualified = bullOb != null && (bullObTouched[symbol] == true || bullObPct <= 10.0)
+        val bearObQualified = bearOb != null && (bearObTouched[symbol] == true || bearObPct <= 10.0)
+        val bullStructure = recoveryChoch[symbol] == "RISE" && recoveryMss[symbol] == "RISE" &&
+            (recoveryMssEpoch[symbol] ?: 0L) > (recoveryChochEpoch[symbol] ?: Long.MAX_VALUE)
+        val bearStructure = recoveryChoch[symbol] == "FALL" && recoveryMss[symbol] == "FALL" &&
+            (recoveryMssEpoch[symbol] ?: 0L) > (recoveryChochEpoch[symbol] ?: Long.MAX_VALUE)
+        val bullReady = bullLiquidityQualified && bullObQualified && bullishFvgFilled[symbol] == true && bullStructure
+        val bearReady = bearLiquidityQualified && bearObQualified && bearishFvgFilled[symbol] == true && bearStructure
 
         runOnUiThread {
             updateMasterDecisionViews(symbol)
@@ -1981,191 +2033,29 @@ indexStatusViews[symbol]?.apply {
         val stake = roundStake(dailyCapital * 0.10)
         val available = (availableBalance - reservedRecoveryCapital()).coerceAtLeast(0.0)
         if (stake <= 0.0 || available + 0.000001 < stake) return
+        val chochLevel = chochBreakLevel[symbol] ?: 0.0
         if (openPosition(symbol, direction, "MASTER", stake,
-                qualificationMssEpoch = last.epoch,
-                qualificationChochEpoch = last.epoch,
-                qualificationRetestEpoch = last.epoch,
-                qualificationChochLevel = if (direction == "RISE") (recentHigh ?: 0.0) else (recentLow ?: 0.0))) {
+                qualificationMssEpoch = recoveryMssEpoch[symbol] ?: last.epoch,
+                qualificationChochEpoch = recoveryChochEpoch[symbol] ?: last.epoch,
+                qualificationRetestEpoch = 0L,
+                qualificationChochLevel = chochLevel)) {
             lastExecutedSignalEpoch[symbol] = last.epoch
             tradePrefs.edit().putLong("last_executed_signal_epoch_$symbol", last.epoch).apply()
             addNotification("Trade", "${displayIndexName(symbol)} $direction signal submitted",
-                "M5 MSS + CHOCH confirmed; matching order block and liquidity reached 10% proximity or less; matching FVG fully closed. Stake: ${formatMoney(stake)}.")
+                "Independent M5 CHOCH and subsequent M5 MSS confirmed; matching OB and liquidity qualified; matching FVG fully filled. Stake: ${formatMoney(stake)}.")
+            // Require a fresh CHOCH/MSS sequence for the next trade on this index.
+            recoveryMss.remove(symbol)
+            recoveryChoch.remove(symbol)
+            pendingMssDirection.remove(symbol)
+            pendingMssLevel.remove(symbol)
+            pendingMssAfterEpoch.remove(symbol)
         }
     }
 
+    // Retired H1 entry engine. All new trade qualification is handled by the
+    // independent, closed-M5 OB/liquidity/FVG/CHOCH/MSS engine above.
     private fun evaluateNewTradingSignal(symbol: String, candles: List<DerivApiClient.Candle>) {
-        if (candles.size < 8) return
-        // The final candle is still forming; only closed H1 candles qualify.
-        val closed = candles.sortedBy { it.epoch }.dropLast(1)
-        if (closed.size < 7) return
-        val last = closed.last()
-        val prior = closed.dropLast(1)
-        // Only a fresh H1 candle may qualify: maximum age is one hour from its close.
-        val qualificationClosedAt = last.epoch + 3600L
-        val qualificationAgeSeconds = (System.currentTimeMillis() / 1000L) - qualificationClosedAt
-        if (qualificationAgeSeconds < 0L || qualificationAgeSeconds > 3600L) return
-
-        // Never prepare another signal while this index already has an open or
-        // pending contract. Once it closes, a genuinely fresh structure break
-        // must occur before this index can qualify again.
-        val indexAlreadyBusy = positions.values.any {
-            it.symbol == symbol && it.status !in setOf("CLOSED", "BUY FAILED", "PROPOSAL FAILED") &&
-                !it.status.startsWith("ERROR")
-        }
-        if (indexAlreadyBusy) return
-
-        // Use confirmed local swing points from completed candles only.
-        val swingHighs = mutableListOf<Double>()
-        val swingLows = mutableListOf<Double>()
-        for (i in 1 until prior.lastIndex) {
-            if (prior[i].high > prior[i - 1].high && prior[i].high > prior[i + 1].high) swingHighs.add(prior[i].high)
-            if (prior[i].low < prior[i - 1].low && prior[i].low < prior[i + 1].low) swingLows.add(prior[i].low)
-        }
-        val lastHigh = swingHighs.lastOrNull()
-        val lastLow = swingLows.lastOrNull()
-
-        // MSS and CHOCH are confirmed on a completed candle. Save the exact broken level;
-        // execution is not permitted until a later completed candle touches or penetrates it.
-        // A qualification is created only on the candle that actually crosses
-        // a confirmed swing level. Consecutive candles that remain beyond the
-        // same level must not generate another MSS/CHOCH qualification.
-        val previousClose = prior.last().close
-        val mssDirection = when {
-            lastHigh != null && previousClose <= lastHigh && last.close > lastHigh -> "RISE"
-            lastLow != null && previousClose >= lastLow && last.close < lastLow -> "FALL"
-            else -> ""
-        }
-        val chochDirection = when {
-            lastHigh != null && previousClose <= lastHigh && last.close > lastHigh && last.close > last.open -> "RISE"
-            lastLow != null && previousClose >= lastLow && last.close < lastLow && last.close < last.open -> "FALL"
-            else -> ""
-        }
-        recoveryMss[symbol] = mssDirection
-        recoveryChoch[symbol] = chochDirection
-        recoveryMssEpoch[symbol] = if (mssDirection.isNotBlank()) last.epoch else 0L
-        recoveryChochEpoch[symbol] = if (chochDirection.isNotBlank()) last.epoch else 0L
-
-        if (pendingChochDirection[symbol].isNullOrBlank() &&
-            mssDirection.isNotBlank() && mssDirection == chochDirection) {
-            val chochLevel = if (chochDirection == "RISE") lastHigh ?: return else lastLow ?: return
-            pendingChochDirection[symbol] = chochDirection
-            pendingChochLevel[symbol] = chochLevel
-            pendingChochEpoch[symbol] = last.epoch
-            tradePrefs.edit()
-                .putString("pending_choch_direction_$symbol", chochDirection)
-                .putLong("pending_choch_level_bits_$symbol", java.lang.Double.doubleToRawLongBits(chochLevel))
-                .putLong("pending_choch_epoch_$symbol", last.epoch)
-                .apply()
-        }
-
-        tradePrefs.edit()
-            .putString("signal_mss_$symbol", mssDirection)
-            .putString("signal_choch_$symbol", chochDirection)
-            .putLong("signal_mss_epoch_$symbol", recoveryMssEpoch[symbol] ?: 0L)
-            .putLong("signal_choch_epoch_$symbol", recoveryChochEpoch[symbol] ?: 0L)
-            .apply()
-
-        runOnUiThread {
-            updateMasterDecisionViews(symbol)
-            updateRecoveryStatusView(symbol)
-        }
-        if (!autoTradingEnabled || !accountConnected || dailyCapital <= 0.0) return
-
-        val direction = pendingChochDirection[symbol] ?: return
-        val level = pendingChochLevel[symbol] ?: return
-        val signalEpoch = pendingChochEpoch[symbol] ?: return
-        // The retest must be on a later candle than the candle that confirmed CHOCH.
-        if (last.epoch <= signalEpoch) return
-        if (lastExecutedSignalEpoch[symbol] == signalEpoch) return
-
-        // First retest candle must touch/penetrate the exact CHOCH level and close
-        // on the required side. If it does not, only the immediately following
-        // completed candle gets one final opportunity to close on that side.
-        // The second candle does not need to touch the level again.
-        val firstRetestEpoch = pendingChochRetestFirstEpoch[symbol] ?: 0L
-        val retestAttempt = pendingChochRetestAttempt[symbol] ?: 0
-        val closesCorrectSide = when (direction) {
-            "RISE" -> last.close > level
-            "FALL" -> last.close < level
-            else -> false
-        }
-        val retestConfirmed = if (retestAttempt == 0) {
-            val touchedLevel = last.low <= level && last.high >= level
-            if (!touchedLevel) return
-            if (closesCorrectSide) {
-                true
-            } else {
-                pendingChochRetestAttempt[symbol] = 1
-                pendingChochRetestFirstEpoch[symbol] = last.epoch
-                tradePrefs.edit()
-                    .putInt("pending_choch_retest_attempt_$symbol", 1)
-                    .putLong("pending_choch_retest_first_epoch_$symbol", last.epoch)
-                    .apply()
-                runOnUiThread { updateRecoveryStatusView(symbol); updateMasterDecisionViews(symbol) }
-                return
-            }
-        } else {
-            // Do not reprocess the first failed retest candle; only a later closed candle counts.
-            if (last.epoch <= firstRetestEpoch) return
-            if (closesCorrectSide) {
-                true
-            } else {
-                // The second candle also failed: permanently cancel this pending setup.
-                pendingChochDirection.remove(symbol)
-                pendingChochLevel.remove(symbol)
-                pendingChochEpoch.remove(symbol)
-                pendingChochRetestAttempt.remove(symbol)
-                pendingChochRetestFirstEpoch.remove(symbol)
-                tradePrefs.edit()
-                    .remove("pending_choch_direction_$symbol")
-                    .remove("pending_choch_level_bits_$symbol")
-                    .remove("pending_choch_epoch_$symbol")
-                    .remove("pending_choch_retest_attempt_$symbol")
-                    .remove("pending_choch_retest_first_epoch_$symbol")
-                    .apply()
-                addNotification("Home", "${displayIndexName(symbol)} CHOCH retest failed", "The first retest candle and the immediately following candle both failed to close on the required side of the CHOCH level. The setup has been cancelled.")
-                runOnUiThread { updateRecoveryStatusView(symbol); updateMasterDecisionViews(symbol) }
-                return
-            }
-        }
-        if (!retestConfirmed) return
-
-        val active = positions.values.firstOrNull {
-            it.symbol == symbol && it.status !in setOf("CLOSED", "BUY FAILED", "PROPOSAL FAILED") &&
-                !it.status.startsWith("ERROR")
-        }
-        if (active != null) return
-
-        val stake = roundStake(dailyCapital * 0.10)
-        val available = (availableBalance - reservedRecoveryCapital()).coerceAtLeast(0.0)
-        if (stake <= 0.0 || available + 0.000001 < stake) return
-        // In the current qualification model MSS and CHOCH are confirmed by the same closed candle.
-        val mssEpoch = signalEpoch
-        val chochEpoch = signalEpoch
-        if (mssEpoch <= 0L || chochEpoch <= 0L || last.epoch <= chochEpoch) return
-        if (openPosition(
-                symbol, direction, "MASTER", stake,
-                qualificationMssEpoch = mssEpoch,
-                qualificationChochEpoch = chochEpoch,
-                qualificationRetestEpoch = last.epoch,
-                qualificationChochLevel = level
-            )) {
-            lastExecutedSignalEpoch[symbol] = signalEpoch
-            pendingChochDirection.remove(symbol)
-            pendingChochLevel.remove(symbol)
-            pendingChochEpoch.remove(symbol)
-            pendingChochRetestAttempt.remove(symbol)
-            pendingChochRetestFirstEpoch.remove(symbol)
-            tradePrefs.edit()
-                .putLong("last_executed_signal_epoch_$symbol", signalEpoch)
-                .remove("pending_choch_direction_$symbol")
-                .remove("pending_choch_level_bits_$symbol")
-                .remove("pending_choch_epoch_$symbol")
-                .remove("pending_choch_retest_attempt_$symbol")
-                .remove("pending_choch_retest_first_epoch_$symbol")
-                .apply()
-            addNotification("Trade", "${displayIndexName(symbol)} ${direction} signal submitted", "MSS and CHOCH confirmed; the CHOCH retest passed within the first retest candle or the immediately following candle. Stake: ${formatMoney(stake)}. Contract expiry: 12 hours.")
-        }
+        // Intentionally disabled; H1 candles must never qualify an entry.
     }
 
     private fun accountStorageSuffix(): String = "${executionMode}_${currentDerivAccountId}"
@@ -2585,7 +2475,6 @@ indexStatusViews[symbol]?.apply {
         recoveryStatusViews.clear()
         mssStatusViews.clear()
         chochStatusViews.clear()
-        retestStatusViews.clear()
         strategyStatusViews.clear()
         tradeStatusViews.clear()
         tradeProfitViews.clear()
@@ -2754,19 +2643,6 @@ indexStatusViews[symbol]?.apply {
             chochStatusViews[symbol] = chochView
             indexCard.addView(chochView)
             indexCard.addView(space(5))
-            indexCard.addView(text("RETEST QUALIFICATION", 10f, whiteText, true))
-            val retestDirection = pendingChochDirection[symbol]
-            val retestView = text(
-                when {
-                    retestDirection.isNullOrBlank() -> "NOT QUALIFIED"
-                    (pendingChochRetestAttempt[symbol] ?: 0) == 1 -> "FINAL CANDLE WAITING · $retestDirection"
-                    else -> "WAITING FOR FIRST RETEST · $retestDirection"
-                },
-                11f, amber, true
-            )
-            retestStatusViews[symbol] = retestView
-            indexCard.addView(retestView)
-            indexCard.addView(space(7))
             indexCard.addView(text("OB · LIQUIDITY · FVG (M5)", 10f, whiteText, true))
             val strategyView = text(strategyDisplayText(symbol), 10f, amber)
             strategyStatusViews[symbol] = strategyView
@@ -2777,7 +2653,7 @@ indexStatusViews[symbol]?.apply {
     }
 
     private fun showTrade() {
-        pageHeading("RUNNING TRADES", "Contracts opened after OB + liquidity + fully filled FVG + M5 MSS/CHOCH confirmation.")
+        pageHeading("RUNNING TRADES", "Contracts opened after OB + liquidity + fully filled FVG + independent M5 CHOCH/MSS confirmation.")
         content.addView(autoTradingButton())
         content.addView(space(10))
         val summary = card()
@@ -2815,16 +2691,14 @@ indexStatusViews[symbol]?.apply {
 
                     c.addView(text("${p.role} · ${p.direction}", 14f,
                         if (p.direction == "RISE") green else red, true))
-                    val hasFullQualification = p.qualificationMssEpoch > 0L &&
-                        p.qualificationChochEpoch > 0L && p.qualificationRetestEpoch > p.qualificationChochEpoch
+                    val hasFullQualification = p.qualificationMssEpoch > p.qualificationChochEpoch &&
+                        p.qualificationChochEpoch > 0L
                     val qualificationDetails = if (hasFullQualification) {
                         val mssTime = java.text.DateFormat.getDateTimeInstance().format(
                             java.util.Date(p.qualificationMssEpoch * 1000L))
                         val chochTime = java.text.DateFormat.getDateTimeInstance().format(
                             java.util.Date(p.qualificationChochEpoch * 1000L))
-                        val retestTime = java.text.DateFormat.getDateTimeInstance().format(
-                            java.util.Date(p.qualificationRetestEpoch * 1000L))
-                        "QUALIFICATION: CONFIRMED\nMSS: CONFIRMED · $mssTime\nCHOCH: CONFIRMED · $chochTime\nRETEST: TOUCH / PENETRATION CONFIRMED\nCHOCH LEVEL: ${formatPrice(p.qualificationChochLevel)}\nRETEST CANDLE: $retestTime"
+                        "QUALIFICATION: CONFIRMED\nCHOCH: CONFIRMED · $chochTime\nMSS: CONFIRMED · $mssTime\nCHOCH LEVEL: ${formatPrice(p.qualificationChochLevel)}"
                     } else {
                         "QUALIFICATION: NOT RECORDED FOR THIS TRADE"
                     }
@@ -2905,11 +2779,11 @@ indexStatusViews[symbol]?.apply {
                 val c = card(indexNameColor(p.symbol))
                 c.addView(text("${displayIndexName(p.symbol)} · ${p.role}", 14f, indexNameColor(p.symbol), true))
                 c.addView(text("DIRECTION: ${p.direction}", 14f, if (p.direction == "RISE") green else red, true))
-                val historyFullyQualified = p.qualificationMssEpoch > 0L &&
-                    p.qualificationChochEpoch > 0L && p.qualificationRetestEpoch > p.qualificationChochEpoch
+                val historyFullyQualified = p.qualificationMssEpoch > p.qualificationChochEpoch &&
+                    p.qualificationChochEpoch > 0L
                 c.addView(text(
                     if (historyFullyQualified)
-                        "QUALIFICATION: MSS + CHOCH + RETEST CONFIRMED · TOUCH / PENETRATION · LEVEL ${formatPrice(p.qualificationChochLevel)}"
+                        "QUALIFICATION: INDEPENDENT M5 MSS + CHOCH CONFIRMED · LEVEL ${formatPrice(p.qualificationChochLevel)}"
                     else "QUALIFICATION: NOT RECORDED FOR THIS TRADE",
                     12f, if (historyFullyQualified) green else amber, true
                 ))
