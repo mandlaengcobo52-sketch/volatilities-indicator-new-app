@@ -1659,9 +1659,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val level = recoveryChochLevel[symbol]
         val epoch = recoveryChochTimestamp[symbol] ?: recoveryChochEpoch[symbol] ?: 0L
         if (direction.isNullOrBlank() || level == null || epoch <= 0L) {
-            return "CHANGE LEVEL: --\\nTIMESTAMP: --"
+            return "CHANGE LEVEL: --" + "\n" + "TIMESTAMP: --"
         }
-        return "DIRECTION: $direction\\nCHANGE LEVEL: ${formatPrice(level)}\\nTIMESTAMP: ${formatSignalTimestamp(epoch)}"
+        return "DIRECTION: $direction" + "\n" + "CHANGE LEVEL: ${formatPrice(level)}" + "\n" + "TIMESTAMP: ${formatSignalTimestamp(epoch)}"
     }
 
     private fun evaluateRecoverySignals(symbol: String, candles: List<DerivApiClient.Candle>) {
