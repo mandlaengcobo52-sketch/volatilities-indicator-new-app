@@ -2007,8 +2007,8 @@ indexStatusViews[symbol]?.apply {
         if (bearOb != null && last.low <= bearOb.high && last.high >= bearOb.low) bearishObTouched[symbol] = true
         val bullLiquidityQualified = bullLiq != null && (bullishLiquiditySwept[symbol] == true || bullLiqPct <= 10.0)
         val bearLiquidityQualified = bearLiq != null && (bearishLiquiditySwept[symbol] == true || bearLiqPct <= 10.0)
-        val bullObQualified = bullOb != null && (bullObTouched[symbol] == true || bullObPct <= 10.0)
-        val bearObQualified = bearOb != null && (bearObTouched[symbol] == true || bearObPct <= 10.0)
+        val bullObQualified = bullOb != null && (bullishObTouched[symbol] == true || bullObPct <= 10.0)
+        val bearObQualified = bearOb != null && (bearishObTouched[symbol] == true || bearObPct <= 10.0)
         val bullStructure = recoveryChoch[symbol] == "RISE" && recoveryMss[symbol] == "RISE" &&
             (recoveryMssEpoch[symbol] ?: 0L) > (recoveryChochEpoch[symbol] ?: Long.MAX_VALUE)
         val bearStructure = recoveryChoch[symbol] == "FALL" && recoveryMss[symbol] == "FALL" &&
