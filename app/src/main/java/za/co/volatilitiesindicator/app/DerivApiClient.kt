@@ -235,7 +235,8 @@ class DerivApiClient(
     private var marketDataReconnectFuture: ScheduledFuture<*>? = null
     private val marketDataEndpoints = listOf(
         "wss://ws.binaryws.com/websockets/v3?app_id=1089",
-        "wss://ws.binaryws.com/websockets/v3"
+        "wss://ws.binaryws.com/websockets/v3",
+        "wss://api.derivws.com/trading/v1/options/ws/public"
     )
 
 private var marketDataRequestId = 1000
@@ -248,35 +249,6 @@ private val candleIndexes = listOf(
     "R_75",
     "R_100"
 )
-
-// Deriv's candle API does not accept 43,200-second granularity.
-// Request supported H1 candles and aggregate them into UTC-aligned H12 bars.
-private fun aggregateHourlyCandlesTo12Hours(hourly: List<Candle>): List<Candle> {
-    if (hourly.isEmpty()) return emptyList()
-    val sorted = hourly.sortedBy { it.epoch }
-    val grouped = sorted.groupBy { it.epoch / 43_200L }.toSortedMap()
-    val latestBucket = grouped.keys.last()
-    val result = mutableListOf<Candle>()
-
-    for ((bucket, bars) in grouped) {
-        val ordered = bars.sortedBy { it.epoch }
-        // Keep a partial latest bucket as the currently-forming H12 candle.
-        // Older buckets must contain all twelve hourly bars.
-        if (bucket != latestBucket && ordered.size < 12) continue
-        if (ordered.isEmpty()) continue
-
-        result.add(
-            Candle(
-                epoch = bucket * 43_200L,
-                open = ordered.first().open,
-                high = ordered.maxOf { it.high },
-                low = ordered.minOf { it.low },
-                close = ordered.last().close
-            )
-        )
-    }
-    return result
-}
 
     private var accessToken:
         String? = null
@@ -1190,7 +1162,7 @@ private fun connectMarketDataEndpoint() {
                 candleRequestSymbols[requestId] = symbol
                 val message = JSONObject().apply {
                     put("ticks_history", symbol)
-                    put("count", 1200)
+                    put("count", 1000)
                     put("end", "latest")
                     put("style", "candles")
                     put("granularity", 3600)
@@ -1243,7 +1215,7 @@ private fun connectMarketDataEndpoint() {
 
                 val candlesJson = json.optJSONArray("candles") ?: json.optJSONObject("history")?.optJSONArray("candles")
                 if (candlesJson == null) {
-                    callback.onMarketDataError(symbol, "Deriv returned no 12-hour candles for $symbol.")
+                    callback.onMarketDataError(symbol, "Deriv returned no H1 candles for $symbol.")
                     return
                 }
                 val candles = mutableListOf<Candle>()
@@ -1260,12 +1232,7 @@ private fun connectMarketDataEndpoint() {
                 }
                 if (candles.isNotEmpty()) {
                     candleRequestSymbols.remove(requestId)
-                    val twelveHourCandles = aggregateHourlyCandlesTo12Hours(candles)
-                    if (twelveHourCandles.isNotEmpty()) {
-                        callback.onCandles(symbol, twelveHourCandles)
-                    } else {
-                        callback.onMarketDataError(symbol, "Not enough hourly history to construct 12-hour candles for $symbol.")
-                    }
+                    callback.onCandles(symbol, candles.sortedBy { it.epoch })
                     // Keep the timeout active until all five index histories have replied.
                     if (candleRequestSymbols.isEmpty()) {
                         marketDataTimeout?.cancel(false)
@@ -1354,7 +1321,7 @@ fun refreshHistoricalCandles() {
 
         val message = JSONObject().apply {
             put("ticks_history", symbol)
-            put("count", 1200)
+            put("count", 1000)
             put("end", "latest")
             put("style", "candles")
             put("granularity", 3600)
