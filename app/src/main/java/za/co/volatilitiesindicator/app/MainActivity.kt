@@ -1764,7 +1764,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var wasRestored = false
 
         if (foundPosition == null) {
-            val symbol = contract.optString(
+            var symbol = contract.optString(
                 "underlying_symbol",
                 contract.optString("symbol", "")
             )
