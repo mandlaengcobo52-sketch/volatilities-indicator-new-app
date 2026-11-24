@@ -147,7 +147,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     private data class Position(
         val localId: String,
-        val symbol: String,
+        var symbol: String,
         var direction: String,
         var role: String,
         val stake: Double,
@@ -1764,7 +1764,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var wasRestored = false
 
         if (foundPosition == null) {
-            var symbol = contract.optString(
+            val symbol = contract.optString(
                 "underlying_symbol",
                 contract.optString("symbol", "")
             )
