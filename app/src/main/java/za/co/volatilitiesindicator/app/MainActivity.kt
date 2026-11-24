@@ -164,7 +164,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var trailingActivated: Boolean = false,
         var trailingPeakPercent: Double = 0.0,
         var trailingStopPercent: Double = 0.0,
-        var losingRecoveryTrail: Boolean = false
+        var losingRecoveryTrail: Boolean = false,
+        var trailingClosePending: Boolean = false,
+        var trailingCloseReason: String = ""
     )
 
     private val positions = linkedMapOf<String, Position>()
@@ -899,8 +901,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 pendingRequests.remove(reqId)
                 val failedPosition = positions[localId]
                 if (failedPosition != null) {
-                    failedPosition.status = if (failedPosition.contractId > 0L) "OPEN" else "ERROR: ${error.optString("message", "Deriv request failed")}"
-                    addNotification("Trade", "${displayIndexName(failedPosition.symbol)} trade request failed", error.optString("message", "Deriv request failed"))
+                    val errorMessage = error.optString("message", "Deriv request failed")
+                    val wasClosing = failedPosition.status == "CLOSING"
+                    failedPosition.status = if (failedPosition.contractId > 0L) "OPEN" else "ERROR: $errorMessage"
+                    if (wasClosing) failedPosition.trailingClosePending = true
+                    addNotification("Trade", "${displayIndexName(failedPosition.symbol)} trade request failed", errorMessage + if (wasClosing) " Automatic close remains pending; the contract is not marked closed." else "")
                 }
                 savePositions()
                 runOnUiThread { if (selectedTab == "Trade") render() }
@@ -941,7 +946,16 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 if (localId == null) return
                 pendingRequests.remove(reqId)
                 val closingPosition = positions[localId] ?: return
-                closingPosition.status = "CLOSING"
+                val receipt = json.optJSONObject("sell") ?: return
+                val soldContractId = receipt.optLong("contract_id", 0L)
+                if (soldContractId != closingPosition.contractId || soldContractId <= 0L) {
+                    closingPosition.status = "OPEN"
+                    closingPosition.trailingClosePending = true
+                    addNotification("Trade", "${displayIndexName(closingPosition.symbol)} close response mismatch", "Deriv returned a sale receipt for contract $soldContractId, but this position is contract ${closingPosition.contractId}. The position remains open pending confirmation.")
+                } else {
+                    closingPosition.status = "CLOSING"
+                    closingPosition.trailingClosePending = false
+                }
                 savePositions()
                 runOnUiThread { if (selectedTab == "Trade") render() }
             }
@@ -1521,7 +1535,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             .put("basis", "stake")
             .put("contract_type", contractType)
             .put("currency", accountCurrency)
-            .put("duration", 12)
+            .put("duration", 6)
             .put("duration_unit", "h")
             .put("underlying_symbol", symbol)
             .put("req_id", req)
@@ -1824,7 +1838,18 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         String.format(Locale.US, "%.2f%%", value)
 
     private fun requestAutomaticTrailingClose(position: Position, reason: String) {
-        if (position.status != "OPEN" || !position.canSell || position.contractId <= 0L || !accountConnected) return
+        if (position.status !in setOf("OPEN", "CLOSING")) return
+        if (position.contractId <= 0L || !accountConnected) return
+
+        // Latch the protected-profit trigger even when Deriv temporarily disallows
+        // selling. Each fresh open-contract update reevaluates and retries it.
+        position.trailingClosePending = true
+        position.trailingCloseReason = reason
+        if (position.status == "CLOSING") return
+        if (!position.canSell) {
+            savePositions()
+            return
+        }
 
         position.status = "CLOSING"
         savePositions()
@@ -1839,18 +1864,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (!sent) {
             pendingRequests.remove(req)
             position.status = "OPEN"
+            position.trailingClosePending = true
             savePositions()
-            addNotification(
-                "Trade",
-                "${displayIndexName(position.symbol)} trailing-stop close failed",
-                "Deriv did not accept the automatic close request. The contract remains open. $reason"
-            )
+            addNotification("Trade", "${displayIndexName(position.symbol)} trailing-stop close failed",
+                "Deriv did not accept the automatic close request. The contract remains open and the close will be retried on a subsequent contract update. $reason")
         } else {
-            addNotification(
-                "Trade",
-                "${displayIndexName(position.symbol)} trailing stop triggered",
-                "$reason Automatic close request sent to Deriv."
-            )
+            addNotification("Trade", "${displayIndexName(position.symbol)} trailing stop triggered",
+                "$reason Automatic close request sent to Deriv; waiting for confirmed sale and final contract update.")
         }
         runOnUiThread {
             updateTradePositionViews(position)
@@ -2062,7 +2082,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 .put("trailingActivated", p.trailingActivated)
                 .put("trailingPeakPercent", p.trailingPeakPercent)
                 .put("trailingStopPercent", p.trailingStopPercent)
-                .put("losingRecoveryTrail", p.losingRecoveryTrail))
+                .put("losingRecoveryTrail", p.losingRecoveryTrail)
+                .put("trailingClosePending", p.trailingClosePending)
+                .put("trailingCloseReason", p.trailingCloseReason))
         }
         // commit() makes completed trade records durable before activity teardown/update.
         tradePrefs.edit().putString("positions", array.toString()).commit()
@@ -2087,6 +2109,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 p.trailingPeakPercent = o.optDouble("trailingPeakPercent", 0.0)
                 p.trailingStopPercent = o.optDouble("trailingStopPercent", 0.0)
                 p.losingRecoveryTrail = o.optBoolean("losingRecoveryTrail", false)
+                p.trailingClosePending = o.optBoolean("trailingClosePending", false)
+                p.trailingCloseReason = o.optString("trailingCloseReason", "")
                 if (p.recoveryEligible && !p.recoveryUsed) recoveryWaiting.add(p.localId)
                 positions[p.localId] = p
                 // Never subscribe a restored contract against the other account's socket.
