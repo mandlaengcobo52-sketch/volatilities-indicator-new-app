@@ -2068,19 +2068,39 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val lastLow = swingLows.lastOrNull()
         if (lastHigh == null || lastLow == null) return
 
+        // A fresh MSS is a STRUCTURE BREAK event, not merely a candle that
+        // remains above/below an old swing. Use the immediately preceding
+        // completed candle as the pre-break reference and require the latest
+        // completed candle to CLOSE across a confirmed swing level.
+        // Swing points are taken only from prior completed candles, so the
+        // pivot has a right-hand confirmation candle before it can qualify.
+        val previousClosed = prior.lastOrNull() ?: return
+        val latestConfirmedSwingHigh = swingHighs.lastOrNull()
+        val latestConfirmedSwingLow = swingLows.lastOrNull()
         val mssDirection = when {
-            last.close > lastHigh -> "RISE"
-            last.close < lastLow -> "FALL"
+            latestConfirmedSwingHigh != null &&
+                previousClosed.close <= latestConfirmedSwingHigh &&
+                last.close > latestConfirmedSwingHigh -> "RISE"
+            latestConfirmedSwingLow != null &&
+                previousClosed.close >= latestConfirmedSwingLow &&
+                last.close < latestConfirmedSwingLow -> "FALL"
             else -> ""
         }
         if (mssDirection.isNotBlank()) {
+            // Record the exact break candle epoch. This prevents an earlier
+            // MSS from satisfying the second-execution gate after the first
+            // original contract has closed.
+            recoveryMss[symbol] = mssDirection
             recoveryMssEpoch[symbol] = last.epoch
-            tradePrefs.edit().putLong("signal_mss_epoch_$symbol", last.epoch).apply()
-            if (recoveryMss[symbol] != mssDirection) {
-                recoveryMss[symbol] = mssDirection
-                tradePrefs.edit().putString("signal_mss_$symbol", mssDirection).apply()
-                addNotification("Home", "${displayIndexName(symbol)} MSS qualified", "MSS qualified in the ${mssDirection.lowercase(Locale.US)} direction on a completed candle.")
-            }
+            tradePrefs.edit()
+                .putString("signal_mss_$symbol", mssDirection)
+                .putLong("signal_mss_epoch_$symbol", last.epoch)
+                .apply()
+            addNotification(
+                "Home",
+                "${displayIndexName(symbol)} FRESH MSS qualified",
+                "Fresh ${mssDirection.lowercase(Locale.US)} market-structure break confirmed by a completed candle closing beyond the latest confirmed swing level."
+            )
         }
 
         // Preserve the existing CHOCH qualification rule; its display is independent of recovery.
