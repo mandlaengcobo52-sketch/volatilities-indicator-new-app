@@ -1952,80 +1952,51 @@ indexStatusViews[symbol]?.apply {
         position.stake * (position.trailingStopPercent / 100.0)
 
     private fun evaluatePairTrailingStops(position: Position) {
-        // A CLOSED position must still be evaluated: its confirmed closure may
-        // be the event that permits the opposite contract to start recovery.
-        if (position.status !in setOf("OPEN", "CLOSED") ||
-            position.stake <= 0.0 || !position.stake.isFinite()) return
-
-        // Resolve the pair when it is available, but do not block the winning
-        // contract's own trailing stop merely because its opposite leg has not
-        // yet been restored into the local position list. Restored Deriv
-        // contracts can have role labels different from locally-created legs.
-        // Trailing-stop state belongs to one trade lifecycle on one index.
-        // Never group unrelated trades by symbol when originalId is missing,
-        // and never allow a matching originalId on another index into this pair.
-        val pair = if (position.originalId.isNotBlank()) {
-            positions.values.filter {
-                it.symbol == position.symbol &&
-                    it.originalId == position.originalId &&
-                    it.role in setOf("ORIGINAL", "EXISTING")
-            }
-        } else {
-            listOf(position)
-        }.distinctBy { it.contractId.takeIf { id -> id > 0L } ?: it.localId }
+        // Trailing-stop state belongs to this contract only. Do not select a
+        // winner from another contract or share state by symbol/originalId.
+        if (position.status != "OPEN" ||
+            position.stake <= 0.0 || !position.stake.isFinite() ||
+            position.losingRecoveryTrail) return
 
         val currentPercent = contractProfitPercent(position)
         if (!currentPercent.isFinite()) return
 
-        // Find the already-armed winning leg, or arm the better-performing
-        // OPEN leg only when it reaches +25% profit on stake.
-        var winner = pair.firstOrNull {
-            it.trailingActivated && !it.losingRecoveryTrail
-        }
-        if (winner == null) {
-            // Only an OPEN contract can become the winning leg. Do not select
-            // a closed leg merely because its last P/L is higher.
-            val candidate = pair
-                .filter { it.status == "OPEN" }
-                .maxByOrNull { contractProfitPercent(it) }
-            val candidatePercent = candidate?.let { contractProfitPercent(it) }
-            if (candidate != null && candidatePercent != null &&
-    candidatePercent.isFinite() && candidatePercent >= 35.0) {
-    candidate.trailingActivated = true
-    candidate.losingRecoveryTrail = false
-    candidate.trailingPeakPercent = candidatePercent
-    candidate.trailingStopPercent = 25.0
-    winner = candidate
-            }
+        // A newly opened contract starts unarmed and must reach +35% of its
+        // own stake before its trailing stop can become active.
+        if (!position.trailingActivated) {
+            if (currentPercent < 35.0) return
+            position.trailingActivated = true
+            position.trailingPeakPercent = currentPercent
+            position.trailingStopPercent = 25.0
         }
 
-        // Manage the winner first. Stop is peak minus 10 percentage points:
-        // +35 -> +25, +45 -> +35, +55 -> +45, etc.
-        winner?.let { winningPosition ->
-            val winningPercent = contractProfitPercent(winningPosition)
-            if (winningPercent.isFinite() && winningPercent > winningPosition.trailingPeakPercent) {
-                winningPosition.trailingPeakPercent = winningPercent
-            }
-            val winnerPeakStage = kotlin.math.floor(
-    (winningPosition.trailingPeakPercent - 35.0) / 10.0
-).toInt()
-winningPosition.trailingStopPercent = 25.0 + (winnerPeakStage * 10.0)
-
-            if (winningPosition.status == "OPEN" && winningPercent <= winningPosition.trailingStopPercent) {
-                val extreme = if (winningPosition.direction == "RISE") "bullish trend top" else "bearish trend bottom"
-                requestAutomaticTrailingClose(
-                    winningPosition,
-                    "Winning ${winningPosition.direction} trailing stop reversed from the $extreme; protected profit ${formatPercent(winningPosition.trailingStopPercent)} of this contract's stake (${formatMoney(protectedProfitAmount(winningPosition))}) reached."
-                )
-            }
+        // Update only this contract's peak and protected-profit threshold.
+        if (currentPercent > position.trailingPeakPercent) {
+            position.trailingPeakPercent = currentPercent
         }
 
-        val activeWinner = winner ?: return
+        val peakStage = kotlin.math.floor(
+            (position.trailingPeakPercent - 35.0) / 10.0
+        ).toInt().coerceAtLeast(0)
+        position.trailingStopPercent = 25.0 + (peakStage * 10.0)
 
-        // Keep the remaining original contract open while MSS/CHOCH are
-        // monitored and the linked SECOND execution runs. It is closed only
-        // after Deriv confirms the SECOND execution's protected-profit sale.
-
+        // Close only after THIS contract has activated and subsequently
+        // retraced to its own protected-profit level. Never use another
+        // index/contract's peak or threshold for this decision.
+        if (currentPercent <= position.trailingStopPercent &&
+            currentPercent < position.trailingPeakPercent) {
+            val extreme = if (position.direction == "RISE") {
+                "bullish trend top"
+            } else {
+                "bearish trend bottom"
+            }
+            requestAutomaticTrailingClose(
+                position,
+                "Winning ${position.direction} trailing stop reversed from the $extreme; " +
+                    "protected profit ${formatPercent(position.trailingStopPercent)} " +
+                    "of this contract's stake (${formatMoney(protectedProfitAmount(position))}) reached."
+            )
+        }
     }
 
     // The linked second execution uses the same existing +35% activation
