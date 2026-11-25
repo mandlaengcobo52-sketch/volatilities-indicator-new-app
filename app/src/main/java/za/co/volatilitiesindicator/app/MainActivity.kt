@@ -64,7 +64,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val blue = Color.rgb(33, 150, 243)
     private val pageColor: Int get() = if (darkInterface) Color.rgb(0, 7, 5) else Color.rgb(245, 247, 250)
     private val cardColor: Int get() = if (darkInterface) Color.rgb(5, 25, 18) else Color.WHITE
-    private val lineColor: Int get() = if (darkInterface) Color.rgb(25, 91, 62) else Color.rgb(190, 225, 205)
+    private val lineColor: Int get() = green
 
     private lateinit var content: LinearLayout
     private var selectedTab = "Home"
@@ -455,7 +455,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         page.addView(TextView(this).apply {
             text = "VOLATILITIES INDICATOR"
             textSize = 25f
-            setTextColor(Color.rgb(0, 230, 118))
+            setTextColor(green)
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             setPadding(0, dp(4), 0, dp(22))
@@ -467,13 +467,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             background = GradientDrawable().apply {
                 setColor(Color.rgb(3, 22, 14))
                 setCornerRadius(dp(22).toFloat())
-                setStroke(dp(2), Color.rgb(0, 230, 118))
+                setStroke(dp(2), green)
             }
         }
         panel.addView(TextView(this).apply {
             text = if (register) "CREATE YOUR PROFILE" else "ACCOUNT LOGIN"
             textSize = 21f
-            setTextColor(Color.rgb(0, 230, 118))
+            setTextColor(green)
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             setPadding(0, 0, 0, dp(12))
@@ -497,7 +497,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     inputType = android.text.InputType.TYPE_CLASS_TEXT
                     transformationMethod = android.text.method.PasswordTransformationMethod.getInstance()
                 }
-                backgroundTintList = android.content.res.ColorStateList.valueOf(Color.rgb(0, 230, 118))
+                backgroundTintList = android.content.res.ColorStateList.valueOf(green)
             }
             val fieldParams = LinearLayout.LayoutParams(-1, dp(58)).apply {
                 bottomMargin = dp(7)
@@ -514,7 +514,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     textSize = 12f
                     typeface = Typeface.DEFAULT_BOLD
                     gravity = Gravity.CENTER
-                    setTextColor(Color.rgb(0, 230, 118))
+                    setTextColor(green)
                     setPadding(dp(10), 0, dp(4), 0)
                     contentDescription = "Show password"
                     isClickable = true
@@ -559,14 +559,14 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 textSize = 14f
                 setTextColor(Color.WHITE)
                 isChecked = true
-                buttonTintList = android.content.res.ColorStateList.valueOf(Color.rgb(0, 230, 118))
+                buttonTintList = android.content.res.ColorStateList.valueOf(green)
             }
             val investorChoice = RadioButton(this).apply {
                 id = View.generateViewId()
                 text = "INVESTOR — Deriv trading account"
                 textSize = 14f
                 setTextColor(Color.WHITE)
-                buttonTintList = android.content.res.ColorStateList.valueOf(Color.rgb(0, 230, 118))
+                buttonTintList = android.content.res.ColorStateList.valueOf(green)
             }
             roleChoices.addView(userChoice)
             roleChoices.addView(investorChoice)
@@ -593,7 +593,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             textSize = 16f
             isAllCaps = false
             setTextColor(Color.BLACK)
-            background = rounded(Color.rgb(0, 230, 118), Color.rgb(0, 230, 118), 10)
+            background = rounded green, green
             setOnClickListener { submitPlatformAuth(register, fields, status, this, selectedRegistrationRole) }
         }
         panel.addView(submit, LinearLayout.LayoutParams(-1, dp(54)).apply {
@@ -603,7 +603,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         panel.addView(TextView(this).apply {
             text = if (register) "Already registered? Login" else "New user? Register here"
             gravity = Gravity.CENTER
-            setTextColor(Color.rgb(0, 230, 118))
+            setTextColor(green)
             setPadding(0, dp(20), 0, dp(8))
             textSize = 16f
             setOnClickListener { showPlatformAuthScreen(!register) }
@@ -3887,9 +3887,7 @@ position.trailingStopPercent = 25.0 + (peakStage * 10.0)
             text = value
             textSize = size
             setTextColor(
-    if (!darkInterface && color == green)
-        Color.rgb(0, 100, 45)
-    else color
+    color
 )
         }
     }
