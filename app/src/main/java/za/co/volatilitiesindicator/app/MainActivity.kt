@@ -178,13 +178,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var executionEpoch: Long = 0L,
         var recoveryAfterEpoch: Long = 0L,
         var pairedLoss: Double = 0.0,
-        var trailingActivated: Boolean = false,
-        var trailingPeakPercent: Double = 0.0,
-        var trailingStopPercent: Double = 0.0,
-        var losingRecoveryTrail: Boolean = false,
-        var trailingClosePending: Boolean = false,
-        var trailingCloseReason: String = "",
-        var trailingStopTriggered: Boolean = false,
         var secondExecutionTriggered: Boolean = false
     )
 
@@ -208,7 +201,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private var tradeStatusView: TextView? = null
     private val tradeStatusViews = mutableMapOf<String, TextView>()
     private val tradeProfitViews = mutableMapOf<String, TextView>()
-    private val tradeTrailingViews = mutableMapOf<String, TextView>()
     private val tradeCountdownViews = mutableMapOf<String, TextView>()
     private val countdownHandler = Handler(Looper.getMainLooper())
     private val countdownTask = object : Runnable {
@@ -932,7 +924,6 @@ indexStatusViews[symbol]?.apply {
                     val errorMessage = error.optString("message", "Deriv request failed")
                     val wasClosing = failedPosition.status == "CLOSING"
                     failedPosition.status = if (failedPosition.contractId > 0L) "OPEN" else "ERROR: $errorMessage"
-                    if (wasClosing) failedPosition.trailingClosePending = true
                     addNotification("Trade", "${displayIndexName(failedPosition.symbol)} trade request failed", errorMessage + if (wasClosing) " Automatic close remains pending; the contract is not marked closed." else "")
                 }
                 savePositions()
@@ -980,7 +971,6 @@ indexStatusViews[symbol]?.apply {
                 val soldContractId = receipt.optLong("contract_id", 0L)
                 if (soldContractId != closingPosition.contractId || soldContractId <= 0L) {
                     closingPosition.status = "OPEN"
-                    closingPosition.trailingClosePending = true
                     addNotification("Trade", "${displayIndexName(closingPosition.symbol)} close response mismatch", "Deriv returned a sale receipt for contract $soldContractId, but this position is contract ${closingPosition.contractId}. The position remains open pending confirmation.")
                 } else if (closingPosition.status != "CLOSED") {
                     // A successful Deriv sell receipt is the sale confirmation.
@@ -992,26 +982,8 @@ indexStatusViews[symbol]?.apply {
                     }
                     closingPosition.status = "CLOSED"
                     closingPosition.canSell = false
-                    closingPosition.trailingClosePending = false
-                    closingPosition.trailingCloseReason = ""
                     closingPosition.closedAt = System.currentTimeMillis() / 1000L
 
-                    if (closingPosition.role == "ORIGINAL" && closingPosition.profit > 0.0 && closingPosition.trailingStopTriggered) {
-                        closingPosition.recoveryEligible = true
-                        closingPosition.recoveryAfterEpoch = closingPosition.closedAt
-                        recoveryWaiting.add(closingPosition.localId)
-                    }
-                    if (closingPosition.role == "SECOND" && closingPosition.trailingStopTriggered && closingPosition.profit > 0.0) {
-                        val remainingOriginal = positions.values.firstOrNull {
-                            it.role == "ORIGINAL" && it.originalId == closingPosition.originalId && it.status == "OPEN"
-                        }
-                        if (remainingOriginal != null) {
-                            requestAutomaticTrailingClose(
-                                remainingOriginal,
-                                "The linked second execution has closed at its protected-profit trailing stop. Closing the remaining original contract as instructed."
-                            )
-                        }
-                    }
                     addNotification("Trade", "${displayIndexName(closingPosition.symbol)} trade closed", "${closingPosition.role} ${closingPosition.direction} final P/L: ${formatMoney(closingPosition.profit)}.")
                 }
                 savePositions()
@@ -1489,8 +1461,7 @@ indexStatusViews[symbol]?.apply {
         val winningOriginal = positions.values.firstOrNull {
             it.symbol == symbol && it.role == "ORIGINAL" &&
                 it.status == "CLOSED" && it.profit > 0.0 &&
-                it.trailingStopTriggered && it.recoveryEligible &&
-                !it.secondExecutionTriggered
+                it.recoveryEligible && !it.secondExecutionTriggered
         }
         if (winningOriginal != null) {
             val peer = positions.values.firstOrNull {
@@ -1521,12 +1492,7 @@ indexStatusViews[symbol]?.apply {
             .firstOrNull { pair -> pair.size == 2 && pair.any { it.status == "OPEN" || it.status == "CLOSING" } }
 
         if (openPair != null) {
-            val winnerWaiting = openPair.any { it.trailingStopTriggered && it.status == "CLOSED" && it.profit > 0.0 }
-            return if (winnerWaiting) {
-                "One original contract has closed profitably. Waiting for the linked second execution."
-            } else {
-                "ORIGINAL RISE + FALL PAIR RUNNING · Waiting for one contract to close at its existing protected-profit trailing stop."
-            }
+            return "ORIGINAL RISE + FALL PAIR RUNNING · Waiting for the original contracts to close."
         }
 
         val existing = positions.values.any {
@@ -1868,40 +1834,11 @@ indexStatusViews[symbol]?.apply {
             position.closedAt = contract.optLong("sell_time", 0L).takeIf { it > 0L }
                 ?: contract.optLong("date_expiry", 0L).takeIf { it > 0L }
                 ?: System.currentTimeMillis() / 1000L
-            if (position.role == "ORIGINAL" && position.profit > 0.0 && position.trailingStopTriggered) {
-                // A single original trade becomes eligible for its opposite-direction
-                // second execution after Deriv confirms its profitable trailing-stop close.
-                position.recoveryEligible = true
-                position.recoveryAfterEpoch = position.closedAt
-                recoveryWaiting.add(position.localId)
-            }
-            if (position.role == "SECOND" && position.trailingStopTriggered && position.profit > 0.0) {
-                val remainingOriginal = positions.values.firstOrNull {
-                    it.role == "ORIGINAL" && it.originalId == position.originalId &&
-                        it.status == "OPEN"
-                }
-                if (remainingOriginal != null) {
-                    requestAutomaticTrailingClose(
-                        remainingOriginal,
-                        "The linked second execution has closed at its protected-profit trailing stop. Closing the remaining original contract as instructed."
-                    )
-                }
-            }
             if (!wasAlreadyClosed) {
                 addNotification("Trade", "${displayIndexName(position.symbol)} trade closed", "${position.role} ${position.direction} final P/L: ${formatMoney(position.profit)}.")
             }
         } else if (position.status != "CLOSING") {
             position.status = "OPEN"
-        }
-
-        // Re-evaluate on OPEN updates and on Deriv's confirmed CLOSED update.
-        // Confirmed first-leg closure unlocks the linked MSS/CHOCH lifecycle.
-        if (position.trailingClosePending && position.status == "OPEN") {
-            requestAutomaticTrailingClose(position, position.trailingCloseReason.ifBlank { "Retrying a previously triggered protected-profit close." })
-        } else if (position.role in setOf("ORIGINAL", "EXISTING")) {
-            evaluatePairTrailingStops(position)
-        } else if (position.role == "SECOND") {
-            evaluateSecondExecutionTrailingStop(position)
         }
 
         savePositions()
@@ -1922,156 +1859,6 @@ indexStatusViews[symbol]?.apply {
 
         if (position.recoveryEligible && !position.recoveryUsed) {
             candlesByIndex[position.symbol]?.let { evaluateRecoverySignals(position.symbol, it) }
-        }
-    }
-
-    /**
-     * Independent winning-leg trailing stop for an original RISE/FALL pair.
-     *
-     * WINNER:
-     * - Activates at +35% profit on stake; initial protected stop is +25% profit on stake.
-     * - Each new +10 percentage-point peak advances the stop by +10 points:
-     *   +35 peak -> +25 stop, +45 -> +35, and so on.
-     * - The stop follows the winning P/L peak, representing the bullish RISE
-     *   move's top or bearish FALL move's bottom.
-     *
-     */
-    /**
-     * Trailing-stop percentages are always measured against THIS Deriv
-     * contract's purchase stake. They are never percentages of account
-     * balance, daily starting capital, or combined index capital.
-     */
-    private fun contractProfitPercent(position: Position): Double {
-        if (position.stake <= 0.0 || !position.stake.isFinite() || !position.profit.isFinite()) {
-            return Double.NaN
-        }
-        return (position.profit / position.stake) * 100.0
-    }
-
-    private fun protectedProfitAmount(position: Position): Double =
-        position.stake * (position.trailingStopPercent / 100.0)
-
-    private fun evaluatePairTrailingStops(position: Position) {
-        // Trailing-stop state belongs to this contract only. Do not select a
-        // winner from another contract or share state by symbol/originalId.
-        if (position.status != "OPEN" ||
-            position.stake <= 0.0 || !position.stake.isFinite() ||
-            position.losingRecoveryTrail) return
-
-        val currentPercent = contractProfitPercent(position)
-        if (!currentPercent.isFinite()) return
-
-        // A newly opened contract starts unarmed and must reach +35% of its
-        // own stake before its trailing stop can become active.
-        if (!position.trailingActivated) {
-            if (currentPercent < 35.0) return
-            position.trailingActivated = true
-            position.trailingPeakPercent = currentPercent
-            position.trailingStopPercent = 25.0
-        }
-
-        // Update only this contract's peak and protected-profit threshold.
-        if (currentPercent > position.trailingPeakPercent) {
-            position.trailingPeakPercent = currentPercent
-        }
-
-        val peakStage = kotlin.math.floor(
-            (position.trailingPeakPercent - 35.0) / 10.0
-        ).toInt().coerceAtLeast(0)
-        position.trailingStopPercent = 25.0 + (peakStage * 10.0)
-
-        // Close only after THIS contract has activated and subsequently
-        // retraced to its own protected-profit level. Never use another
-        // index/contract's peak or threshold for this decision.
-        if (currentPercent <= position.trailingStopPercent &&
-            currentPercent < position.trailingPeakPercent) {
-            val extreme = if (position.direction == "RISE") {
-                "bullish trend top"
-            } else {
-                "bearish trend bottom"
-            }
-            requestAutomaticTrailingClose(
-                position,
-                "Winning ${position.direction} trailing stop reversed from the $extreme; " +
-                    "protected profit ${formatPercent(position.trailingStopPercent)} " +
-                    "of this contract's stake (${formatMoney(protectedProfitAmount(position))}) reached."
-            )
-        }
-    }
-
-    // The linked second execution uses the same existing +35% activation
-    // and 10-point trailing progression. No trailing thresholds are changed.
-    private fun evaluateSecondExecutionTrailingStop(position: Position) {
-        if (position.status != "OPEN" || position.stake <= 0.0 || !position.stake.isFinite()) return
-        val currentPercent = contractProfitPercent(position)
-        if (!currentPercent.isFinite()) return
-        if (!position.trailingActivated) {
-            if (currentPercent < 35.0) return
-            position.trailingActivated = true
-            position.trailingPeakPercent = currentPercent
-            position.trailingStopPercent = 25.0
-        }
-        if (currentPercent > position.trailingPeakPercent) {
-            position.trailingPeakPercent = currentPercent
-        }
-        val peakStage = kotlin.math.floor(
-    (position.trailingPeakPercent - 35.0) / 10.0
-).toInt()
-position.trailingStopPercent = 25.0 + (peakStage * 10.0)
-        if (currentPercent <= position.trailingStopPercent) {
-            requestAutomaticTrailingClose(
-                position,
-                "Second execution trailing stop reversed from its peak; protected profit ${formatPercent(position.trailingStopPercent)} of this contract's stake (${formatMoney(protectedProfitAmount(position))}) reached."
-            )
-        }
-    }
-
-    private fun formatPercent(value: Double): String =
-        String.format(Locale.US, "%.0f%%", value)
-
-    private fun formatPnlPercent(value: Double): String =
-        String.format(Locale.US, "%.2f%%", value)
-
-    private fun requestAutomaticTrailingClose(position: Position, reason: String) {
-        if (position.status !in setOf("OPEN", "CLOSING")) return
-        if (position.contractId <= 0L || !accountConnected) return
-
-        // Latch the protected-profit trigger even when Deriv temporarily disallows
-        // selling. Each fresh open-contract update reevaluates and retries it.
-        position.trailingClosePending = true
-        position.trailingStopTriggered = true
-        position.trailingCloseReason = reason
-        if (position.status == "CLOSING") return
-        if (!position.canSell) {
-            savePositions()
-            return
-        }
-
-        position.status = "CLOSING"
-        savePositions()
-        val req = nextRequestId()
-        pendingRequests[req] = position.localId
-        val request = JSONObject()
-            .put("sell", position.contractId)
-            .put("price", 0)
-            .put("req_id", req)
-
-        val sent = derivService?.client?.send(request) == true
-        if (!sent) {
-            pendingRequests.remove(req)
-            position.status = "OPEN"
-            position.trailingClosePending = true
-            savePositions()
-            addNotification("Trade", "${displayIndexName(position.symbol)} trailing-stop close failed",
-                "Deriv did not accept the automatic close request. The contract remains open and the close will be retried on a subsequent contract update. $reason")
-        } else {
-            addNotification("Trade", "${displayIndexName(position.symbol)} trailing stop triggered",
-                "$reason Automatic close request sent to Deriv; waiting for confirmed sale and final contract update.")
-        }
-        runOnUiThread {
-            updateTradePositionViews(position)
-            if (selectedTab == "Trade") render()
-            updateAccountProfitLossViews()
         }
     }
 
@@ -2191,13 +1978,13 @@ position.trailingStopPercent = 25.0 + (peakStage * 10.0)
         val choch = recoveryChoch[symbol]
         if (!autoTradingEnabled || !accountConnected || mss.isNullOrBlank() || choch.isNullOrBlank() || mss != choch) return
 
-        // A single ORIGINAL trade must be confirmed closed profitably at its
-        // existing trailing stop before a second execution can be considered.
+        // A profitable original closure and fresh MSS/CHOCH are required
+        // before a linked second execution can be considered.
         val nowEpoch = System.currentTimeMillis() / 1000L
         val winningOriginal = positions.values.firstOrNull { winner ->
             winner.symbol == symbol && winner.role == "ORIGINAL" &&
                 winner.status == "CLOSED" && winner.profit > 0.0 &&
-                winner.trailingStopTriggered && winner.recoveryEligible &&
+                winner.recoveryEligible &&
                 !winner.secondExecutionTriggered &&
                 positions.values.none { it.role == "SECOND" && it.originalId == winner.originalId }
         } ?: return
@@ -2305,13 +2092,6 @@ position.trailingStopPercent = 25.0 + (peakStage * 10.0)
                 .put("executionEpoch", p.executionEpoch)
                 .put("recoveryAfterEpoch", p.recoveryAfterEpoch)
                 .put("pairedLoss", p.pairedLoss)
-                .put("trailingActivated", p.trailingActivated)
-                .put("trailingPeakPercent", p.trailingPeakPercent)
-                .put("trailingStopPercent", p.trailingStopPercent)
-                .put("losingRecoveryTrail", p.losingRecoveryTrail)
-                .put("trailingClosePending", p.trailingClosePending)
-                .put("trailingCloseReason", p.trailingCloseReason)
-                .put("trailingStopTriggered", p.trailingStopTriggered)
                 .put("secondExecutionTriggered", p.secondExecutionTriggered))
         }
         // commit() makes completed trade records durable before activity teardown/update.
@@ -2345,13 +2125,6 @@ position.trailingStopPercent = 25.0 + (peakStage * 10.0)
                 p.executionEpoch = o.optLong("executionEpoch", p.openedAtEpoch)
                 p.recoveryAfterEpoch = o.optLong("recoveryAfterEpoch", p.closedAt)
                 p.pairedLoss = o.optDouble("pairedLoss", 0.0)
-                p.trailingActivated = o.optBoolean("trailingActivated", false)
-                p.trailingPeakPercent = o.optDouble("trailingPeakPercent", 0.0)
-                p.trailingStopPercent = o.optDouble("trailingStopPercent", 0.0)
-                p.losingRecoveryTrail = o.optBoolean("losingRecoveryTrail", false)
-                p.trailingClosePending = o.optBoolean("trailingClosePending", false)
-                p.trailingCloseReason = o.optString("trailingCloseReason", "")
-                p.trailingStopTriggered = o.optBoolean("trailingStopTriggered", false)
                 p.secondExecutionTriggered = o.optBoolean("secondExecutionTriggered", false)
                 if (p.recoveryEligible && !p.recoveryUsed) recoveryWaiting.add(p.localId)
                 positions[p.localId] = p
@@ -2566,7 +2339,6 @@ position.trailingStopPercent = 25.0 + (peakStage * 10.0)
         chochStatusViews.clear()
         tradeStatusViews.clear()
         tradeProfitViews.clear()
-        tradeTrailingViews.clear()
         tradeCountdownViews.clear()
 
         val root = LinearLayout(this).apply {
@@ -2822,19 +2594,6 @@ position.trailingStopPercent = 25.0 + (peakStage * 10.0)
                     tradeProfitViews[p.localId] = profitView
                     c.addView(profitView)
 
-                    if (p.status != "CLOSED") {
-                        val currentPercent = contractProfitPercent(p).takeIf { it.isFinite() } ?: 0.0
-                        val trailDescription = if (p.trailingActivated) {
-                            val trailType = if (p.losingRecoveryTrail) "LOSS PROTECTION" else "WINNING TRAIL"
-                            "TRAILING STOP: ACTIVE · $trailType · PROFIT ON STAKE ${formatPnlPercent(currentPercent)} · PROTECTED PROFIT ON STAKE ${formatMoney(protectedProfitAmount(p))} (${formatPercent(p.trailingStopPercent)})"
-                        } else {
-                            "TRAILING STOP: MONITORING · P/L ${formatPnlPercent(currentPercent)} OF STAKE · ACTIVATES AT +35% · PROTECTS 10 POINTS BELOW THE HIGHEST PROFIT"
-                        }
-                        val trailView = text(trailDescription, 12f, if (p.trailingActivated) amber else blue, true)
-                        tradeTrailingViews[p.localId] = trailView
-                        c.addView(trailView)
-                    }
-
                     if (p.contractId > 0L && p.status == "OPEN") {
                         c.addView(space(6))
                         c.addView(actionButton("CLOSE THIS ${p.direction} TRADE", primary = false) {
@@ -2935,16 +2694,6 @@ position.trailingStopPercent = 25.0 + (peakStage * 10.0)
         tradeProfitViews[position.localId]?.apply {
             text = "Profit / Loss: ${formatMoney(position.profit)}"
             setTextColor(if (position.profit >= 0.0) green else red)
-        }
-        tradeTrailingViews[position.localId]?.let { view ->
-            val currentPercent = contractProfitPercent(position).takeIf { it.isFinite() } ?: 0.0
-            view.text = if (position.trailingActivated) {
-                val label = if (position.losingRecoveryTrail) "LOSS PROTECTION" else "WINNING TRAIL"
-                "TRAILING STOP: ACTIVE · $label · PROFIT ON STAKE ${formatPnlPercent(currentPercent)} · PROTECTED PROFIT ON STAKE ${formatMoney(protectedProfitAmount(position))} (${formatPercent(position.trailingStopPercent)})"
-            } else {
-                "TRAILING STOP: MONITORING · P/L ${formatPnlPercent(currentPercent)} OF STAKE · ACTIVATES AT +35% · PROTECTS 10 POINTS BELOW THE HIGHEST PROFIT"
-            }
-            view.setTextColor(if (position.trailingActivated) amber else blue)
         }
     }
 
