@@ -187,6 +187,20 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     // recovery before a fresh new direction change is confirmed.
     private val recoveryMssEpoch = mutableMapOf<String, Long>()
     private val recoveryChochEpoch = mutableMapOf<String, Long>()
+    // First-ever qualification is retained for audit; latest qualification drives execution.
+    private val firstMssDirection = mutableMapOf<String, String>()
+    private val firstMssLevel = mutableMapOf<String, Double>()
+    private val firstMssClose = mutableMapOf<String, Double>()
+    private val firstMssEpoch = mutableMapOf<String, Long>()
+    private val firstChochDirection = mutableMapOf<String, String>()
+    private val firstChochLevel = mutableMapOf<String, Double>()
+    private val firstChochClose = mutableMapOf<String, Double>()
+    private val firstChochEpoch = mutableMapOf<String, Long>()
+    private val latestMssLevel = mutableMapOf<String, Double>()
+    private val latestMssClose = mutableMapOf<String, Double>()
+    private val latestChochLevel = mutableMapOf<String, Double>()
+    private val latestChochClose = mutableMapOf<String, Double>()
+    private val signalScanStartedEpoch = System.currentTimeMillis() / 1000L
     private var requestCounter = 7000
     private var dailyCapital = 0.0
     private var accountCurrency = "USD"
@@ -1402,11 +1416,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         recoveryStatusViews[symbol]?.text = status
         tradeRecoveryStatusViews[symbol]?.text = status
         mssStatusViews[symbol]?.apply {
-            text = signalQualificationText(recoveryMss[symbol])
+            text = signalQualificationText(recoveryMss[symbol]) + signalDetailText(latestMssLevel[symbol], latestMssClose[symbol], recoveryMssEpoch[symbol], firstMssLevel[symbol], firstMssEpoch[symbol])
             setTextColor(if (recoveryMss[symbol].isNullOrBlank()) amber else green)
         }
         chochStatusViews[symbol]?.apply {
-            text = signalQualificationText(recoveryChoch[symbol])
+            text = signalQualificationText(recoveryChoch[symbol]) + signalDetailText(latestChochLevel[symbol], latestChochClose[symbol], recoveryChochEpoch[symbol], firstChochLevel[symbol], firstChochEpoch[symbol])
             setTextColor(if (recoveryChoch[symbol].isNullOrBlank()) amber else green)
         }
     }
@@ -1914,6 +1928,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val closed = candles.sortedBy { it.epoch }.dropLast(1)
         if (closed.size < 4) return
         val last = closed.last()
+        // Do not replay a historical candle as a fresh signal after app launch.
+        if (last.epoch <= signalScanStartedEpoch) return
         val prior = closed.dropLast(1)
         val swingHighs = mutableListOf<Double>()
         val swingLows = mutableListOf<Double>()
@@ -1924,46 +1940,84 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val lastHigh = swingHighs.lastOrNull()
         val lastLow = swingLows.lastOrNull()
         if (lastHigh == null || lastLow == null) return
+        val previousClose = prior.last().close
 
+        // A qualification is a new confirmed break, not every candle that remains
+        // beyond an already-broken swing level.
         val mssDirection = when {
-            last.close > lastHigh -> "RISE"
-            last.close < lastLow -> "FALL"
+            previousClose <= lastHigh && last.close > lastHigh -> "RISE"
+            previousClose >= lastLow && last.close < lastLow -> "FALL"
             else -> ""
         }
         if (mssDirection.isNotBlank()) {
+            recoveryMss[symbol] = mssDirection
             recoveryMssEpoch[symbol] = last.epoch
-            tradePrefs.edit().putLong("signal_mss_epoch_$symbol", last.epoch).apply()
-            if (recoveryMss[symbol] != mssDirection) {
-                recoveryMss[symbol] = mssDirection
-                tradePrefs.edit().putString("signal_mss_$symbol", mssDirection).apply()
-                addNotification("Home", "${displayIndexName(symbol)} MSS qualified", "MSS qualified in the ${mssDirection.lowercase(Locale.US)} direction on a completed candle.")
+            latestMssLevel[symbol] = if (mssDirection == "RISE") lastHigh else lastLow
+            latestMssClose[symbol] = last.close
+            val prefsEdit = tradePrefs.edit()
+                .putString("signal_mss_$symbol", mssDirection)
+                .putLong("signal_mss_epoch_$symbol", last.epoch)
+                .putFloat("signal_mss_level_$symbol", latestMssLevel[symbol]!!.toFloat())
+                .putFloat("signal_mss_close_$symbol", last.close.toFloat())
+            if (!firstMssEpoch.containsKey(symbol)) {
+                firstMssDirection[symbol] = mssDirection
+                firstMssLevel[symbol] = latestMssLevel[symbol]!!
+                firstMssClose[symbol] = last.close
+                firstMssEpoch[symbol] = last.epoch
+                prefsEdit.putString("first_mss_direction_$symbol", mssDirection)
+                    .putLong("first_mss_epoch_$symbol", last.epoch)
+                    .putFloat("first_mss_level_$symbol", latestMssLevel[symbol]!!.toFloat())
+                    .putFloat("first_mss_close_$symbol", last.close.toFloat())
             }
+            prefsEdit.apply()
+            addNotification("Home", "${displayIndexName(symbol)} MSS qualified", "MSS $mssDirection. Break level ${formatPrice(latestMssLevel[symbol]!!)}; candle close ${formatPrice(last.close)}; candle time ${formatSignalEpoch(last.epoch)}.")
         }
 
-        // Preserve the existing CHOCH qualification rule; its display is independent of recovery.
+        // CHOCH retains the existing direction/candle-colour rule, but only
+        // qualifies on the first close through the swing level.
         val chochDirection = when {
-            last.close > lastHigh && last.close > last.open -> "RISE"
-            last.close < lastLow && last.close < last.open -> "FALL"
+            previousClose <= lastHigh && last.close > lastHigh && last.close > last.open -> "RISE"
+            previousClose >= lastLow && last.close < lastLow && last.close < last.open -> "FALL"
             else -> ""
         }
         if (chochDirection.isNotBlank()) {
+            recoveryChoch[symbol] = chochDirection
             recoveryChochEpoch[symbol] = last.epoch
-            tradePrefs.edit().putLong("signal_choch_epoch_$symbol", last.epoch).apply()
-            if (recoveryChoch[symbol] != chochDirection) {
-                recoveryChoch[symbol] = chochDirection
-                tradePrefs.edit().putString("signal_choch_$symbol", chochDirection).apply()
-                addNotification("Home", "${displayIndexName(symbol)} CHOCH qualified", "CHOCH qualified in the ${chochDirection.lowercase(Locale.US)} direction on a completed candle.")
+            latestChochLevel[symbol] = if (chochDirection == "RISE") lastHigh else lastLow
+            latestChochClose[symbol] = last.close
+            val prefsEdit = tradePrefs.edit()
+                .putString("signal_choch_$symbol", chochDirection)
+                .putLong("signal_choch_epoch_$symbol", last.epoch)
+                .putFloat("signal_choch_level_$symbol", latestChochLevel[symbol]!!.toFloat())
+                .putFloat("signal_choch_close_$symbol", last.close.toFloat())
+            if (!firstChochEpoch.containsKey(symbol)) {
+                firstChochDirection[symbol] = chochDirection
+                firstChochLevel[symbol] = latestChochLevel[symbol]!!
+                firstChochClose[symbol] = last.close
+                firstChochEpoch[symbol] = last.epoch
+                prefsEdit.putString("first_choch_direction_$symbol", chochDirection)
+                    .putLong("first_choch_epoch_$symbol", last.epoch)
+                    .putFloat("first_choch_level_$symbol", latestChochLevel[symbol]!!.toFloat())
+                    .putFloat("first_choch_close_$symbol", last.close.toFloat())
             }
+            prefsEdit.apply()
+            addNotification("Home", "${displayIndexName(symbol)} CHOCH qualified", "CHOCH $chochDirection. Break level ${formatPrice(latestChochLevel[symbol]!!)}; candle close ${formatPrice(last.close)}; candle time ${formatSignalEpoch(last.epoch)}.")
         }
 
         runOnUiThread {
             updateRecoveryStatusView(symbol)
             mssStatusViews[symbol]?.apply {
-                text = signalQualificationText(recoveryMss[symbol])
+                text = signalQualificationText(recoveryMss[symbol]) + signalDetailText(
+                    latestMssLevel[symbol], latestMssClose[symbol], recoveryMssEpoch[symbol],
+                    firstMssLevel[symbol], firstMssEpoch[symbol]
+                )
                 setTextColor(if (recoveryMss[symbol].isNullOrBlank()) amber else green)
             }
             chochStatusViews[symbol]?.apply {
-                text = signalQualificationText(recoveryChoch[symbol])
+                text = signalQualificationText(recoveryChoch[symbol]) + signalDetailText(
+                    latestChochLevel[symbol], latestChochClose[symbol], recoveryChochEpoch[symbol],
+                    firstChochLevel[symbol], firstChochEpoch[symbol]
+                )
                 setTextColor(if (recoveryChoch[symbol].isNullOrBlank()) amber else green)
             }
         }
@@ -1971,43 +2025,42 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val mss = recoveryMss[symbol]
         val choch = recoveryChoch[symbol]
         if (!autoTradingEnabled || !accountConnected || mss.isNullOrBlank() || choch.isNullOrBlank() || mss != choch) return
-
-        // The first original must be closed profitably at its unchanged
-        // trailing stop. A fresh opposite MSS and CHOCH must close after it.
         val nowEpoch = System.currentTimeMillis() / 1000L
         val winningOriginal = positions.values.firstOrNull { winner ->
-            winner.symbol == symbol && winner.role == "ORIGINAL" &&
-                winner.status == "CLOSED" && winner.profit > 0.0 &&
-                winner.trailingStopTriggered && winner.recoveryEligible &&
+            winner.symbol == symbol && winner.role == "ORIGINAL" && winner.status == "CLOSED" &&
+                winner.profit > 0.0 && winner.trailingStopTriggered && winner.recoveryEligible &&
                 !winner.secondExecutionTriggered &&
                 positions.values.none { it.role == "SECOND" && it.originalId == winner.originalId }
         } ?: return
-
         val oppositeDirection = if (winningOriginal.direction == "RISE") "FALL" else "RISE"
         if (mss != oppositeDirection || choch != oppositeDirection) return
         if ((recoveryMssEpoch[symbol] ?: 0L) <= winningOriginal.closedAt ||
             (recoveryChochEpoch[symbol] ?: 0L) <= winningOriginal.closedAt) return
-
         val remainingSeconds = winningOriginal.expiryEpoch - nowEpoch
         if (remainingSeconds <= 0L) return
         val secondStake = roundStake(winningOriginal.stake + winningOriginal.profit)
         if (secondStake <= 0.0 || availableBalance + 0.000001 < secondStake) return
-
-        val submitted = openPosition(
-            symbol, oppositeDirection, "SECOND", secondStake,
-            winningOriginal.originalId, remainingSeconds
-        )
+        val submitted = openPosition(symbol, oppositeDirection, "SECOND", secondStake, winningOriginal.originalId, remainingSeconds)
         if (!submitted) return
         winningOriginal.secondExecutionTriggered = true
         winningOriginal.recoveryUsed = true
         savePositions()
-        addNotification(
-            "Trade",
-            "${displayIndexName(symbol)} second execution triggered",
-            "Original ${winningOriginal.direction} closed profitably. Fresh MSS and CHOCH confirmed ${oppositeDirection}. Second ${oppositeDirection} stake: ${formatMoney(secondStake)} (original stake plus first-trade profit); duration: ${remainingSeconds} seconds, matching the remaining original scheduled duration."
-        )
+        addNotification("Trade", "${displayIndexName(symbol)} second execution triggered", "Original ${winningOriginal.direction} closed profitably. Fresh MSS and CHOCH confirmed ${oppositeDirection}. Second ${oppositeDirection} stake: ${formatMoney(secondStake)}; duration: ${remainingSeconds} seconds.")
         runOnUiThread { updateRecoveryStatusView(symbol); if (selectedTab == "Trade") render() }
+    }
 
+    private fun formatSignalEpoch(epoch: Long): String {
+        if (epoch <= 0L) return "Unavailable"
+        return java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
+            .format(java.util.Date(epoch * 1000L))
+    }
+
+    private fun signalDetailText(level: Double?, close: Double?, epoch: Long?, firstLevel: Double?, firstEpoch: Long?): String {
+        val latest = if (level != null && close != null && (epoch ?: 0L) > 0L)
+            "\nLatest break: ${formatPrice(level)} · Close: ${formatPrice(close)} · ${formatSignalEpoch(epoch!!)}" else "\nLatest break: Awaiting new qualification"
+        val first = if (firstLevel != null && (firstEpoch ?: 0L) > 0L)
+            "\nFirst qualified: ${formatPrice(firstLevel)} · ${formatSignalEpoch(firstEpoch!!)}" else "\nFirst qualified: Not recorded"
+        return latest + first
     }
 
     /**
@@ -2030,17 +2083,30 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         recoveryChoch.clear()
         recoveryMssEpoch.clear()
         recoveryChochEpoch.clear()
+        firstMssDirection.clear(); firstMssLevel.clear(); firstMssClose.clear(); firstMssEpoch.clear()
+        firstChochDirection.clear(); firstChochLevel.clear(); firstChochClose.clear(); firstChochEpoch.clear()
+        latestMssLevel.clear(); latestMssClose.clear(); latestChochLevel.clear(); latestChochClose.clear()
         originalTriggered.clear()
 
         tradingDayKey = tradePrefs.getString("day_key", "").orEmpty()
         dailyCapital = tradePrefs.getFloat("daily_capital", 0f).toDouble()
         indexes.forEach { symbol ->
-            tradePrefs.getString("signal_mss_$symbol", null)?.let { recoveryMss[symbol] = it }
-            tradePrefs.getString("signal_choch_$symbol", null)?.let { recoveryChoch[symbol] = it }
-            val mssEpoch = tradePrefs.getLong("signal_mss_epoch_$symbol", 0L)
-            val chochEpoch = tradePrefs.getLong("signal_choch_epoch_$symbol", 0L)
-            if (mssEpoch > 0L) recoveryMssEpoch[symbol] = mssEpoch
-            if (chochEpoch > 0L) recoveryChochEpoch[symbol] = chochEpoch
+            tradePrefs.getString("first_mss_direction_$symbol", null)?.let { firstMssDirection[symbol] = it }
+            tradePrefs.getString("first_choch_direction_$symbol", null)?.let { firstChochDirection[symbol] = it }
+            val fm = tradePrefs.getLong("first_mss_epoch_$symbol", 0L)
+            val fc = tradePrefs.getLong("first_choch_epoch_$symbol", 0L)
+            if (fm > 0L) {
+                firstMssEpoch[symbol] = fm
+                firstMssLevel[symbol] = tradePrefs.getFloat("first_mss_level_$symbol", 0f).toDouble()
+                firstMssClose[symbol] = tradePrefs.getFloat("first_mss_close_$symbol", 0f).toDouble()
+            }
+            if (fc > 0L) {
+                firstChochEpoch[symbol] = fc
+                firstChochLevel[symbol] = tradePrefs.getFloat("first_choch_level_$symbol", 0f).toDouble()
+                firstChochClose[symbol] = tradePrefs.getFloat("first_choch_close_$symbol", 0f).toDouble()
+            }
+            // Current qualifications are deliberately not restored: after restart,
+            // a new completed-candle break must qualify before execution is possible.
         }
         loadPositions()
         if (tradingDayKey.isNotBlank()) {
@@ -2474,13 +2540,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             indexCard.addView(divider())
             indexCard.addView(space(8))
             indexCard.addView(text("MSS QUALIFICATION", 10f, whiteText, true))
-            val mssView = text(signalQualificationText(recoveryMss[symbol]), 11f,
+            val mssView = text(signalQualificationText(recoveryMss[symbol]) + signalDetailText(latestMssLevel[symbol], latestMssClose[symbol], recoveryMssEpoch[symbol], firstMssLevel[symbol], firstMssEpoch[symbol]), 11f,
                 if (recoveryMss[symbol].isNullOrBlank()) amber else green, true)
             mssStatusViews[symbol] = mssView
             indexCard.addView(mssView)
             indexCard.addView(space(5))
             indexCard.addView(text("CHOCH QUALIFICATION", 10f, whiteText, true))
-            val chochView = text(signalQualificationText(recoveryChoch[symbol]), 11f,
+            val chochView = text(signalQualificationText(recoveryChoch[symbol]) + signalDetailText(latestChochLevel[symbol], latestChochClose[symbol], recoveryChochEpoch[symbol], firstChochLevel[symbol], firstChochEpoch[symbol]), 11f,
                 if (recoveryChoch[symbol].isNullOrBlank()) amber else green, true)
             chochStatusViews[symbol] = chochView
             indexCard.addView(chochView)
