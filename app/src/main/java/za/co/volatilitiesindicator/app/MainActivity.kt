@@ -171,7 +171,24 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var trailingClosePending: Boolean = false,
         var trailingCloseReason: String = "",
         var trailingStopTriggered: Boolean = false,
-        var secondExecutionTriggered: Boolean = false
+        var secondExecutionTriggered: Boolean = false,
+        // Immutable-at-entry audit snapshot of the qualifications used for this contract.
+        var entryMssDirection: String = "",
+        var entryMssLevel: Double = 0.0,
+        var entryMssClose: Double = 0.0,
+        var entryMssEpoch: Long = 0L,
+        var entryMssFirstDirection: String = "",
+        var entryMssFirstLevel: Double = 0.0,
+        var entryMssFirstClose: Double = 0.0,
+        var entryMssFirstEpoch: Long = 0L,
+        var entryChochDirection: String = "",
+        var entryChochLevel: Double = 0.0,
+        var entryChochClose: Double = 0.0,
+        var entryChochEpoch: Long = 0L,
+        var entryChochFirstDirection: String = "",
+        var entryChochFirstLevel: Double = 0.0,
+        var entryChochFirstClose: Double = 0.0,
+        var entryChochFirstEpoch: Long = 0L
     )
 
     private val positions = linkedMapOf<String, Position>()
@@ -1539,6 +1556,24 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             originalId.ifBlank { localId }
         }
         val p = Position(localId, symbol, direction, role, roundedStake, originalId)
+        // Capture the exact MSS/CHOCH event at submission time. This snapshot is
+        // stored on the contract and is never cleared when live signal state resets.
+        p.entryMssDirection = recoveryMss[symbol].orEmpty()
+        p.entryMssLevel = latestMssLevel[symbol] ?: 0.0
+        p.entryMssClose = latestMssClose[symbol] ?: 0.0
+        p.entryMssEpoch = recoveryMssEpoch[symbol] ?: 0L
+        p.entryMssFirstDirection = firstMssDirection[symbol].orEmpty()
+        p.entryMssFirstLevel = firstMssLevel[symbol] ?: 0.0
+        p.entryMssFirstClose = firstMssClose[symbol] ?: 0.0
+        p.entryMssFirstEpoch = firstMssEpoch[symbol] ?: 0L
+        p.entryChochDirection = recoveryChoch[symbol].orEmpty()
+        p.entryChochLevel = latestChochLevel[symbol] ?: 0.0
+        p.entryChochClose = latestChochClose[symbol] ?: 0.0
+        p.entryChochEpoch = recoveryChochEpoch[symbol] ?: 0L
+        p.entryChochFirstDirection = firstChochDirection[symbol].orEmpty()
+        p.entryChochFirstLevel = firstChochLevel[symbol] ?: 0.0
+        p.entryChochFirstClose = firstChochClose[symbol] ?: 0.0
+        p.entryChochFirstEpoch = firstChochEpoch[symbol] ?: 0L
         positions[localId] = p
         val req = nextRequestId()
         pendingRequests[req] = localId
@@ -2063,6 +2098,19 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         return latest + first
     }
 
+    private fun tradeEntrySignalAuditText(p: Position): String {
+        fun oneSignal(label: String, direction: String, level: Double, close: Double, epoch: Long, firstDirection: String, firstLevel: Double, firstClose: Double, firstEpoch: Long): String {
+            if (direction.isBlank() || level <= 0.0 || close <= 0.0 || epoch <= 0L) {
+                return "$label: EVIDENCE UNAVAILABLE (contract was not created with a recorded signal snapshot)"
+            }
+            val first = if (firstEpoch > 0L && firstLevel > 0.0 && firstClose > 0.0)
+                "\nFirst qualification: $firstDirection · Break ${formatPrice(firstLevel)} · Close ${formatPrice(firstClose)} · ${formatSignalEpoch(firstEpoch)}"
+            else "\nFirst qualification: Not recorded at entry"
+            return "$label: $direction\nBreak level: ${formatPrice(level)} · Candle close: ${formatPrice(close)}\nQualified: ${formatSignalEpoch(epoch)}$first"
+        }
+        return "ENTRY SIGNAL AUDIT\n${oneSignal("MSS", p.entryMssDirection, p.entryMssLevel, p.entryMssClose, p.entryMssEpoch, p.entryMssFirstDirection, p.entryMssFirstLevel, p.entryMssFirstClose, p.entryMssFirstEpoch)}\n${oneSignal("CHOCH", p.entryChochDirection, p.entryChochLevel, p.entryChochClose, p.entryChochEpoch, p.entryChochFirstDirection, p.entryChochFirstLevel, p.entryChochFirstClose, p.entryChochFirstEpoch)}"
+    }
+
     /**
      * Switch the in-memory trading ledger to the selected Deriv environment.
      * DEMO and REAL use different SharedPreferences files; no legacy shared
@@ -2137,7 +2185,23 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 .put("trailingClosePending", p.trailingClosePending)
                 .put("trailingCloseReason", p.trailingCloseReason)
                 .put("trailingStopTriggered", p.trailingStopTriggered)
-                .put("secondExecutionTriggered", p.secondExecutionTriggered))
+                .put("secondExecutionTriggered", p.secondExecutionTriggered)
+                .put("entryMssDirection", p.entryMssDirection)
+                .put("entryMssLevel", p.entryMssLevel)
+                .put("entryMssClose", p.entryMssClose)
+                .put("entryMssEpoch", p.entryMssEpoch)
+                .put("entryMssFirstDirection", p.entryMssFirstDirection)
+                .put("entryMssFirstLevel", p.entryMssFirstLevel)
+                .put("entryMssFirstClose", p.entryMssFirstClose)
+                .put("entryMssFirstEpoch", p.entryMssFirstEpoch)
+                .put("entryChochDirection", p.entryChochDirection)
+                .put("entryChochLevel", p.entryChochLevel)
+                .put("entryChochClose", p.entryChochClose)
+                .put("entryChochEpoch", p.entryChochEpoch)
+                .put("entryChochFirstDirection", p.entryChochFirstDirection)
+                .put("entryChochFirstLevel", p.entryChochFirstLevel)
+                .put("entryChochFirstClose", p.entryChochFirstClose)
+                .put("entryChochFirstEpoch", p.entryChochFirstEpoch))
         }
         // commit() makes completed trade records durable before activity teardown/update.
         tradePrefs.edit().putString("positions", array.toString()).commit()
@@ -2169,6 +2233,22 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 p.trailingCloseReason = o.optString("trailingCloseReason", "")
                 p.trailingStopTriggered = o.optBoolean("trailingStopTriggered", false)
                 p.secondExecutionTriggered = o.optBoolean("secondExecutionTriggered", false)
+                p.entryMssDirection = o.optString("entryMssDirection", "")
+                p.entryMssLevel = o.optDouble("entryMssLevel", 0.0)
+                p.entryMssClose = o.optDouble("entryMssClose", 0.0)
+                p.entryMssEpoch = o.optLong("entryMssEpoch", 0L)
+                p.entryMssFirstDirection = o.optString("entryMssFirstDirection", "")
+                p.entryMssFirstLevel = o.optDouble("entryMssFirstLevel", 0.0)
+                p.entryMssFirstClose = o.optDouble("entryMssFirstClose", 0.0)
+                p.entryMssFirstEpoch = o.optLong("entryMssFirstEpoch", 0L)
+                p.entryChochDirection = o.optString("entryChochDirection", "")
+                p.entryChochLevel = o.optDouble("entryChochLevel", 0.0)
+                p.entryChochClose = o.optDouble("entryChochClose", 0.0)
+                p.entryChochEpoch = o.optLong("entryChochEpoch", 0L)
+                p.entryChochFirstDirection = o.optString("entryChochFirstDirection", "")
+                p.entryChochFirstLevel = o.optDouble("entryChochFirstLevel", 0.0)
+                p.entryChochFirstClose = o.optDouble("entryChochFirstClose", 0.0)
+                p.entryChochFirstEpoch = o.optLong("entryChochFirstEpoch", 0L)
                 if (p.recoveryEligible && !p.recoveryUsed) recoveryWaiting.add(p.localId)
                 positions[p.localId] = p
                 // Never subscribe a restored contract against the other account's socket.
@@ -2557,6 +2637,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             val recoveryView = text(recoveryStatusText(symbol), 11f, muted)
             recoveryStatusViews[symbol] = recoveryView
             indexCard.addView(recoveryView)
+            val activeForIndex = positions.values.filter { it.symbol == symbol && isActiveTradePosition(it) }
+            activeForIndex.forEach { activePosition ->
+                indexCard.addView(space(6))
+                indexCard.addView(text("${activePosition.role} ${activePosition.direction} · ENTRY EVIDENCE", 11f, gold, true))
+                indexCard.addView(text(tradeEntrySignalAuditText(activePosition), 10f, whiteText, true))
+            }
             content.addView(indexCard)
             content.addView(space(9))
         }
@@ -2614,6 +2700,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     c.addView(text("Contract: ${if (p.contractId > 0L) p.contractId.toString() else "Pending"}",
                         12f, Color.WHITE))
                     c.addView(text("Stake: ${formatMoney(p.stake)}", 13f, gold))
+                    c.addView(space(5))
+                    c.addView(text(tradeEntrySignalAuditText(p), 11f, whiteText, true))
 
                     val statusView = text("Status: ${p.status}", 13f,
                         if (p.status == "OPEN") green else amber, true)
@@ -2686,6 +2774,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 c.addView(text("${displayIndexName(p.symbol)} · ${p.role}", 14f, indexNameColor(p.symbol), true))
                 c.addView(text("DIRECTION: ${p.direction}", 14f, if (p.direction == "RISE") green else red, true))
                 c.addView(text("Stake: ${formatMoney(p.stake)}", 13f, Color.WHITE))
+                c.addView(space(5))
+                c.addView(text(tradeEntrySignalAuditText(p), 11f, whiteText, true))
                 c.addView(text("FINAL P/L: ${formatMoney(p.profit)}", 14f, if (p.profit >= 0.0) green else red, true))
                 val closedText = if (p.closedAt > 0L) java.text.DateFormat.getDateTimeInstance().format(java.util.Date(p.closedAt * 1000L)) else "Time unavailable"
                 c.addView(text("Closed: $closedText", 11f, Color.WHITE))
