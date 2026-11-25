@@ -3843,14 +3843,19 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     private fun pill(label: String, color: Int): TextView {
-        return TextView(this).apply {
-            text = label
-            textSize = 10f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(color)
-            setPadding(dp(9), dp(5), dp(9), dp(5))
-            background = rounded(Color.WHITE, color, 20)
-        }
+    val isLive = color == green
+    return TextView(this).apply {
+        text = label
+        textSize = 10f
+        setTypeface(null, Typeface.BOLD)
+        setTextColor(if (isLive) Color.BLACK else color)
+        setPadding(dp(9), dp(5), dp(9), dp(5))
+        background = rounded(
+            if (isLive) green else Color.WHITE,
+            if (isLive) green else color,
+            20
+        )
+    }
     }
 
     private fun text(value: String, size: Float, color: Int, bold: Boolean = false): TextView {
