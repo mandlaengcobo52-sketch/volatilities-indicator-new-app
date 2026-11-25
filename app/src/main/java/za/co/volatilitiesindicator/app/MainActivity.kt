@@ -1703,7 +1703,7 @@ indexStatusViews[symbol]?.apply {
         positions[localId] = p
         val req = nextRequestId()
         pendingRequests[req] = localId
-        // Original pair contracts use 24 hours. The linked SECOND execution
+        // Original pair contracts use 7 days. The linked SECOND execution
         // uses the exact remaining duration of its still-running original leg.
         val proposal = JSONObject()
             .put("proposal", 1)
@@ -1728,8 +1728,8 @@ indexStatusViews[symbol]?.apply {
         } else {
             val contractType = if (direction == "RISE") "CALL" else "PUT"
             proposal.put("contract_type", contractType)
-                .put("duration", 24)
-                .put("duration_unit", "h")
+                .put("duration", 7)
+                .put("duration_unit", "d")
         }
         p.status = "REQUESTING PROPOSAL"
         if (role == "SECOND") {
