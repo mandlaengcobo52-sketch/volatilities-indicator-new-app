@@ -1624,11 +1624,11 @@ indexStatusViews[symbol]?.apply {
         }
         if (indexAlreadyActive) return
 
-        val stake = roundStake(dailyCapital * 0.20)
+        val stake = roundStake(dailyCapital * 0.15)
         if (stake <= 0.0 || availableBalance + 0.000001 < stake) {
             if (insufficientFundsNotified.add(tradeKey)) {
                 addNotification("Trade", "${displayIndexName(symbol)} trade not executed",
-                    "Available balance ${formatMoney(availableBalance)} is below the single-trade stake ${formatMoney(stake)} (20% of daily starting capital).")
+                    "Available balance ${formatMoney(availableBalance)} is below the single-trade stake ${formatMoney(stake)} (15% of daily starting capital).")
             }
             return
         }
@@ -1890,9 +1890,9 @@ indexStatusViews[symbol]?.apply {
      * Independent winning-leg trailing stop for an original RISE/FALL pair.
      *
      * WINNER:
-     * - Activates at +50% profit on stake; initial protected stop is +40% profit on stake.
+     * - Activates at +35% profit on stake; initial protected stop is +25% profit on stake.
      * - Each new +10 percentage-point peak advances the stop by +10 points:
-     *   +60 peak -> +50 stop, +70 -> +60, and so on.
+     *   +35 peak -> +25 stop, +45 -> +35, and so on.
      * - The stop follows the winning P/L peak, representing the bullish RISE
      *   move's top or bearish FALL move's bottom.
      *
@@ -1938,7 +1938,7 @@ indexStatusViews[symbol]?.apply {
         if (!currentPercent.isFinite()) return
 
         // Find the already-armed winning leg, or arm the better-performing
-        // OPEN leg only when it reaches +50% profit on stake.
+        // OPEN leg only when it reaches +25% profit on stake.
         var winner = pair.firstOrNull {
             it.trailingActivated && !it.losingRecoveryTrail
         }
@@ -1950,17 +1950,17 @@ indexStatusViews[symbol]?.apply {
                 .maxByOrNull { contractProfitPercent(it) }
             val candidatePercent = candidate?.let { contractProfitPercent(it) }
             if (candidate != null && candidatePercent != null &&
-                candidatePercent.isFinite() && candidatePercent >= 50.0) {
+                candidatePercent.isFinite() && candidatePercent >= 35.0) {
                 candidate.trailingActivated = true
                 candidate.losingRecoveryTrail = false
                 candidate.trailingPeakPercent = candidatePercent
-                candidate.trailingStopPercent = 40.0
+                candidate.trailingStopPercent = 35.0
                 winner = candidate
             }
         }
 
         // Manage the winner first. Stop is peak minus 10 percentage points:
-        // +50 -> +40, +60 -> +50, +70 -> +60, etc.
+        // +35 -> +25, +45 -> +35, +55 -> +45, etc.
         winner?.let { winningPosition ->
             val winningPercent = contractProfitPercent(winningPosition)
             if (winningPercent.isFinite() && winningPercent > winningPosition.trailingPeakPercent) {
@@ -1986,17 +1986,17 @@ indexStatusViews[symbol]?.apply {
 
     }
 
-    // The linked second execution uses the same existing +50% activation
+    // The linked second execution uses the same existing +35% activation
     // and 10-point trailing progression. No trailing thresholds are changed.
     private fun evaluateSecondExecutionTrailingStop(position: Position) {
         if (position.status != "OPEN" || position.stake <= 0.0 || !position.stake.isFinite()) return
         val currentPercent = contractProfitPercent(position)
         if (!currentPercent.isFinite()) return
         if (!position.trailingActivated) {
-            if (currentPercent < 50.0) return
+            if (currentPercent < 35.0) return
             position.trailingActivated = true
             position.trailingPeakPercent = currentPercent
-            position.trailingStopPercent = 40.0
+            position.trailingStopPercent = 25.0
         }
         if (currentPercent > position.trailingPeakPercent) {
             position.trailingPeakPercent = currentPercent
