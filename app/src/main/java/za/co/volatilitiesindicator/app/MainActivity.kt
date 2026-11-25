@@ -3732,10 +3732,18 @@ indexStatusViews[symbol]?.apply {
     }
 
     private fun updateConnectionLabels(message: String) {
-        if (selectedTab == "Home") {
-            feedPillView?.text = if (marketFeedConnected) "LIVE" else "CONNECTING"
-            feedPillView?.setTextColor(if (marketFeedConnected) green else amber)
+    if (selectedTab == "Home") {
+        val isLive = marketFeedConnected
+        feedPillView?.apply {
+            text = if (isLive) "LIVE" else "CONNECTING"
+            setTextColor(if (isLive) Color.BLACK else amber)
+            background = rounded(
+                if (isLive) green else Color.WHITE,
+                if (isLive) green else amber,
+                20
+            )
         }
+    }
     }
 
     private fun renderIfHome() {
