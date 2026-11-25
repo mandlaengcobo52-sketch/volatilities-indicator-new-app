@@ -847,13 +847,17 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         marketFeedConnected = true
         if (accountConnected) evaluateOriginalEntries(symbol, quote)
         runOnUiThread {
-            feedPillView?.text = "LIVE"
-            feedPillView?.setTextColor(green)
-            priceViews[symbol]?.text = formatPrice(quote)
-            indexStatusViews[symbol]?.apply {
-                text = "LIVE"
-                setTextColor(green)
-            }
+            feedPillView?.apply {
+    text = "LIVE"
+    setTextColor(Color.BLACK)
+    background = rounded(green, green, 20)
+}
+
+indexStatusViews[symbol]?.apply {
+    text = "LIVE"
+    setTextColor(Color.BLACK)
+    background = rounded(green, green, 20)
+}
             updateMasterDecisionViews(symbol)
         }
     }
