@@ -873,13 +873,17 @@ indexStatusViews[symbol]?.apply {
             val lastClose = candles.last().close
             if (!latestPrices.containsKey(symbol)) latestPrices[symbol] = lastClose
             runOnUiThread {
-                feedPillView?.text = "LIVE"
-                feedPillView?.setTextColor(green)
-                priceViews[symbol]?.text = formatPrice(latestPrices[symbol] ?: lastClose)
-                indexStatusViews[symbol]?.apply {
-                    text = "LIVE"
-                    setTextColor(green)
-                }
+                feedPillView?.apply {
+    text = "LIVE"
+    setTextColor(Color.BLACK)
+    background = rounded(green, green, 20)
+}
+
+indexStatusViews[symbol]?.apply {
+    text = "LIVE"
+    setTextColor(Color.BLACK)
+    background = rounded(green, green, 20)
+}
                 updateMasterDecisionViews(symbol)
                 updateRecoveryStatusView(symbol)
             }
