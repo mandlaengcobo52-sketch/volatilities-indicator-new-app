@@ -59,8 +59,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val whiteText: Int get() = if (darkInterface) Color.WHITE else ink
     private val green = Color.rgb(0, 200, 83)
     private val red = Color.rgb(244, 67, 54)
-    private val amber = Color.parseColor("#E4FFF022")
-    private val gold = Color.parseColor("#E4FFF022")
+    private val amber = Color.rgb(255, 214, 0)
+    private val gold = Color.rgb(255, 214, 0)
     private val blue = Color.rgb(33, 150, 243)
     private val pageColor: Int get() = if (darkInterface) Color.rgb(0, 7, 5) else Color.rgb(245, 247, 250)
     private val cardColor: Int get() = if (darkInterface) Color.rgb(5, 25, 18) else Color.WHITE
@@ -89,6 +89,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val tradeRecoveryStatusViews = mutableMapOf<String, TextView>()
     private val mssStatusViews = mutableMapOf<String, TextView>()
     private val chochStatusViews = mutableMapOf<String, TextView>()
+    // Structural break prices captured from the completed H1 candle's confirmed swing levels.
+    private val recoveryMssPrice = mutableMapOf<String, Double>()
+    private val recoveryChochPrice = mutableMapOf<String, Double>()
+    private val recoverySignalClosePrice = mutableMapOf<String, Double>()
 
     private data class AppNotification(
         val id: Long,
@@ -167,6 +171,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var entryMssCloseEpoch: Long = 0L,
         var entryChochDirection: String = "",
         var entryChochCloseEpoch: Long = 0L,
+        var entryMssPrice: Double = 0.0,
+        var entryChochPrice: Double = 0.0,
+        var entryLastCandleClosePrice: Double = 0.0,
         var entryLastCandleCloseEpoch: Long = 0L,
         var executionEpoch: Long = 0L,
         var recoveryAfterEpoch: Long = 0L,
@@ -840,13 +847,17 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         marketFeedConnected = true
         if (accountConnected) evaluateOriginalEntries(symbol, quote)
         runOnUiThread {
-            feedPillView?.text = "LIVE"
-            feedPillView?.setTextColor(green)
-            priceViews[symbol]?.text = formatPrice(quote)
-            indexStatusViews[symbol]?.apply {
-                text = "LIVE"
-                setTextColor(green)
-            }
+            feedPillView?.apply {
+    text = "LIVE"
+    setTextColor(Color.BLACK)
+    background = rounded(green, green, 20)
+}
+
+indexStatusViews[symbol]?.apply {
+    text = "LIVE"
+    setTextColor(Color.BLACK)
+    background = rounded(green, green, 20)
+}
             updateMasterDecisionViews(symbol)
         }
     }
@@ -862,13 +873,17 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             val lastClose = candles.last().close
             if (!latestPrices.containsKey(symbol)) latestPrices[symbol] = lastClose
             runOnUiThread {
-                feedPillView?.text = "LIVE"
-                feedPillView?.setTextColor(green)
-                priceViews[symbol]?.text = formatPrice(latestPrices[symbol] ?: lastClose)
-                indexStatusViews[symbol]?.apply {
-                    text = "LIVE"
-                    setTextColor(green)
-                }
+                feedPillView?.apply {
+    text = "LIVE"
+    setTextColor(Color.BLACK)
+    background = rounded(green, green, 20)
+}
+
+indexStatusViews[symbol]?.apply {
+    text = "LIVE"
+    setTextColor(Color.BLACK)
+    background = rounded(green, green, 20)
+}
                 updateMasterDecisionViews(symbol)
                 updateRecoveryStatusView(symbol)
             }
@@ -1534,9 +1549,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             return "ENTRY SIGNAL AUDIT\nMSS: DATE NOT RECORDED\nCHOCH: DATE NOT RECORDED\nLAST CANDLE CLOSE: DATE NOT RECORDED\nEXECUTION: ${formatAuditDateTime(position.executionEpoch)}"
         }
         return "ENTRY SIGNAL AUDIT\n" +
-            "CHOCH (${position.entryChochDirection}): ${formatAuditDateTime(position.entryChochCloseEpoch)}\n" +
-            "MSS (${position.entryMssDirection}): ${formatAuditDateTime(position.entryMssCloseEpoch)}\n" +
-            "LAST CANDLE CLOSE: ${formatAuditDateTime(position.entryLastCandleCloseEpoch)}\n" +
+            "CHOCH (${position.entryChochDirection}): ${formatAuditDateTime(position.entryChochCloseEpoch)} · LEVEL ${formatPrice(position.entryChochPrice)}\n" +
+            "MSS (${position.entryMssDirection}): ${formatAuditDateTime(position.entryMssCloseEpoch)} · LEVEL ${formatPrice(position.entryMssPrice)}\n" +
+            "LAST CANDLE CLOSE: ${formatAuditDateTime(position.entryLastCandleCloseEpoch)} · PRICE ${formatPrice(position.entryLastCandleClosePrice)}\n" +
             "EXECUTION: ${formatAuditDateTime(position.executionEpoch)}"
     }
 
@@ -1609,11 +1624,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         }
         if (indexAlreadyActive) return
 
-        val stake = roundStake(dailyCapital * 0.20)
+        val stake = roundStake(dailyCapital * 0.15)
         if (stake <= 0.0 || availableBalance + 0.000001 < stake) {
             if (insufficientFundsNotified.add(tradeKey)) {
                 addNotification("Trade", "${displayIndexName(symbol)} trade not executed",
-                    "Available balance ${formatMoney(availableBalance)} is below the single-trade stake ${formatMoney(stake)} (20% of daily starting capital).")
+                    "Available balance ${formatMoney(availableBalance)} is below the single-trade stake ${formatMoney(stake)} (15% of daily starting capital).")
             }
             return
         }
@@ -1628,6 +1643,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             entryMssCloseEpoch = mssCloseEpoch,
             entryChochDirection = choch,
             entryChochCloseEpoch = chochCloseEpoch,
+            entryMssPrice = recoveryMssPrice[symbol] ?: 0.0,
+            entryChochPrice = recoveryChochPrice[symbol] ?: 0.0,
+            entryLastCandleClosePrice = recoverySignalClosePrice[symbol] ?: 0.0,
             entryLastCandleCloseEpoch = lastConfirmingCloseEpoch
         )
         if (!submitted) {
@@ -1639,7 +1657,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         originalTriggered.add(tradeKey)
         tradePrefs.edit().putStringSet("triggered_$today", originalTriggered.toSet()).apply()
         addNotification("Trade", "${displayIndexName(symbol)} ${mss} trade submitted",
-            "One ${mss} contract proposal was sent to Deriv. Stake: ${formatMoney(stake)} (20% of fixed daily starting capital). Waiting for Deriv acceptance.")
+            "One ${mss} contract proposal was sent to Deriv. Stake: ${formatMoney(stake)} (15% of fixed daily starting capital). Waiting for Deriv acceptance.")
     }
     private fun roundStake(value: Double): Double =
         BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP).toDouble()
@@ -1649,6 +1667,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         originalId: String = "", durationSeconds: Long = 0L,
         entryMssDirection: String = "", entryMssCloseEpoch: Long = 0L,
         entryChochDirection: String = "", entryChochCloseEpoch: Long = 0L,
+        entryMssPrice: Double = 0.0, entryChochPrice: Double = 0.0,
+        entryLastCandleClosePrice: Double = 0.0,
         entryLastCandleCloseEpoch: Long = 0L
     ): Boolean {
         if (platformAuthenticated && platformUserRole == "investor") {
@@ -1676,6 +1696,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         p.entryMssCloseEpoch = entryMssCloseEpoch
         p.entryChochDirection = entryChochDirection
         p.entryChochCloseEpoch = entryChochCloseEpoch
+        p.entryMssPrice = entryMssPrice
+        p.entryChochPrice = entryChochPrice
+        p.entryLastCandleClosePrice = entryLastCandleClosePrice
         p.entryLastCandleCloseEpoch = entryLastCandleCloseEpoch
         positions[localId] = p
         val req = nextRequestId()
@@ -1867,9 +1890,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
      * Independent winning-leg trailing stop for an original RISE/FALL pair.
      *
      * WINNER:
-     * - Activates at +150% profit on stake; initial protected stop is +140% profit on stake.
+     * - Activates at +35% profit on stake; initial protected stop is +25% profit on stake.
      * - Each new +10 percentage-point peak advances the stop by +10 points:
-     *   +160 peak -> +150 stop, +170 -> +160, and so on.
+     *   +35 peak -> +25 stop, +45 -> +35, and so on.
      * - The stop follows the winning P/L peak, representing the bullish RISE
      *   move's top or bearish FALL move's bottom.
      *
@@ -1915,7 +1938,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (!currentPercent.isFinite()) return
 
         // Find the already-armed winning leg, or arm the better-performing
-        // OPEN leg only when it reaches +150% profit on stake.
+        // OPEN leg only when it reaches +25% profit on stake.
         var winner = pair.firstOrNull {
             it.trailingActivated && !it.losingRecoveryTrail
         }
@@ -1927,24 +1950,26 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 .maxByOrNull { contractProfitPercent(it) }
             val candidatePercent = candidate?.let { contractProfitPercent(it) }
             if (candidate != null && candidatePercent != null &&
-                candidatePercent.isFinite() && candidatePercent >= 150.0) {
-                candidate.trailingActivated = true
-                candidate.losingRecoveryTrail = false
-                candidate.trailingPeakPercent = candidatePercent
-                candidate.trailingStopPercent = 140.0
-                winner = candidate
+    candidatePercent.isFinite() && candidatePercent >= 35.0) {
+    candidate.trailingActivated = true
+    candidate.losingRecoveryTrail = false
+    candidate.trailingPeakPercent = candidatePercent
+    candidate.trailingStopPercent = 25.0
+    winner = candidate
             }
         }
 
         // Manage the winner first. Stop is peak minus 10 percentage points:
-        // +150 -> +140, +160 -> +150, +170 -> +160, etc.
+        // +35 -> +25, +45 -> +35, +55 -> +45, etc.
         winner?.let { winningPosition ->
             val winningPercent = contractProfitPercent(winningPosition)
             if (winningPercent.isFinite() && winningPercent > winningPosition.trailingPeakPercent) {
                 winningPosition.trailingPeakPercent = winningPercent
             }
-            val winnerPeakStage = kotlin.math.floor(winningPosition.trailingPeakPercent / 10.0).toInt()
-            winningPosition.trailingStopPercent = (winnerPeakStage * 10.0) - 10.0
+            val winnerPeakStage = kotlin.math.floor(
+    (winningPosition.trailingPeakPercent - 35.0) / 10.0
+).toInt()
+winningPosition.trailingStopPercent = 25.0 + (winnerPeakStage * 10.0)
 
             if (winningPosition.status == "OPEN" && winningPercent <= winningPosition.trailingStopPercent) {
                 val extreme = if (winningPosition.direction == "RISE") "bullish trend top" else "bearish trend bottom"
@@ -1963,23 +1988,25 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     }
 
-    // The linked second execution uses the same existing +150% activation
+    // The linked second execution uses the same existing +35% activation
     // and 10-point trailing progression. No trailing thresholds are changed.
     private fun evaluateSecondExecutionTrailingStop(position: Position) {
         if (position.status != "OPEN" || position.stake <= 0.0 || !position.stake.isFinite()) return
         val currentPercent = contractProfitPercent(position)
         if (!currentPercent.isFinite()) return
         if (!position.trailingActivated) {
-            if (currentPercent < 150.0) return
+            if (currentPercent < 35.0) return
             position.trailingActivated = true
             position.trailingPeakPercent = currentPercent
-            position.trailingStopPercent = 140.0
+            position.trailingStopPercent = 25.0
         }
         if (currentPercent > position.trailingPeakPercent) {
             position.trailingPeakPercent = currentPercent
         }
-        val peakStage = kotlin.math.floor(position.trailingPeakPercent / 10.0).toInt()
-        position.trailingStopPercent = (peakStage * 10.0) - 10.0
+        val peakStage = kotlin.math.floor(
+    (position.trailingPeakPercent - 35.0) / 10.0
+).toInt()
+position.trailingStopPercent = 25.0 + (peakStage * 10.0)
         if (currentPercent <= position.trailingStopPercent) {
             requestAutomaticTrailingClose(
                 position,
@@ -2108,6 +2135,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             else -> ""
         }
         if (mssDirection.isNotBlank()) {
+            recoveryMssPrice[symbol] = if (mssDirection == "RISE") lastHigh else lastLow
+            recoverySignalClosePrice[symbol] = last.close
             recoveryMssEpoch[symbol] = last.epoch
             tradePrefs.edit().putLong("signal_mss_epoch_$symbol", last.epoch).apply()
             if (recoveryMss[symbol] != mssDirection) {
@@ -2124,6 +2153,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             else -> ""
         }
         if (chochDirection.isNotBlank()) {
+            recoveryChochPrice[symbol] = if (chochDirection == "RISE") lastHigh else lastLow
+            recoverySignalClosePrice[symbol] = last.close
             recoveryChochEpoch[symbol] = last.epoch
             tradePrefs.edit().putLong("signal_choch_epoch_$symbol", last.epoch).apply()
             if (recoveryChoch[symbol] != chochDirection) {
@@ -2182,6 +2213,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             entryMssCloseEpoch = mssCloseEpoch,
             entryChochDirection = choch,
             entryChochCloseEpoch = chochCloseEpoch,
+            entryMssPrice = recoveryMssPrice[symbol] ?: 0.0,
+            entryChochPrice = recoveryChochPrice[symbol] ?: 0.0,
+            entryLastCandleClosePrice = recoverySignalClosePrice[symbol] ?: 0.0,
             entryLastCandleCloseEpoch = maxOf(mssCloseEpoch, chochCloseEpoch)
         )
         if (!submitted) return
@@ -2253,6 +2287,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 .put("entryMssCloseEpoch", p.entryMssCloseEpoch)
                 .put("entryChochDirection", p.entryChochDirection)
                 .put("entryChochCloseEpoch", p.entryChochCloseEpoch)
+                .put("entryMssPrice", p.entryMssPrice)
+                .put("entryChochPrice", p.entryChochPrice)
+                .put("entryLastCandleClosePrice", p.entryLastCandleClosePrice)
                 .put("entryLastCandleCloseEpoch", p.entryLastCandleCloseEpoch)
                 .put("executionEpoch", p.executionEpoch)
                 .put("recoveryAfterEpoch", p.recoveryAfterEpoch)
@@ -2290,6 +2327,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 p.entryMssCloseEpoch = o.optLong("entryMssCloseEpoch", 0L)
                 p.entryChochDirection = o.optString("entryChochDirection", "")
                 p.entryChochCloseEpoch = o.optLong("entryChochCloseEpoch", 0L)
+                p.entryMssPrice = o.optDouble("entryMssPrice", 0.0)
+                p.entryChochPrice = o.optDouble("entryChochPrice", 0.0)
+                p.entryLastCandleClosePrice = o.optDouble("entryLastCandleClosePrice", 0.0)
                 p.entryLastCandleCloseEpoch = o.optLong("entryLastCandleCloseEpoch", 0L)
                 p.executionEpoch = o.optLong("executionEpoch", p.openedAtEpoch)
                 p.recoveryAfterEpoch = o.optLong("recoveryAfterEpoch", p.closedAt)
@@ -2619,8 +2659,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         account.addView(statusText)
         account.addView(space(12))
         account.addView(actionButton(if (accountConnected) "ACCOUNT OPTIONS" else "CONNECT DERIV ACCOUNT") {
-            if (accountConnected) openTab("Accounts") else showAccountModeDialog()
-        })
+    if (accountConnected) openTab("Accounts") else showAccountModeDialog()
+}.apply {
+    setTextColor(Color.BLACK)
+})
         content.addView(account)
         content.addView(space(18))
 
@@ -2705,7 +2747,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         summary.addView(text("DAILY STARTING CAPITAL", 12f, gold, true))
         summary.addView(text(String.format(Locale.US, "%.2f %s", dailyCapital, accountCurrency), 18f, blue, true))
         summary.addView(text("ACCOUNT MODE: $executionMode", 12f, if (executionMode == "REAL") blue else red, true))
-        summary.addView(text("ORIGINAL TRADE STAKE: 20% OF FIXED DAILY STARTING CAPITAL", 12f, gold))
+        summary.addView(text("ORIGINAL TRADE STAKE: 15% OF FIXED DAILY STARTING CAPITAL", 12f, gold))
         content.addView(summary)
         content.addView(space(16))
 
@@ -2775,7 +2817,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                             val trailType = if (p.losingRecoveryTrail) "LOSS PROTECTION" else "WINNING TRAIL"
                             "TRAILING STOP: ACTIVE · $trailType · PROFIT ON STAKE ${formatPnlPercent(currentPercent)} · PROTECTED PROFIT ON STAKE ${formatMoney(protectedProfitAmount(p))} (${formatPercent(p.trailingStopPercent)})"
                         } else {
-                            "TRAILING STOP: MONITORING · P/L ${formatPnlPercent(currentPercent)} OF STAKE · ACTIVATES AT +150% · PROTECTS 10 POINTS BELOW THE HIGHEST PROFIT"
+                            "TRAILING STOP: MONITORING · P/L ${formatPnlPercent(currentPercent)} OF STAKE · ACTIVATES AT +35% · PROTECTS 10 POINTS BELOW THE HIGHEST PROFIT"
                         }
                         val trailView = text(trailDescription, 12f, if (p.trailingActivated) amber else blue, true)
                         tradeTrailingViews[p.localId] = trailView
@@ -2877,7 +2919,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 val label = if (position.losingRecoveryTrail) "LOSS PROTECTION" else "WINNING TRAIL"
                 "TRAILING STOP: ACTIVE · $label · PROFIT ON STAKE ${formatPnlPercent(currentPercent)} · PROTECTED PROFIT ON STAKE ${formatMoney(protectedProfitAmount(position))} (${formatPercent(position.trailingStopPercent)})"
             } else {
-                "TRAILING STOP: MONITORING · P/L ${formatPnlPercent(currentPercent)} OF STAKE · ACTIVATES AT +150% · PROTECTS 10 POINTS BELOW THE HIGHEST PROFIT"
+                "TRAILING STOP: MONITORING · P/L ${formatPnlPercent(currentPercent)} OF STAKE · ACTIVATES AT +35% · PROTECTS 10 POINTS BELOW THE HIGHEST PROFIT"
             }
             view.setTextColor(if (position.trailingActivated) amber else blue)
         }
@@ -2900,8 +2942,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         deriv.addView(accountTotalPlView)
         deriv.addView(space(12))
         deriv.addView(actionButton(if (accountConnected) "SWITCH / CONNECT ACCOUNT" else "CONNECT DERIV") {
-            showAccountModeDialog()
-        })
+    showAccountModeDialog()
+}.apply {
+    setTextColor(Color.BLACK)
+})
         deriv.addView(space(8))
         deriv.addView(actionButton("DISCONNECT DERIV", false) {
             disconnectDerivAccount()
@@ -3629,7 +3673,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             if (autoTradingEnabled) "AUTO TRADING: ON" else "AUTO TRADING: OFF",
             primary = autoTradingEnabled
         ) { toggleAutoTrading() }
-        button.setTextColor(Color.WHITE)
+        button.setTextColor(Color.BLACK)
         button.background = rounded(
             if (autoTradingEnabled) green else red,
             if (autoTradingEnabled) green else red,
@@ -3696,10 +3740,18 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     private fun updateConnectionLabels(message: String) {
-        if (selectedTab == "Home") {
-            feedPillView?.text = if (marketFeedConnected) "LIVE" else "CONNECTING"
-            feedPillView?.setTextColor(if (marketFeedConnected) green else amber)
+    if (selectedTab == "Home") {
+        val isLive = marketFeedConnected
+        feedPillView?.apply {
+            text = if (isLive) "LIVE" else "CONNECTING"
+            setTextColor(if (isLive) Color.BLACK else amber)
+            background = rounded(
+                if (isLive) green else Color.WHITE,
+                if (isLive) green else amber,
+                20
+            )
         }
+    }
     }
 
     private fun renderIfHome() {
@@ -3815,22 +3867,28 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     private fun pill(label: String, color: Int): TextView {
-        return TextView(this).apply {
-            text = label
-            textSize = 10f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(color)
-            setPadding(dp(9), dp(5), dp(9), dp(5))
-            background = rounded(Color.WHITE, color, 20)
-        }
+    val isLive = color == green
+    return TextView(this).apply {
+        text = label
+        textSize = 10f
+        setTypeface(null, Typeface.BOLD)
+        setTextColor(if (isLive) Color.BLACK else color)
+        setPadding(dp(9), dp(5), dp(9), dp(5))
+        background = rounded(
+            if (isLive) green else Color.WHITE,
+            if (isLive) green else color,
+            20
+        )
+    }
     }
 
     private fun text(value: String, size: Float, color: Int, bold: Boolean = false): TextView {
         return TextView(this).apply {
             text = value
             textSize = size
-            setTextColor(color)
-            if (bold) setTypeface(null, Typeface.BOLD)
+            setTextColor(
+    color
+)
         }
     }
 
