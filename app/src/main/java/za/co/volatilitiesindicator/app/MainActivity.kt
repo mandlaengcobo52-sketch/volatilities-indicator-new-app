@@ -2655,8 +2655,10 @@ indexStatusViews[symbol]?.apply {
         account.addView(statusText)
         account.addView(space(12))
         account.addView(actionButton(if (accountConnected) "ACCOUNT OPTIONS" else "CONNECT DERIV ACCOUNT") {
-            if (accountConnected) openTab("Accounts") else showAccountModeDialog()
-        })
+    if (accountConnected) openTab("Accounts") else showAccountModeDialog()
+}.apply {
+    setTextColor(Color.BLACK)
+})
         content.addView(account)
         content.addView(space(18))
 
@@ -2936,8 +2938,10 @@ indexStatusViews[symbol]?.apply {
         deriv.addView(accountTotalPlView)
         deriv.addView(space(12))
         deriv.addView(actionButton(if (accountConnected) "SWITCH / CONNECT ACCOUNT" else "CONNECT DERIV") {
-            showAccountModeDialog()
-        })
+    showAccountModeDialog()
+}.apply {
+    setTextColor(Color.BLACK)
+})
         deriv.addView(space(8))
         deriv.addView(actionButton("DISCONNECT DERIV", false) {
             disconnectDerivAccount()
@@ -3665,7 +3669,7 @@ indexStatusViews[symbol]?.apply {
             if (autoTradingEnabled) "AUTO TRADING: ON" else "AUTO TRADING: OFF",
             primary = autoTradingEnabled
         ) { toggleAutoTrading() }
-        button.setTextColor(Color.WHITE)
+        button.setTextColor(Color.BLACK)
         button.background = rounded(
             if (autoTradingEnabled) green else red,
             if (autoTradingEnabled) green else red,
