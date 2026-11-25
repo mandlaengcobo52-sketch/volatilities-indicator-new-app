@@ -1951,16 +1951,27 @@ indexStatusViews[symbol]?.apply {
     private fun protectedProfitAmount(position: Position): Double =
         position.stake * (position.trailingStopPercent / 100.0)
 
-    val pair = if (position.originalId.isNotBlank()) {
+    private fun evaluatePairTrailingStops(position: Position) {
+        // A CLOSED position must still be evaluated: its confirmed closure may
+        // be the event that permits the opposite contract to start recovery.
+        if (position.status !in setOf("OPEN", "CLOSED") ||
+            position.stake <= 0.0 || !position.stake.isFinite()) return
+
+        // Resolve the pair when it is available, but do not block the winning
+        // contract's own trailing stop merely because its opposite leg has not
+        // yet been restored into the local position list. Restored Deriv
+        // contracts can have role labels different from locally-created legs.
+        // Trailing-stop state belongs to one trade lifecycle on one index.
+        // Never group unrelated trades by symbol when originalId is missing,
+        // and never allow a matching originalId on another index into this pair.
+        val pair = if (position.originalId.isNotBlank()) {
             positions.values.filter {
-                it.originalId == position.originalId &&
+                it.symbol == position.symbol &&
+                    it.originalId == position.originalId &&
                     it.role in setOf("ORIGINAL", "EXISTING")
             }
         } else {
-            positions.values.filter {
-                it.symbol == position.symbol &&
-                    it.role in setOf("ORIGINAL", "EXISTING")
-            }
+            listOf(position)
         }.distinctBy { it.contractId.takeIf { id -> id > 0L } ?: it.localId }
 
         val currentPercent = contractProfitPercent(position)
