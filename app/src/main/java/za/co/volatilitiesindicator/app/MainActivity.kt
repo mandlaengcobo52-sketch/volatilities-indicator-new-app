@@ -59,11 +59,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val whiteText: Int get() = if (darkInterface) Color.WHITE else ink
     private val green = Color.rgb(0, 200, 83)
     private val red = Color.rgb(244, 67, 54)
-    private val amber = Color.parseColor("#E4FFF022")
-    private val gold = Color.parseColor("#E4FFF022")
+    private val amber = Color.rgb(255, 214, 0)
+    private val gold = Color.rgb(255, 214, 0)
     private val blue = Color.rgb(33, 150, 243)
     private val pageColor: Int get() = if (darkInterface) Color.rgb(0, 7, 5) else Color.rgb(245, 247, 250)
-    private val cardColor: Int get() = if (darkInterface) green else Color.WHITE
+    private val cardColor: Int get() = if (darkInterface) Color.rgb(5, 25, 18) else Color.WHITE
     private val lineColor: Int get() = green
 
     private lateinit var content: LinearLayout
@@ -465,7 +465,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(22), dp(20), dp(22))
             background = GradientDrawable().apply {
-                setColor(green)
+                setColor(Color.rgb(3, 22, 14))
                 setCornerRadius(dp(22).toFloat())
                 setStroke(dp(2), green)
             }
@@ -3838,9 +3838,7 @@ position.trailingStopPercent = 25.0 + (peakStage * 10.0)
     }
 
     private fun card(accent: Int? = null): LinearLayout {
-        val fill = if (darkInterface && accent == green) {
-            green
-        } else if (darkInterface && accent != null) {
+        val fill = if (darkInterface && accent != null) {
             val r = Color.red(accent) / 10
             val g = Color.green(accent) / 10
             val b = Color.blue(accent) / 10
@@ -3861,7 +3859,7 @@ position.trailingStopPercent = 25.0 + (peakStage * 10.0)
             textSize = 12f
             isAllCaps = false
             setTextColor(if (primary) Color.WHITE else green)
-            background = rounded(if (primary) green else if (darkInterface) green else Color.rgb(235, 247, 241),
+            background = rounded(if (primary) green else if (darkInterface) Color.rgb(8, 42, 28) else Color.rgb(235, 247, 241),
                 if (primary) green else if (darkInterface) lineColor else Color.rgb(210, 235, 222), 10)
             setPadding(dp(12), dp(8), dp(12), dp(8))
             setOnClickListener { action() }
