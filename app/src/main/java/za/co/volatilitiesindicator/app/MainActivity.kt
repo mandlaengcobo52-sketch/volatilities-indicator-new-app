@@ -1961,16 +1961,17 @@ indexStatusViews[symbol]?.apply {
         // contract's own trailing stop merely because its opposite leg has not
         // yet been restored into the local position list. Restored Deriv
         // contracts can have role labels different from locally-created legs.
-        val pair = if (position.originalId.isNotBlank()) {
+                val pair = if (position.originalId.isNotBlank()) {
             positions.values.filter {
                 it.originalId == position.originalId &&
                     it.role in setOf("ORIGINAL", "EXISTING")
             }
         } else {
-            positions.values.filter {
-                it.symbol == position.symbol &&
-                    it.role in setOf("ORIGINAL", "EXISTING")
-            }
+            // Independent trade: never share trailing-stop state by index.
+            listOf(position)
+        }.distinctBy {
+            it.contractId.takeIf { id -> id > 0L } ?: it.localId
+                }
         }.distinctBy { it.contractId.takeIf { id -> id > 0L } ?: it.localId }
 
         val currentPercent = contractProfitPercent(position)
