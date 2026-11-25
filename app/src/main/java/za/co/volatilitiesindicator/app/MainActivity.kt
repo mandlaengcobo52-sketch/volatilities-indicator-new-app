@@ -1952,26 +1952,51 @@ indexStatusViews[symbol]?.apply {
         position.stake * (position.trailingStopPercent / 100.0)
 
     private fun evaluatePairTrailingStops(position: Position) {
-        // A CLOSED position must still be evaluated: its confirmed closure may
-        // be the event that permits the opposite contract to start recovery.
-        if (position.status !in setOf("OPEN", "CLOSED") ||
-            position.stake <= 0.0 || !position.stake.isFinite()) return
+    if (position.status != "OPEN" ||
+        position.stake <= 0.0 ||
+        !position.stake.isFinite()) return
 
-        // Resolve the pair when it is available, but do not block the winning
-        // contract's own trailing stop merely because its opposite leg has not
-        // yet been restored into the local position list. Restored Deriv
-        // contracts can have role labels different from locally-created legs.
-                val pair = if (position.originalId.isNotBlank()) {
-            positions.values.filter {
-                it.originalId == position.originalId &&
-                    it.role in setOf("ORIGINAL", "EXISTING")
-            }
+    val currentPercent = contractProfitPercent(position)
+    if (!currentPercent.isFinite()) return
+
+    // Every contract maintains its OWN independent trailing-stop state.
+    // Never inherit another trade's activation, peak or protected level.
+    if (!position.trailingActivated) {
+        if (currentPercent < 35.0) return
+
+        position.trailingActivated = true
+        position.trailingPeakPercent = currentPercent
+        position.trailingStopPercent = 25.0
+    }
+
+    if (currentPercent > position.trailingPeakPercent) {
+        position.trailingPeakPercent = currentPercent
+    }
+
+    // +35% activation protects +25%.
+    // Every additional +10% peak advances protection by +10%.
+    val peakStage = kotlin.math.floor(
+        (position.trailingPeakPercent - 35.0) / 10.0
+    ).toInt()
+
+    position.trailingStopPercent = 25.0 + (peakStage * 10.0)
+
+    if (currentPercent <= position.trailingStopPercent) {
+        val extreme = if (position.direction == "RISE") {
+            "bullish trend top"
         } else {
-            // Independent trade: never share trailing-stop state by index.
-            listOf(position)
-        }.distinctBy {
-            it.contractId.takeIf { id -> id > 0L } ?: it.localId
-                }
+            "bearish trend bottom"
+        }
+
+        requestAutomaticTrailingClose(
+            position,
+            "Winning ${position.direction} trailing stop reversed from the $extreme; " +
+                "protected profit ${formatPercent(position.trailingStopPercent)} " +
+                "of this contract's stake " +
+                "(${formatMoney(protectedProfitAmount(position))}) reached."
+        )
+    }
+    }
         }.distinctBy { it.contractId.takeIf { id -> id > 0L } ?: it.localId }
 
         val currentPercent = contractProfitPercent(position)
