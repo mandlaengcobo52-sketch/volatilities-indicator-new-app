@@ -1951,52 +1951,16 @@ indexStatusViews[symbol]?.apply {
     private fun protectedProfitAmount(position: Position): Double =
         position.stake * (position.trailingStopPercent / 100.0)
 
-    private fun evaluatePairTrailingStops(position: Position) {
-    if (position.status != "OPEN" ||
-        position.stake <= 0.0 ||
-        !position.stake.isFinite()) return
-
-    val currentPercent = contractProfitPercent(position)
-    if (!currentPercent.isFinite()) return
-
-    // Every contract maintains its OWN independent trailing-stop state.
-    // Never inherit another trade's activation, peak or protected level.
-    if (!position.trailingActivated) {
-        if (currentPercent < 35.0) return
-
-        position.trailingActivated = true
-        position.trailingPeakPercent = currentPercent
-        position.trailingStopPercent = 25.0
-    }
-
-    if (currentPercent > position.trailingPeakPercent) {
-        position.trailingPeakPercent = currentPercent
-    }
-
-    // +35% activation protects +25%.
-    // Every additional +10% peak advances protection by +10%.
-    val peakStage = kotlin.math.floor(
-        (position.trailingPeakPercent - 35.0) / 10.0
-    ).toInt()
-
-    position.trailingStopPercent = 25.0 + (peakStage * 10.0)
-
-    if (currentPercent <= position.trailingStopPercent) {
-        val extreme = if (position.direction == "RISE") {
-            "bullish trend top"
+    val pair = if (position.originalId.isNotBlank()) {
+            positions.values.filter {
+                it.originalId == position.originalId &&
+                    it.role in setOf("ORIGINAL", "EXISTING")
+            }
         } else {
-            "bearish trend bottom"
-        }
-
-        requestAutomaticTrailingClose(
-            position,
-            "Winning ${position.direction} trailing stop reversed from the $extreme; " +
-                "protected profit ${formatPercent(position.trailingStopPercent)} " +
-                "of this contract's stake " +
-                "(${formatMoney(protectedProfitAmount(position))}) reached."
-        )
-    }
-    }
+            positions.values.filter {
+                it.symbol == position.symbol &&
+                    it.role in setOf("ORIGINAL", "EXISTING")
+            }
         }.distinctBy { it.contractId.takeIf { id -> id > 0L } ?: it.localId }
 
         val currentPercent = contractProfitPercent(position)
