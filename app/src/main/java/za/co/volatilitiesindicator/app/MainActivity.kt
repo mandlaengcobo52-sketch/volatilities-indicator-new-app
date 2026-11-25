@@ -1657,7 +1657,7 @@ indexStatusViews[symbol]?.apply {
         originalTriggered.add(tradeKey)
         tradePrefs.edit().putStringSet("triggered_$today", originalTriggered.toSet()).apply()
         addNotification("Trade", "${displayIndexName(symbol)} ${mss} trade submitted",
-            "One ${mss} contract proposal was sent to Deriv. Stake: ${formatMoney(stake)} (20% of fixed daily starting capital). Waiting for Deriv acceptance.")
+            "One ${mss} contract proposal was sent to Deriv. Stake: ${formatMoney(stake)} (15% of fixed daily starting capital). Waiting for Deriv acceptance.")
     }
     private fun roundStake(value: Double): Double =
         BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP).toDouble()
@@ -2747,7 +2747,7 @@ position.trailingStopPercent = 25.0 + (peakStage * 10.0)
         summary.addView(text("DAILY STARTING CAPITAL", 12f, gold, true))
         summary.addView(text(String.format(Locale.US, "%.2f %s", dailyCapital, accountCurrency), 18f, blue, true))
         summary.addView(text("ACCOUNT MODE: $executionMode", 12f, if (executionMode == "REAL") blue else red, true))
-        summary.addView(text("ORIGINAL TRADE STAKE: 20% OF FIXED DAILY STARTING CAPITAL", 12f, gold))
+        summary.addView(text("ORIGINAL TRADE STAKE: 15% OF FIXED DAILY STARTING CAPITAL", 12f, gold))
         content.addView(summary)
         content.addView(space(16))
 
