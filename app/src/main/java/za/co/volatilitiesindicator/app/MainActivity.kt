@@ -1392,7 +1392,7 @@ indexStatusViews[symbol]?.apply {
     /**
      * Deriv portfolio restoration initially labels contracts EXISTING because
      * the app may not have their local pair metadata. A matching CALL+PUT pair
-     * on the same index, with the same 7-day expiry and near-identical
+     * on the same index, with the same 24-hour expiry and near-identical
      * purchase time, is reconciled into one recovery cycle.
      */
     private fun reconcileRestoredOriginalPairs(symbolHint: String? = null) {
@@ -1739,7 +1739,7 @@ indexStatusViews[symbol]?.apply {
         positions[localId] = p
         val req = nextRequestId()
         pendingRequests[req] = localId
-        // Original pair contracts use 7 days. The linked SECOND execution
+        // Original pair contracts use 24 hours. The linked SECOND execution
         // uses the exact remaining duration of its still-running original leg.
         val proposal = JSONObject()
             .put("proposal", 1)
@@ -1764,8 +1764,8 @@ indexStatusViews[symbol]?.apply {
         } else {
             val contractType = if (direction == "RISE") "CALL" else "PUT"
             proposal.put("contract_type", contractType)
-                .put("duration", 7)
-                .put("duration_unit", "d")
+                .put("duration", 24)
+                .put("duration_unit", "h")
         }
         p.status = "REQUESTING PROPOSAL"
         if (role == "SECOND") {
@@ -2910,17 +2910,36 @@ position.trailingStopPercent = 25.0 + (peakStage * 10.0)
 
     private fun formatContractCountdown(expiryEpoch: Long): String {
         if (expiryEpoch <= 0L) return "Waiting for Deriv expiry time"
-        val remainingSeconds = (expiryEpoch - System.currentTimeMillis() / 1000L)
-            .coerceAtLeast(0L)
-        val hours = remainingSeconds / 3600L
-        val minutes = (remainingSeconds % 3600L) / 60L
-        val seconds = remainingSeconds % 60L
-        val days = days / 7L
-        val remainingHours = days % 7L
-        return if (days > 0L) {
-            String.format(Locale.US, "%dd %02d:%02d:%02d", days, remainingHours, minutes, seconds)
+
+        val nowEpochSeconds: Long = System.currentTimeMillis() / 1000L
+        val remainingSeconds: Long = (expiryEpoch - nowEpochSeconds).coerceAtLeast(0L)
+
+        // Use subtraction-based remainder calculations to keep every value Long
+        // and avoid overloaded rem()/compareTo() compiler resolution problems.
+        val totalHours: Long = remainingSeconds / 3600L
+        val remainingDays: Long = totalHours / 24L
+        val hoursWithinDay: Long = totalHours - (remainingDays * 24L)
+        val totalMinutes: Long = remainingSeconds / 60L
+        val minutesWithinHour: Long = totalMinutes - (totalHours * 60L)
+        val secondsWithinMinute: Long = remainingSeconds - (totalMinutes * 60L)
+
+        return if (remainingDays > 0L) {
+            String.format(
+                Locale.US,
+                "%dd %02d:%02d:%02d",
+                remainingDays,
+                hoursWithinDay,
+                minutesWithinHour,
+                secondsWithinMinute
+            )
         } else {
-            String.format(Locale.US, "%02d:%02d:%02d", hours, minutes, seconds)
+            String.format(
+                Locale.US,
+                "%02d:%02d:%02d",
+                totalHours,
+                minutesWithinHour,
+                secondsWithinMinute
+            )
         }
     }
 
