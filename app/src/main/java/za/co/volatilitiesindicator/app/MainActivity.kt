@@ -89,6 +89,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val tradeRecoveryStatusViews = mutableMapOf<String, TextView>()
     private val mssStatusViews = mutableMapOf<String, TextView>()
     private val chochStatusViews = mutableMapOf<String, TextView>()
+    // Structural break prices captured from the completed H1 candle's confirmed swing levels.
+    private val recoveryMssPrice = mutableMapOf<String, Double>()
+    private val recoveryChochPrice = mutableMapOf<String, Double>()
+    private val recoverySignalClosePrice = mutableMapOf<String, Double>()
 
     private data class AppNotification(
         val id: Long,
@@ -167,6 +171,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var entryMssCloseEpoch: Long = 0L,
         var entryChochDirection: String = "",
         var entryChochCloseEpoch: Long = 0L,
+        var entryMssPrice: Double = 0.0,
+        var entryChochPrice: Double = 0.0,
+        var entryLastCandleClosePrice: Double = 0.0,
         var entryLastCandleCloseEpoch: Long = 0L,
         var executionEpoch: Long = 0L,
         var recoveryAfterEpoch: Long = 0L,
@@ -1534,9 +1541,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             return "ENTRY SIGNAL AUDIT\nMSS: DATE NOT RECORDED\nCHOCH: DATE NOT RECORDED\nLAST CANDLE CLOSE: DATE NOT RECORDED\nEXECUTION: ${formatAuditDateTime(position.executionEpoch)}"
         }
         return "ENTRY SIGNAL AUDIT\n" +
-            "CHOCH (${position.entryChochDirection}): ${formatAuditDateTime(position.entryChochCloseEpoch)}\n" +
-            "MSS (${position.entryMssDirection}): ${formatAuditDateTime(position.entryMssCloseEpoch)}\n" +
-            "LAST CANDLE CLOSE: ${formatAuditDateTime(position.entryLastCandleCloseEpoch)}\n" +
+            "CHOCH (${position.entryChochDirection}): ${formatAuditDateTime(position.entryChochCloseEpoch)} · LEVEL ${formatPrice(position.entryChochPrice)}\n" +
+            "MSS (${position.entryMssDirection}): ${formatAuditDateTime(position.entryMssCloseEpoch)} · LEVEL ${formatPrice(position.entryMssPrice)}\n" +
+            "LAST CANDLE CLOSE: ${formatAuditDateTime(position.entryLastCandleCloseEpoch)} · PRICE ${formatPrice(position.entryLastCandleClosePrice)}\n" +
             "EXECUTION: ${formatAuditDateTime(position.executionEpoch)}"
     }
 
@@ -1628,6 +1635,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             entryMssCloseEpoch = mssCloseEpoch,
             entryChochDirection = choch,
             entryChochCloseEpoch = chochCloseEpoch,
+            entryMssPrice = recoveryMssPrice[symbol] ?: 0.0,
+            entryChochPrice = recoveryChochPrice[symbol] ?: 0.0,
+            entryLastCandleClosePrice = recoverySignalClosePrice[symbol] ?: 0.0,
             entryLastCandleCloseEpoch = lastConfirmingCloseEpoch
         )
         if (!submitted) {
@@ -1649,6 +1659,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         originalId: String = "", durationSeconds: Long = 0L,
         entryMssDirection: String = "", entryMssCloseEpoch: Long = 0L,
         entryChochDirection: String = "", entryChochCloseEpoch: Long = 0L,
+        entryMssPrice: Double = 0.0, entryChochPrice: Double = 0.0,
+        entryLastCandleClosePrice: Double = 0.0,
         entryLastCandleCloseEpoch: Long = 0L
     ): Boolean {
         if (platformAuthenticated && platformUserRole == "investor") {
@@ -1676,6 +1688,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         p.entryMssCloseEpoch = entryMssCloseEpoch
         p.entryChochDirection = entryChochDirection
         p.entryChochCloseEpoch = entryChochCloseEpoch
+        p.entryMssPrice = entryMssPrice
+        p.entryChochPrice = entryChochPrice
+        p.entryLastCandleClosePrice = entryLastCandleClosePrice
         p.entryLastCandleCloseEpoch = entryLastCandleCloseEpoch
         positions[localId] = p
         val req = nextRequestId()
@@ -2108,6 +2123,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             else -> ""
         }
         if (mssDirection.isNotBlank()) {
+            recoveryMssPrice[symbol] = if (mssDirection == "RISE") lastHigh else lastLow
+            recoverySignalClosePrice[symbol] = last.close
             recoveryMssEpoch[symbol] = last.epoch
             tradePrefs.edit().putLong("signal_mss_epoch_$symbol", last.epoch).apply()
             if (recoveryMss[symbol] != mssDirection) {
@@ -2124,6 +2141,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             else -> ""
         }
         if (chochDirection.isNotBlank()) {
+            recoveryChochPrice[symbol] = if (chochDirection == "RISE") lastHigh else lastLow
+            recoverySignalClosePrice[symbol] = last.close
             recoveryChochEpoch[symbol] = last.epoch
             tradePrefs.edit().putLong("signal_choch_epoch_$symbol", last.epoch).apply()
             if (recoveryChoch[symbol] != chochDirection) {
@@ -2182,6 +2201,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             entryMssCloseEpoch = mssCloseEpoch,
             entryChochDirection = choch,
             entryChochCloseEpoch = chochCloseEpoch,
+            entryMssPrice = recoveryMssPrice[symbol] ?: 0.0,
+            entryChochPrice = recoveryChochPrice[symbol] ?: 0.0,
+            entryLastCandleClosePrice = recoverySignalClosePrice[symbol] ?: 0.0,
             entryLastCandleCloseEpoch = maxOf(mssCloseEpoch, chochCloseEpoch)
         )
         if (!submitted) return
@@ -2253,6 +2275,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 .put("entryMssCloseEpoch", p.entryMssCloseEpoch)
                 .put("entryChochDirection", p.entryChochDirection)
                 .put("entryChochCloseEpoch", p.entryChochCloseEpoch)
+                .put("entryMssPrice", p.entryMssPrice)
+                .put("entryChochPrice", p.entryChochPrice)
+                .put("entryLastCandleClosePrice", p.entryLastCandleClosePrice)
                 .put("entryLastCandleCloseEpoch", p.entryLastCandleCloseEpoch)
                 .put("executionEpoch", p.executionEpoch)
                 .put("recoveryAfterEpoch", p.recoveryAfterEpoch)
@@ -2290,6 +2315,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 p.entryMssCloseEpoch = o.optLong("entryMssCloseEpoch", 0L)
                 p.entryChochDirection = o.optString("entryChochDirection", "")
                 p.entryChochCloseEpoch = o.optLong("entryChochCloseEpoch", 0L)
+                p.entryMssPrice = o.optDouble("entryMssPrice", 0.0)
+                p.entryChochPrice = o.optDouble("entryChochPrice", 0.0)
+                p.entryLastCandleClosePrice = o.optDouble("entryLastCandleClosePrice", 0.0)
                 p.entryLastCandleCloseEpoch = o.optLong("entryLastCandleCloseEpoch", 0L)
                 p.executionEpoch = o.optLong("executionEpoch", p.openedAtEpoch)
                 p.recoveryAfterEpoch = o.optLong("recoveryAfterEpoch", p.closedAt)
