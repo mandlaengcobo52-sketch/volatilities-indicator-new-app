@@ -1950,12 +1950,12 @@ indexStatusViews[symbol]?.apply {
                 .maxByOrNull { contractProfitPercent(it) }
             val candidatePercent = candidate?.let { contractProfitPercent(it) }
             if (candidate != null && candidatePercent != null &&
-                candidatePercent.isFinite() && candidatePercent >= 35.0) {
-                candidate.trailingActivated = true
-                candidate.losingRecoveryTrail = false
-                candidate.trailingPeakPercent = candidatePercent
-                candidate.trailingStopPercent = 35.0
-                winner = candidate
+    candidatePercent.isFinite() && candidatePercent >= 35.0) {
+    candidate.trailingActivated = true
+    candidate.losingRecoveryTrail = false
+    candidate.trailingPeakPercent = candidatePercent
+    candidate.trailingStopPercent = 25.0
+    winner = candidate
             }
         }
 
@@ -1966,8 +1966,10 @@ indexStatusViews[symbol]?.apply {
             if (winningPercent.isFinite() && winningPercent > winningPosition.trailingPeakPercent) {
                 winningPosition.trailingPeakPercent = winningPercent
             }
-            val winnerPeakStage = kotlin.math.floor(winningPosition.trailingPeakPercent / 10.0).toInt()
-            winningPosition.trailingStopPercent = (winnerPeakStage * 10.0) - 10.0
+            val winnerPeakStage = kotlin.math.floor(
+    (winningPosition.trailingPeakPercent - 35.0) / 10.0
+).toInt()
+winningPosition.trailingStopPercent = 25.0 + (winnerPeakStage * 10.0)
 
             if (winningPosition.status == "OPEN" && winningPercent <= winningPosition.trailingStopPercent) {
                 val extreme = if (winningPosition.direction == "RISE") "bullish trend top" else "bearish trend bottom"
@@ -2001,8 +2003,10 @@ indexStatusViews[symbol]?.apply {
         if (currentPercent > position.trailingPeakPercent) {
             position.trailingPeakPercent = currentPercent
         }
-        val peakStage = kotlin.math.floor(position.trailingPeakPercent / 10.0).toInt()
-        position.trailingStopPercent = (peakStage * 10.0) - 10.0
+        val peakStage = kotlin.math.floor(
+    (position.trailingPeakPercent - 35.0) / 10.0
+).toInt()
+position.trailingStopPercent = 25.0 + (peakStage * 10.0)
         if (currentPercent <= position.trailingStopPercent) {
             requestAutomaticTrailingClose(
                 position,
@@ -2813,7 +2817,7 @@ indexStatusViews[symbol]?.apply {
                             val trailType = if (p.losingRecoveryTrail) "LOSS PROTECTION" else "WINNING TRAIL"
                             "TRAILING STOP: ACTIVE · $trailType · PROFIT ON STAKE ${formatPnlPercent(currentPercent)} · PROTECTED PROFIT ON STAKE ${formatMoney(protectedProfitAmount(p))} (${formatPercent(p.trailingStopPercent)})"
                         } else {
-                            "TRAILING STOP: MONITORING · P/L ${formatPnlPercent(currentPercent)} OF STAKE · ACTIVATES AT +50% · PROTECTS 10 POINTS BELOW THE HIGHEST PROFIT"
+                            "TRAILING STOP: MONITORING · P/L ${formatPnlPercent(currentPercent)} OF STAKE · ACTIVATES AT +35% · PROTECTS 10 POINTS BELOW THE HIGHEST PROFIT"
                         }
                         val trailView = text(trailDescription, 12f, if (p.trailingActivated) amber else blue, true)
                         tradeTrailingViews[p.localId] = trailView
@@ -2915,7 +2919,7 @@ indexStatusViews[symbol]?.apply {
                 val label = if (position.losingRecoveryTrail) "LOSS PROTECTION" else "WINNING TRAIL"
                 "TRAILING STOP: ACTIVE · $label · PROFIT ON STAKE ${formatPnlPercent(currentPercent)} · PROTECTED PROFIT ON STAKE ${formatMoney(protectedProfitAmount(position))} (${formatPercent(position.trailingStopPercent)})"
             } else {
-                "TRAILING STOP: MONITORING · P/L ${formatPnlPercent(currentPercent)} OF STAKE · ACTIVATES AT +50% · PROTECTS 10 POINTS BELOW THE HIGHEST PROFIT"
+                "TRAILING STOP: MONITORING · P/L ${formatPnlPercent(currentPercent)} OF STAKE · ACTIVATES AT +35% · PROTECTS 10 POINTS BELOW THE HIGHEST PROFIT"
             }
             view.setTextColor(if (position.trailingActivated) amber else blue)
         }
