@@ -982,12 +982,48 @@ indexStatusViews[symbol]?.apply {
                     closingPosition.status = "OPEN"
                     closingPosition.trailingClosePending = true
                     addNotification("Trade", "${displayIndexName(closingPosition.symbol)} close response mismatch", "Deriv returned a sale receipt for contract $soldContractId, but this position is contract ${closingPosition.contractId}. The position remains open pending confirmation.")
-                } else {
-                    closingPosition.status = "CLOSING"
+                } else if (closingPosition.status != "CLOSED") {
+                    // A successful Deriv sell receipt is the sale confirmation.
+                    // Do not leave the position waiting indefinitely for a later
+                    // proposal_open_contract packet that may be delayed or missed.
+                    val soldFor = receipt.optDouble("sold_for", Double.NaN)
+                    if (soldFor.isFinite()) {
+                        closingPosition.profit = soldFor - closingPosition.stake
+                    }
+                    closingPosition.status = "CLOSED"
+                    closingPosition.canSell = false
                     closingPosition.trailingClosePending = false
+                    closingPosition.trailingCloseReason = ""
+                    closingPosition.closedAt = System.currentTimeMillis() / 1000L
+
+                    if (closingPosition.role == "ORIGINAL" && closingPosition.profit > 0.0 && closingPosition.trailingStopTriggered) {
+                        closingPosition.recoveryEligible = true
+                        closingPosition.recoveryAfterEpoch = closingPosition.closedAt
+                        recoveryWaiting.add(closingPosition.localId)
+                    }
+                    if (closingPosition.role == "SECOND" && closingPosition.trailingStopTriggered && closingPosition.profit > 0.0) {
+                        val remainingOriginal = positions.values.firstOrNull {
+                            it.role == "ORIGINAL" && it.originalId == closingPosition.originalId && it.status == "OPEN"
+                        }
+                        if (remainingOriginal != null) {
+                            requestAutomaticTrailingClose(
+                                remainingOriginal,
+                                "The linked second execution has closed at its protected-profit trailing stop. Closing the remaining original contract as instructed."
+                            )
+                        }
+                    }
+                    addNotification("Trade", "${displayIndexName(closingPosition.symbol)} trade closed", "${closingPosition.role} ${closingPosition.direction} final P/L: ${formatMoney(closingPosition.profit)}.")
                 }
                 savePositions()
-                runOnUiThread { if (selectedTab == "Trade") render() }
+                runOnUiThread {
+                    updateMasterDecisionViews(closingPosition.symbol)
+                    updateRecoveryStatusView(closingPosition.symbol)
+                    if (selectedTab == "Trade") render()
+                    updateAccountProfitLossViews()
+                }
+                if (closingPosition.recoveryEligible && !closingPosition.recoveryUsed) {
+                    candlesByIndex[closingPosition.symbol]?.let { evaluateRecoverySignals(closingPosition.symbol, it) }
+                }
             }
             "proposal_open_contract" -> handleOpenContract(json.optJSONObject("proposal_open_contract") ?: return)
             "portfolio" -> {
@@ -1703,7 +1739,7 @@ indexStatusViews[symbol]?.apply {
         positions[localId] = p
         val req = nextRequestId()
         pendingRequests[req] = localId
-        // Original pair contracts use 7 days. The linked SECOND execution
+        // Original pair contracts use 24 hours. The linked SECOND execution
         // uses the exact remaining duration of its still-running original leg.
         val proposal = JSONObject()
             .put("proposal", 1)
@@ -1728,8 +1764,8 @@ indexStatusViews[symbol]?.apply {
         } else {
             val contractType = if (direction == "RISE") "CALL" else "PUT"
             proposal.put("contract_type", contractType)
-                .put("duration", 7)
-                .put("duration_unit", "d")
+                .put("duration", 24)
+                .put("duration_unit", "h")
         }
         p.status = "REQUESTING PROPOSAL"
         if (role == "SECOND") {
@@ -1794,6 +1830,9 @@ indexStatusViews[symbol]?.apply {
 
         val position = foundPosition ?: return
         val wasAlreadyClosed = position.status == "CLOSED"
+        // Ignore delayed open-contract snapshots after a confirmed sell receipt.
+        // They must never move a locally confirmed CLOSED trade back to OPEN.
+        if (wasAlreadyClosed) return
         position.expiryEpoch = contract.optLong("date_expiry", position.expiryEpoch)
 
         when (contract.optString("contract_type").uppercase(Locale.US)) {
