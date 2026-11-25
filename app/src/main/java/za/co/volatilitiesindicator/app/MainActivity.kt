@@ -593,7 +593,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             textSize = 16f
             isAllCaps = false
             setTextColor(Color.BLACK)
-            background = rounded green, green
+            background = rounded(green, green, 10)
             setOnClickListener { submitPlatformAuth(register, fields, status, this, selectedRegistrationRole) }
         }
         panel.addView(submit, LinearLayout.LayoutParams(-1, dp(54)).apply {
