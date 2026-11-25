@@ -1942,7 +1942,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 .maxByOrNull { contractProfitPercent(it) }
             val candidatePercent = candidate?.let { contractProfitPercent(it) }
             if (candidate != null && candidatePercent != null &&
-                candidatePercent.isFinite() && candidatePercent >= 150.0) {
+                candidatePercent.isFinite() && candidatePercent >= 50.0) {
                 candidate.trailingActivated = true
                 candidate.losingRecoveryTrail = false
                 candidate.trailingPeakPercent = candidatePercent
@@ -2803,7 +2803,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                             val trailType = if (p.losingRecoveryTrail) "LOSS PROTECTION" else "WINNING TRAIL"
                             "TRAILING STOP: ACTIVE · $trailType · PROFIT ON STAKE ${formatPnlPercent(currentPercent)} · PROTECTED PROFIT ON STAKE ${formatMoney(protectedProfitAmount(p))} (${formatPercent(p.trailingStopPercent)})"
                         } else {
-                            "TRAILING STOP: MONITORING · P/L ${formatPnlPercent(currentPercent)} OF STAKE · ACTIVATES AT +150% · PROTECTS 10 POINTS BELOW THE HIGHEST PROFIT"
+                            "TRAILING STOP: MONITORING · P/L ${formatPnlPercent(currentPercent)} OF STAKE · ACTIVATES AT +50% · PROTECTS 10 POINTS BELOW THE HIGHEST PROFIT"
                         }
                         val trailView = text(trailDescription, 12f, if (p.trailingActivated) amber else blue, true)
                         tradeTrailingViews[p.localId] = trailView
@@ -2905,7 +2905,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 val label = if (position.losingRecoveryTrail) "LOSS PROTECTION" else "WINNING TRAIL"
                 "TRAILING STOP: ACTIVE · $label · PROFIT ON STAKE ${formatPnlPercent(currentPercent)} · PROTECTED PROFIT ON STAKE ${formatMoney(protectedProfitAmount(position))} (${formatPercent(position.trailingStopPercent)})"
             } else {
-                "TRAILING STOP: MONITORING · P/L ${formatPnlPercent(currentPercent)} OF STAKE · ACTIVATES AT +150% · PROTECTS 10 POINTS BELOW THE HIGHEST PROFIT"
+                "TRAILING STOP: MONITORING · P/L ${formatPnlPercent(currentPercent)} OF STAKE · ACTIVATES AT +50% · PROTECTS 10 POINTS BELOW THE HIGHEST PROFIT"
             }
             view.setTextColor(if (position.trailingActivated) amber else blue)
         }
