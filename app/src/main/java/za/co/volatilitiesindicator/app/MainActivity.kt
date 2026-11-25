@@ -3857,8 +3857,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         return TextView(this).apply {
             text = value
             textSize = size
-            setTextColor(color)
-            if (bold) setTypeface(null, Typeface.BOLD)
+            setTextColor(
+    if (!darkInterface && color == green)
+        Color.rgb(0, 100, 45)
+    else color
+)
         }
     }
 
