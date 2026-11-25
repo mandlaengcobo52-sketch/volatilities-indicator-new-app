@@ -1882,9 +1882,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
      * Independent winning-leg trailing stop for an original RISE/FALL pair.
      *
      * WINNER:
-     * - Activates at +150% profit on stake; initial protected stop is +140% profit on stake.
+     * - Activates at +50% profit on stake; initial protected stop is +40% profit on stake.
      * - Each new +10 percentage-point peak advances the stop by +10 points:
-     *   +160 peak -> +150 stop, +170 -> +160, and so on.
+     *   +60 peak -> +50 stop, +70 -> +60, and so on.
      * - The stop follows the winning P/L peak, representing the bullish RISE
      *   move's top or bearish FALL move's bottom.
      *
@@ -1930,7 +1930,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (!currentPercent.isFinite()) return
 
         // Find the already-armed winning leg, or arm the better-performing
-        // OPEN leg only when it reaches +150% profit on stake.
+        // OPEN leg only when it reaches +50% profit on stake.
         var winner = pair.firstOrNull {
             it.trailingActivated && !it.losingRecoveryTrail
         }
@@ -1946,13 +1946,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 candidate.trailingActivated = true
                 candidate.losingRecoveryTrail = false
                 candidate.trailingPeakPercent = candidatePercent
-                candidate.trailingStopPercent = 140.0
+                candidate.trailingStopPercent = 40.0
                 winner = candidate
             }
         }
 
         // Manage the winner first. Stop is peak minus 10 percentage points:
-        // +150 -> +140, +160 -> +150, +170 -> +160, etc.
+        // +50 -> +40, +60 -> +50, +70 -> +60, etc.
         winner?.let { winningPosition ->
             val winningPercent = contractProfitPercent(winningPosition)
             if (winningPercent.isFinite() && winningPercent > winningPosition.trailingPeakPercent) {
@@ -1978,17 +1978,17 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     }
 
-    // The linked second execution uses the same existing +150% activation
+    // The linked second execution uses the same existing +50% activation
     // and 10-point trailing progression. No trailing thresholds are changed.
     private fun evaluateSecondExecutionTrailingStop(position: Position) {
         if (position.status != "OPEN" || position.stake <= 0.0 || !position.stake.isFinite()) return
         val currentPercent = contractProfitPercent(position)
         if (!currentPercent.isFinite()) return
         if (!position.trailingActivated) {
-            if (currentPercent < 150.0) return
+            if (currentPercent < 50.0) return
             position.trailingActivated = true
             position.trailingPeakPercent = currentPercent
-            position.trailingStopPercent = 140.0
+            position.trailingStopPercent = 40.0
         }
         if (currentPercent > position.trailingPeakPercent) {
             position.trailingPeakPercent = currentPercent
