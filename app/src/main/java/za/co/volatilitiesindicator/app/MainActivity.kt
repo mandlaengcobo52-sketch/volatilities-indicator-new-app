@@ -2876,13 +2876,6 @@ position.trailingStopPercent = 25.0 + (peakStage * 10.0)
                     }
                 }
 
-                val combinedProfit = indexPositions.sumOf { it.profit }
-                c.addView(space(8))
-                c.addView(divider())
-                c.addView(space(8))
-                c.addView(text("INDEX COMBINED P/L: ${formatMoney(combinedProfit)}", 13f,
-                    if (combinedProfit >= 0.0) green else red, true))
-
                 content.addView(c)
                 content.addView(space(8))
             }
