@@ -1642,27 +1642,50 @@ indexStatusViews[symbol]?.apply {
     }
 
     private fun calculatePreviousDailyLevels(symbol: String, candles: List<DerivApiClient.Candle>) {
-        // Keep the existing H1 calculation: group by UTC calendar day and select
-        // the most recent completed day before the current UTC day.
-        val grouped = candles.groupBy { it.epoch / 86400L }.toSortedMap()
-        if (grouped.size < 2) return
+        // H1 candles are grouped by UTC calendar day. Previous-day levels must
+        // come from the immediately preceding completed UTC day, not an older
+        // arbitrary candle group.
+        val grouped = candles
+            .filter { it.epoch > 0L && it.high.isFinite() && it.low.isFinite() }
+            .groupBy { it.epoch / 86400L }
+            .toSortedMap()
 
-        val currentDay = System.currentTimeMillis() / 1000L / 86400L
-        val completed = grouped.filterKeys { it < currentDay }.entries.lastOrNull() ?: return
-        val high = completed.value.maxOf { it.high }
-        val low = completed.value.minOf { it.low }
+        val currentUtcDay = System.currentTimeMillis() / 1000L / 86400L
+        val previousUtcDay = currentUtcDay - 1L
+        val previousDayCandles = grouped[previousUtcDay]
 
-        if (high > low && high.isFinite() && low.isFinite()) {
+        android.util.Log.d(
+            "VI_DAILY_LEVELS",
+            "$symbol H1 received=${candles.size}, groupedDays=${grouped.keys}, targetUTCday=$previousUtcDay"
+        )
+
+        // A partial response, delayed feed, or missing previous-day group must
+        // never erase the last confirmed levels. Wait for a valid H1 response.
+        if (previousDayCandles.isNullOrEmpty()) {
+            android.util.Log.w(
+                "VI_DAILY_LEVELS",
+                "$symbol has no H1 candles for previous UTC day $previousUtcDay; retaining last confirmed levels."
+            )
+            return
+        }
+
+        val high = previousDayCandles.maxOf { it.high }
+        val low = previousDayCandles.minOf { it.low }
+
+        if (high.isFinite() && low.isFinite() && high > low) {
             val previous = dailyLevels[symbol]
             dailyLevels[symbol] = high to low
 
-            // Persist only a valid completed-day H1 range. An incomplete/empty
-            // refresh must never erase a previously confirmed range.
             dailyLevelsPrefs.edit()
-                .putLong("day_$symbol", completed.key)
+                .putLong("day_$symbol", previousUtcDay)
                 .putString("high_$symbol", high.toString())
                 .putString("low_$symbol", low.toString())
                 .apply()
+
+            android.util.Log.i(
+                "VI_DAILY_LEVELS",
+                "$symbol previous-day levels confirmed: UTC day=$previousUtcDay high=$high low=$low"
+            )
 
             if (previous == null || previous.first != high || previous.second != low) {
                 addNotification(
@@ -1671,25 +1694,32 @@ indexStatusViews[symbol]?.apply {
                     "Previous completed-day high: ${formatPrice(high)}; low: ${formatPrice(low)}."
                 )
             }
+
+            // Update existing Home labels immediately when H1 data is confirmed.
+            runOnUiThread { updateMasterDecisionViews(symbol) }
         }
     }
 
     private fun loadPreviousDailyLevels() {
-        val currentDay = System.currentTimeMillis() / 1000L / 86400L
-        val expectedPreviousDay = currentDay - 1L
-
         indexes.forEach { symbol ->
             val savedDay = dailyLevelsPrefs.getLong("day_$symbol", -1L)
             val high = dailyLevelsPrefs.getString("high_$symbol", null)?.toDoubleOrNull()
             val low = dailyLevelsPrefs.getString("low_$symbol", null)?.toDoubleOrNull()
 
-            // Do not show stale reference levels from an older trading day.
+            // Restore the last confirmed H1 values first. The next successful H1
+            // response replaces them with the immediately preceding UTC day's range.
+            // Do not hide valid saved levels merely because the device date changed
+            // before Deriv has delivered the new H1 candle set.
             if (
-                savedDay == expectedPreviousDay &&
+                savedDay >= 0L &&
                 high != null && low != null &&
                 high.isFinite() && low.isFinite() && high > low
             ) {
                 dailyLevels[symbol] = high to low
+                android.util.Log.d(
+                    "VI_DAILY_LEVELS",
+                    "$symbol restored saved levels for UTC day=$savedDay high=$high low=$low"
+                )
             }
         }
     }
