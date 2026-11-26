@@ -111,6 +111,18 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val notificationPermissionRequest = 9001
     private val paymentProofPickerRequest = 9107
 
+    // Prevent repeated identical Deriv error popups/notifications while preserving
+    // the first report and allowing the same error to be reported again later.
+    private val lastDerivErrorReportAt = mutableMapOf<String, Long>()
+    @Synchronized
+    private fun shouldReportDerivError(key: String, intervalMs: Long = 60_000L): Boolean {
+        val now = System.currentTimeMillis()
+        val previous = lastDerivErrorReportAt[key] ?: 0L
+        if (now - previous < intervalMs) return false
+        lastDerivErrorReportAt[key] = now
+        return true
+    }
+
     private var marketFeedConnected = false
     private var accountConnected = false
     private var accountLabel = "Not connected"
@@ -185,11 +197,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var trailingStopPercent: Double = 0.0,
         var trailingClosePending: Boolean = false,
         // Minimum Deriv sale price requested to preserve the protected P/L.
-        var trailingCloseFloorPrice: Double = 0.0,
-        // Back off after a rejected/stale protected-sale quote; never retry every tick.
-        var trailingCloseRetryAfterMs: Long = 0L,
-        // One failure notification per contract, rather than a notification storm.
-        var trailingCloseFailureNotified: Boolean = false
+        var trailingCloseFloorPrice: Double = 0.0
     )
 
     private val positions = linkedMapOf<String, Position>()
@@ -212,8 +220,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private var tradeStatusView: TextView? = null
     private val tradeStatusViews = mutableMapOf<String, TextView>()
     private val tradeProfitViews = mutableMapOf<String, TextView>()
-    // Live, contract-specific trailing monitor displayed from confirmed execution.
-    private val tradeTrailingViews = mutableMapOf<String, TextView>()
     private val tradeCountdownViews = mutableMapOf<String, TextView>()
     private val countdownHandler = Handler(Looper.getMainLooper())
     private val countdownTask = object : Runnable {
@@ -908,22 +914,15 @@ indexStatusViews[symbol]?.apply {
         }
     }
 
-    // Deriv can emit the same transient quote/market error repeatedly. Keep the
-    // first alert, but suppress identical repeats for 60 seconds.
-    private var lastDerivErrorMessage: String = ""
-    private var lastDerivErrorAtMs: Long = 0L
-
     override fun onError(message: String) {
         runOnUiThread {
-            val now = System.currentTimeMillis()
-            val isRepeatedError = message == lastDerivErrorMessage &&
-                now - lastDerivErrorAtMs < 60_000L
-            if (isRepeatedError) return@runOnUiThread
-            lastDerivErrorMessage = message
-            lastDerivErrorAtMs = now
-            addNotification("Accounts", "Deriv connection issue", message)
+            val reportThisError = shouldReportDerivError("connection:$message")
+            if (reportThisError) {
+                addNotification("Accounts", "Deriv connection issue", message)
+            }
             if (accountConnected) {
-                toast(message)
+                // A repeated callback must not create a toast every few seconds.
+                if (reportThisError) toast(message)
             } else {
                 accountLabel = "Connection failed"
                 accountBalanceLabel = message
@@ -951,18 +950,12 @@ indexStatusViews[symbol]?.apply {
                     failedPosition.status = if (failedPosition.contractId > 0L) "OPEN" else "ERROR: $errorMessage"
                     failedPosition.trailingClosePending = false
                     if (wasTrailingClose) {
-                        // A rejected quote is stale; do not immediately resubmit on
-                        // every proposal_open_contract update. Wait for a fresh quote.
-                        failedPosition.trailingCloseRetryAfterMs = System.currentTimeMillis() + 30_000L
-                        if (!failedPosition.trailingCloseFailureNotified) {
-                            failedPosition.trailingCloseFailureNotified = true
-                            addNotification(
-                                "Trade",
-                                "${displayIndexName(failedPosition.symbol)} protected sale not filled",
-                                "Deriv did not accept the trailing-stop sale at the required minimum price of ${formatMoney(failedPosition.trailingCloseFloorPrice)}. The contract remains OPEN; no below-floor market sale will be sent. Automatic retry is paused for 30 seconds. Deriv response: $errorMessage"
-                            )
-                        }
-                    } else {
+                        addNotification(
+                            "Trade",
+                            "${displayIndexName(failedPosition.symbol)} protected sale not filled",
+                            "Deriv did not accept the trailing-stop sale at the required minimum price of ${formatMoney(failedPosition.trailingCloseFloorPrice)}. The contract remains OPEN; no below-floor market sale will be sent. Deriv response: $errorMessage"
+                        )
+                    } else if (shouldReportDerivError("trade-request:$errorMessage")) {
                         addNotification("Trade", "${displayIndexName(failedPosition.symbol)} trade request failed", errorMessage + if (wasClosing) " Automatic close remains pending; the contract is not marked closed." else "")
                     }
                 }
@@ -1015,9 +1008,7 @@ indexStatusViews[symbol]?.apply {
                 val soldContractId = receipt.optLong("contract_id", 0L)
                 if (soldContractId != closingPosition.contractId || soldContractId <= 0L) {
                     closingPosition.status = "OPEN"
-                    closingPosition.trailingClosePending = false
-                    closingPosition.trailingCloseRetryAfterMs = System.currentTimeMillis() + 30_000L
-                    addNotification("Trade", "${displayIndexName(closingPosition.symbol)} close response mismatch", "Deriv returned a sale receipt for contract $soldContractId, but this position is contract ${closingPosition.contractId}. The position remains open; another protected-sale request is paused for 30 seconds.")
+                    addNotification("Trade", "${displayIndexName(closingPosition.symbol)} close response mismatch", "Deriv returned a sale receipt for contract $soldContractId, but this position is contract ${closingPosition.contractId}. The position remains open pending confirmation.")
                 } else if (closingPosition.status != "CLOSED") {
                     // A successful Deriv sell receipt is the sale confirmation.
                     // Do not leave the position waiting indefinitely for a later
@@ -1914,10 +1905,6 @@ indexStatusViews[symbol]?.apply {
         runOnUiThread {
             updateMasterDecisionViews(position.symbol)
             updateRecoveryStatusView(position.symbol)
-            // Always refresh the exact contract that received this Deriv update.
-            // The related-pair filter below intentionally groups linked positions
-            // and may not include an ORIGINAL position with no originalId.
-            updateTradePositionViews(position)
             val relatedPositions = positions.values.filter {
                 it.symbol == position.symbol && it.status != "CLOSED" &&
                     (if (position.originalId.isNotBlank()) it.originalId == position.originalId
@@ -1981,8 +1968,6 @@ indexStatusViews[symbol]?.apply {
         // A reversal to the protected threshold triggers a close of this contract_id only.
         if (currentPercent <= position.trailingStopPercent &&
             currentPercent < position.trailingPeakPercent) {
-            // A rejected/stale Deriv quote must not cause a request every update.
-            if (System.currentTimeMillis() < position.trailingCloseRetryAfterMs) return
             if (!position.canSell) return
 
             position.trailingClosePending = true
@@ -1999,7 +1984,6 @@ indexStatusViews[symbol]?.apply {
                 pendingRequests.remove(req)
                 position.trailingClosePending = false
                 position.status = "OPEN"
-                position.trailingCloseRetryAfterMs = System.currentTimeMillis() + 30_000L
                 savePositions()
                 return
             }
@@ -2014,7 +1998,6 @@ indexStatusViews[symbol]?.apply {
                 pendingRequests.remove(req)
                 position.trailingClosePending = false
                 position.status = "OPEN"
-                position.trailingCloseRetryAfterMs = System.currentTimeMillis() + 30_000L
                 savePositions()
                 return
             }
@@ -2262,9 +2245,7 @@ indexStatusViews[symbol]?.apply {
                 .put("trailingPeakPercent", p.trailingPeakPercent)
                 .put("trailingStopPercent", p.trailingStopPercent)
                 .put("trailingClosePending", p.trailingClosePending)
-                .put("trailingCloseFloorPrice", p.trailingCloseFloorPrice)
-                .put("trailingCloseRetryAfterMs", p.trailingCloseRetryAfterMs)
-                .put("trailingCloseFailureNotified", p.trailingCloseFailureNotified))
+                .put("trailingCloseFloorPrice", p.trailingCloseFloorPrice))
         }
         // commit() makes completed trade records durable before activity teardown/update.
         tradePrefs.edit().putString("positions", array.toString()).commit()
@@ -2303,8 +2284,6 @@ indexStatusViews[symbol]?.apply {
                 p.trailingStopPercent = o.optDouble("trailingStopPercent", 0.0)
                 p.trailingClosePending = o.optBoolean("trailingClosePending", false)
                 p.trailingCloseFloorPrice = o.optDouble("trailingCloseFloorPrice", 0.0)
-                p.trailingCloseRetryAfterMs = o.optLong("trailingCloseRetryAfterMs", 0L)
-                p.trailingCloseFailureNotified = o.optBoolean("trailingCloseFailureNotified", false)
                 if (p.recoveryEligible && !p.recoveryUsed) recoveryWaiting.add(p.localId)
                 positions[p.localId] = p
                 // Never subscribe a restored contract against the other account's socket.
@@ -2518,7 +2497,6 @@ indexStatusViews[symbol]?.apply {
         chochStatusViews.clear()
         tradeStatusViews.clear()
         tradeProfitViews.clear()
-        tradeTrailingViews.clear()
         tradeCountdownViews.clear()
 
         val root = LinearLayout(this).apply {
@@ -2774,19 +2752,6 @@ indexStatusViews[symbol]?.apply {
                     tradeProfitViews[p.localId] = profitView
                     c.addView(profitView)
 
-                    // Show the live P/L percentage from the moment Deriv confirms
-                    // this exact contract. Negative values remain visible; the
-                    // protective close does not activate until +35% is reached.
-                    if (p.contractId > 0L && p.status == "OPEN") {
-                        val trailingView = text(
-                            trailingMonitorText(p), 12f,
-                            if (p.trailingActivated) green else blue, true
-                        )
-                        tradeTrailingViews[p.localId] = trailingView
-                        c.addView(space(5))
-                        c.addView(trailingView)
-                    }
-
                     if (p.contractId > 0L && p.status == "OPEN") {
                         c.addView(space(6))
                         c.addView(actionButton("CLOSE THIS ${p.direction} TRADE", primary = false) {
@@ -2879,34 +2844,6 @@ indexStatusViews[symbol]?.apply {
         }
     }
 
-    // Percentage is always calculated from the latest Deriv P/L and this
-    // contract's own confirmed buy_price (position.stake), never account capital
-    // or another contract's stake.
-    private fun currentContractProfitPercent(position: Position): Double {
-        if (position.stake <= 0.0 || !position.stake.isFinite() ||
-            !position.profit.isFinite()) return 0.0
-        return (position.profit / position.stake) * 100.0
-    }
-
-    private fun trailingMonitorText(position: Position): String {
-        val currentPercent = currentContractProfitPercent(position)
-        val currentLabel = String.format(Locale.US, "%+.2f%%", currentPercent)
-        return if (!position.trailingActivated) {
-            "TRAILING STOP: MONITORING\n" +
-                "CURRENT CONTRACT P/L: $currentLabel\n" +
-                "ACTIVATION TARGET: +35.00%\n" +
-                "PROTECTION: WAITING FOR ACTIVATION"
-        } else {
-            val protected = String.format(Locale.US, "+%.2f%%", position.trailingStopPercent)
-            val peak = String.format(Locale.US, "+%.2f%%", position.trailingPeakPercent)
-            "TRAILING STOP: ACTIVE\n" +
-                "CURRENT CONTRACT P/L: $currentLabel\n" +
-                "HIGHEST PROFIT: $peak\n" +
-                "PROTECTED PROFIT: $protected\n" +
-                "TRAILING DISTANCE: 10.00 PERCENTAGE POINTS"
-        }
-    }
-
     private fun updateTradePositionViews(position: Position) {
         tradeStatusViews[position.localId]?.apply {
             text = "Status: ${position.status}"
@@ -2915,10 +2852,6 @@ indexStatusViews[symbol]?.apply {
         tradeProfitViews[position.localId]?.apply {
             text = "Profit / Loss: ${formatMoney(position.profit)}"
             setTextColor(if (position.profit >= 0.0) green else red)
-        }
-        tradeTrailingViews[position.localId]?.apply {
-            text = trailingMonitorText(position)
-            setTextColor(if (position.trailingActivated) green else blue)
         }
     }
 
