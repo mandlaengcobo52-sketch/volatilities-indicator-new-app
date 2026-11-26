@@ -194,6 +194,12 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val positions = linkedMapOf<String, Position>()
     private val pendingRequests = mutableMapOf<Int, String>()
     private val dailyLevels = mutableMapOf<String, Pair<Double, Double>>() // high, low
+    // Previous completed-day levels survive Activity recreation and UI refreshes.
+    // Stored separately from DEMO/REAL trade ledgers because market reference levels
+    // are public market data, not account-specific state.
+    private val dailyLevelsPrefs by lazy {
+        getSharedPreferences("vi_previous_day_levels", MODE_PRIVATE)
+    }
     private val originalSweepStatus = mutableMapOf<String, String>()
     private val candlesByIndex = mutableMapOf<String, List<DerivApiClient.Candle>>()
     // Dedicated M15 history for execution qualification; H1 history remains unchanged for daily levels and restoration audit.
@@ -303,6 +309,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         tradingDayKey = ""
         activateAccountMode(executionMode)
+        loadPreviousDailyLevels()
         loadNotifications()
         createNotificationChannel()
         requestNotificationPermissionIfNeeded()
@@ -1635,21 +1642,54 @@ indexStatusViews[symbol]?.apply {
     }
 
     private fun calculatePreviousDailyLevels(symbol: String, candles: List<DerivApiClient.Candle>) {
+        // Keep the existing H1 calculation: group by UTC calendar day and select
+        // the most recent completed day before the current UTC day.
         val grouped = candles.groupBy { it.epoch / 86400L }.toSortedMap()
         if (grouped.size < 2) return
+
         val currentDay = System.currentTimeMillis() / 1000L / 86400L
         val completed = grouped.filterKeys { it < currentDay }.entries.lastOrNull() ?: return
         val high = completed.value.maxOf { it.high }
         val low = completed.value.minOf { it.low }
+
         if (high > low && high.isFinite() && low.isFinite()) {
             val previous = dailyLevels[symbol]
             dailyLevels[symbol] = high to low
+
+            // Persist only a valid completed-day H1 range. An incomplete/empty
+            // refresh must never erase a previously confirmed range.
+            dailyLevelsPrefs.edit()
+                .putLong("day_$symbol", completed.key)
+                .putString("high_$symbol", high.toString())
+                .putString("low_$symbol", low.toString())
+                .apply()
+
             if (previous == null || previous.first != high || previous.second != low) {
                 addNotification(
                     "Home",
                     "${displayIndexName(symbol)} reference levels updated",
                     "Previous completed-day high: ${formatPrice(high)}; low: ${formatPrice(low)}."
                 )
+            }
+        }
+    }
+
+    private fun loadPreviousDailyLevels() {
+        val currentDay = System.currentTimeMillis() / 1000L / 86400L
+        val expectedPreviousDay = currentDay - 1L
+
+        indexes.forEach { symbol ->
+            val savedDay = dailyLevelsPrefs.getLong("day_$symbol", -1L)
+            val high = dailyLevelsPrefs.getString("high_$symbol", null)?.toDoubleOrNull()
+            val low = dailyLevelsPrefs.getString("low_$symbol", null)?.toDoubleOrNull()
+
+            // Do not show stale reference levels from an older trading day.
+            if (
+                savedDay == expectedPreviousDay &&
+                high != null && low != null &&
+                high.isFinite() && low.isFinite() && high > low
+            ) {
+                dailyLevels[symbol] = high to low
             }
         }
     }
