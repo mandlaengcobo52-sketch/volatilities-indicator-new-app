@@ -1090,14 +1090,16 @@ indexStatusViews[symbol]?.apply {
                     }
 
                     val portfolioExpiry = c.optLong("date_expiry", 0L)
-                    val portfolioPurchase = c.optLong(
-                        "purchase_time",
-                        (portfolioExpiry - 6L * 60L * 60L).coerceAtLeast(0L)
-                    )
+                    // Only use Deriv's actual purchase_time. Do not manufacture an
+                    // opening timestamp by subtracting an assumed duration from expiry.
+                    val portfolioPurchase = c.optLong("purchase_time", 0L)
                     if (existing != null) {
                         existing.direction = direction
                         existing.expiryEpoch = portfolioExpiry.takeIf { it > 0L } ?: existing.expiryEpoch
-                        existing.openedAtEpoch = portfolioPurchase.takeIf { it > 0L } ?: existing.openedAtEpoch
+                        if (portfolioPurchase > 0L) {
+                            existing.openedAtEpoch = portfolioPurchase
+                            if (existing.executionEpoch <= 0L) existing.executionEpoch = portfolioPurchase
+                        }
                         if (existing.status != "CLOSING") {
                             existing.status = "OPEN"
                         }
@@ -1113,6 +1115,7 @@ indexStatusViews[symbol]?.apply {
                         restored.contractId = id
                         restored.expiryEpoch = portfolioExpiry
                         restored.openedAtEpoch = portfolioPurchase
+                        restored.executionEpoch = portfolioPurchase
                         restored.status = "OPEN"
                         positions[restored.localId] = restored
                     }
@@ -1751,7 +1754,33 @@ indexStatusViews[symbol]?.apply {
         p.entryChochPrice = entryChochPrice
         p.entryLastCandleClosePrice = entryLastCandleClosePrice
         p.entryLastCandleCloseEpoch = entryLastCandleCloseEpoch
-        positions[localId] = p
+        // Atomic per-index execution gate. The reservation is inserted before
+        // any proposal is sent, so concurrent signal callbacks cannot both pass.
+        // Every role and direction shares this same index slot.
+        val indexReserved = synchronized(positions) {
+            val alreadyOccupied = positions.values.any {
+                it.symbol == symbol &&
+                    it.status != "CLOSED" &&
+                    !it.status.startsWith("ERROR") &&
+                    it.status !in setOf("BUY FAILED", "PROPOSAL FAILED")
+            }
+            if (alreadyOccupied) {
+                false
+            } else {
+                p.status = "REQUESTING PROPOSAL"
+                positions[localId] = p
+                true
+            }
+        }
+        if (!indexReserved) {
+            addNotification(
+                "Trade",
+                "${displayIndexName(symbol)} execution blocked",
+                "This index already has a pending or running contract. Only one trade per index is permitted; no second proposal was sent."
+            )
+            return false
+        }
+
         val req = nextRequestId()
         pendingRequests[req] = localId
         // Original pair contracts use seven days. A linked SECOND execution
@@ -1782,7 +1811,6 @@ indexStatusViews[symbol]?.apply {
                 .put("duration", 7)
                 .put("duration_unit", "d")
         }
-        p.status = "REQUESTING PROPOSAL"
         if (role == "SECOND") {
             addNotification("Trade", "${displayIndexName(symbol)} second execution setup", "${direction} proposal requested using the remaining original-contract duration.")
         }
@@ -1837,6 +1865,14 @@ indexStatusViews[symbol]?.apply {
             )
             restored.contractId = contractId
             restored.expiryEpoch = contract.optLong("date_expiry", 0L)
+            // Deriv open-contract updates may contain the original purchase time.
+            // Store it in both fields used by the trade audit and persistence ledger.
+            val actualPurchaseTime = contract.optLong("purchase_time", 0L)
+                .takeIf { it > 0L }
+                ?: contract.optLong("date_start", 0L).takeIf { it > 0L }
+                ?: 0L
+            restored.openedAtEpoch = actualPurchaseTime
+            restored.executionEpoch = actualPurchaseTime
             restored.status = "OPEN"
             positions[restored.localId] = restored
             foundPosition = restored
@@ -1849,6 +1885,16 @@ indexStatusViews[symbol]?.apply {
         // They must never move a locally confirmed CLOSED trade back to OPEN.
         if (wasAlreadyClosed) return
         position.expiryEpoch = contract.optLong("date_expiry", position.expiryEpoch)
+        // Backfill missing opening/execution time from Deriv's real contract fields,
+        // while preserving any previously saved local timestamp and signal audit.
+        val actualPurchaseTime = contract.optLong("purchase_time", 0L)
+            .takeIf { it > 0L }
+            ?: contract.optLong("date_start", 0L).takeIf { it > 0L }
+            ?: 0L
+        if (actualPurchaseTime > 0L) {
+            if (position.openedAtEpoch <= 0L) position.openedAtEpoch = actualPurchaseTime
+            if (position.executionEpoch <= 0L) position.executionEpoch = actualPurchaseTime
+        }
         // Use this exact Deriv contract's confirmed purchase price as its P/L denominator.
         val confirmedContractStake = contract.optDouble("buy_price", position.stake)
         if (confirmedContractStake.isFinite() && confirmedContractStake > 0.0) {
