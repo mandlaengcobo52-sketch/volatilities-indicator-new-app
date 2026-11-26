@@ -154,7 +154,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val symbol: String,
         var direction: String,
         var role: String,
-        val stake: Double,
+        var stake: Double,
         var originalId: String = "",
         var contractId: Long = 0L,
         var profit: Double = 0.0,
@@ -206,7 +206,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private var tradeStatusView: TextView? = null
     private val tradeStatusViews = mutableMapOf<String, TextView>()
     private val tradeProfitViews = mutableMapOf<String, TextView>()
-    private val tradeTrailingViews = mutableMapOf<String, TextView>()
     private val tradeCountdownViews = mutableMapOf<String, TextView>()
     private val countdownHandler = Handler(Looper.getMainLooper())
     private val countdownTask = object : Runnable {
@@ -959,6 +958,10 @@ indexStatusViews[symbol]?.apply {
                 val position = positions[localId] ?: return
                 position.contractId = buy.optLong("contract_id", 0L)
                 if (position.contractId <= 0L) { position.status = "BUY FAILED"; return }
+                val confirmedBuyPrice = buy.optDouble("buy_price", position.stake)
+                if (confirmedBuyPrice.isFinite() && confirmedBuyPrice > 0.0) {
+                    position.stake = confirmedBuyPrice
+                }
                 position.status = "OPEN"
                 position.openedAtEpoch = buy.optLong("purchase_time", System.currentTimeMillis() / 1000L)
                 position.executionEpoch = position.openedAtEpoch
@@ -980,12 +983,9 @@ indexStatusViews[symbol]?.apply {
                     closingPosition.status = "OPEN"
                     addNotification("Trade", "${displayIndexName(closingPosition.symbol)} close response mismatch", "Deriv returned a sale receipt for contract $soldContractId, but this position is contract ${closingPosition.contractId}. The position remains open pending confirmation.")
                 } else if (closingPosition.status != "CLOSED") {
-                    // A successful Deriv sell receipt confirms closure. The actual
-                    // sold_for value is authoritative; it may differ from the
-                    // requested trailing level because the market can move while
-                    // Deriv processes the sell request.
-                    val wasTrailingClose = closingPosition.trailingClosePending
-                    val requestedProtectedPercent = closingPosition.trailingStopPercent
+                    // A successful Deriv sell receipt is the sale confirmation.
+                    // Do not leave the position waiting indefinitely for a later
+                    // proposal_open_contract packet that may be delayed or missed.
                     val soldFor = receipt.optDouble("sold_for", Double.NaN)
                     if (soldFor.isFinite()) {
                         closingPosition.profit = soldFor - closingPosition.stake
@@ -995,12 +995,7 @@ indexStatusViews[symbol]?.apply {
                     closingPosition.trailingClosePending = false
                     closingPosition.closedAt = System.currentTimeMillis() / 1000L
 
-                    val finalMessage = if (wasTrailingClose) {
-                        "Trailing-stop sale confirmed by Deriv. Protected trigger: ${String.format(Locale.US, "%.2f%%", requestedProtectedPercent)} of this contract's stake. Actual final P/L: ${formatMoney(closingPosition.profit)}."
-                    } else {
-                        "${closingPosition.role} ${closingPosition.direction} final P/L: ${formatMoney(closingPosition.profit)}."
-                    }
-                    addNotification("Trade", "${displayIndexName(closingPosition.symbol)} trade closed", finalMessage)
+                    addNotification("Trade", "${displayIndexName(closingPosition.symbol)} trade closed", "${closingPosition.role} ${closingPosition.direction} final P/L: ${formatMoney(closingPosition.profit)}.")
                 }
                 savePositions()
                 runOnUiThread {
@@ -1816,6 +1811,11 @@ indexStatusViews[symbol]?.apply {
         // They must never move a locally confirmed CLOSED trade back to OPEN.
         if (wasAlreadyClosed) return
         position.expiryEpoch = contract.optLong("date_expiry", position.expiryEpoch)
+        // Use this exact Deriv contract's confirmed purchase price as its P/L denominator.
+        val confirmedContractStake = contract.optDouble("buy_price", position.stake)
+        if (confirmedContractStake.isFinite() && confirmedContractStake > 0.0) {
+            position.stake = confirmedContractStake
+        }
 
         when (contract.optString("contract_type").uppercase(Locale.US)) {
             "CALL" -> position.direction = "RISE"
@@ -1856,9 +1856,11 @@ indexStatusViews[symbol]?.apply {
             }
         } else if (position.status != "CLOSING") {
             position.status = "OPEN"
-            // Evaluate only after the latest sellability flag and sold/expired
-            // state have been processed. This prevents a close request against
-            // an already-sold contract and avoids using stale canSell data.
+        }
+
+        // Evaluate only this contract, after its latest sellability and sold state
+        // have been read from the same Deriv update.
+        if (position.status == "OPEN" && !isSold) {
             evaluateContractTrailingStop(position)
         }
 
@@ -1884,45 +1886,56 @@ indexStatusViews[symbol]?.apply {
     }
 
     /**
-     * Contract-specific trailing stop. All percentages are measured against
-     * this contract's own stake. Profit tracking starts at 0% when the contract
-     * opens. Activation is +25%; initial protection is +10%; thereafter the
-     * protected level stays 10 percentage points below the highest observed P/L.
+     * Contract-specific trailing stop. This function is called only with the
+     * Position matched by the incoming Deriv contract_id, so another index or
+     * another contract cannot change this contract's trailing state.
+     * P/L percentage = live Deriv P/L / this contract's confirmed buy_price.
+     * Monitor from opening (including negative P/L); activate at +35%, protect
+     * +25%, then maintain a 10-percentage-point distance below the best peak.
      */
     private fun evaluateContractTrailingStop(position: Position) {
-        if (position.status != "OPEN" || position.stake <= 0.0 ||
-            !position.stake.isFinite() || position.trailingClosePending) return
+        if (position.status != "OPEN" || position.contractId <= 0L ||
+            position.stake <= 0.0 || !position.stake.isFinite() ||
+            position.trailingClosePending) return
 
+        // Always calculate against this exact contract's current confirmed stake.
         val currentPercent = (position.profit / position.stake) * 100.0
         if (!currentPercent.isFinite()) return
 
         if (!position.trailingActivated) {
-            // Do not arm the stop until this individual contract reaches +25%.
-            if (currentPercent < 25.0) return
+            // Negative and sub-threshold values are monitored but never trigger a sale.
+            if (currentPercent < 35.0) return
             position.trailingActivated = true
-            // The first protected level is explicitly +10%, as requested.
-            // Record the highest P/L observed on the activation update without
-            // changing the explicitly requested initial +10% protection.
             position.trailingPeakPercent = currentPercent
-            position.trailingStopPercent = 10.0
-        } else if (currentPercent > position.trailingPeakPercent) {
-            // Option A: keep the stop 10 percentage points below each new peak.
-            // The peak is monotonic: a pullback can never lower it.
-            position.trailingPeakPercent = currentPercent
-            position.trailingStopPercent =
-                (position.trailingPeakPercent - 10.0).coerceAtLeast(10.0)
+            position.trailingStopPercent = 25.0
+            addNotification(
+                "Trade",
+                "${displayIndexName(position.symbol)} trailing stop activated",
+                "${position.role} ${position.direction} contract reached +35.00% of its own current stake. Initial protected-profit level: +25.00% (${formatMoney(position.stake * 0.25)})."
+            )
         }
+
+        // Preserve the highest P/L reached by this contract only.
+        if (currentPercent > position.trailingPeakPercent) {
+            position.trailingPeakPercent = currentPercent
+        }
+
+        // Option A: continuous 10 percentage-point trailing distance.
+        // At activation (+35%) the floor is +25%; thereafter it follows peak - 10.
+        position.trailingStopPercent = maxOf(
+            25.0,
+            position.trailingPeakPercent - 10.0
+        )
         savePositions()
 
-        // A reversal to or through the protected level triggers one sell request.
-        // The trade is not marked CLOSED until Deriv confirms the sale.
-        if (currentPercent <= position.trailingStopPercent) {
-            if (!position.canSell || position.contractId <= 0L) return
+        // A reversal to the protected threshold triggers a close of this contract_id only.
+        if (currentPercent <= position.trailingStopPercent &&
+            currentPercent < position.trailingPeakPercent) {
+            if (!position.canSell) return
 
             position.trailingClosePending = true
             position.status = "CLOSING"
             savePositions()
-
             val req = nextRequestId()
             pendingRequests[req] = position.localId
             val request = JSONObject()
@@ -1937,11 +1950,10 @@ indexStatusViews[symbol]?.apply {
                 savePositions()
                 return
             }
-
             addNotification(
                 "Trade",
                 "${displayIndexName(position.symbol)} trailing stop triggered",
-                "${position.role} ${position.direction} contract reached its protected-profit level of ${String.format(Locale.US, "%.2f%%", position.trailingStopPercent)} of its own stake (${formatMoney(position.stake * position.trailingStopPercent / 100.0)}). Deriv close request sent; waiting for confirmed sale."
+                "${position.role} ${position.direction} contract reversed to its protected-profit threshold of +${String.format(Locale.US, "%.2f", position.trailingStopPercent)}% of its own current stake (${formatMoney(position.stake * position.trailingStopPercent / 100.0)}). Deriv close request sent for this contract only; waiting for confirmed sale."
             )
             runOnUiThread { if (selectedTab == "Trade") render() }
         }
@@ -2432,7 +2444,6 @@ indexStatusViews[symbol]?.apply {
         chochStatusViews.clear()
         tradeStatusViews.clear()
         tradeProfitViews.clear()
-        tradeTrailingViews.clear()
         tradeCountdownViews.clear()
 
         val root = LinearLayout(this).apply {
@@ -2688,11 +2699,6 @@ indexStatusViews[symbol]?.apply {
                     tradeProfitViews[p.localId] = profitView
                     c.addView(profitView)
 
-                    val trailingView = text(trailingStopDisplayText(p), 11.5f,
-                        if (p.trailingActivated) green else amber, true)
-                    tradeTrailingViews[p.localId] = trailingView
-                    c.addView(trailingView)
-
                     if (p.contractId > 0L && p.status == "OPEN") {
                         c.addView(space(6))
                         c.addView(actionButton("CLOSE THIS ${p.direction} TRADE", primary = false) {
@@ -2785,18 +2791,6 @@ indexStatusViews[symbol]?.apply {
         }
     }
 
-    private fun trailingStopDisplayText(position: Position): String {
-        val currentPercent = if (position.stake > 0.0 && position.stake.isFinite())
-            (position.profit / position.stake) * 100.0 else 0.0
-        return if (position.trailingClosePending || position.status == "CLOSING") {
-            "TRAILING STOP: CLOSE REQUEST SENT · WAITING FOR DERIV CONFIRMATION"
-        } else if (position.trailingActivated) {
-            "TRAILING STOP ACTIVE · PEAK: ${String.format(Locale.US, "%.2f%%", position.trailingPeakPercent)} · PROTECT: ${String.format(Locale.US, "%.2f%%", position.trailingStopPercent)}"
-        } else {
-            "TRAILING STOP WAITING · CURRENT: ${String.format(Locale.US, "%.2f%%", currentPercent)} · ACTIVATES AT +25.00%"
-        }
-    }
-
     private fun updateTradePositionViews(position: Position) {
         tradeStatusViews[position.localId]?.apply {
             text = "Status: ${position.status}"
@@ -2805,10 +2799,6 @@ indexStatusViews[symbol]?.apply {
         tradeProfitViews[position.localId]?.apply {
             text = "Profit / Loss: ${formatMoney(position.profit)}"
             setTextColor(if (position.profit >= 0.0) green else red)
-        }
-        tradeTrailingViews[position.localId]?.apply {
-            text = trailingStopDisplayText(position)
-            setTextColor(if (position.trailingActivated) green else amber)
         }
     }
 
