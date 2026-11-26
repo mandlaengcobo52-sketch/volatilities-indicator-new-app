@@ -192,6 +192,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val originalSweepStatus = mutableMapOf<String, String>()
     private val candlesByIndex = mutableMapOf<String, List<DerivApiClient.Candle>>()
     private val originalTriggered = mutableSetOf<String>()
+    // Atomic per-index guard: prevents two concurrent market-data callbacks
+    // from submitting duplicate ORIGINAL proposals for the same index.
+    private val originalEntryLocks = mutableSetOf<String>()
     private val recoveryWaiting = mutableSetOf<String>()
     private val recoveryMss = mutableMapOf<String, String>()
     private val recoveryChoch = mutableMapOf<String, String>()
@@ -1621,54 +1624,83 @@ indexStatusViews[symbol]?.apply {
     }
 
     private fun evaluateOriginalEntries(symbol: String, quote: Double) {
-        if (!autoTradingEnabled || !accountConnected || dailyCapital <= 0.0 || !quote.isFinite()) return
+        // Claim this index atomically before doing any work that can submit a
+        // proposal. Market-data callbacks can arrive concurrently; checking
+        // positions alone is not sufficient unless the check and claim are atomic.
         val today = utcDayKey(System.currentTimeMillis() / 1000L)
         val tradeKey = "$today|$symbol|ORIGINAL"
-        if (tradeKey in originalTriggered) return
-
-        // One original trade only, in the direction confirmed by matching MSS and CHOCH.
-        val mss = recoveryMss[symbol]
-        val choch = recoveryChoch[symbol]
-        if (mss.isNullOrBlank() || mss != choch) return
-
-        val indexAlreadyActive = positions.values.any {
-            it.symbol == symbol && it.status != "CLOSED" &&
-                !it.status.startsWith("ERROR") && it.status !in setOf("BUY FAILED", "PROPOSAL FAILED")
-        }
-        if (indexAlreadyActive) return
-
         val stake = roundStake(dailyCapital * 0.15)
-        if (stake <= 0.0 || availableBalance + 0.000001 < stake) {
-            if (insufficientFundsNotified.add(tradeKey)) {
-                addNotification("Trade", "${displayIndexName(symbol)} trade not executed",
-                    "Available balance ${formatMoney(availableBalance)} is below the single-trade stake ${formatMoney(stake)} (15% of daily starting capital).")
+        val claimed = synchronized(originalEntryLocks) {
+            if (!autoTradingEnabled || !accountConnected || dailyCapital <= 0.0 || !quote.isFinite()) return
+            if (symbol in originalEntryLocks || tradeKey in originalTriggered) return
+
+            // One original trade only, in the direction confirmed by matching MSS and CHOCH.
+            val mss = recoveryMss[symbol]
+            val choch = recoveryChoch[symbol]
+            if (mss.isNullOrBlank() || mss != choch) return
+
+            // Pending proposal, buying, open, or closing positions all block a
+            // second original request for this same index. Other indexes remain independent.
+            val indexAlreadyActive = positions.values.any {
+                it.symbol == symbol && it.status !in setOf(
+                    "CLOSED", "ERROR", "BUY FAILED", "PROPOSAL FAILED"
+                ) && !it.status.startsWith("ERROR")
             }
+            if (indexAlreadyActive) return
+
+            if (stake <= 0.0 || availableBalance + 0.000001 < stake) {
+                if (insufficientFundsNotified.add(tradeKey)) {
+                    addNotification("Trade", "${displayIndexName(symbol)} trade not executed",
+                        "Available balance ${formatMoney(availableBalance)} is below the single-trade stake ${formatMoney(stake)} (15% of daily starting capital).")
+                }
+                return
+            }
+            originalEntryLocks.add(symbol)
+            true
+        }
+        if (!claimed) return
+
+        val mss = recoveryMss[symbol] ?: run {
+            synchronized(originalEntryLocks) { originalEntryLocks.remove(symbol) }
             return
         }
-
-        val originalId = "ORIGINAL-${today}-${symbol}-${UUID.randomUUID()}"
+        val choch = recoveryChoch[symbol] ?: run {
+            synchronized(originalEntryLocks) { originalEntryLocks.remove(symbol) }
+            return
+        }
         val mssCloseEpoch = recoveryMssEpoch[symbol]?.plus(3600L) ?: 0L
         val chochCloseEpoch = recoveryChochEpoch[symbol]?.plus(3600L) ?: 0L
         val lastConfirmingCloseEpoch = maxOf(mssCloseEpoch, chochCloseEpoch)
-        val submitted = openPosition(
-            symbol, mss, "ORIGINAL", stake, originalId,
-            entryMssDirection = mss,
-            entryMssCloseEpoch = mssCloseEpoch,
-            entryChochDirection = choch,
-            entryChochCloseEpoch = chochCloseEpoch,
-            entryMssPrice = recoveryMssPrice[symbol] ?: 0.0,
-            entryChochPrice = recoveryChochPrice[symbol] ?: 0.0,
-            entryLastCandleClosePrice = recoverySignalClosePrice[symbol] ?: 0.0,
-            entryLastCandleCloseEpoch = lastConfirmingCloseEpoch
-        )
+        var submitted = false
+        try {
+            val originalId = "ORIGINAL-${today}-${symbol}-${UUID.randomUUID()}"
+            submitted = openPosition(
+                symbol, mss, "ORIGINAL", stake, originalId,
+                entryMssDirection = mss,
+                entryMssCloseEpoch = mssCloseEpoch,
+                entryChochDirection = choch,
+                entryChochCloseEpoch = chochCloseEpoch,
+                entryMssPrice = recoveryMssPrice[symbol] ?: 0.0,
+                entryChochPrice = recoveryChochPrice[symbol] ?: 0.0,
+                entryLastCandleClosePrice = recoverySignalClosePrice[symbol] ?: 0.0,
+                entryLastCandleCloseEpoch = lastConfirmingCloseEpoch
+            )
+        } finally {
+            synchronized(originalEntryLocks) {
+                if (submitted) {
+                    originalTriggered.add(tradeKey)
+                    tradePrefs.edit().putStringSet("triggered_$today", originalTriggered.toSet()).apply()
+                }
+                originalEntryLocks.remove(symbol)
+            }
+        }
+
         if (!submitted) {
             addNotification("Trade", "${displayIndexName(symbol)} trade not submitted",
                 "The ${mss} proposal request could not be sent. The signal remains available for retry.")
             return
         }
 
-        originalTriggered.add(tradeKey)
-        tradePrefs.edit().putStringSet("triggered_$today", originalTriggered.toSet()).apply()
         addNotification("Trade", "${displayIndexName(symbol)} ${mss} trade submitted",
             "One ${mss} contract proposal was sent to Deriv. Stake: ${formatMoney(stake)} (15% of fixed daily starting capital). Waiting for Deriv acceptance.")
     }
