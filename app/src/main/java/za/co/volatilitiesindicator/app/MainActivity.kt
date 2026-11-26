@@ -111,27 +111,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val notificationPermissionRequest = 9001
     private val paymentProofPickerRequest = 9107
 
-    // Prevent repeated identical Deriv error popups/notifications while preserving
-    // the first report and allowing the same error to be reported again later.
-    private val lastDerivErrorReportAt = mutableMapOf<String, Long>()
-    @Synchronized
-    private fun shouldReportDerivError(key: String, intervalMs: Long = 60_000L): Boolean {
-        val now = System.currentTimeMillis()
-        val previous = lastDerivErrorReportAt[key] ?: 0L
-        if (now - previous < intervalMs) return false
-        lastDerivErrorReportAt[key] = now
-        return true
-    }
-
-    // Deriv can repeatedly reject a buy when its proposal quote has gone stale.
-    // This is a trade-price rejection, not a connection failure; do not surface
-    // it as a repeating Android toast or a new app notification.
-    private fun isTransientMarketMovedError(message: String): Boolean {
-        val normalized = message.lowercase(Locale.US)
-        return normalized.contains("underlying market has moved too much") ||
-            normalized.contains("market has moved too much since you priced")
-    }
-
     private var marketFeedConnected = false
     private var accountConnected = false
     private var accountLabel = "Not connected"
@@ -205,6 +184,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var trailingPeakPercent: Double = 0.0,
         var trailingStopPercent: Double = 0.0,
         var trailingClosePending: Boolean = false,
+        // Latch a rejected protected sale. Do not resubmit on every contract tick;
+        // re-arm only after this contract's P/L recovers above its trailing threshold.
+        var trailingCloseRejected: Boolean = false,
         // Minimum Deriv sale price requested to preserve the protected P/L.
         var trailingCloseFloorPrice: Double = 0.0
     )
@@ -925,16 +907,18 @@ indexStatusViews[symbol]?.apply {
 
     override fun onError(message: String) {
         runOnUiThread {
-            // This specific Deriv quote-rejection message is handled silently here;
-            // it must not be mistaken for a connection failure and shown every few seconds.
-            if (isTransientMarketMovedError(message)) return@runOnUiThread
-            val reportThisError = shouldReportDerivError("connection:$message")
-            if (reportThisError) {
-                addNotification("Accounts", "Deriv connection issue", message)
-            }
+            // A stale/minimum-price rejection from a protected trailing sale is an
+            // order-level event, not a connection failure. onTradeData records the
+            // single contract-specific rejection; do not also toast and notify it here.
+            val lowerMessage = message.lowercase(Locale.US)
+            val protectedSalePriceRejection =
+                lowerMessage.contains("underlying market has moved too much since you priced the contract") ||
+                lowerMessage.contains("contract sell price has changed")
+            if (protectedSalePriceRejection) return@runOnUiThread
+
+            addNotification("Accounts", "Deriv connection issue", message)
             if (accountConnected) {
-                // A repeated callback must not create a toast every few seconds.
-                if (reportThisError) toast(message)
+                toast(message)
             } else {
                 accountLabel = "Connection failed"
                 accountBalanceLabel = message
@@ -962,13 +946,15 @@ indexStatusViews[symbol]?.apply {
                     failedPosition.status = if (failedPosition.contractId > 0L) "OPEN" else "ERROR: $errorMessage"
                     failedPosition.trailingClosePending = false
                     if (wasTrailingClose) {
+                        // Keep the rejection latched. Repeated open-contract updates
+                        // must not submit the same stale protected-sale price again.
+                        failedPosition.trailingCloseRejected = true
                         addNotification(
                             "Trade",
                             "${displayIndexName(failedPosition.symbol)} protected sale not filled",
                             "Deriv did not accept the trailing-stop sale at the required minimum price of ${formatMoney(failedPosition.trailingCloseFloorPrice)}. The contract remains OPEN; no below-floor market sale will be sent. Deriv response: $errorMessage"
                         )
-                    } else if (!isTransientMarketMovedError(errorMessage) &&
-                        shouldReportDerivError("trade-request:$errorMessage")) {
+                    } else {
                         addNotification("Trade", "${displayIndexName(failedPosition.symbol)} trade request failed", errorMessage + if (wasClosing) " Automatic close remains pending; the contract is not marked closed." else "")
                     }
                 }
@@ -1043,6 +1029,7 @@ indexStatusViews[symbol]?.apply {
                     closingPosition.status = "CLOSED"
                     closingPosition.canSell = false
                     closingPosition.trailingClosePending = false
+                    closingPosition.trailingCloseRejected = false
                     closingPosition.closedAt = System.currentTimeMillis() / 1000L
 
                     addNotification("Trade", "${displayIndexName(closingPosition.symbol)} trade closed", "${closingPosition.role} ${closingPosition.direction} final P/L: ${formatMoney(closingPosition.profit)}.")
@@ -1898,6 +1885,7 @@ indexStatusViews[symbol]?.apply {
             position.status = "CLOSED"
             position.canSell = false
             position.trailingClosePending = false
+            position.trailingCloseRejected = false
             position.closedAt = contract.optLong("sell_time", 0L).takeIf { it > 0L }
                 ?: contract.optLong("date_expiry", 0L).takeIf { it > 0L }
                 ?: System.currentTimeMillis() / 1000L
@@ -1976,6 +1964,17 @@ indexStatusViews[symbol]?.apply {
             25.0,
             position.trailingPeakPercent - 10.0
         )
+
+        // A rejected sale remains blocked while P/L is at/below the protected
+        // threshold. Re-arm only after a genuine recovery above that threshold;
+        // the next downward crossing may then make one fresh sale attempt.
+        if (position.trailingCloseRejected) {
+            if (currentPercent <= position.trailingStopPercent) {
+                savePositions()
+                return
+            }
+            position.trailingCloseRejected = false
+        }
         savePositions()
 
         // A reversal to the protected threshold triggers a close of this contract_id only.
@@ -2258,6 +2257,7 @@ indexStatusViews[symbol]?.apply {
                 .put("trailingPeakPercent", p.trailingPeakPercent)
                 .put("trailingStopPercent", p.trailingStopPercent)
                 .put("trailingClosePending", p.trailingClosePending)
+                .put("trailingCloseRejected", p.trailingCloseRejected)
                 .put("trailingCloseFloorPrice", p.trailingCloseFloorPrice))
         }
         // commit() makes completed trade records durable before activity teardown/update.
@@ -2296,6 +2296,7 @@ indexStatusViews[symbol]?.apply {
                 p.trailingPeakPercent = o.optDouble("trailingPeakPercent", 0.0)
                 p.trailingStopPercent = o.optDouble("trailingStopPercent", 0.0)
                 p.trailingClosePending = o.optBoolean("trailingClosePending", false)
+                p.trailingCloseRejected = o.optBoolean("trailingCloseRejected", false)
                 p.trailingCloseFloorPrice = o.optDouble("trailingCloseFloorPrice", 0.0)
                 if (p.recoveryEligible && !p.recoveryUsed) recoveryWaiting.add(p.localId)
                 positions[p.localId] = p
