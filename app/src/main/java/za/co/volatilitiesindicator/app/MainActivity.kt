@@ -211,6 +211,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private var tradeStatusView: TextView? = null
     private val tradeStatusViews = mutableMapOf<String, TextView>()
     private val tradeProfitViews = mutableMapOf<String, TextView>()
+    private val tradeTrailingViews = mutableMapOf<String, TextView>()
     private val tradeCountdownViews = mutableMapOf<String, TextView>()
     private val countdownHandler = Handler(Looper.getMainLooper())
     private val countdownTask = object : Runnable {
@@ -1924,12 +1925,38 @@ indexStatusViews[symbol]?.apply {
     }
 
     /**
+     * Returns the agreed stepped protected-profit percentage for a contract.
+     * +35 peak -> +25 protected; +45 -> +35; +55 -> +45, etc.
+     */
+    private fun trailingProtectionPercent(peakPercent: Double): Double {
+        if (!peakPercent.isFinite() || peakPercent < 35.0) return 0.0
+        val completedSteps = kotlin.math.floor((peakPercent - 35.0) / 10.0)
+            .toInt().coerceAtLeast(0)
+        return 25.0 + completedSteps * 10.0
+    }
+
+    /** Display values are calculated from this individual contract's own stake. */
+    private fun trailingStopDisplayText(position: Position): String {
+        val currentPercent = if (position.stake > 0.0 && position.stake.isFinite())
+            (position.profit / position.stake) * 100.0 else 0.0
+        val currentText = String.format(Locale.US, "%+.2f%%", currentPercent)
+        if (!position.trailingActivated) {
+            return "TRAILING STOP: WAITING · ACTIVATES AT +35.00% · CURRENT P/L: $currentText"
+        }
+        val peakText = String.format(Locale.US, "%+.2f%%", position.trailingPeakPercent)
+        val protectedPercent = trailingProtectionPercent(position.trailingPeakPercent)
+        val protectedText = String.format(Locale.US, "+%.2f%%", protectedPercent)
+        return "TRAILING STOP: ${if (position.trailingClosePending) "CLOSING" else "ACTIVE"} · CURRENT: $currentText · PEAK: $peakText · PROTECTED: $protectedText"
+    }
+
+    /**
      * Contract-specific trailing stop. This function is called only with the
      * Position matched by the incoming Deriv contract_id, so another index or
      * another contract cannot change this contract's trailing state.
      * P/L percentage = live Deriv P/L / this contract's confirmed buy_price.
-     * Monitor from opening (including negative P/L); activate at +35%, protect
-     * +25%, then maintain a 10-percentage-point distance below the best peak.
+     * Activate at +35%, initially protect +25%, then advance protection in
+     * discrete 10-percentage-point steps as the contract's peak reaches each
+     * next +10 milestone. No continuous peak-minus-10 calculation is used.
      */
     private fun evaluateContractTrailingStop(position: Position) {
         if (position.status != "OPEN" || position.contractId <= 0L ||
@@ -1958,12 +1985,10 @@ indexStatusViews[symbol]?.apply {
             position.trailingPeakPercent = currentPercent
         }
 
-        // Option A: continuous 10 percentage-point trailing distance.
-        // At activation (+35%) the floor is +25%; thereafter it follows peak - 10.
-        position.trailingStopPercent = maxOf(
-            25.0,
-            position.trailingPeakPercent - 10.0
-        )
+        // Stepped protection agreed for this strategy:
+        // +35 peak protects +25; each completed additional +10 peak milestone
+        // advances protection by +10. Do not use a continuous peak-minus-10 formula.
+        position.trailingStopPercent = trailingProtectionPercent(position.trailingPeakPercent)
 
         // A rejected sale remains blocked while P/L is at/below the protected
         // threshold. Re-arm only after a genuine recovery above that threshold;
@@ -2511,6 +2536,7 @@ indexStatusViews[symbol]?.apply {
         chochStatusViews.clear()
         tradeStatusViews.clear()
         tradeProfitViews.clear()
+        tradeTrailingViews.clear()
         tradeCountdownViews.clear()
 
         val root = LinearLayout(this).apply {
@@ -2766,6 +2792,11 @@ indexStatusViews[symbol]?.apply {
                     tradeProfitViews[p.localId] = profitView
                     c.addView(profitView)
 
+                    val trailingView = text(trailingStopDisplayText(p), 12f,
+                        if (p.trailingActivated) green else blue, true)
+                    tradeTrailingViews[p.localId] = trailingView
+                    c.addView(trailingView)
+
                     if (p.contractId > 0L && p.status == "OPEN") {
                         c.addView(space(6))
                         c.addView(actionButton("CLOSE THIS ${p.direction} TRADE", primary = false) {
@@ -2866,6 +2897,10 @@ indexStatusViews[symbol]?.apply {
         tradeProfitViews[position.localId]?.apply {
             text = "Profit / Loss: ${formatMoney(position.profit)}"
             setTextColor(if (position.profit >= 0.0) green else red)
+        }
+        tradeTrailingViews[position.localId]?.apply {
+            text = trailingStopDisplayText(position)
+            setTextColor(if (position.trailingActivated) green else blue)
         }
     }
 
