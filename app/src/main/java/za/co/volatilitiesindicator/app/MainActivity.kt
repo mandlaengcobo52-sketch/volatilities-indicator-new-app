@@ -185,7 +185,11 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var trailingStopPercent: Double = 0.0,
         var trailingClosePending: Boolean = false,
         // Minimum Deriv sale price requested to preserve the protected P/L.
-        var trailingCloseFloorPrice: Double = 0.0
+        var trailingCloseFloorPrice: Double = 0.0,
+        // Back off after a rejected/stale protected-sale quote; never retry every tick.
+        var trailingCloseRetryAfterMs: Long = 0L,
+        // One failure notification per contract, rather than a notification storm.
+        var trailingCloseFailureNotified: Boolean = false
     )
 
     private val positions = linkedMapOf<String, Position>()
@@ -904,8 +908,19 @@ indexStatusViews[symbol]?.apply {
         }
     }
 
+    // Deriv can emit the same transient quote/market error repeatedly. Keep the
+    // first alert, but suppress identical repeats for 60 seconds.
+    private var lastDerivErrorMessage: String = ""
+    private var lastDerivErrorAtMs: Long = 0L
+
     override fun onError(message: String) {
         runOnUiThread {
+            val now = System.currentTimeMillis()
+            val isRepeatedError = message == lastDerivErrorMessage &&
+                now - lastDerivErrorAtMs < 60_000L
+            if (isRepeatedError) return@runOnUiThread
+            lastDerivErrorMessage = message
+            lastDerivErrorAtMs = now
             addNotification("Accounts", "Deriv connection issue", message)
             if (accountConnected) {
                 toast(message)
@@ -936,11 +951,17 @@ indexStatusViews[symbol]?.apply {
                     failedPosition.status = if (failedPosition.contractId > 0L) "OPEN" else "ERROR: $errorMessage"
                     failedPosition.trailingClosePending = false
                     if (wasTrailingClose) {
-                        addNotification(
-                            "Trade",
-                            "${displayIndexName(failedPosition.symbol)} protected sale not filled",
-                            "Deriv did not accept the trailing-stop sale at the required minimum price of ${formatMoney(failedPosition.trailingCloseFloorPrice)}. The contract remains OPEN; no below-floor market sale will be sent. Deriv response: $errorMessage"
-                        )
+                        // A rejected quote is stale; do not immediately resubmit on
+                        // every proposal_open_contract update. Wait for a fresh quote.
+                        failedPosition.trailingCloseRetryAfterMs = System.currentTimeMillis() + 30_000L
+                        if (!failedPosition.trailingCloseFailureNotified) {
+                            failedPosition.trailingCloseFailureNotified = true
+                            addNotification(
+                                "Trade",
+                                "${displayIndexName(failedPosition.symbol)} protected sale not filled",
+                                "Deriv did not accept the trailing-stop sale at the required minimum price of ${formatMoney(failedPosition.trailingCloseFloorPrice)}. The contract remains OPEN; no below-floor market sale will be sent. Automatic retry is paused for 30 seconds. Deriv response: $errorMessage"
+                            )
+                        }
                     } else {
                         addNotification("Trade", "${displayIndexName(failedPosition.symbol)} trade request failed", errorMessage + if (wasClosing) " Automatic close remains pending; the contract is not marked closed." else "")
                     }
@@ -994,7 +1015,9 @@ indexStatusViews[symbol]?.apply {
                 val soldContractId = receipt.optLong("contract_id", 0L)
                 if (soldContractId != closingPosition.contractId || soldContractId <= 0L) {
                     closingPosition.status = "OPEN"
-                    addNotification("Trade", "${displayIndexName(closingPosition.symbol)} close response mismatch", "Deriv returned a sale receipt for contract $soldContractId, but this position is contract ${closingPosition.contractId}. The position remains open pending confirmation.")
+                    closingPosition.trailingClosePending = false
+                    closingPosition.trailingCloseRetryAfterMs = System.currentTimeMillis() + 30_000L
+                    addNotification("Trade", "${displayIndexName(closingPosition.symbol)} close response mismatch", "Deriv returned a sale receipt for contract $soldContractId, but this position is contract ${closingPosition.contractId}. The position remains open; another protected-sale request is paused for 30 seconds.")
                 } else if (closingPosition.status != "CLOSED") {
                     // A successful Deriv sell receipt is the sale confirmation.
                     // Do not leave the position waiting indefinitely for a later
@@ -1958,6 +1981,8 @@ indexStatusViews[symbol]?.apply {
         // A reversal to the protected threshold triggers a close of this contract_id only.
         if (currentPercent <= position.trailingStopPercent &&
             currentPercent < position.trailingPeakPercent) {
+            // A rejected/stale Deriv quote must not cause a request every update.
+            if (System.currentTimeMillis() < position.trailingCloseRetryAfterMs) return
             if (!position.canSell) return
 
             position.trailingClosePending = true
@@ -1974,6 +1999,7 @@ indexStatusViews[symbol]?.apply {
                 pendingRequests.remove(req)
                 position.trailingClosePending = false
                 position.status = "OPEN"
+                position.trailingCloseRetryAfterMs = System.currentTimeMillis() + 30_000L
                 savePositions()
                 return
             }
@@ -1988,6 +2014,7 @@ indexStatusViews[symbol]?.apply {
                 pendingRequests.remove(req)
                 position.trailingClosePending = false
                 position.status = "OPEN"
+                position.trailingCloseRetryAfterMs = System.currentTimeMillis() + 30_000L
                 savePositions()
                 return
             }
@@ -2235,7 +2262,9 @@ indexStatusViews[symbol]?.apply {
                 .put("trailingPeakPercent", p.trailingPeakPercent)
                 .put("trailingStopPercent", p.trailingStopPercent)
                 .put("trailingClosePending", p.trailingClosePending)
-                .put("trailingCloseFloorPrice", p.trailingCloseFloorPrice))
+                .put("trailingCloseFloorPrice", p.trailingCloseFloorPrice)
+                .put("trailingCloseRetryAfterMs", p.trailingCloseRetryAfterMs)
+                .put("trailingCloseFailureNotified", p.trailingCloseFailureNotified))
         }
         // commit() makes completed trade records durable before activity teardown/update.
         tradePrefs.edit().putString("positions", array.toString()).commit()
@@ -2274,6 +2303,8 @@ indexStatusViews[symbol]?.apply {
                 p.trailingStopPercent = o.optDouble("trailingStopPercent", 0.0)
                 p.trailingClosePending = o.optBoolean("trailingClosePending", false)
                 p.trailingCloseFloorPrice = o.optDouble("trailingCloseFloorPrice", 0.0)
+                p.trailingCloseRetryAfterMs = o.optLong("trailingCloseRetryAfterMs", 0L)
+                p.trailingCloseFailureNotified = o.optBoolean("trailingCloseFailureNotified", false)
                 if (p.recoveryEligible && !p.recoveryUsed) recoveryWaiting.add(p.localId)
                 positions[p.localId] = p
                 // Never subscribe a restored contract against the other account's socket.
