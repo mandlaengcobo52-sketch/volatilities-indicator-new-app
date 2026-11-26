@@ -123,6 +123,15 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         return true
     }
 
+    // Deriv can repeatedly reject a buy when its proposal quote has gone stale.
+    // This is a trade-price rejection, not a connection failure; do not surface
+    // it as a repeating Android toast or a new app notification.
+    private fun isTransientMarketMovedError(message: String): Boolean {
+        val normalized = message.lowercase(Locale.US)
+        return normalized.contains("underlying market has moved too much") ||
+            normalized.contains("market has moved too much since you priced")
+    }
+
     private var marketFeedConnected = false
     private var accountConnected = false
     private var accountLabel = "Not connected"
@@ -916,6 +925,9 @@ indexStatusViews[symbol]?.apply {
 
     override fun onError(message: String) {
         runOnUiThread {
+            // This specific Deriv quote-rejection message is handled silently here;
+            // it must not be mistaken for a connection failure and shown every few seconds.
+            if (isTransientMarketMovedError(message)) return@runOnUiThread
             val reportThisError = shouldReportDerivError("connection:$message")
             if (reportThisError) {
                 addNotification("Accounts", "Deriv connection issue", message)
@@ -955,7 +967,8 @@ indexStatusViews[symbol]?.apply {
                             "${displayIndexName(failedPosition.symbol)} protected sale not filled",
                             "Deriv did not accept the trailing-stop sale at the required minimum price of ${formatMoney(failedPosition.trailingCloseFloorPrice)}. The contract remains OPEN; no below-floor market sale will be sent. Deriv response: $errorMessage"
                         )
-                    } else if (shouldReportDerivError("trade-request:$errorMessage")) {
+                    } else if (!isTransientMarketMovedError(errorMessage) &&
+                        shouldReportDerivError("trade-request:$errorMessage")) {
                         addNotification("Trade", "${displayIndexName(failedPosition.symbol)} trade request failed", errorMessage + if (wasClosing) " Automatic close remains pending; the contract is not marked closed." else "")
                     }
                 }
