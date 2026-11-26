@@ -78,25 +78,11 @@ class DerivConnectionService : Service() {
                 activityCallback?.onCandles(symbol, candles)
             }
 
-            override fun onM15Candles(
-                symbol: String,
-                candles: List<DerivApiClient.Candle>
-            ) {
-                activityCallback?.onM15Candles(symbol, candles)
-            }
-
             override fun onMarketDataError(
                 symbol: String,
                 message: String
             ) {
                 activityCallback?.onMarketDataError(symbol, message)
-            }
-
-            override fun onM15MarketDataError(
-                symbol: String,
-                message: String
-            ) {
-                activityCallback?.onM15MarketDataError(symbol, message)
             }
 
             override fun onError(message: String) {
