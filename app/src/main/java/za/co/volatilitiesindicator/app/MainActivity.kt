@@ -183,7 +183,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var trailingActivated: Boolean = false,
         var trailingPeakPercent: Double = 0.0,
         var trailingStopPercent: Double = 0.0,
-        var trailingClosePending: Boolean = false
+        var trailingClosePending: Boolean = false,
+        // Minimum Deriv sale price requested to preserve the protected P/L.
+        var trailingCloseFloorPrice: Double = 0.0
     )
 
     private val positions = linkedMapOf<String, Position>()
@@ -192,9 +194,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val originalSweepStatus = mutableMapOf<String, String>()
     private val candlesByIndex = mutableMapOf<String, List<DerivApiClient.Candle>>()
     private val originalTriggered = mutableSetOf<String>()
-    // Atomic per-index guard: prevents two concurrent market-data callbacks
-    // from submitting duplicate ORIGINAL proposals for the same index.
-    private val originalEntryLocks = mutableSetOf<String>()
     private val recoveryWaiting = mutableSetOf<String>()
     private val recoveryMss = mutableMapOf<String, String>()
     private val recoveryChoch = mutableMapOf<String, String>()
@@ -931,9 +930,18 @@ indexStatusViews[symbol]?.apply {
                 if (failedPosition != null) {
                     val errorMessage = error.optString("message", "Deriv request failed")
                     val wasClosing = failedPosition.status == "CLOSING"
+                    val wasTrailingClose = failedPosition.trailingClosePending
                     failedPosition.status = if (failedPosition.contractId > 0L) "OPEN" else "ERROR: $errorMessage"
                     failedPosition.trailingClosePending = false
-                    addNotification("Trade", "${displayIndexName(failedPosition.symbol)} trade request failed", errorMessage + if (wasClosing) " Automatic close remains pending; the contract is not marked closed." else "")
+                    if (wasTrailingClose) {
+                        addNotification(
+                            "Trade",
+                            "${displayIndexName(failedPosition.symbol)} protected sale not filled",
+                            "Deriv did not accept the trailing-stop sale at the required minimum price of ${formatMoney(failedPosition.trailingCloseFloorPrice)}. The contract remains OPEN; no below-floor market sale will be sent. Deriv response: $errorMessage"
+                        )
+                    } else {
+                        addNotification("Trade", "${displayIndexName(failedPosition.symbol)} trade request failed", errorMessage + if (wasClosing) " Automatic close remains pending; the contract is not marked closed." else "")
+                    }
                 }
                 savePositions()
                 runOnUiThread { if (selectedTab == "Trade") render() }
@@ -990,8 +998,18 @@ indexStatusViews[symbol]?.apply {
                     // Do not leave the position waiting indefinitely for a later
                     // proposal_open_contract packet that may be delayed or missed.
                     val soldFor = receipt.optDouble("sold_for", Double.NaN)
+                    val wasTrailingClose = closingPosition.trailingClosePending
+                    val requestedFloor = closingPosition.trailingCloseFloorPrice
                     if (soldFor.isFinite()) {
                         closingPosition.profit = soldFor - closingPosition.stake
+                    }
+                    if (wasTrailingClose && requestedFloor > 0.0 && soldFor.isFinite() &&
+                        soldFor + 0.01 < requestedFloor) {
+                        addNotification(
+                            "Trade",
+                            "${displayIndexName(closingPosition.symbol)} trailing protection breach",
+                            "Deriv confirmed sale below the requested minimum sale price. Requested minimum: ${formatMoney(requestedFloor)}; actual sale: ${formatMoney(soldFor)}; actual P/L: ${formatMoney(closingPosition.profit)}. This is recorded as a protection breach, not a successful protected-profit exit."
+                        )
                     }
                     closingPosition.status = "CLOSED"
                     closingPosition.canSell = false
@@ -1624,83 +1642,54 @@ indexStatusViews[symbol]?.apply {
     }
 
     private fun evaluateOriginalEntries(symbol: String, quote: Double) {
-        // Claim this index atomically before doing any work that can submit a
-        // proposal. Market-data callbacks can arrive concurrently; checking
-        // positions alone is not sufficient unless the check and claim are atomic.
+        if (!autoTradingEnabled || !accountConnected || dailyCapital <= 0.0 || !quote.isFinite()) return
         val today = utcDayKey(System.currentTimeMillis() / 1000L)
         val tradeKey = "$today|$symbol|ORIGINAL"
+        if (tradeKey in originalTriggered) return
+
+        // One original trade only, in the direction confirmed by matching MSS and CHOCH.
+        val mss = recoveryMss[symbol]
+        val choch = recoveryChoch[symbol]
+        if (mss.isNullOrBlank() || mss != choch) return
+
+        val indexAlreadyActive = positions.values.any {
+            it.symbol == symbol && it.status != "CLOSED" &&
+                !it.status.startsWith("ERROR") && it.status !in setOf("BUY FAILED", "PROPOSAL FAILED")
+        }
+        if (indexAlreadyActive) return
+
         val stake = roundStake(dailyCapital * 0.15)
-        val claimed = synchronized(originalEntryLocks) {
-            if (!autoTradingEnabled || !accountConnected || dailyCapital <= 0.0 || !quote.isFinite()) return
-            if (symbol in originalEntryLocks || tradeKey in originalTriggered) return
-
-            // One original trade only, in the direction confirmed by matching MSS and CHOCH.
-            val mss = recoveryMss[symbol]
-            val choch = recoveryChoch[symbol]
-            if (mss.isNullOrBlank() || mss != choch) return
-
-            // Pending proposal, buying, open, or closing positions all block a
-            // second original request for this same index. Other indexes remain independent.
-            val indexAlreadyActive = positions.values.any {
-                it.symbol == symbol && it.status !in setOf(
-                    "CLOSED", "ERROR", "BUY FAILED", "PROPOSAL FAILED"
-                ) && !it.status.startsWith("ERROR")
+        if (stake <= 0.0 || availableBalance + 0.000001 < stake) {
+            if (insufficientFundsNotified.add(tradeKey)) {
+                addNotification("Trade", "${displayIndexName(symbol)} trade not executed",
+                    "Available balance ${formatMoney(availableBalance)} is below the single-trade stake ${formatMoney(stake)} (15% of daily starting capital).")
             }
-            if (indexAlreadyActive) return
-
-            if (stake <= 0.0 || availableBalance + 0.000001 < stake) {
-                if (insufficientFundsNotified.add(tradeKey)) {
-                    addNotification("Trade", "${displayIndexName(symbol)} trade not executed",
-                        "Available balance ${formatMoney(availableBalance)} is below the single-trade stake ${formatMoney(stake)} (15% of daily starting capital).")
-                }
-                return
-            }
-            originalEntryLocks.add(symbol)
-            true
-        }
-        if (!claimed) return
-
-        val mss = recoveryMss[symbol] ?: run {
-            synchronized(originalEntryLocks) { originalEntryLocks.remove(symbol) }
             return
         }
-        val choch = recoveryChoch[symbol] ?: run {
-            synchronized(originalEntryLocks) { originalEntryLocks.remove(symbol) }
-            return
-        }
+
+        val originalId = "ORIGINAL-${today}-${symbol}-${UUID.randomUUID()}"
         val mssCloseEpoch = recoveryMssEpoch[symbol]?.plus(3600L) ?: 0L
         val chochCloseEpoch = recoveryChochEpoch[symbol]?.plus(3600L) ?: 0L
         val lastConfirmingCloseEpoch = maxOf(mssCloseEpoch, chochCloseEpoch)
-        var submitted = false
-        try {
-            val originalId = "ORIGINAL-${today}-${symbol}-${UUID.randomUUID()}"
-            submitted = openPosition(
-                symbol, mss, "ORIGINAL", stake, originalId,
-                entryMssDirection = mss,
-                entryMssCloseEpoch = mssCloseEpoch,
-                entryChochDirection = choch,
-                entryChochCloseEpoch = chochCloseEpoch,
-                entryMssPrice = recoveryMssPrice[symbol] ?: 0.0,
-                entryChochPrice = recoveryChochPrice[symbol] ?: 0.0,
-                entryLastCandleClosePrice = recoverySignalClosePrice[symbol] ?: 0.0,
-                entryLastCandleCloseEpoch = lastConfirmingCloseEpoch
-            )
-        } finally {
-            synchronized(originalEntryLocks) {
-                if (submitted) {
-                    originalTriggered.add(tradeKey)
-                    tradePrefs.edit().putStringSet("triggered_$today", originalTriggered.toSet()).apply()
-                }
-                originalEntryLocks.remove(symbol)
-            }
-        }
-
+        val submitted = openPosition(
+            symbol, mss, "ORIGINAL", stake, originalId,
+            entryMssDirection = mss,
+            entryMssCloseEpoch = mssCloseEpoch,
+            entryChochDirection = choch,
+            entryChochCloseEpoch = chochCloseEpoch,
+            entryMssPrice = recoveryMssPrice[symbol] ?: 0.0,
+            entryChochPrice = recoveryChochPrice[symbol] ?: 0.0,
+            entryLastCandleClosePrice = recoverySignalClosePrice[symbol] ?: 0.0,
+            entryLastCandleCloseEpoch = lastConfirmingCloseEpoch
+        )
         if (!submitted) {
             addNotification("Trade", "${displayIndexName(symbol)} trade not submitted",
                 "The ${mss} proposal request could not be sent. The signal remains available for retry.")
             return
         }
 
+        originalTriggered.add(tradeKey)
+        tradePrefs.edit().putStringSet("triggered_$today", originalTriggered.toSet()).apply()
         addNotification("Trade", "${displayIndexName(symbol)} ${mss} trade submitted",
             "One ${mss} contract proposal was sent to Deriv. Stake: ${formatMoney(stake)} (15% of fixed daily starting capital). Waiting for Deriv acceptance.")
     }
@@ -1970,9 +1959,23 @@ indexStatusViews[symbol]?.apply {
             savePositions()
             val req = nextRequestId()
             pendingRequests[req] = position.localId
+            // Deriv "sell.price" is the MINIMUM acceptable sale price.
+            // Never send 0 here: 0 explicitly requests an unrestricted market sale
+            // and can realize a loss even after the trailing threshold was reached.
+            val minimumSalePrice = position.stake *
+                (1.0 + position.trailingStopPercent / 100.0)
+            if (!minimumSalePrice.isFinite() || minimumSalePrice <= position.stake) {
+                pendingRequests.remove(req)
+                position.trailingClosePending = false
+                position.status = "OPEN"
+                savePositions()
+                return
+            }
+            position.trailingCloseFloorPrice = minimumSalePrice
+            savePositions()
             val request = JSONObject()
                 .put("sell", position.contractId)
-                .put("price", 0)
+                .put("price", minimumSalePrice)
                 .put("req_id", req)
             val sent = derivService?.client?.send(request) == true
             if (!sent) {
@@ -1985,7 +1988,7 @@ indexStatusViews[symbol]?.apply {
             addNotification(
                 "Trade",
                 "${displayIndexName(position.symbol)} trailing stop triggered",
-                "${position.role} ${position.direction} contract reversed to its protected-profit threshold of +${String.format(Locale.US, "%.2f", position.trailingStopPercent)}% of its own current stake (${formatMoney(position.stake * position.trailingStopPercent / 100.0)}). Deriv close request sent for this contract only; waiting for confirmed sale."
+                "${position.role} ${position.direction} contract reversed to its protected-profit threshold of +${String.format(Locale.US, "%.2f", position.trailingStopPercent)}% of its own current stake (${formatMoney(position.stake * position.trailingStopPercent / 100.0)}). A minimum Deriv sale price of ${formatMoney(minimumSalePrice)} has been requested for this contract only. If the market cannot meet that minimum, Deriv must reject the sale rather than sell below the protection floor; waiting for the response."
             )
             runOnUiThread { if (selectedTab == "Trade") render() }
         }
@@ -2225,7 +2228,8 @@ indexStatusViews[symbol]?.apply {
                 .put("trailingActivated", p.trailingActivated)
                 .put("trailingPeakPercent", p.trailingPeakPercent)
                 .put("trailingStopPercent", p.trailingStopPercent)
-                .put("trailingClosePending", p.trailingClosePending))
+                .put("trailingClosePending", p.trailingClosePending)
+                .put("trailingCloseFloorPrice", p.trailingCloseFloorPrice))
         }
         // commit() makes completed trade records durable before activity teardown/update.
         tradePrefs.edit().putString("positions", array.toString()).commit()
@@ -2263,6 +2267,7 @@ indexStatusViews[symbol]?.apply {
                 p.trailingPeakPercent = o.optDouble("trailingPeakPercent", 0.0)
                 p.trailingStopPercent = o.optDouble("trailingStopPercent", 0.0)
                 p.trailingClosePending = o.optBoolean("trailingClosePending", false)
+                p.trailingCloseFloorPrice = o.optDouble("trailingCloseFloorPrice", 0.0)
                 if (p.recoveryEligible && !p.recoveryUsed) recoveryWaiting.add(p.localId)
                 positions[p.localId] = p
                 // Never subscribe a restored contract against the other account's socket.
