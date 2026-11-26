@@ -51,18 +51,30 @@ class DerivApiClient(
             // Optional callback for historical candle data.
         }
 
-        fun onCandlesM15(
+        fun onM15Candles(
             symbol: String,
             candles: List<Candle>
         ) {
-            // Optional callback for confirmed 15-minute execution qualification.
+            // Optional callback for 15-minute execution qualification data.
         }
 
         fun onMarketDataError(symbol: String, message: String) {
             // Optional callback for public market-data errors.
         }
 
+        fun onM15MarketDataError(symbol: String, message: String) {
+            // Optional callback for M15-only market-data errors.
+        }
+
         fun onError(message: String)
+
+        /**
+         * Authenticated trade responses (proposal, buy, sell, open contract,
+         * portfolio and request-level errors) are forwarded to the trading layer.
+         */
+        fun onTradeData(json: JSONObject) {
+            // Optional callback for trade and contract responses.
+        }
 
         fun onDisconnected()
     }
@@ -229,8 +241,7 @@ class DerivApiClient(
     private var marketDataSocket: WebSocket? = null
 
 private var marketDataRequestId = 1000
-private val candleRequestSymbols = java.util.concurrent.ConcurrentHashMap<Int, String>()
-private val candleRequestGranularities = java.util.concurrent.ConcurrentHashMap<Int, Int>()
+private val candleRequestSymbols = java.util.concurrent.ConcurrentHashMap<Int, Pair<String, Int>>()
 
 private val candleIndexes = listOf(
     "R_10",
@@ -338,6 +349,28 @@ private val candleIndexes = listOf(
             token,
             "DEMO"
         )
+    }
+
+    /**
+     * Restore the selected account when the Activity or foreground Service resumes.
+     * Avoid restarting an already-connected or currently-connecting matching account.
+     */
+    fun ensureConnectedOnResume(
+        token: String,
+        requestedAccountType: String
+    ) {
+        val normalizedType =
+            if (requestedAccountType.equals("REAL", ignoreCase = true)) "REAL" else "DEMO"
+
+        if (token.isBlank()) {
+            callback.onError("Deriv access token is empty.")
+            return
+        }
+
+        if (connected && accountType.equals(normalizedType, ignoreCase = true)) return
+        if (connecting && accountType.equals(normalizedType, ignoreCase = true)) return
+
+        connectWithAccessToken(token, normalizedType)
     }
 
     /*
@@ -1131,23 +1164,33 @@ fun requestHistoricalCandles() {
             ) {
 
                 for (symbol in candleIndexes) {
-                    // H1 remains the source for previous completed-day levels and historical audit reconstruction.
-                    // M15 is a separate feed used exclusively for MSS, CHOCH and the final execution gate.
-                    for (granularity in listOf(3600, 900)) {
-                        val requestId = marketDataRequestId++
-                        candleRequestSymbols[requestId] = symbol
-                        candleRequestGranularities[requestId] = granularity
 
-                        val message = JSONObject().apply {
-                            put("ticks_history", symbol)
-                            put("count", 1000)
-                            put("end", "latest")
-                            put("style", "candles")
-                            put("granularity", granularity)
-                            put("req_id", requestId)
-                        }
-                        webSocket.send(message.toString())
+                    val requestId = marketDataRequestId++
+                    candleRequestSymbols[requestId] = symbol to 3600
+
+                    val message = JSONObject().apply {
+                        put("ticks_history", symbol)
+                        put("count", 1000)
+                        put("end", "latest")
+                        put("style", "candles")
+                        put("granularity", 3600)
+                        put("req_id", requestId)
                     }
+
+                    webSocket.send(message.toString())
+
+                    // Independent M15 history for execution qualification.
+                    val m15RequestId = marketDataRequestId++
+                    candleRequestSymbols[m15RequestId] = symbol to 900
+                    val m15Message = JSONObject().apply {
+                        put("ticks_history", symbol)
+                        put("count", 1000)
+                        put("end", "latest")
+                        put("style", "candles")
+                        put("granularity", 900)
+                        put("req_id", m15RequestId)
+                    }
+                    webSocket.send(m15Message.toString())
                 }
 
                 // Subscribe to public live prices on the same market-data socket.
@@ -1172,20 +1215,25 @@ fun requestHistoricalCandles() {
                     val apiError = json.optJSONObject("error")
                     if (apiError != null) {
                         val failedReqId = json.optInt("req_id", -1)
-                        val failedSymbol = json.optJSONObject("echo_req")
-                            ?.optString("ticks_history", "")
+                        val failedMeta = candleRequestSymbols.remove(failedReqId)
+                        val failedEcho = json.optJSONObject("echo_req")
+                        val failedSymbol = failedEcho?.optString("ticks_history", "")
                             ?.takeIf { it in candleIndexes }
-                            ?: candleRequestSymbols[failedReqId]
+                            ?: failedMeta?.first
                             ?: ""
-                        candleRequestSymbols.remove(failedReqId)
-                        candleRequestGranularities.remove(failedReqId)
+                        val failedGranularity = failedEcho?.optInt("granularity", failedMeta?.second ?: 3600)
+                            ?: (failedMeta?.second ?: 3600)
                         val errorMessage = apiError.optString("message", "Deriv market-data request failed.")
                         android.util.Log.e(
                             "DerivCandles",
                             "Deriv candle API error: ${apiError.optString("code")} - $errorMessage; response=$text"
                         )
                         if (failedSymbol in candleIndexes) {
-                            callback.onMarketDataError(failedSymbol, errorMessage)
+                            if (failedGranularity == 900) {
+                                callback.onM15MarketDataError(failedSymbol, errorMessage)
+                            } else {
+                                callback.onMarketDataError(failedSymbol, errorMessage)
+                            }
                         }
                         return
                     }
@@ -1203,16 +1251,13 @@ fun requestHistoricalCandles() {
 
                     val echoRequest = json.optJSONObject("echo_req")
                     val requestId = json.optInt("req_id", -1)
+                    val requestMeta = candleRequestSymbols.remove(requestId)
                     val symbol = echoRequest?.optString("ticks_history", "")
                         ?.takeIf { it in candleIndexes }
-                        ?: candleRequestSymbols[requestId]
+                        ?: requestMeta?.first
                         ?: ""
-                    val granularity = echoRequest?.optInt("granularity", 0)
-                        ?.takeIf { it > 0 }
-                        ?: candleRequestGranularities[requestId]
-                        ?: 3600
-                    candleRequestSymbols.remove(requestId)
-                    candleRequestGranularities.remove(requestId)
+                    val granularity = echoRequest?.optInt("granularity", requestMeta?.second ?: 3600)
+                        ?: (requestMeta?.second ?: 3600)
 
                     if (symbol !in candleIndexes) {
                         android.util.Log.d(
@@ -1233,7 +1278,7 @@ fun requestHistoricalCandles() {
                         callback.onMarketDataError(
                             symbol,
                             json.optJSONObject("error")?.optString("message")
-                                ?: "Deriv returned no candles for $symbol (granularity=$granularity)."
+                                ?: "Deriv returned no H1 candles for $symbol."
                         )
                         return
                     }
@@ -1268,8 +1313,8 @@ fun requestHistoricalCandles() {
                     if (candles.isNotEmpty()) {
                         val sortedCandles = candles.sortedBy { it.epoch }
                         if (granularity == 900) {
-                            callback.onCandlesM15(symbol, sortedCandles)
-                        } else if (granularity == 3600) {
+                            callback.onM15Candles(symbol, sortedCandles)
+                        } else {
                             callback.onCandles(symbol, sortedCandles)
                         }
                     } else {
@@ -1306,7 +1351,6 @@ fun requestHistoricalCandles() {
                     callback.onMarketDataError(symbol, message)
                 }
                 candleRequestSymbols.clear()
-                candleRequestGranularities.clear()
                 for (symbol in candleIndexes) {
                     callback.onMarketDataError(
                         symbol,
@@ -1331,29 +1375,38 @@ fun refreshHistoricalCandles() {
     }
 
     for (symbol in candleIndexes) {
-        for (granularity in listOf(3600, 900)) {
-            val requestId = marketDataRequestId++
-            candleRequestSymbols[requestId] = symbol
-            candleRequestGranularities[requestId] = granularity
 
-            val message = JSONObject().apply {
-                put("ticks_history", symbol)
-                put("count", 1000)
-                put("end", "latest")
-                put("style", "candles")
-                put("granularity", granularity)
-                put("req_id", requestId)
-            }
+        val requestId = marketDataRequestId++
+        candleRequestSymbols[requestId] = symbol to 3600
 
-            val sent = socket.send(message.toString())
-            if (!sent) {
-                candleRequestSymbols.remove(requestId)
-                candleRequestGranularities.remove(requestId)
-                android.util.Log.e(
-                    "DerivCandles",
-                    "Failed to request refreshed candles for $symbol (granularity=$granularity)"
-                )
-            }
+        val message = JSONObject().apply {
+            put("ticks_history", symbol)
+            put("count", 1000)
+            put("end", "latest")
+            put("style", "candles")
+            put("granularity", 3600)
+            put("req_id", requestId)
+        }
+
+        val sent = socket.send(message.toString())
+
+        val m15RequestId = marketDataRequestId++
+        candleRequestSymbols[m15RequestId] = symbol to 900
+        val m15Message = JSONObject().apply {
+            put("ticks_history", symbol)
+            put("count", 1000)
+            put("end", "latest")
+            put("style", "candles")
+            put("granularity", 900)
+            put("req_id", m15RequestId)
+        }
+        val m15Sent = socket.send(m15Message.toString())
+
+        if (!sent || !m15Sent) {
+            android.util.Log.e(
+                "DerivCandles",
+                "Failed to request refreshed H1/M15 candles for $symbol"
+            )
         }
     }
 
@@ -1400,6 +1453,26 @@ if (tick != null) {
         )
     }
 }
+            /*
+             * Route authenticated trade responses to the existing trading layer.
+             * Request-level errors must also reach onTradeData so pending proposal,
+             * buy and sell operations can be reconciled against their req_id.
+             */
+            val tradeMessageType = json.optString("msg_type", "")
+            val isTradeResponse = tradeMessageType in setOf(
+                "proposal",
+                "buy",
+                "sell",
+                "proposal_open_contract",
+                "portfolio"
+            )
+            val isTradeRequestError = json.has("error") && json.has("req_id")
+
+            if (isTradeResponse || isTradeRequestError) {
+                callback.onTradeData(json)
+                return
+            }
+
             /*
              * Deriv WebSocket error.
              */
@@ -1938,6 +2011,10 @@ if (tick != null) {
      * Automatic reconnection is deliberately disabled
      * until connectWithAccessToken() is called again.
      */
+    fun disconnectAccount() {
+        disconnect()
+    }
+
     fun disconnect() {
 
         manuallyDisconnected =
@@ -2081,6 +2158,19 @@ if (tick != null) {
         )
 
         loadAccountsAndConnect()
+    }
+
+    /**
+     * Request the authenticated account's currently open contracts.
+     * MainActivity reconciles this portfolio response with its persisted trade ledger.
+     */
+    fun requestOpenTrades() {
+        if (!connected) {
+            callback.onError("Cannot restore open trades: Deriv is not connected.")
+            return
+        }
+
+        send(JSONObject().put("portfolio", 1))
     }
 
     /*
