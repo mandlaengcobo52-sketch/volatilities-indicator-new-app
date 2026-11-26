@@ -89,7 +89,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val tradeRecoveryStatusViews = mutableMapOf<String, TextView>()
     private val mssStatusViews = mutableMapOf<String, TextView>()
     private val chochStatusViews = mutableMapOf<String, TextView>()
-    // Structural break prices captured from the completed H1 candle's confirmed swing levels.
+    // Structural break prices captured from completed M15 candles' confirmed swing levels.
     private val recoveryMssPrice = mutableMapOf<String, Double>()
     private val recoveryChochPrice = mutableMapOf<String, Double>()
     private val recoverySignalClosePrice = mutableMapOf<String, Double>()
@@ -166,7 +166,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var expiryEpoch: Long = 0L,
         var openedAtEpoch: Long = 0L,
         var originalSignalDirection: String = "",
-        // Immutable entry audit: H1 candle epochs are stored as candle-close times.
+        // Immutable entry audit: M15 candle epochs are stored as candle-close times.
         var entryMssDirection: String = "",
         var entryMssCloseEpoch: Long = 0L,
         var entryChochDirection: String = "",
@@ -196,6 +196,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val dailyLevels = mutableMapOf<String, Pair<Double, Double>>() // high, low
     private val originalSweepStatus = mutableMapOf<String, String>()
     private val candlesByIndex = mutableMapOf<String, List<DerivApiClient.Candle>>()
+    // Dedicated M15 history for execution qualification; H1 history remains unchanged for daily levels and restoration audit.
+    private val m15CandlesByIndex = mutableMapOf<String, List<DerivApiClient.Candle>>()
     private val originalTriggered = mutableSetOf<String>()
     private val recoveryWaiting = mutableSetOf<String>()
     private val recoveryMss = mutableMapOf<String, String>()
@@ -814,7 +816,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         derivService?.client?.requestOpenTrades()
         // Re-check already-qualified MSS/CHOCH against any waiting closed original
         // immediately after the execution account reconnects.
-        candlesByIndex.forEach { (symbol, candles) -> evaluateRecoverySignals(symbol, candles) }
+        m15CandlesByIndex.forEach { (symbol, candles) -> evaluateRecoverySignals(symbol, candles) }
         runOnUiThread {
             if (platformUserRole == "investor") selectedTab = "Trade"
             accountIdView?.text = accountLabel
@@ -872,7 +874,6 @@ indexStatusViews[symbol]?.apply {
             candlesByIndex[symbol] = candles.sortedBy { it.epoch }
             calculatePreviousDailyLevels(symbol, candles)
             reconcileRestoredOriginalPairs(symbol)
-            evaluateRecoverySignals(symbol, candles)
             val lastClose = candles.last().close
             if (!latestPrices.containsKey(symbol)) latestPrices[symbol] = lastClose
             runOnUiThread {
@@ -891,6 +892,19 @@ indexStatusViews[symbol]?.apply {
                 updateRecoveryStatusView(symbol)
             }
             if (selectedTab == "Home") runOnUiThread { updateMasterDecisionViews(symbol); updateRecoveryStatusView(symbol) }
+        }
+    }
+
+    override fun onM15Candles(symbol: String, candles: List<DerivApiClient.Candle>) {
+        if (symbol !in indexes || candles.isEmpty()) return
+        val sorted = candles.sortedBy { it.epoch }
+        m15CandlesByIndex[symbol] = sorted
+        // MSS and CHOCH qualification now uses completed M15 candles only.
+        evaluateRecoverySignals(symbol, sorted)
+        latestPrices[symbol]?.let { evaluateOriginalEntries(symbol, it) }
+        runOnUiThread {
+            updateMasterDecisionViews(symbol)
+            updateRecoveryStatusView(symbol)
         }
     }
 
@@ -1043,7 +1057,7 @@ indexStatusViews[symbol]?.apply {
                     updateAccountProfitLossViews()
                 }
                 if (closingPosition.recoveryEligible && !closingPosition.recoveryUsed) {
-                    candlesByIndex[closingPosition.symbol]?.let { evaluateRecoverySignals(closingPosition.symbol, it) }
+                    m15CandlesByIndex[closingPosition.symbol]?.let { evaluateRecoverySignals(closingPosition.symbol, it) }
                 }
             }
             "proposal_open_contract" -> handleOpenContract(json.optJSONObject("proposal_open_contract") ?: return)
@@ -1661,6 +1675,46 @@ indexStatusViews[symbol]?.apply {
             .toSet()
     }
 
+    private fun passesM15LevelExecutionGate(symbol: String, direction: String, currentPrice: Double): Boolean {
+        val levels = dailyLevels[symbol] ?: return false
+        val upper = levels.first
+        val lower = levels.second
+        if (!upper.isFinite() || !lower.isFinite() || upper <= lower) return false
+
+        val midpoint = (upper + lower) / 2.0
+        val candles = m15CandlesByIndex[symbol]?.sortedBy { it.epoch } ?: return false
+        // Deriv includes the currently-forming candle as the final item.
+        val lastClosed = candles.dropLast(1).lastOrNull() ?: return false
+        val now = System.currentTimeMillis() / 1000L
+        val closeEpoch = lastClosed.epoch + 900L
+        // Do not execute from an old touch/cross event.
+        if (closeEpoch > now || now - closeEpoch > 900L) return false
+
+        return when (direction) {
+            "FALL" -> {
+                val permittedMove = (upper - midpoint) * 0.20
+                val minimumAllowed = upper - permittedMove
+                val candleTouchedOrCrossed = lastClosed.high >= upper
+                val candleClosedBearishSide = lastClosed.close < upper
+                val candleCloseWithinBand = lastClosed.close >= minimumAllowed
+                val currentPriceWithinBand = currentPrice in minimumAllowed..upper
+                candleTouchedOrCrossed && candleClosedBearishSide &&
+                    candleCloseWithinBand && currentPriceWithinBand
+            }
+            "RISE" -> {
+                val permittedMove = (midpoint - lower) * 0.20
+                val maximumAllowed = lower + permittedMove
+                val candleTouchedOrCrossed = lastClosed.low <= lower
+                val candleClosedBullishSide = lastClosed.close > lower
+                val candleCloseWithinBand = lastClosed.close <= maximumAllowed
+                val currentPriceWithinBand = currentPrice in lower..maximumAllowed
+                candleTouchedOrCrossed && candleClosedBullishSide &&
+                    candleCloseWithinBand && currentPriceWithinBand
+            }
+            else -> false
+        }
+    }
+
     private fun evaluateOriginalEntries(symbol: String, quote: Double) {
         if (!autoTradingEnabled || !accountConnected || dailyCapital <= 0.0 || !quote.isFinite()) return
         val today = utcDayKey(System.currentTimeMillis() / 1000L)
@@ -1671,6 +1725,11 @@ indexStatusViews[symbol]?.apply {
         val mss = recoveryMss[symbol]
         val choch = recoveryChoch[symbol]
         if (mss.isNullOrBlank() || mss != choch) return
+
+        // Additional execution qualification: previous completed-day levels,
+        // a completed M15 touch/cross candle, correct close direction, and
+        // current price no farther than 20% of the level-to-midpoint distance.
+        if (!passesM15LevelExecutionGate(symbol, mss, quote)) return
 
         val indexAlreadyActive = positions.values.any {
             it.symbol == symbol && it.status != "CLOSED" &&
@@ -1688,8 +1747,8 @@ indexStatusViews[symbol]?.apply {
         }
 
         val originalId = "ORIGINAL-${today}-${symbol}-${UUID.randomUUID()}"
-        val mssCloseEpoch = recoveryMssEpoch[symbol]?.plus(3600L) ?: 0L
-        val chochCloseEpoch = recoveryChochEpoch[symbol]?.plus(3600L) ?: 0L
+        val mssCloseEpoch = recoveryMssEpoch[symbol]?.plus(900L) ?: 0L
+        val chochCloseEpoch = recoveryChochEpoch[symbol]?.plus(900L) ?: 0L
         val lastConfirmingCloseEpoch = maxOf(mssCloseEpoch, chochCloseEpoch)
         val submitted = openPosition(
             symbol, mss, "ORIGINAL", stake, originalId,
@@ -1966,7 +2025,7 @@ indexStatusViews[symbol]?.apply {
         }
 
         if (position.recoveryEligible && !position.recoveryUsed) {
-            candlesByIndex[position.symbol]?.let { evaluateRecoverySignals(position.symbol, it) }
+            m15CandlesByIndex[position.symbol]?.let { evaluateRecoverySignals(position.symbol, it) }
         }
     }
 
@@ -2167,10 +2226,10 @@ indexStatusViews[symbol]?.apply {
             recoveryMssPrice[symbol] = if (mssDirection == "RISE") lastHigh else lastLow
             recoverySignalClosePrice[symbol] = last.close
             recoveryMssEpoch[symbol] = last.epoch
-            tradePrefs.edit().putLong("signal_mss_epoch_$symbol", last.epoch).apply()
+            tradePrefs.edit().putLong("signal_mss_m15_epoch_$symbol", last.epoch).apply()
             if (recoveryMss[symbol] != mssDirection) {
                 recoveryMss[symbol] = mssDirection
-                tradePrefs.edit().putString("signal_mss_$symbol", mssDirection).apply()
+                tradePrefs.edit().putString("signal_mss_m15_$symbol", mssDirection).apply()
                 addNotification("Home", "${displayIndexName(symbol)} MSS qualified", "MSS qualified in the ${mssDirection.lowercase(Locale.US)} direction on a completed candle.")
             }
         }
@@ -2185,10 +2244,10 @@ indexStatusViews[symbol]?.apply {
             recoveryChochPrice[symbol] = if (chochDirection == "RISE") lastHigh else lastLow
             recoverySignalClosePrice[symbol] = last.close
             recoveryChochEpoch[symbol] = last.epoch
-            tradePrefs.edit().putLong("signal_choch_epoch_$symbol", last.epoch).apply()
+            tradePrefs.edit().putLong("signal_choch_m15_epoch_$symbol", last.epoch).apply()
             if (recoveryChoch[symbol] != chochDirection) {
                 recoveryChoch[symbol] = chochDirection
-                tradePrefs.edit().putString("signal_choch_$symbol", chochDirection).apply()
+                tradePrefs.edit().putString("signal_choch_m15_$symbol", chochDirection).apply()
                 addNotification("Home", "${displayIndexName(symbol)} CHOCH qualified", "CHOCH qualified in the ${chochDirection.lowercase(Locale.US)} direction on a completed candle.")
             }
         }
@@ -2222,6 +2281,8 @@ indexStatusViews[symbol]?.apply {
 
         val oppositeDirection = if (winningOriginal.direction == "RISE") "FALL" else "RISE"
         if (mss != oppositeDirection || choch != oppositeDirection) return
+        val currentPrice = latestPrices[symbol] ?: return
+        if (!passesM15LevelExecutionGate(symbol, oppositeDirection, currentPrice)) return
         if ((recoveryMssEpoch[symbol] ?: 0L) <= winningOriginal.closedAt ||
             (recoveryChochEpoch[symbol] ?: 0L) <= winningOriginal.closedAt) return
 
@@ -2233,8 +2294,8 @@ indexStatusViews[symbol]?.apply {
         val secondStake = roundStake(winningOriginal.stake + winningOriginal.profit)
         if (secondStake <= 0.0 || availableBalance + 0.000001 < secondStake) return
 
-        val mssCloseEpoch = recoveryMssEpoch[symbol]?.plus(3600L) ?: 0L
-        val chochCloseEpoch = recoveryChochEpoch[symbol]?.plus(3600L) ?: 0L
+        val mssCloseEpoch = recoveryMssEpoch[symbol]?.plus(900L) ?: 0L
+        val chochCloseEpoch = recoveryChochEpoch[symbol]?.plus(900L) ?: 0L
         val submitted = openPosition(
             symbol, oppositeDirection, "SECOND", secondStake,
             winningOriginal.originalId, remainingSeconds,
@@ -2285,10 +2346,10 @@ indexStatusViews[symbol]?.apply {
         tradingDayKey = tradePrefs.getString("day_key", "").orEmpty()
         dailyCapital = tradePrefs.getFloat("daily_capital", 0f).toDouble()
         indexes.forEach { symbol ->
-            tradePrefs.getString("signal_mss_$symbol", null)?.let { recoveryMss[symbol] = it }
-            tradePrefs.getString("signal_choch_$symbol", null)?.let { recoveryChoch[symbol] = it }
-            val mssEpoch = tradePrefs.getLong("signal_mss_epoch_$symbol", 0L)
-            val chochEpoch = tradePrefs.getLong("signal_choch_epoch_$symbol", 0L)
+            tradePrefs.getString("signal_mss_m15_$symbol", null)?.let { recoveryMss[symbol] = it }
+            tradePrefs.getString("signal_choch_m15_$symbol", null)?.let { recoveryChoch[symbol] = it }
+            val mssEpoch = tradePrefs.getLong("signal_mss_m15_epoch_$symbol", 0L)
+            val chochEpoch = tradePrefs.getLong("signal_choch_m15_epoch_$symbol", 0L)
             if (mssEpoch > 0L) recoveryMssEpoch[symbol] = mssEpoch
             if (chochEpoch > 0L) recoveryChochEpoch[symbol] = chochEpoch
         }
@@ -3718,7 +3779,7 @@ indexStatusViews[symbol]?.apply {
         )
         if (autoTradingEnabled && accountConnected) {
             indexes.forEach { symbol ->
-                candlesByIndex[symbol]?.let { evaluateRecoverySignals(symbol, it) }
+                m15CandlesByIndex[symbol]?.let { evaluateRecoverySignals(symbol, it) }
                 latestPrices[symbol]?.let { evaluateOriginalEntries(symbol, it) }
             }
         }
