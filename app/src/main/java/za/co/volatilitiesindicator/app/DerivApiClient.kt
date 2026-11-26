@@ -241,7 +241,7 @@ class DerivApiClient(
     private var marketDataSocket: WebSocket? = null
 
 private var marketDataRequestId = 1000
-private val candleRequestSymbols = java.util.concurrent.ConcurrentHashMap<Int, Pair<String, Int>>()
+private val candleRequestSymbols = java.util.concurrent.ConcurrentHashMap<Int, String>()
 
 private val candleIndexes = listOf(
     "R_10",
@@ -1147,6 +1147,7 @@ fun subscribeToLiveTicks() {
 fun requestHistoricalCandles() {
 
     if (marketDataSocket != null) {
+        requestM15HistoricalCandles()
         return
     }
 
@@ -1166,7 +1167,7 @@ fun requestHistoricalCandles() {
                 for (symbol in candleIndexes) {
 
                     val requestId = marketDataRequestId++
-                    candleRequestSymbols[requestId] = symbol to 3600
+                    candleRequestSymbols[requestId] = symbol
 
                     val message = JSONObject().apply {
                         put("ticks_history", symbol)
@@ -1178,19 +1179,6 @@ fun requestHistoricalCandles() {
                     }
 
                     webSocket.send(message.toString())
-
-                    // Independent M15 history for execution qualification.
-                    val m15RequestId = marketDataRequestId++
-                    candleRequestSymbols[m15RequestId] = symbol to 900
-                    val m15Message = JSONObject().apply {
-                        put("ticks_history", symbol)
-                        put("count", 1000)
-                        put("end", "latest")
-                        put("style", "candles")
-                        put("granularity", 900)
-                        put("req_id", m15RequestId)
-                    }
-                    webSocket.send(m15Message.toString())
                 }
 
                 // Subscribe to public live prices on the same market-data socket.
@@ -1215,25 +1203,18 @@ fun requestHistoricalCandles() {
                     val apiError = json.optJSONObject("error")
                     if (apiError != null) {
                         val failedReqId = json.optInt("req_id", -1)
-                        val failedMeta = candleRequestSymbols.remove(failedReqId)
-                        val failedEcho = json.optJSONObject("echo_req")
-                        val failedSymbol = failedEcho?.optString("ticks_history", "")
+                        val failedSymbol = json.optJSONObject("echo_req")
+                            ?.optString("ticks_history", "")
                             ?.takeIf { it in candleIndexes }
-                            ?: failedMeta?.first
+                            ?: candleRequestSymbols.remove(failedReqId)
                             ?: ""
-                        val failedGranularity = failedEcho?.optInt("granularity", failedMeta?.second ?: 3600)
-                            ?: (failedMeta?.second ?: 3600)
                         val errorMessage = apiError.optString("message", "Deriv market-data request failed.")
                         android.util.Log.e(
                             "DerivCandles",
                             "Deriv candle API error: ${apiError.optString("code")} - $errorMessage; response=$text"
                         )
                         if (failedSymbol in candleIndexes) {
-                            if (failedGranularity == 900) {
-                                callback.onM15MarketDataError(failedSymbol, errorMessage)
-                            } else {
-                                callback.onMarketDataError(failedSymbol, errorMessage)
-                            }
+                            callback.onMarketDataError(failedSymbol, errorMessage)
                         }
                         return
                     }
@@ -1251,13 +1232,10 @@ fun requestHistoricalCandles() {
 
                     val echoRequest = json.optJSONObject("echo_req")
                     val requestId = json.optInt("req_id", -1)
-                    val requestMeta = candleRequestSymbols.remove(requestId)
                     val symbol = echoRequest?.optString("ticks_history", "")
                         ?.takeIf { it in candleIndexes }
-                        ?: requestMeta?.first
+                        ?: candleRequestSymbols.remove(requestId)
                         ?: ""
-                    val granularity = echoRequest?.optInt("granularity", requestMeta?.second ?: 3600)
-                        ?: (requestMeta?.second ?: 3600)
 
                     if (symbol !in candleIndexes) {
                         android.util.Log.d(
@@ -1311,12 +1289,8 @@ fun requestHistoricalCandles() {
                     }
 
                     if (candles.isNotEmpty()) {
-                        val sortedCandles = candles.sortedBy { it.epoch }
-                        if (granularity == 900) {
-                            callback.onM15Candles(symbol, sortedCandles)
-                        } else {
-                            callback.onCandles(symbol, sortedCandles)
-                        }
+                        candleRequestSymbols.remove(requestId)
+                        callback.onCandles(symbol, candles.sortedBy { it.epoch })
                     } else {
                         android.util.Log.w(
                             "DerivCandles",
@@ -1360,6 +1334,9 @@ fun requestHistoricalCandles() {
             }
         }
     )
+
+    // Independent M15 history socket. Does not alter the H1/live-price socket.
+    requestM15HistoricalCandles()
 }
 // =============================================================
 // REFRESH HISTORICAL CANDLES
@@ -1377,7 +1354,7 @@ fun refreshHistoricalCandles() {
     for (symbol in candleIndexes) {
 
         val requestId = marketDataRequestId++
-        candleRequestSymbols[requestId] = symbol to 3600
+        candleRequestSymbols[requestId] = symbol
 
         val message = JSONObject().apply {
             put("ticks_history", symbol)
@@ -1390,22 +1367,10 @@ fun refreshHistoricalCandles() {
 
         val sent = socket.send(message.toString())
 
-        val m15RequestId = marketDataRequestId++
-        candleRequestSymbols[m15RequestId] = symbol to 900
-        val m15Message = JSONObject().apply {
-            put("ticks_history", symbol)
-            put("count", 1000)
-            put("end", "latest")
-            put("style", "candles")
-            put("granularity", 900)
-            put("req_id", m15RequestId)
-        }
-        val m15Sent = socket.send(m15Message.toString())
-
-        if (!sent || !m15Sent) {
+        if (!sent) {
             android.util.Log.e(
                 "DerivCandles",
-                "Failed to request refreshed H1/M15 candles for $symbol"
+                "Failed to request refreshed candles for $symbol"
             )
         }
     }
@@ -1414,7 +1379,184 @@ fun refreshHistoricalCandles() {
         "DerivCandles",
         "Historical candle refresh requested for all indexes"
     )
+
+    // M15 execution data uses a separate socket; H1 and live tick processing above
+    // remain on the original market-data socket.
+    refreshM15HistoricalCandles()
 }
+
+
+// =============================================================
+// ISOLATED M15 EXECUTION CANDLES
+// This feed is intentionally separate from the original H1/live-price socket.
+// =============================================================
+
+private var m15MarketDataSocket: WebSocket? = null
+private val m15CandleRequestSymbols =
+    java.util.concurrent.ConcurrentHashMap<Int, String>()
+
+private fun requestM15HistoricalCandles() {
+    if (m15MarketDataSocket != null) return
+
+    val request = Request.Builder()
+        .url("wss://ws.binaryws.com/websockets/v3?app_id=1089")
+        .build()
+
+    m15MarketDataSocket = webSocketClient.newWebSocket(
+        request,
+        object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                for (symbol in candleIndexes) {
+                    val requestId = marketDataRequestId++
+                    m15CandleRequestSymbols[requestId] = symbol
+                    val message = JSONObject().apply {
+                        put("ticks_history", symbol)
+                        put("count", 1000)
+                        put("end", "latest")
+                        put("style", "candles")
+                        put("granularity", 900)
+                        put("req_id", requestId)
+                    }
+                    if (!webSocket.send(message.toString())) {
+                        m15CandleRequestSymbols.remove(requestId)
+                        callback.onM15MarketDataError(
+                            symbol,
+                            "Could not request M15 candles for $symbol."
+                        )
+                    }
+                }
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                try {
+                    val json = JSONObject(text)
+                    val requestId = json.optInt("req_id", -1)
+                    val echo = json.optJSONObject("echo_req")
+                    val symbol = echo?.optString("ticks_history", "")
+                        ?.takeIf { it in candleIndexes }
+                        ?: m15CandleRequestSymbols[requestId]
+                        ?: ""
+
+                    val apiError = json.optJSONObject("error")
+                    if (apiError != null) {
+                        m15CandleRequestSymbols.remove(requestId)
+                        if (symbol in candleIndexes) {
+                            callback.onM15MarketDataError(
+                                symbol,
+                                apiError.optString(
+                                    "message",
+                                    "Deriv M15 candle request failed."
+                                )
+                            )
+                        }
+                        return
+                    }
+
+                    if (symbol !in candleIndexes) return
+
+                    val candlesJson = json.optJSONArray("candles")
+                        ?: json.optJSONObject("history")?.optJSONArray("candles")
+                        ?: return
+
+                    val candles = mutableListOf<Candle>()
+                    for (i in 0 until candlesJson.length()) {
+                        val item = candlesJson.optJSONObject(i) ?: continue
+                        val epoch = item.optLong("epoch", 0L)
+                        val open = item.optDouble("open", Double.NaN)
+                        val high = item.optDouble("high", Double.NaN)
+                        val low = item.optDouble("low", Double.NaN)
+                        val close = item.optDouble("close", Double.NaN)
+                        if (
+                            epoch > 0L && open.isFinite() && high.isFinite() &&
+                            low.isFinite() && close.isFinite()
+                        ) {
+                            candles.add(
+                                Candle(
+                                    epoch = epoch,
+                                    open = open,
+                                    high = high,
+                                    low = low,
+                                    close = close
+                                )
+                            )
+                        }
+                    }
+
+                    if (candles.isNotEmpty()) {
+                        m15CandleRequestSymbols.remove(requestId)
+                        callback.onM15Candles(
+                            symbol,
+                            candles.sortedBy { it.epoch }
+                        )
+                    } else {
+                        callback.onM15MarketDataError(
+                            symbol,
+                            "Deriv returned no valid M15 candles for $symbol."
+                        )
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e(
+                        "DerivM15Candles",
+                        "M15 candle parsing failed: ${e.message}; response=$text",
+                        e
+                    )
+                }
+            }
+
+            override fun onFailure(
+                webSocket: WebSocket,
+                t: Throwable,
+                response: Response?
+            ) {
+                m15MarketDataSocket = null
+                m15CandleRequestSymbols.clear()
+                val message = t.message ?: "M15 market-data connection failed."
+                for (symbol in candleIndexes) {
+                    callback.onM15MarketDataError(symbol, message)
+                }
+            }
+
+            override fun onClosed(
+                webSocket: WebSocket,
+                code: Int,
+                reason: String
+            ) {
+                if (m15MarketDataSocket === webSocket) {
+                    m15MarketDataSocket = null
+                }
+            }
+        }
+    )
+}
+
+private fun refreshM15HistoricalCandles() {
+    val socket = m15MarketDataSocket
+    if (socket == null) {
+        requestM15HistoricalCandles()
+        return
+    }
+
+    for (symbol in candleIndexes) {
+        val requestId = marketDataRequestId++
+        m15CandleRequestSymbols[requestId] = symbol
+        val message = JSONObject().apply {
+            put("ticks_history", symbol)
+            put("count", 1000)
+            put("end", "latest")
+            put("style", "candles")
+            put("granularity", 900)
+            put("req_id", requestId)
+        }
+        if (!socket.send(message.toString())) {
+            m15CandleRequestSymbols.remove(requestId)
+            android.util.Log.e(
+                "DerivM15Candles",
+                "Failed to refresh M15 candles for $symbol"
+            )
+        }
+    }
+}
+
     private fun handleWebSocketMessage(
         text: String
     ) {
