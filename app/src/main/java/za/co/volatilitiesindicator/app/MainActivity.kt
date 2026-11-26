@@ -78,6 +78,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     private val indexes = listOf("R_10", "R_25", "R_50", "R_75", "R_100")
     private val latestPrices = mutableMapOf<String, Double>()
+    // Prevent an older tick from a parallel WebSocket subscription overwriting
+    // a newer quote for the same index.
+    private val latestTickEpochs = mutableMapOf<String, Long>()
     private val priceViews = mutableMapOf<String, TextView>()
     private val indexStatusViews = mutableMapOf<String, TextView>()
     private val marketStatusViews = mutableMapOf<String, TextView>()
@@ -846,21 +849,35 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     override fun onTick(symbol: String, quote: Double, epoch: Long) {
         if (symbol !in indexes || !quote.isFinite()) return
-        latestPrices[symbol] = quote
+
+        // The authenticated and public market-data sockets can both deliver
+        // ticks. Ignore an older/duplicate timestamp so a delayed callback
+        // cannot replace a newer quote already received for this index.
+        synchronized(latestTickEpochs) {
+            val previousEpoch = latestTickEpochs[symbol] ?: Long.MIN_VALUE
+            if (epoch > 0L && epoch <= previousEpoch) return
+            if (epoch > 0L) latestTickEpochs[symbol] = epoch
+            latestPrices[symbol] = quote
+        }
+
         marketFeedConnected = true
         if (accountConnected) evaluateOriginalEntries(symbol, quote)
         runOnUiThread {
-            feedPillView?.apply {
-    text = "LIVE"
-    setTextColor(Color.BLACK)
-    background = rounded(green, green, 20)
-}
+            // This was missing: the TextView was only populated during render(),
+            // so the stored live quote did not refresh on incoming ticks.
+            priceViews[symbol]?.text = formatPrice(quote)
 
-indexStatusViews[symbol]?.apply {
-    text = "LIVE"
-    setTextColor(Color.BLACK)
-    background = rounded(green, green, 20)
-}
+            feedPillView?.apply {
+                text = "LIVE"
+                setTextColor(Color.BLACK)
+                background = rounded(green, green, 20)
+            }
+
+            indexStatusViews[symbol]?.apply {
+                text = "LIVE"
+                setTextColor(Color.BLACK)
+                background = rounded(green, green, 20)
+            }
             updateMasterDecisionViews(symbol)
         }
     }
