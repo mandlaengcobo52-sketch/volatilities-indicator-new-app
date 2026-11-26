@@ -208,6 +208,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private var tradeStatusView: TextView? = null
     private val tradeStatusViews = mutableMapOf<String, TextView>()
     private val tradeProfitViews = mutableMapOf<String, TextView>()
+    // Live, contract-specific trailing monitor displayed from confirmed execution.
+    private val tradeTrailingViews = mutableMapOf<String, TextView>()
     private val tradeCountdownViews = mutableMapOf<String, TextView>()
     private val countdownHandler = Handler(Looper.getMainLooper())
     private val countdownTask = object : Runnable {
@@ -1889,6 +1891,10 @@ indexStatusViews[symbol]?.apply {
         runOnUiThread {
             updateMasterDecisionViews(position.symbol)
             updateRecoveryStatusView(position.symbol)
+            // Always refresh the exact contract that received this Deriv update.
+            // The related-pair filter below intentionally groups linked positions
+            // and may not include an ORIGINAL position with no originalId.
+            updateTradePositionViews(position)
             val relatedPositions = positions.values.filter {
                 it.symbol == position.symbol && it.status != "CLOSED" &&
                     (if (position.originalId.isNotBlank()) it.originalId == position.originalId
@@ -2481,6 +2487,7 @@ indexStatusViews[symbol]?.apply {
         chochStatusViews.clear()
         tradeStatusViews.clear()
         tradeProfitViews.clear()
+        tradeTrailingViews.clear()
         tradeCountdownViews.clear()
 
         val root = LinearLayout(this).apply {
@@ -2736,6 +2743,19 @@ indexStatusViews[symbol]?.apply {
                     tradeProfitViews[p.localId] = profitView
                     c.addView(profitView)
 
+                    // Show the live P/L percentage from the moment Deriv confirms
+                    // this exact contract. Negative values remain visible; the
+                    // protective close does not activate until +35% is reached.
+                    if (p.contractId > 0L && p.status == "OPEN") {
+                        val trailingView = text(
+                            trailingMonitorText(p), 12f,
+                            if (p.trailingActivated) green else blue, true
+                        )
+                        tradeTrailingViews[p.localId] = trailingView
+                        c.addView(space(5))
+                        c.addView(trailingView)
+                    }
+
                     if (p.contractId > 0L && p.status == "OPEN") {
                         c.addView(space(6))
                         c.addView(actionButton("CLOSE THIS ${p.direction} TRADE", primary = false) {
@@ -2828,6 +2848,34 @@ indexStatusViews[symbol]?.apply {
         }
     }
 
+    // Percentage is always calculated from the latest Deriv P/L and this
+    // contract's own confirmed buy_price (position.stake), never account capital
+    // or another contract's stake.
+    private fun currentContractProfitPercent(position: Position): Double {
+        if (position.stake <= 0.0 || !position.stake.isFinite() ||
+            !position.profit.isFinite()) return 0.0
+        return (position.profit / position.stake) * 100.0
+    }
+
+    private fun trailingMonitorText(position: Position): String {
+        val currentPercent = currentContractProfitPercent(position)
+        val currentLabel = String.format(Locale.US, "%+.2f%%", currentPercent)
+        return if (!position.trailingActivated) {
+            "TRAILING STOP: MONITORING\n" +
+                "CURRENT CONTRACT P/L: $currentLabel\n" +
+                "ACTIVATION TARGET: +35.00%\n" +
+                "PROTECTION: WAITING FOR ACTIVATION"
+        } else {
+            val protected = String.format(Locale.US, "+%.2f%%", position.trailingStopPercent)
+            val peak = String.format(Locale.US, "+%.2f%%", position.trailingPeakPercent)
+            "TRAILING STOP: ACTIVE\n" +
+                "CURRENT CONTRACT P/L: $currentLabel\n" +
+                "HIGHEST PROFIT: $peak\n" +
+                "PROTECTED PROFIT: $protected\n" +
+                "TRAILING DISTANCE: 10.00 PERCENTAGE POINTS"
+        }
+    }
+
     private fun updateTradePositionViews(position: Position) {
         tradeStatusViews[position.localId]?.apply {
             text = "Status: ${position.status}"
@@ -2836,6 +2884,10 @@ indexStatusViews[symbol]?.apply {
         tradeProfitViews[position.localId]?.apply {
             text = "Profit / Loss: ${formatMoney(position.profit)}"
             setTextColor(if (position.profit >= 0.0) green else red)
+        }
+        tradeTrailingViews[position.localId]?.apply {
+            text = trailingMonitorText(position)
+            setTextColor(if (position.trailingActivated) green else blue)
         }
     }
 
