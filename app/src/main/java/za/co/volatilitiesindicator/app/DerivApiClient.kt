@@ -1152,8 +1152,17 @@ private fun connectMarketDataEndpoint() {
             marketDataTimeout?.cancel(false)
             marketDataTimeout = scheduler.schedule({
                 if (marketDataSocket === webSocket) {
-                    android.util.Log.e("DerivCandles", "Market-data endpoint opened but did not complete candle loading within 20 seconds: $endpoint")
-                    try { webSocket.close(1011, "Market-data response timeout") } catch (_: Exception) {}
+                    // H1 history is supplementary data. A delayed/missing candle
+                    // response must NOT close the socket carrying live tick
+                    // subscriptions. Keep the live feed connected and release
+                    // stale request bookkeeping; late candle replies are still
+                    // identified by echo_req.ticks_history below.
+                    android.util.Log.w(
+                        "DerivCandles",
+                        "H1 candle loading exceeded 20 seconds for $endpoint; preserving live tick socket."
+                    )
+                    candleRequestSymbols.clear()
+                    marketDataTimeout = null
                 }
             }, 20, java.util.concurrent.TimeUnit.SECONDS)
 
