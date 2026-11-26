@@ -196,7 +196,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     private val positions = linkedMapOf<String, Position>()
     private val pendingRequests = mutableMapOf<Int, String>()
-    private val dailyLevels = mutableMapOf<String, Pair<Double, Double>>() // high, low
+    private val dailyLevels = mutableMapOf<String, Pair<Double, Double>>() // previous completed-day high, low (H1 source)
+    private val m15CandlesByIndex = mutableMapOf<String, List<DerivApiClient.Candle>>()
+    // A direction is populated only by a completed M15 candle that touched/crossed
+    // the relevant previous-day level, closed beyond it, and stayed within the 20% extension limit.
+    private val levelBreakDirection = mutableMapOf<String, String>()
+    private val levelBreakCloseEpoch = mutableMapOf<String, Long>()
+    private val levelBreakClosePrice = mutableMapOf<String, Double>()
     private val originalSweepStatus = mutableMapOf<String, String>()
     private val candlesByIndex = mutableMapOf<String, List<DerivApiClient.Candle>>()
     private val originalTriggered = mutableSetOf<String>()
@@ -817,7 +823,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         derivService?.client?.requestOpenTrades()
         // Re-check already-qualified MSS/CHOCH against any waiting closed original
         // immediately after the execution account reconnects.
-        candlesByIndex.forEach { (symbol, candles) -> evaluateRecoverySignals(symbol, candles) }
+        m15CandlesByIndex.forEach { (symbol, candles) -> evaluateRecoverySignals(symbol, candles) }
         runOnUiThread {
             if (platformUserRole == "investor") selectedTab = "Trade"
             accountIdView?.text = accountLabel
@@ -889,7 +895,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             candlesByIndex[symbol] = candles.sortedBy { it.epoch }
             calculatePreviousDailyLevels(symbol, candles)
             reconcileRestoredOriginalPairs(symbol)
-            evaluateRecoverySignals(symbol, candles)
             val lastClose = candles.last().close
             if (!latestPrices.containsKey(symbol)) latestPrices[symbol] = lastClose
             runOnUiThread {
@@ -908,6 +913,24 @@ indexStatusViews[symbol]?.apply {
                 updateRecoveryStatusView(symbol)
             }
             if (selectedTab == "Home") runOnUiThread { updateMasterDecisionViews(symbol); updateRecoveryStatusView(symbol) }
+        }
+    }
+
+    override fun onM15Candles(symbol: String, candles: List<DerivApiClient.Candle>) {
+        if (symbol !in indexes || candles.isEmpty()) return
+        val ordered = candles.sortedBy { it.epoch }
+        m15CandlesByIndex[symbol] = ordered
+
+        // Update the completed-candle level gate first so neither original nor
+        // linked SECOND execution can reuse a previous candle's level signal.
+        updatePreviousDayLevelBreakQualification(symbol, ordered)
+        // MSS and CHOCH are now calculated exclusively from M15 candles.
+        evaluateRecoverySignals(symbol, ordered)
+        latestPrices[symbol]?.let { evaluateOriginalEntries(symbol, it) }
+
+        runOnUiThread {
+            updateRecoveryStatusView(symbol)
+            updateMasterDecisionViews(symbol)
         }
     }
 
@@ -1060,7 +1083,7 @@ indexStatusViews[symbol]?.apply {
                     updateAccountProfitLossViews()
                 }
                 if (closingPosition.recoveryEligible && !closingPosition.recoveryUsed) {
-                    candlesByIndex[closingPosition.symbol]?.let { evaluateRecoverySignals(closingPosition.symbol, it) }
+                    m15CandlesByIndex[closingPosition.symbol]?.let { evaluateRecoverySignals(closingPosition.symbol, it) }
                 }
             }
             "proposal_open_contract" -> handleOpenContract(json.optJSONObject("proposal_open_contract") ?: return)
@@ -1422,10 +1445,10 @@ indexStatusViews[symbol]?.apply {
         val mss = recoveryMss[symbol]
         val choch = recoveryChoch[symbol]
         return when {
-            mss.isNullOrBlank() && choch.isNullOrBlank() -> "Waiting for confirmed MSS and CHOCH on a completed candle."
+            mss.isNullOrBlank() && choch.isNullOrBlank() -> "Waiting for confirmed M15 MSS + CHOCH and a previous-day HIGH/LOW touch or cross."
             !mss.isNullOrBlank() && choch.isNullOrBlank() -> "MSS confirmed ${mss.lowercase(Locale.US)}. Waiting for CHOCH."
             mss.isNullOrBlank() && !choch.isNullOrBlank() -> "CHOCH confirmed ${choch.lowercase(Locale.US)}. Waiting for MSS."
-            mss == choch -> "MSS and CHOCH confirmed ${mss!!.lowercase(Locale.US)}. One directional trade can execute."
+            mss == choch -> "M15 MSS + CHOCH confirmed ${mss!!.lowercase(Locale.US)}. Waiting for previous-day HIGH/LOW confirmation."
             else -> "MSS and CHOCH disagree. Waiting for matching direction."
         }
     }
@@ -1657,6 +1680,84 @@ indexStatusViews[symbol]?.apply {
         }
     }
 
+    /**
+     * Qualifies a completed M15 candle against the previous completed day's
+     * HIGH/LOW. The candle must touch/cross the relevant level and close beyond
+     * it in the same direction. Extension beyond the level is capped at 20%
+     * of the distance from that level to the midpoint of the previous-day range.
+     */
+    private fun updatePreviousDayLevelBreakQualification(
+        symbol: String,
+        candles: List<DerivApiClient.Candle>
+    ) {
+        val levels = dailyLevels[symbol]
+        if (levels == null || candles.size < 2) {
+            levelBreakDirection.remove(symbol)
+            levelBreakCloseEpoch.remove(symbol)
+            levelBreakClosePrice.remove(symbol)
+            return
+        }
+
+        // The final candle is still forming; only the preceding candle can qualify.
+        val ordered = candles.sortedBy { it.epoch }
+        val completed = ordered.dropLast(1).lastOrNull()
+        if (completed == null) return
+
+        val previousHigh = levels.first
+        val previousLow = levels.second
+        if (!previousHigh.isFinite() || !previousLow.isFinite() || previousHigh <= previousLow) return
+
+        val midpoint = (previousHigh + previousLow) / 2.0
+        val maxRiseExtension = (previousHigh - midpoint) * 0.20
+        val maxFallExtension = (midpoint - previousLow) * 0.20
+
+        val direction = when {
+            // Upper level: price reached/crossed the previous-day HIGH and the
+            // completed M15 candle closed above it, but not beyond the 20% limit.
+            completed.high >= previousHigh &&
+                completed.close > previousHigh &&
+                (completed.close - previousHigh) <= maxRiseExtension -> "RISE"
+
+            // Lower level: price reached/crossed the previous-day LOW and the
+            // completed M15 candle closed below it, but not beyond the 20% limit.
+            completed.low <= previousLow &&
+                completed.close < previousLow &&
+                (previousLow - completed.close) <= maxFallExtension -> "FALL"
+
+            else -> ""
+        }
+
+        if (direction.isBlank()) {
+            levelBreakDirection.remove(symbol)
+            levelBreakCloseEpoch.remove(symbol)
+            levelBreakClosePrice.remove(symbol)
+        } else {
+            levelBreakDirection[symbol] = direction
+            levelBreakCloseEpoch[symbol] = completed.epoch + 900L
+            levelBreakClosePrice[symbol] = completed.close
+        }
+    }
+
+    private fun isLivePriceWithinLevelExtension(
+        symbol: String,
+        direction: String,
+        quote: Double
+    ): Boolean {
+        val levels = dailyLevels[symbol] ?: return false
+        if (!quote.isFinite()) return false
+        val previousHigh = levels.first
+        val previousLow = levels.second
+        if (!previousHigh.isFinite() || !previousLow.isFinite() || previousHigh <= previousLow) return false
+        val midpoint = (previousHigh + previousLow) / 2.0
+        return when (direction) {
+            "RISE" -> quote >= previousHigh &&
+                (quote - previousHigh) <= (previousHigh - midpoint) * 0.20
+            "FALL" -> quote <= previousLow &&
+                (previousLow - quote) <= (midpoint - previousLow) * 0.20
+            else -> false
+        }
+    }
+
     // A RISE/FALL pair and its linked SECOND execution share one lifecycle.
     private fun tradeGroupId(position: Position): String {
         if (position.role == "SECOND" || position.role == "RECOVERY") {
@@ -1689,6 +1790,20 @@ indexStatusViews[symbol]?.apply {
         val choch = recoveryChoch[symbol]
         if (mss.isNullOrBlank() || mss != choch) return
 
+        // Extra execution layer: a completed M15 candle must touch/cross the
+        // previous-day HIGH/LOW, close beyond that level, and remain within the
+        // 20% extension allowance toward the previous-day range midpoint.
+        val levelDirection = levelBreakDirection[symbol] ?: return
+        val levelCloseEpoch = levelBreakCloseEpoch[symbol] ?: return
+        val levelClosePrice = levelBreakClosePrice[symbol] ?: return
+        val nowEpoch = System.currentTimeMillis() / 1000L
+        if (levelDirection != mss || levelCloseEpoch > nowEpoch ||
+            nowEpoch - levelCloseEpoch > 900L ||
+            !isLivePriceWithinLevelExtension(symbol, mss, quote)) return
+        val mssEpoch = recoveryMssEpoch[symbol] ?: return
+        val chochEpoch = recoveryChochEpoch[symbol] ?: return
+        if (mssEpoch + 900L > levelCloseEpoch || chochEpoch + 900L > levelCloseEpoch) return
+
         val indexAlreadyActive = positions.values.any {
             it.symbol == symbol && it.status != "CLOSED" &&
                 !it.status.startsWith("ERROR") && it.status !in setOf("BUY FAILED", "PROPOSAL FAILED")
@@ -1705,9 +1820,9 @@ indexStatusViews[symbol]?.apply {
         }
 
         val originalId = "ORIGINAL-${today}-${symbol}-${UUID.randomUUID()}"
-        val mssCloseEpoch = recoveryMssEpoch[symbol]?.plus(3600L) ?: 0L
-        val chochCloseEpoch = recoveryChochEpoch[symbol]?.plus(3600L) ?: 0L
-        val lastConfirmingCloseEpoch = maxOf(mssCloseEpoch, chochCloseEpoch)
+        val mssCloseEpoch = recoveryMssEpoch[symbol]?.plus(900L) ?: 0L
+        val chochCloseEpoch = recoveryChochEpoch[symbol]?.plus(900L) ?: 0L
+        val lastConfirmingCloseEpoch = maxOf(mssCloseEpoch, chochCloseEpoch, levelCloseEpoch)
         val submitted = openPosition(
             symbol, mss, "ORIGINAL", stake, originalId,
             entryMssDirection = mss,
@@ -1716,7 +1831,7 @@ indexStatusViews[symbol]?.apply {
             entryChochCloseEpoch = chochCloseEpoch,
             entryMssPrice = recoveryMssPrice[symbol] ?: 0.0,
             entryChochPrice = recoveryChochPrice[symbol] ?: 0.0,
-            entryLastCandleClosePrice = recoverySignalClosePrice[symbol] ?: 0.0,
+            entryLastCandleClosePrice = levelClosePrice,
             entryLastCandleCloseEpoch = lastConfirmingCloseEpoch
         )
         if (!submitted) {
@@ -1983,19 +2098,20 @@ indexStatusViews[symbol]?.apply {
         }
 
         if (position.recoveryEligible && !position.recoveryUsed) {
-            candlesByIndex[position.symbol]?.let { evaluateRecoverySignals(position.symbol, it) }
+            m15CandlesByIndex[position.symbol]?.let { evaluateRecoverySignals(position.symbol, it) }
         }
     }
 
     /**
-     * Returns the agreed stepped protected-profit percentage for a contract.
-     * +35 peak -> +25 protected; +45 -> +35; +55 -> +45, etc.
+     * Contract-specific stepped protection:
+     * +10% peak protects 0%; +20% protects +10%; +30% protects +20%, etc.
+     * Every percentage is measured against this contract's own stake.
      */
     private fun trailingProtectionPercent(peakPercent: Double): Double {
-        if (!peakPercent.isFinite() || peakPercent < 35.0) return 0.0
-        val completedSteps = kotlin.math.floor((peakPercent - 35.0) / 10.0)
+        if (!peakPercent.isFinite() || peakPercent < 10.0) return 0.0
+        val completedSteps = kotlin.math.floor((peakPercent - 10.0) / 10.0)
             .toInt().coerceAtLeast(0)
-        return 25.0 + completedSteps * 10.0
+        return completedSteps * 10.0
     }
 
     /** Display values are calculated from this individual contract's own stake. */
@@ -2004,7 +2120,7 @@ indexStatusViews[symbol]?.apply {
             (position.profit / position.stake) * 100.0 else 0.0
         val currentText = String.format(Locale.US, "%+.2f%%", currentPercent)
         if (!position.trailingActivated) {
-            return "TRAILING STOP: WAITING · ACTIVATES AT +35.00% · CURRENT P/L: $currentText"
+            return "TRAILING STOP: WAITING · ACTIVATES AT +10.00% · CURRENT P/L: $currentText"
         }
         val peakText = String.format(Locale.US, "%+.2f%%", position.trailingPeakPercent)
         val protectedPercent = trailingProtectionPercent(position.trailingPeakPercent)
@@ -2017,9 +2133,8 @@ indexStatusViews[symbol]?.apply {
      * Position matched by the incoming Deriv contract_id, so another index or
      * another contract cannot change this contract's trailing state.
      * P/L percentage = live Deriv P/L / this contract's confirmed buy_price.
-     * Activate at +35%, initially protect +25%, then advance protection in
-     * discrete 10-percentage-point steps as the contract's peak reaches each
-     * next +10 milestone. No continuous peak-minus-10 calculation is used.
+     * Activate at +10%, initially protect 0%, then advance protection by
+     * +10 percentage points at each further +10 peak milestone.
      */
     private fun evaluateContractTrailingStop(position: Position) {
         if (position.status != "OPEN" || position.contractId <= 0L ||
@@ -2032,14 +2147,14 @@ indexStatusViews[symbol]?.apply {
 
         if (!position.trailingActivated) {
             // Negative and sub-threshold values are monitored but never trigger a sale.
-            if (currentPercent < 35.0) return
+            if (currentPercent < 10.0) return
             position.trailingActivated = true
             position.trailingPeakPercent = currentPercent
-            position.trailingStopPercent = 25.0
+            position.trailingStopPercent = trailingProtectionPercent(currentPercent)
             addNotification(
                 "Trade",
                 "${displayIndexName(position.symbol)} trailing stop activated",
-                "${position.role} ${position.direction} contract reached +35.00% of its own current stake. Initial protected-profit level: +25.00% (${formatMoney(position.stake * 0.25)})."
+                "${position.role} ${position.direction} contract reached +10.00% of its own current stake. Initial protected-profit level: 0.00% (breakeven at the original stake)."
             )
         }
 
@@ -2049,8 +2164,7 @@ indexStatusViews[symbol]?.apply {
         }
 
         // Stepped protection agreed for this strategy:
-        // +35 peak protects +25; each completed additional +10 peak milestone
-        // advances protection by +10. Do not use a continuous peak-minus-10 formula.
+        // +10 peak protects 0; +20 protects +10; +30 protects +20, etc.
         position.trailingStopPercent = trailingProtectionPercent(position.trailingPeakPercent)
 
         // A rejected sale remains blocked while P/L is at/below the protected
@@ -2080,7 +2194,7 @@ indexStatusViews[symbol]?.apply {
             // and can realize a loss even after the trailing threshold was reached.
             val minimumSalePrice = position.stake *
                 (1.0 + position.trailingStopPercent / 100.0)
-            if (!minimumSalePrice.isFinite() || minimumSalePrice <= position.stake) {
+            if (!minimumSalePrice.isFinite() || minimumSalePrice < position.stake) {
                 pendingRequests.remove(req)
                 position.trailingClosePending = false
                 position.status = "OPEN"
@@ -2184,10 +2298,10 @@ indexStatusViews[symbol]?.apply {
             recoveryMssPrice[symbol] = if (mssDirection == "RISE") lastHigh else lastLow
             recoverySignalClosePrice[symbol] = last.close
             recoveryMssEpoch[symbol] = last.epoch
-            tradePrefs.edit().putLong("signal_mss_epoch_$symbol", last.epoch).apply()
+            tradePrefs.edit().putLong("signal_mss_m15_epoch_$symbol", last.epoch).apply()
             if (recoveryMss[symbol] != mssDirection) {
                 recoveryMss[symbol] = mssDirection
-                tradePrefs.edit().putString("signal_mss_$symbol", mssDirection).apply()
+                tradePrefs.edit().putString("signal_mss_m15_$symbol", mssDirection).apply()
                 addNotification("Home", "${displayIndexName(symbol)} MSS qualified", "MSS qualified in the ${mssDirection.lowercase(Locale.US)} direction on a completed candle.")
             }
         }
@@ -2202,10 +2316,10 @@ indexStatusViews[symbol]?.apply {
             recoveryChochPrice[symbol] = if (chochDirection == "RISE") lastHigh else lastLow
             recoverySignalClosePrice[symbol] = last.close
             recoveryChochEpoch[symbol] = last.epoch
-            tradePrefs.edit().putLong("signal_choch_epoch_$symbol", last.epoch).apply()
+            tradePrefs.edit().putLong("signal_choch_m15_epoch_$symbol", last.epoch).apply()
             if (recoveryChoch[symbol] != chochDirection) {
                 recoveryChoch[symbol] = chochDirection
-                tradePrefs.edit().putString("signal_choch_$symbol", chochDirection).apply()
+                tradePrefs.edit().putString("signal_choch_m15_$symbol", chochDirection).apply()
                 addNotification("Home", "${displayIndexName(symbol)} CHOCH qualified", "CHOCH qualified in the ${chochDirection.lowercase(Locale.US)} direction on a completed candle.")
             }
         }
@@ -2242,6 +2356,17 @@ indexStatusViews[symbol]?.apply {
         if ((recoveryMssEpoch[symbol] ?: 0L) <= winningOriginal.closedAt ||
             (recoveryChochEpoch[symbol] ?: 0L) <= winningOriginal.closedAt) return
 
+        // Linked SECOND executions must pass the same previous-day level gate.
+        val levelDirection = levelBreakDirection[symbol] ?: return
+        val levelCloseEpoch = levelBreakCloseEpoch[symbol] ?: return
+        val levelClosePrice = levelBreakClosePrice[symbol] ?: return
+        val liveQuote = latestPrices[symbol] ?: return
+        if (levelDirection != oppositeDirection || levelCloseEpoch > nowEpoch ||
+            nowEpoch - levelCloseEpoch > 900L ||
+            !isLivePriceWithinLevelExtension(symbol, oppositeDirection, liveQuote)) return
+        if ((recoveryMssEpoch[symbol] ?: Long.MAX_VALUE) + 900L > levelCloseEpoch ||
+            (recoveryChochEpoch[symbol] ?: Long.MAX_VALUE) + 900L > levelCloseEpoch) return
+
         // The second contract may run only until the first contract's scheduled expiry.
         val remainingSeconds = winningOriginal.expiryEpoch - nowEpoch
         if (remainingSeconds <= 0L) return
@@ -2250,8 +2375,8 @@ indexStatusViews[symbol]?.apply {
         val secondStake = roundStake(winningOriginal.stake + winningOriginal.profit)
         if (secondStake <= 0.0 || availableBalance + 0.000001 < secondStake) return
 
-        val mssCloseEpoch = recoveryMssEpoch[symbol]?.plus(3600L) ?: 0L
-        val chochCloseEpoch = recoveryChochEpoch[symbol]?.plus(3600L) ?: 0L
+        val mssCloseEpoch = recoveryMssEpoch[symbol]?.plus(900L) ?: 0L
+        val chochCloseEpoch = recoveryChochEpoch[symbol]?.plus(900L) ?: 0L
         val submitted = openPosition(
             symbol, oppositeDirection, "SECOND", secondStake,
             winningOriginal.originalId, remainingSeconds,
@@ -2261,8 +2386,8 @@ indexStatusViews[symbol]?.apply {
             entryChochCloseEpoch = chochCloseEpoch,
             entryMssPrice = recoveryMssPrice[symbol] ?: 0.0,
             entryChochPrice = recoveryChochPrice[symbol] ?: 0.0,
-            entryLastCandleClosePrice = recoverySignalClosePrice[symbol] ?: 0.0,
-            entryLastCandleCloseEpoch = maxOf(mssCloseEpoch, chochCloseEpoch)
+            entryLastCandleClosePrice = levelClosePrice,
+            entryLastCandleCloseEpoch = maxOf(mssCloseEpoch, chochCloseEpoch, levelCloseEpoch)
         )
         if (!submitted) return
         winningOriginal.secondExecutionTriggered = true
@@ -2297,15 +2422,18 @@ indexStatusViews[symbol]?.apply {
         recoveryChoch.clear()
         recoveryMssEpoch.clear()
         recoveryChochEpoch.clear()
+        levelBreakDirection.clear()
+        levelBreakCloseEpoch.clear()
+        levelBreakClosePrice.clear()
         originalTriggered.clear()
 
         tradingDayKey = tradePrefs.getString("day_key", "").orEmpty()
         dailyCapital = tradePrefs.getFloat("daily_capital", 0f).toDouble()
         indexes.forEach { symbol ->
-            tradePrefs.getString("signal_mss_$symbol", null)?.let { recoveryMss[symbol] = it }
-            tradePrefs.getString("signal_choch_$symbol", null)?.let { recoveryChoch[symbol] = it }
-            val mssEpoch = tradePrefs.getLong("signal_mss_epoch_$symbol", 0L)
-            val chochEpoch = tradePrefs.getLong("signal_choch_epoch_$symbol", 0L)
+            tradePrefs.getString("signal_mss_m15_$symbol", null)?.let { recoveryMss[symbol] = it }
+            tradePrefs.getString("signal_choch_m15_$symbol", null)?.let { recoveryChoch[symbol] = it }
+            val mssEpoch = tradePrefs.getLong("signal_mss_m15_epoch_$symbol", 0L)
+            val chochEpoch = tradePrefs.getLong("signal_choch_m15_epoch_$symbol", 0L)
             if (mssEpoch > 0L) recoveryMssEpoch[symbol] = mssEpoch
             if (chochEpoch > 0L) recoveryChochEpoch[symbol] = chochEpoch
         }
@@ -3735,7 +3863,7 @@ indexStatusViews[symbol]?.apply {
         )
         if (autoTradingEnabled && accountConnected) {
             indexes.forEach { symbol ->
-                candlesByIndex[symbol]?.let { evaluateRecoverySignals(symbol, it) }
+                m15CandlesByIndex[symbol]?.let { evaluateRecoverySignals(symbol, it) }
                 latestPrices[symbol]?.let { evaluateOriginalEntries(symbol, it) }
             }
         }
