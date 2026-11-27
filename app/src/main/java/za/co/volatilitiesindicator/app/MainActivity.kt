@@ -841,7 +841,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         val today = utcDayKey(System.currentTimeMillis() / 1000L)
         if (tradingDayKey != today) {
             tradingDayKey = today
-            dailyCapital =7 balance
+            dailyCapital = balance
             originalTriggered.clear()
             tradePrefs.edit().putString("day_key", today).putFloat("daily_capital", balance.toFloat()).apply()
         } else if (dailyCapital <= 0.0) {
@@ -3805,8 +3805,7 @@ content.addView(space(8))
         body.addView(actionButton("EDIT USER PROFILE", true) { showEditUserDialog(user) })
         body.addView(space(8))
         body.addView(actionButton("CHANGE ACCOUNT TYPE", false) {
-            
-val currentRole = user.optString("role", "user").lowercase(Locale.US)
+            val currentRole = user.optString("role", "user").lowercase(Locale.US)
             val nextRole = if (currentRole == "investor") "user" else "investor"
             AlertDialog.Builder(this)
                 .setTitle("Change account type?")
@@ -3819,6 +3818,7 @@ val currentRole = user.optString("role", "user").lowercase(Locale.US)
                     }
                 }.show()
         })
+        body.addView(space(8))
 
         body.addView(space(8))
         when (user.optString("status", "pending").lowercase(Locale.US)) {
@@ -4172,4 +4172,3 @@ val currentRole = user.optString("role", "user").lowercase(Locale.US)
         android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show()
     }
 }
-                     }
