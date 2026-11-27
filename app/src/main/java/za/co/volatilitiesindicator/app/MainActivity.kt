@@ -3838,8 +3838,6 @@ if (currentRole != "admin") {
 }
 
         body.addView(space(8))
-
-        body.addView(space(8))
         when (user.optString("status", "pending").lowercase(Locale.US)) {
             "pending" -> body.addView(actionButton("APPROVE USER", true) { adminUserAction("admin_approve_user", userId) })
             "suspended" -> body.addView(actionButton("REACTIVATE USER", true) { adminUserAction("admin_reactivate_user", userId) })
