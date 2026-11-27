@@ -3776,6 +3776,37 @@ content.addView(space(8))
     }
 
     
+        
+    private fun showAdminUserProfile(user: JSONObject) {
+        val userId = user.optString("id")
+        val body = accountSubPage(
+            "USER PROFILE",
+            "Administrator controls for this registered user."
+        )
+
+        addProfileField(body, "FULL NAME", user.optString("full_name"))
+        addProfileField(body, "EMAIL", user.optString("email"))
+        addProfileField(body, "PHONE", user.optString("phone"))
+        addProfileField(body, "ACCOUNT TYPE", user.optString("role", "user").uppercase(Locale.US))
+        addProfileField(body, "STATUS", user.optString("status", "pending").uppercase(Locale.US))
+        addProfileField(body, "INVESTMENT PAYMENT", user.optString("investment_payment_status", "PENDING").uppercase(Locale.US))
+        addProfileField(body, "SUBSCRIPTION", user.optString("subscription_status", "PENDING").uppercase(Locale.US))
+        addProfileField(body, "SUBSCRIPTION EXPIRY", user.optString("subscription_expiry_date", "Not available"))
+        addProfileField(body, "INVESTOR PLAN", when (user.optString("investor_plan", "")) {
+            "A" -> "PLAN A"
+            "B" -> "PLAN B"
+            "U" -> "UNLIMITED INVESTOR"
+            else -> "Not selected"
+        })
+
+        body.addView(space(8))
+
+        body.addView(actionButton("EDIT USER PROFILE", true) {
+            showEditUserDialog(user)
+        })
+
+        body.addView(space(8))
+
         body.addView(actionButton("CHANGE ACCOUNT TYPE", false) {
             val currentRole = user.optString("role", "user").lowercase(Locale.US)
             val currentPlan = user.optString("investor_plan", "").uppercase(Locale.US)
@@ -3801,29 +3832,23 @@ content.addView(space(8))
                 }
                 .setNegativeButton("CANCEL", null)
                 .setPositiveButton("CONTINUE") { _, _ ->
-
                     val nextType = when (chosenType) {
                         2 -> "unlimited_investor"
                         1 -> "investor"
                         else -> "user"
                     }
 
-                    val displayType = accountTypes[chosenType]
-
                     AlertDialog.Builder(this)
                         .setTitle("CONFIRM ACCOUNT TYPE")
                         .setMessage(
-                            "Change ${user.optString("full_name")} to $displayType? " +
-                            "The existing login and account history will be retained."
+                            "Change ${user.optString("full_name")} to ${accountTypes[chosenType]}? " +
+                                "The existing login and account history will be retained."
                         )
                         .setNegativeButton("CANCEL", null)
-                        .setPositiveButton("CONFIRM") { _, _ ->
+                        .setPositiveButton("CHANGE") { _, _ ->
                             platformRequest(
                                 "admin_change_role",
-                                mapOf(
-                                    "user_id" to userId,
-                                    "role" to nextType
-                                )
+                                mapOf("user_id" to userId, "role" to nextType)
                             ) {
                                 toast(it.optString("message", "Account type updated."))
                                 openAdminDashboard()
@@ -3833,8 +3858,49 @@ content.addView(space(8))
                 }
                 .show()
         })
-        
+
         body.addView(space(8))
+
+        when (user.optString("status", "pending").lowercase(Locale.US)) {
+            "pending" -> body.addView(actionButton("APPROVE USER", true) {
+                adminUserAction("admin_approve_user", userId)
+            })
+
+            "suspended" -> body.addView(actionButton("REACTIVATE USER", true) {
+                adminUserAction("admin_reactivate_user", userId)
+            })
+
+            else -> body.addView(actionButton("SUSPEND USER", false) {
+                AlertDialog.Builder(this)
+                    .setTitle("Suspend user?")
+                    .setMessage("This user will no longer be able to sign in.")
+                    .setNegativeButton("CANCEL", null)
+                    .setPositiveButton("SUSPEND") { _, _ ->
+                        adminUserAction("admin_suspend_user", userId)
+                    }
+                    .show()
+            })
+        }
+
+        body.addView(space(8))
+
+        body.addView(actionButton("DELETE USER", false) {
+            AlertDialog.Builder(this)
+                .setTitle("Delete user?")
+                .setMessage("This permanently deletes this user account. This action cannot be undone.")
+                .setNegativeButton("CANCEL", null)
+                .setPositiveButton("DELETE") { _, _ ->
+                    adminUserAction("admin_delete_user", userId)
+                }
+                .show()
+        })
+
+        body.addView(space(8))
+        body.addView(actionButton("BACK TO ACCOUNTS", false) {
+            openAdminDashboard()
+        })
+    }
+    
 
         body.addView(space(8))
         when (user.optString("status", "pending").lowercase(Locale.US)) {
