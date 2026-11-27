@@ -3805,19 +3805,38 @@ content.addView(space(8))
         body.addView(actionButton("EDIT USER PROFILE", true) { showEditUserDialog(user) })
         body.addView(space(8))
         body.addView(actionButton("CHANGE ACCOUNT TYPE", false) {
-            val currentRole = user.optString("role", "user").lowercase(Locale.US)
-            val nextRole = if (currentRole == "investor") "user" else "investor"
-            AlertDialog.Builder(this)
-                .setTitle("Change account type?")
-                .setMessage("Change ${user.optString("full_name")} from ${currentRole.uppercase(Locale.US)} to ${nextRole.uppercase(Locale.US)}? The existing login and account history will be retained.")
-                .setNegativeButton("CANCEL", null)
-                .setPositiveButton("CHANGE") { _, _ ->
-                    platformRequest("admin_change_role", mapOf("user_id" to userId, "role" to nextRole)) {
-                        toast(it.optString("message", "Account type updated."))
-                        openAdminDashboard()
+            
+val currentRole = user.optString("role", "user").lowercase(Locale.US)
+if (currentRole != "admin") {
+    body.addView(actionButton("CHANGE ACCOUNT TYPE", false) {
+        val roleOptions = if (currentRole == "investor") {
+            arrayOf("USER", "ADMIN")
+        } else {
+            arrayOf("INVESTOR", "ADMIN")
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Select account type")
+            .setItems(roleOptions) { _, selectedIndex ->
+                val nextRole = roleOptions[selectedIndex].lowercase(Locale.US)
+
+                AlertDialog.Builder(this)
+                    .setTitle("Confirm account type change")
+                    .setMessage("Change ${user.optString("full_name")} from ${currentRole.uppercase(Locale.US)} to ${nextRole.uppercase(Locale.US)}? The account owner will need to sign in again.")
+                    .setNegativeButton("CANCEL", null)
+                    .setPositiveButton("CHANGE") { _, _ ->
+                        platformRequest("admin_change_role", mapOf("user_id" to userId, "role" to nextRole)) {
+                            toast(it.optString("message", "Account type updated."))
+                            openAdminDashboard()
+                        }
                     }
-                }.show()
-        })
+                    .show()
+            }
+            .setNegativeButton("CANCEL", null)
+            .show()
+    })
+}
+
         body.addView(space(8))
 
         body.addView(space(8))
