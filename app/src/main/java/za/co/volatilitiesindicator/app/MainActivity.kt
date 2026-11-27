@@ -1507,7 +1507,7 @@ indexStatusViews[symbol]?.apply {
                 val partner = unmatched.removeAt(partnerIndex)
                 val pairOpened = listOf(first.openedAtEpoch, partner.openedAtEpoch)
                     .filter { it > 0L }.minOrNull()
-                    ?: (first.expiryEpoch - 7L * 24L * 60L * 60L).coerceAtLeast(0L)
+                    ?: (first.expiryEpoch - 5L * 24L * 60L * 60L).coerceAtLeast(0L)
                 val pairId = "RESTORED|$symbol|${first.expiryEpoch}|$pairOpened"
                 val historicalDirection = originalSignalAt(symbol, pairOpened)
                 listOf(first, partner).forEach { leg ->
@@ -1826,11 +1826,11 @@ indexStatusViews[symbol]?.apply {
         }
         if (indexAlreadyActive) return
 
-        val stake = roundStake(dailyCapital * 0.15)
+        val stake = roundStake(dailyCapital * 0.20)
         if (stake <= 0.0 || availableBalance + 0.000001 < stake) {
             if (insufficientFundsNotified.add(tradeKey)) {
                 addNotification("Trade", "${displayIndexName(symbol)} trade not executed",
-                    "Available balance ${formatMoney(availableBalance)} is below the single-trade stake ${formatMoney(stake)} (15% of daily starting capital).")
+                    "Available balance ${formatMoney(availableBalance)} is below the single-trade stake ${formatMoney(stake)} (20% of daily starting capital).")
             }
             return
         }
@@ -1859,7 +1859,7 @@ indexStatusViews[symbol]?.apply {
         originalTriggered.add(tradeKey)
         tradePrefs.edit().putStringSet("triggered_$today", originalTriggered.toSet()).apply()
         addNotification("Trade", "${displayIndexName(symbol)} ${mss} trade submitted",
-            "One ${mss} contract proposal was sent to Deriv. Stake: ${formatMoney(stake)} (15% of fixed daily starting capital). Waiting for Deriv acceptance.")
+            "One ${mss} contract proposal was sent to Deriv. Stake: ${formatMoney(stake)} (20% of fixed daily starting capital). Waiting for Deriv acceptance.")
     }
     private fun roundStake(value: Double): Double =
         BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP).toDouble()
@@ -1931,7 +1931,7 @@ indexStatusViews[symbol]?.apply {
 
         val req = nextRequestId()
         pendingRequests[req] = localId
-        // Original pair contracts use seven days. A linked SECOND execution
+        // Original pair contracts use five days. A linked SECOND execution
         // uses the exact remaining duration of its still-running original leg.
         val proposal = JSONObject()
             .put("proposal", 1)
@@ -1956,7 +1956,7 @@ indexStatusViews[symbol]?.apply {
         } else {
             val contractType = if (direction == "RISE") "CALL" else "PUT"
             proposal.put("contract_type", contractType)
-                .put("duration", 7)
+                .put("duration", 5)
                 .put("duration_unit", "d")
         }
         if (role == "SECOND") {
@@ -2949,7 +2949,7 @@ indexStatusViews[symbol]?.apply {
         summary.addView(text("DAILY STARTING CAPITAL", 12f, gold, true))
         summary.addView(text(String.format(Locale.US, "%.2f %s", dailyCapital, accountCurrency), 18f, blue, true))
         summary.addView(text("ACCOUNT MODE: $executionMode", 12f, if (executionMode == "REAL") blue else red, true))
-        summary.addView(text("ORIGINAL TRADE STAKE: 15% OF FIXED DAILY STARTING CAPITAL", 12f, gold))
+        summary.addView(text("ORIGINAL TRADE STAKE: 20% OF FIXED DAILY STARTING CAPITAL", 12f, gold))
         content.addView(summary)
         content.addView(space(16))
 
