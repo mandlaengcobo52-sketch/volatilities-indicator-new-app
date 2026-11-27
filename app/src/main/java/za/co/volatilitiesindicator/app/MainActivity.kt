@@ -941,7 +941,7 @@ indexStatusViews[symbol]?.apply {
                 setTextColor(red)
             }
             marketStatusViews[symbol]?.text = message
-            addNotification("Home", "Market data error · ${displayIndexName(symbol)}", message)
+            // Market-data errors remain visible on the index card; do not send notifications.
             updateConnectionLabels("Market data error: $symbol")
         }
     }
