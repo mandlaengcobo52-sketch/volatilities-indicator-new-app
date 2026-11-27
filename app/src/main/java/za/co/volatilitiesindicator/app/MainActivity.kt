@@ -78,6 +78,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     private val indexes = listOf("R_10", "R_25", "R_50", "R_75", "R_100")
     private val latestPrices = mutableMapOf<String, Double>()
+    // Prevent an older tick from a parallel WebSocket subscription overwriting
+    // a newer quote for the same index.
+    private val latestTickEpochs = mutableMapOf<String, Long>()
     private val priceViews = mutableMapOf<String, TextView>()
     private val indexStatusViews = mutableMapOf<String, TextView>()
     private val marketStatusViews = mutableMapOf<String, TextView>()
@@ -193,7 +196,13 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     private val positions = linkedMapOf<String, Position>()
     private val pendingRequests = mutableMapOf<Int, String>()
-    private val dailyLevels = mutableMapOf<String, Pair<Double, Double>>() // high, low
+    private val dailyLevels = mutableMapOf<String, Pair<Double, Double>>() // previous completed-day high, low (H1 source)
+    private val m15CandlesByIndex = mutableMapOf<String, List<DerivApiClient.Candle>>()
+    // A direction is populated only by a completed M15 candle that touched/crossed
+    // the relevant previous-day level, closed beyond it, and stayed within the 20% extension limit.
+    private val levelBreakDirection = mutableMapOf<String, String>()
+    private val levelBreakCloseEpoch = mutableMapOf<String, Long>()
+    private val levelBreakClosePrice = mutableMapOf<String, Double>()
     private val originalSweepStatus = mutableMapOf<String, String>()
     private val candlesByIndex = mutableMapOf<String, List<DerivApiClient.Candle>>()
     private val originalTriggered = mutableSetOf<String>()
@@ -814,7 +823,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         derivService?.client?.requestOpenTrades()
         // Re-check already-qualified MSS/CHOCH against any waiting closed original
         // immediately after the execution account reconnects.
-        candlesByIndex.forEach { (symbol, candles) -> evaluateRecoverySignals(symbol, candles) }
+        m15CandlesByIndex.forEach { (symbol, candles) -> evaluateRecoverySignals(symbol, candles) }
         runOnUiThread {
             if (platformUserRole == "investor") selectedTab = "Trade"
             accountIdView?.text = accountLabel
@@ -846,21 +855,35 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     override fun onTick(symbol: String, quote: Double, epoch: Long) {
         if (symbol !in indexes || !quote.isFinite()) return
-        latestPrices[symbol] = quote
+
+        // The authenticated and public market-data sockets can both deliver
+        // ticks. Ignore an older/duplicate timestamp so a delayed callback
+        // cannot replace a newer quote already received for this index.
+        synchronized(latestTickEpochs) {
+            val previousEpoch = latestTickEpochs[symbol] ?: Long.MIN_VALUE
+            if (epoch > 0L && epoch <= previousEpoch) return
+            if (epoch > 0L) latestTickEpochs[symbol] = epoch
+            latestPrices[symbol] = quote
+        }
+
         marketFeedConnected = true
         if (accountConnected) evaluateOriginalEntries(symbol, quote)
         runOnUiThread {
-            feedPillView?.apply {
-    text = "LIVE"
-    setTextColor(Color.BLACK)
-    background = rounded(green, green, 20)
-}
+            // This was missing: the TextView was only populated during render(),
+            // so the stored live quote did not refresh on incoming ticks.
+            priceViews[symbol]?.text = formatPrice(quote)
 
-indexStatusViews[symbol]?.apply {
-    text = "LIVE"
-    setTextColor(Color.BLACK)
-    background = rounded(green, green, 20)
-}
+            feedPillView?.apply {
+                text = "LIVE"
+                setTextColor(Color.BLACK)
+                background = rounded(green, green, 20)
+            }
+
+            indexStatusViews[symbol]?.apply {
+                text = "LIVE"
+                setTextColor(Color.BLACK)
+                background = rounded(green, green, 20)
+            }
             updateMasterDecisionViews(symbol)
         }
     }
@@ -872,7 +895,6 @@ indexStatusViews[symbol]?.apply {
             candlesByIndex[symbol] = candles.sortedBy { it.epoch }
             calculatePreviousDailyLevels(symbol, candles)
             reconcileRestoredOriginalPairs(symbol)
-            evaluateRecoverySignals(symbol, candles)
             val lastClose = candles.last().close
             if (!latestPrices.containsKey(symbol)) latestPrices[symbol] = lastClose
             runOnUiThread {
@@ -891,6 +913,24 @@ indexStatusViews[symbol]?.apply {
                 updateRecoveryStatusView(symbol)
             }
             if (selectedTab == "Home") runOnUiThread { updateMasterDecisionViews(symbol); updateRecoveryStatusView(symbol) }
+        }
+    }
+
+    override fun onM15Candles(symbol: String, candles: List<DerivApiClient.Candle>) {
+        if (symbol !in indexes || candles.isEmpty()) return
+        val ordered = candles.sortedBy { it.epoch }
+        m15CandlesByIndex[symbol] = ordered
+
+        // Update the completed-candle level gate first so neither original nor
+        // linked SECOND execution can reuse a previous candle's level signal.
+        updatePreviousDayLevelBreakQualification(symbol, ordered)
+        // MSS and CHOCH are now calculated exclusively from M15 candles.
+        evaluateRecoverySignals(symbol, ordered)
+        latestPrices[symbol]?.let { evaluateOriginalEntries(symbol, it) }
+
+        runOnUiThread {
+            updateRecoveryStatusView(symbol)
+            updateMasterDecisionViews(symbol)
         }
     }
 
@@ -1043,7 +1083,7 @@ indexStatusViews[symbol]?.apply {
                     updateAccountProfitLossViews()
                 }
                 if (closingPosition.recoveryEligible && !closingPosition.recoveryUsed) {
-                    candlesByIndex[closingPosition.symbol]?.let { evaluateRecoverySignals(closingPosition.symbol, it) }
+                    m15CandlesByIndex[closingPosition.symbol]?.let { evaluateRecoverySignals(closingPosition.symbol, it) }
                 }
             }
             "proposal_open_contract" -> handleOpenContract(json.optJSONObject("proposal_open_contract") ?: return)
@@ -1364,15 +1404,31 @@ indexStatusViews[symbol]?.apply {
             .setTitle("ALL NOTIFICATIONS ($unread UNREAD)")
             .setView(panel)
             .setNeutralButton("MARK ALL READ") { _, _ ->
-                appNotifications.forEach {
-                    it.read = true
-                    cancelAndroidNotification(it)
-                }
-                saveNotifications()
-                updateNotificationBadge()
+    appNotifications.forEach {
+        it.read = true
+        cancelAndroidNotification(it)
+    }
+    saveNotifications()
+    updateNotificationBadge()
+}
+.setPositiveButton("CLEAR ALL") { _, _ ->
+    AlertDialog.Builder(this)
+        .setTitle("CLEAR ALL NOTIFICATIONS")
+        .setMessage("Are you sure you want to delete all saved notifications?")
+        .setNegativeButton("CANCEL", null)
+        .setPositiveButton("CLEAR") { _, _ ->
+            appNotifications.toList().forEach {
+                cancelAndroidNotification(it)
             }
-            .setNegativeButton("CLOSE", null)
-            .show()
+
+            appNotifications.clear()
+            saveNotifications()
+            updateNotificationBadge()
+        }
+        .show()
+}
+.setNegativeButton("CLOSE", null)
+.show()
     }
 
     private fun cancelAndroidNotification(item: AppNotification) {
@@ -1405,10 +1461,10 @@ indexStatusViews[symbol]?.apply {
         val mss = recoveryMss[symbol]
         val choch = recoveryChoch[symbol]
         return when {
-            mss.isNullOrBlank() && choch.isNullOrBlank() -> "Waiting for confirmed MSS and CHOCH on a completed candle."
+            mss.isNullOrBlank() && choch.isNullOrBlank() -> "Waiting for confirmed M15 MSS + CHOCH and a previous-day HIGH/LOW touch or cross."
             !mss.isNullOrBlank() && choch.isNullOrBlank() -> "MSS confirmed ${mss.lowercase(Locale.US)}. Waiting for CHOCH."
             mss.isNullOrBlank() && !choch.isNullOrBlank() -> "CHOCH confirmed ${choch.lowercase(Locale.US)}. Waiting for MSS."
-            mss == choch -> "MSS and CHOCH confirmed ${mss!!.lowercase(Locale.US)}. One directional trade can execute."
+            mss == choch -> "M15 MSS + CHOCH confirmed ${mss!!.lowercase(Locale.US)}. Waiting for previous-day HIGH/LOW confirmation."
             else -> "MSS and CHOCH disagree. Waiting for matching direction."
         }
     }
@@ -1640,6 +1696,84 @@ indexStatusViews[symbol]?.apply {
         }
     }
 
+    /**
+     * Qualifies a completed M15 candle against the previous completed day's
+     * HIGH/LOW. The candle must touch/cross the relevant level and close beyond
+     * it in the same direction. Extension beyond the level is capped at 20%
+     * of the distance from that level to the midpoint of the previous-day range.
+     */
+    private fun updatePreviousDayLevelBreakQualification(
+        symbol: String,
+        candles: List<DerivApiClient.Candle>
+    ) {
+        val levels = dailyLevels[symbol]
+        if (levels == null || candles.size < 2) {
+            levelBreakDirection.remove(symbol)
+            levelBreakCloseEpoch.remove(symbol)
+            levelBreakClosePrice.remove(symbol)
+            return
+        }
+
+        // The final candle is still forming; only the preceding candle can qualify.
+        val ordered = candles.sortedBy { it.epoch }
+        val completed = ordered.dropLast(1).lastOrNull()
+        if (completed == null) return
+
+        val previousHigh = levels.first
+        val previousLow = levels.second
+        if (!previousHigh.isFinite() || !previousLow.isFinite() || previousHigh <= previousLow) return
+
+        val midpoint = (previousHigh + previousLow) / 2.0
+        val maxRiseExtension = (previousHigh - midpoint) * 0.20
+        val maxFallExtension = (midpoint - previousLow) * 0.20
+
+        val direction = when {
+            // Upper level: price reached/crossed the previous-day HIGH and the
+            // completed M15 candle closed above it, but not beyond the 20% limit.
+            completed.high >= previousHigh &&
+                completed.close > previousHigh &&
+                (completed.close - previousHigh) <= maxRiseExtension -> "RISE"
+
+            // Lower level: price reached/crossed the previous-day LOW and the
+            // completed M15 candle closed below it, but not beyond the 20% limit.
+            completed.low <= previousLow &&
+                completed.close < previousLow &&
+                (previousLow - completed.close) <= maxFallExtension -> "FALL"
+
+            else -> ""
+        }
+
+        if (direction.isBlank()) {
+            levelBreakDirection.remove(symbol)
+            levelBreakCloseEpoch.remove(symbol)
+            levelBreakClosePrice.remove(symbol)
+        } else {
+            levelBreakDirection[symbol] = direction
+            levelBreakCloseEpoch[symbol] = completed.epoch + 900L
+            levelBreakClosePrice[symbol] = completed.close
+        }
+    }
+
+    private fun isLivePriceWithinLevelExtension(
+        symbol: String,
+        direction: String,
+        quote: Double
+    ): Boolean {
+        val levels = dailyLevels[symbol] ?: return false
+        if (!quote.isFinite()) return false
+        val previousHigh = levels.first
+        val previousLow = levels.second
+        if (!previousHigh.isFinite() || !previousLow.isFinite() || previousHigh <= previousLow) return false
+        val midpoint = (previousHigh + previousLow) / 2.0
+        return when (direction) {
+            "RISE" -> quote >= previousHigh &&
+                (quote - previousHigh) <= (previousHigh - midpoint) * 0.20
+            "FALL" -> quote <= previousLow &&
+                (previousLow - quote) <= (midpoint - previousLow) * 0.20
+            else -> false
+        }
+    }
+
     // A RISE/FALL pair and its linked SECOND execution share one lifecycle.
     private fun tradeGroupId(position: Position): String {
         if (position.role == "SECOND" || position.role == "RECOVERY") {
@@ -1672,6 +1806,20 @@ indexStatusViews[symbol]?.apply {
         val choch = recoveryChoch[symbol]
         if (mss.isNullOrBlank() || mss != choch) return
 
+        // Extra execution layer: a completed M15 candle must touch/cross the
+        // previous-day HIGH/LOW, close beyond that level, and remain within the
+        // 20% extension allowance toward the previous-day range midpoint.
+        val levelDirection = levelBreakDirection[symbol] ?: return
+        val levelCloseEpoch = levelBreakCloseEpoch[symbol] ?: return
+        val levelClosePrice = levelBreakClosePrice[symbol] ?: return
+        val nowEpoch = System.currentTimeMillis() / 1000L
+        if (levelDirection != mss || levelCloseEpoch > nowEpoch ||
+            nowEpoch - levelCloseEpoch > 900L ||
+            !isLivePriceWithinLevelExtension(symbol, mss, quote)) return
+        val mssEpoch = recoveryMssEpoch[symbol] ?: return
+        val chochEpoch = recoveryChochEpoch[symbol] ?: return
+        if (mssEpoch + 900L > levelCloseEpoch || chochEpoch + 900L > levelCloseEpoch) return
+
         val indexAlreadyActive = positions.values.any {
             it.symbol == symbol && it.status != "CLOSED" &&
                 !it.status.startsWith("ERROR") && it.status !in setOf("BUY FAILED", "PROPOSAL FAILED")
@@ -1688,9 +1836,9 @@ indexStatusViews[symbol]?.apply {
         }
 
         val originalId = "ORIGINAL-${today}-${symbol}-${UUID.randomUUID()}"
-        val mssCloseEpoch = recoveryMssEpoch[symbol]?.plus(3600L) ?: 0L
-        val chochCloseEpoch = recoveryChochEpoch[symbol]?.plus(3600L) ?: 0L
-        val lastConfirmingCloseEpoch = maxOf(mssCloseEpoch, chochCloseEpoch)
+        val mssCloseEpoch = recoveryMssEpoch[symbol]?.plus(900L) ?: 0L
+        val chochCloseEpoch = recoveryChochEpoch[symbol]?.plus(900L) ?: 0L
+        val lastConfirmingCloseEpoch = maxOf(mssCloseEpoch, chochCloseEpoch, levelCloseEpoch)
         val submitted = openPosition(
             symbol, mss, "ORIGINAL", stake, originalId,
             entryMssDirection = mss,
@@ -1699,7 +1847,7 @@ indexStatusViews[symbol]?.apply {
             entryChochCloseEpoch = chochCloseEpoch,
             entryMssPrice = recoveryMssPrice[symbol] ?: 0.0,
             entryChochPrice = recoveryChochPrice[symbol] ?: 0.0,
-            entryLastCandleClosePrice = recoverySignalClosePrice[symbol] ?: 0.0,
+            entryLastCandleClosePrice = levelClosePrice,
             entryLastCandleCloseEpoch = lastConfirmingCloseEpoch
         )
         if (!submitted) {
@@ -1966,19 +2114,20 @@ indexStatusViews[symbol]?.apply {
         }
 
         if (position.recoveryEligible && !position.recoveryUsed) {
-            candlesByIndex[position.symbol]?.let { evaluateRecoverySignals(position.symbol, it) }
+            m15CandlesByIndex[position.symbol]?.let { evaluateRecoverySignals(position.symbol, it) }
         }
     }
 
     /**
-     * Returns the agreed stepped protected-profit percentage for a contract.
-     * +35 peak -> +25 protected; +45 -> +35; +55 -> +45, etc.
+     * Contract-specific stepped protection:
+     * +10% peak protects 0%; +20% protects +10%; +30% protects +20%, etc.
+     * Every percentage is measured against this contract's own stake.
      */
     private fun trailingProtectionPercent(peakPercent: Double): Double {
-        if (!peakPercent.isFinite() || peakPercent < 35.0) return 0.0
-        val completedSteps = kotlin.math.floor((peakPercent - 35.0) / 10.0)
+        if (!peakPercent.isFinite() || peakPercent < 10.0) return 0.0
+        val completedSteps = kotlin.math.floor((peakPercent - 10.0) / 10.0)
             .toInt().coerceAtLeast(0)
-        return 25.0 + completedSteps * 10.0
+        return completedSteps * 10.0
     }
 
     /** Display values are calculated from this individual contract's own stake. */
@@ -1987,7 +2136,7 @@ indexStatusViews[symbol]?.apply {
             (position.profit / position.stake) * 100.0 else 0.0
         val currentText = String.format(Locale.US, "%+.2f%%", currentPercent)
         if (!position.trailingActivated) {
-            return "TRAILING STOP: WAITING · ACTIVATES AT +35.00% · CURRENT P/L: $currentText"
+            return "TRAILING STOP: WAITING · ACTIVATES AT +10.00% · CURRENT P/L: $currentText"
         }
         val peakText = String.format(Locale.US, "%+.2f%%", position.trailingPeakPercent)
         val protectedPercent = trailingProtectionPercent(position.trailingPeakPercent)
@@ -2000,9 +2149,8 @@ indexStatusViews[symbol]?.apply {
      * Position matched by the incoming Deriv contract_id, so another index or
      * another contract cannot change this contract's trailing state.
      * P/L percentage = live Deriv P/L / this contract's confirmed buy_price.
-     * Activate at +35%, initially protect +25%, then advance protection in
-     * discrete 10-percentage-point steps as the contract's peak reaches each
-     * next +10 milestone. No continuous peak-minus-10 calculation is used.
+     * Activate at +10%, initially protect 0%, then advance protection by
+     * +10 percentage points at each further +10 peak milestone.
      */
     private fun evaluateContractTrailingStop(position: Position) {
         if (position.status != "OPEN" || position.contractId <= 0L ||
@@ -2015,14 +2163,14 @@ indexStatusViews[symbol]?.apply {
 
         if (!position.trailingActivated) {
             // Negative and sub-threshold values are monitored but never trigger a sale.
-            if (currentPercent < 35.0) return
+            if (currentPercent < 10.0) return
             position.trailingActivated = true
             position.trailingPeakPercent = currentPercent
-            position.trailingStopPercent = 25.0
+            position.trailingStopPercent = trailingProtectionPercent(currentPercent)
             addNotification(
                 "Trade",
                 "${displayIndexName(position.symbol)} trailing stop activated",
-                "${position.role} ${position.direction} contract reached +35.00% of its own current stake. Initial protected-profit level: +25.00% (${formatMoney(position.stake * 0.25)})."
+                "${position.role} ${position.direction} contract reached +10.00% of its own current stake. Initial protected-profit level: 0.00% (breakeven at the original stake)."
             )
         }
 
@@ -2032,8 +2180,7 @@ indexStatusViews[symbol]?.apply {
         }
 
         // Stepped protection agreed for this strategy:
-        // +35 peak protects +25; each completed additional +10 peak milestone
-        // advances protection by +10. Do not use a continuous peak-minus-10 formula.
+        // +10 peak protects 0; +20 protects +10; +30 protects +20, etc.
         position.trailingStopPercent = trailingProtectionPercent(position.trailingPeakPercent)
 
         // A rejected sale remains blocked while P/L is at/below the protected
@@ -2063,7 +2210,7 @@ indexStatusViews[symbol]?.apply {
             // and can realize a loss even after the trailing threshold was reached.
             val minimumSalePrice = position.stake *
                 (1.0 + position.trailingStopPercent / 100.0)
-            if (!minimumSalePrice.isFinite() || minimumSalePrice <= position.stake) {
+            if (!minimumSalePrice.isFinite() || minimumSalePrice < position.stake) {
                 pendingRequests.remove(req)
                 position.trailingClosePending = false
                 position.status = "OPEN"
@@ -2167,10 +2314,10 @@ indexStatusViews[symbol]?.apply {
             recoveryMssPrice[symbol] = if (mssDirection == "RISE") lastHigh else lastLow
             recoverySignalClosePrice[symbol] = last.close
             recoveryMssEpoch[symbol] = last.epoch
-            tradePrefs.edit().putLong("signal_mss_epoch_$symbol", last.epoch).apply()
+            tradePrefs.edit().putLong("signal_mss_m15_epoch_$symbol", last.epoch).apply()
             if (recoveryMss[symbol] != mssDirection) {
                 recoveryMss[symbol] = mssDirection
-                tradePrefs.edit().putString("signal_mss_$symbol", mssDirection).apply()
+                tradePrefs.edit().putString("signal_mss_m15_$symbol", mssDirection).apply()
                 addNotification("Home", "${displayIndexName(symbol)} MSS qualified", "MSS qualified in the ${mssDirection.lowercase(Locale.US)} direction on a completed candle.")
             }
         }
@@ -2185,10 +2332,10 @@ indexStatusViews[symbol]?.apply {
             recoveryChochPrice[symbol] = if (chochDirection == "RISE") lastHigh else lastLow
             recoverySignalClosePrice[symbol] = last.close
             recoveryChochEpoch[symbol] = last.epoch
-            tradePrefs.edit().putLong("signal_choch_epoch_$symbol", last.epoch).apply()
+            tradePrefs.edit().putLong("signal_choch_m15_epoch_$symbol", last.epoch).apply()
             if (recoveryChoch[symbol] != chochDirection) {
                 recoveryChoch[symbol] = chochDirection
-                tradePrefs.edit().putString("signal_choch_$symbol", chochDirection).apply()
+                tradePrefs.edit().putString("signal_choch_m15_$symbol", chochDirection).apply()
                 addNotification("Home", "${displayIndexName(symbol)} CHOCH qualified", "CHOCH qualified in the ${chochDirection.lowercase(Locale.US)} direction on a completed candle.")
             }
         }
@@ -2225,6 +2372,17 @@ indexStatusViews[symbol]?.apply {
         if ((recoveryMssEpoch[symbol] ?: 0L) <= winningOriginal.closedAt ||
             (recoveryChochEpoch[symbol] ?: 0L) <= winningOriginal.closedAt) return
 
+        // Linked SECOND executions must pass the same previous-day level gate.
+        val levelDirection = levelBreakDirection[symbol] ?: return
+        val levelCloseEpoch = levelBreakCloseEpoch[symbol] ?: return
+        val levelClosePrice = levelBreakClosePrice[symbol] ?: return
+        val liveQuote = latestPrices[symbol] ?: return
+        if (levelDirection != oppositeDirection || levelCloseEpoch > nowEpoch ||
+            nowEpoch - levelCloseEpoch > 900L ||
+            !isLivePriceWithinLevelExtension(symbol, oppositeDirection, liveQuote)) return
+        if ((recoveryMssEpoch[symbol] ?: Long.MAX_VALUE) + 900L > levelCloseEpoch ||
+            (recoveryChochEpoch[symbol] ?: Long.MAX_VALUE) + 900L > levelCloseEpoch) return
+
         // The second contract may run only until the first contract's scheduled expiry.
         val remainingSeconds = winningOriginal.expiryEpoch - nowEpoch
         if (remainingSeconds <= 0L) return
@@ -2233,8 +2391,8 @@ indexStatusViews[symbol]?.apply {
         val secondStake = roundStake(winningOriginal.stake + winningOriginal.profit)
         if (secondStake <= 0.0 || availableBalance + 0.000001 < secondStake) return
 
-        val mssCloseEpoch = recoveryMssEpoch[symbol]?.plus(3600L) ?: 0L
-        val chochCloseEpoch = recoveryChochEpoch[symbol]?.plus(3600L) ?: 0L
+        val mssCloseEpoch = recoveryMssEpoch[symbol]?.plus(900L) ?: 0L
+        val chochCloseEpoch = recoveryChochEpoch[symbol]?.plus(900L) ?: 0L
         val submitted = openPosition(
             symbol, oppositeDirection, "SECOND", secondStake,
             winningOriginal.originalId, remainingSeconds,
@@ -2244,8 +2402,8 @@ indexStatusViews[symbol]?.apply {
             entryChochCloseEpoch = chochCloseEpoch,
             entryMssPrice = recoveryMssPrice[symbol] ?: 0.0,
             entryChochPrice = recoveryChochPrice[symbol] ?: 0.0,
-            entryLastCandleClosePrice = recoverySignalClosePrice[symbol] ?: 0.0,
-            entryLastCandleCloseEpoch = maxOf(mssCloseEpoch, chochCloseEpoch)
+            entryLastCandleClosePrice = levelClosePrice,
+            entryLastCandleCloseEpoch = maxOf(mssCloseEpoch, chochCloseEpoch, levelCloseEpoch)
         )
         if (!submitted) return
         winningOriginal.secondExecutionTriggered = true
@@ -2280,15 +2438,18 @@ indexStatusViews[symbol]?.apply {
         recoveryChoch.clear()
         recoveryMssEpoch.clear()
         recoveryChochEpoch.clear()
+        levelBreakDirection.clear()
+        levelBreakCloseEpoch.clear()
+        levelBreakClosePrice.clear()
         originalTriggered.clear()
 
         tradingDayKey = tradePrefs.getString("day_key", "").orEmpty()
         dailyCapital = tradePrefs.getFloat("daily_capital", 0f).toDouble()
         indexes.forEach { symbol ->
-            tradePrefs.getString("signal_mss_$symbol", null)?.let { recoveryMss[symbol] = it }
-            tradePrefs.getString("signal_choch_$symbol", null)?.let { recoveryChoch[symbol] = it }
-            val mssEpoch = tradePrefs.getLong("signal_mss_epoch_$symbol", 0L)
-            val chochEpoch = tradePrefs.getLong("signal_choch_epoch_$symbol", 0L)
+            tradePrefs.getString("signal_mss_m15_$symbol", null)?.let { recoveryMss[symbol] = it }
+            tradePrefs.getString("signal_choch_m15_$symbol", null)?.let { recoveryChoch[symbol] = it }
+            val mssEpoch = tradePrefs.getLong("signal_mss_m15_epoch_$symbol", 0L)
+            val chochEpoch = tradePrefs.getLong("signal_choch_m15_epoch_$symbol", 0L)
             if (mssEpoch > 0L) recoveryMssEpoch[symbol] = mssEpoch
             if (chochEpoch > 0L) recoveryChochEpoch[symbol] = chochEpoch
         }
@@ -2793,46 +2954,36 @@ indexStatusViews[symbol]?.apply {
             // independently inside that card.
             activePositions.groupBy { it.symbol }.forEach { (symbol, indexPositions) ->
                 val c = card(indexNameColor(symbol))
-                val header = text(
-                    "${displayIndexName(symbol)} · RUNNING POSITIONS   ＋",
-                    14f, indexNameColor(symbol), true
-                )
-                c.addView(header)
+                c.addView(text("${displayIndexName(symbol)} · RUNNING POSITIONS", 14f,
+                    indexNameColor(symbol), true))
                 c.addView(space(8))
-
-                // Always-visible compact window: remaining time, P/L and trailing stop.
-                val summaryWindow = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                }
-                c.addView(summaryWindow)
-
-                // Full trade information is hidden until this index card is expanded.
-                val detailsContainer = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    visibility = View.GONE
-                }
-                c.addView(detailsContainer)
-
-                header.setOnClickListener {
-                    val expanded = detailsContainer.visibility == View.VISIBLE
-                    detailsContainer.visibility = if (expanded) View.GONE else View.VISIBLE
-                    header.text = "${displayIndexName(symbol)} · RUNNING POSITIONS   ${if (expanded) "＋" else "−"}"
-                }
+                c.addView(text("TRADE LIFECYCLE", 12f, gold, true))
+                val recoveryTradeView = text(recoveryStatusText(symbol), 12f, blue, true)
+                tradeRecoveryStatusViews[symbol] = recoveryTradeView
+                c.addView(recoveryTradeView)
+                c.addView(space(8))
+                c.addView(divider())
+                c.addView(space(8))
 
                 indexPositions.forEachIndexed { index, p ->
                     if (index > 0) {
-                        summaryWindow.addView(space(8))
-                        summaryWindow.addView(divider())
-                        summaryWindow.addView(space(8))
-                        detailsContainer.addView(space(8))
-                        detailsContainer.addView(divider())
-                        detailsContainer.addView(space(8))
+                        c.addView(space(8))
+                        c.addView(divider())
+                        c.addView(space(8))
                     }
 
-                    summaryWindow.addView(text(
-                        "${p.role} · ${p.direction}", 12f,
-                        if (p.direction == "RISE") green else red, true
-                    ))
+                    c.addView(text("${p.role} · ${p.direction}", 14f,
+                        if (p.direction == "RISE") green else red, true))
+                    c.addView(text("Contract: ${if (p.contractId > 0L) p.contractId.toString() else "Pending"}",
+                        12f, Color.WHITE))
+                    c.addView(text("Stake: ${formatMoney(p.stake)}", 13f, gold))
+                    c.addView(space(5))
+                    c.addView(text(entrySignalAuditText(p), 11.5f, Color.WHITE, true))
+
+                    val statusView = text("Status: ${p.status}", 13f,
+                        if (p.status == "OPEN") green else amber, true)
+                    tradeStatusViews[p.localId] = statusView
+                    c.addView(statusView)
 
                     if (p.status == "OPEN") {
                         val countdownView = text(
@@ -2840,47 +2991,23 @@ indexStatusViews[symbol]?.apply {
                             13f, blue, true
                         )
                         tradeCountdownViews[p.localId] = countdownView
-                        summaryWindow.addView(countdownView)
+                        c.addView(countdownView)
                     }
 
-                    val profitView = text(
-                        "Profit / Loss: ${formatMoney(p.profit)}", 14f,
-                        if (p.profit >= 0.0) green else red, true
-                    )
+                    val profitView = text("Profit / Loss: ${formatMoney(p.profit)}", 14f,
+                        if (p.profit >= 0.0) green else red, true)
                     tradeProfitViews[p.localId] = profitView
-                    summaryWindow.addView(profitView)
+                    c.addView(profitView)
 
-                    val trailingView = text(
-                        trailingStopDisplayText(p), 12f,
-                        if (p.trailingActivated) green else blue, true
-                    )
+                    val trailingView = text(trailingStopDisplayText(p), 12f,
+                        if (p.trailingActivated) green else blue, true)
                     tradeTrailingViews[p.localId] = trailingView
-                    summaryWindow.addView(trailingView)
-
-                    detailsContainer.addView(text("TRADE LIFECYCLE", 12f, gold, true))
-                    val recoveryTradeView = text(recoveryStatusText(symbol), 12f, blue, true)
-                    tradeRecoveryStatusViews[symbol] = recoveryTradeView
-                    detailsContainer.addView(recoveryTradeView)
-                    detailsContainer.addView(space(6))
-                    detailsContainer.addView(text(
-                        "Contract: ${if (p.contractId > 0L) p.contractId.toString() else "Pending"}",
-                        12f, Color.WHITE
-                    ))
-                    detailsContainer.addView(text("Stake: ${formatMoney(p.stake)}", 13f, gold))
-                    detailsContainer.addView(space(5))
-                    detailsContainer.addView(text(entrySignalAuditText(p), 11.5f, Color.WHITE, true))
-
-                    val statusView = text("Status: ${p.status}", 13f,
-                        if (p.status == "OPEN") green else amber, true)
-                    tradeStatusViews[p.localId] = statusView
-                    detailsContainer.addView(statusView)
+                    c.addView(trailingView)
 
                     if (p.contractId > 0L && p.status == "OPEN") {
-                        detailsContainer.addView(space(6))
-                        detailsContainer.addView(actionButton(
-                            "CLOSE THIS ${p.direction} TRADE", primary = false
-                        ) {
-                            AlertDialog.Builder(this@MainActivity)
+                        c.addView(space(6))
+                        c.addView(actionButton("CLOSE THIS ${p.direction} TRADE", primary = false) {
+                            AlertDialog.Builder(this)
                                 .setTitle("CONFIRM TRADE CLOSURE")
                                 .setMessage("Are you sure you want to close this ${p.direction} contract on ${displayIndexName(p.symbol)}?")
                                 .setNegativeButton("CANCEL", null)
@@ -2899,8 +3026,27 @@ indexStatusViews[symbol]?.apply {
         content.addView(divider())
         content.addView(space(14))
         content.addView(text("TRADE HISTORY", 17f, Color.WHITE, true))
-        content.addView(text("Completed original and second-execution contracts.", 12f, whiteText))
-        content.addView(space(8))
+content.addView(text("Completed original and second-execution contracts.", 12f, whiteText))
+content.addView(space(8))
+
+content.addView(actionButton("CLEAR TRADING HISTORY", primary = false) {
+    AlertDialog.Builder(this)
+        .setTitle("CLEAR TRADING HISTORY")
+        .setMessage("Are you sure you want to delete all completed trades? Running trades will not be affected.")
+        .setNegativeButton("CANCEL", null)
+        .setPositiveButton("CLEAR") { _, _ ->
+            val completedIds = positions.values
+                .filter { it.status == "CLOSED" }
+                .map { it.localId }
+
+            completedIds.forEach { positions.remove(it) }
+
+            savePositions()
+            render()
+        }
+        .show()
+})
+content.addView(space(8))
         if (closedPositions.isEmpty()) {
             content.addView(text("No completed trades yet.", 12f, muted))
         } else {
@@ -3037,229 +3183,99 @@ indexStatusViews[symbol]?.apply {
             showPlatformAuthScreen(false, "Please sign in to continue.")
             return
         }
---- a/MainActivity.kt
-+++ b/MainActivity.kt
-@@ -2931,6 +2931,7 @@
-         pageHeading("RUNNING TRADES", "Original pair and linked second execution.")
-         content.addView(autoTradingButton())
-         content.addView(space(10))
-+
-         val summary = card()
-         summary.addView(text("DAILY STARTING CAPITAL", 12f, gold, true))
-         summary.addView(text(String.format(Locale.US, "%.2f %s", dailyCapital, accountCurrency), 18f, blue, true))
-@@ -2939,7 +2940,20 @@
-         content.addView(summary)
-         content.addView(space(16))
- 
--        
-+        val activePositions = positions.values.filter { it.status != "CLOSED" }
-+        val closedPositions = positions.values.filter { it.status == "CLOSED" }.sortedByDescending { it.closedAt }
-+
-+        content.addView(text("RUNNING TRADES", 17f, gold, true))
-+        content.addView(space(8))
-+        if (activePositions.isEmpty()) {
-+            val empty = card()
-+            empty.addView(text("NO RUNNING TRADES", 15f, ink, true))
-+            empty.addView(text("No trade is currently open.", 13f, muted))
-+            content.addView(empty)
-+        } else {
-+            // One independently collapsible card per index.
-+            activePositions.groupBy { it.symbol }.forEach { (symbol, indexPositions) ->
-+                val c = card(indexNameColor(symbol))
-                 val headerView = text(
-                     "${displayIndexName(symbol)} · RUNNING POSITIONS   ＋",
-                     14f, indexNameColor(symbol), true
-@@ -2947,18 +2961,13 @@
-                 c.addView(headerView)
-                 c.addView(space(8))
- 
--                // Compact summary window: always visible when the card is collapsed.
-+                // Only these contract values remain visible while collapsed.
-                 val summaryWindow = LinearLayout(this).apply {
-                     orientation = LinearLayout.VERTICAL
--                    setPadding(dp(10), dp(10), dp(10), dp(10))
--                    background = rounded(
--                        if (darkInterface) Color.rgb(8, 28, 32) else Color.rgb(240, 247, 250),
--                        indexNameColor(symbol), 10
--                    )
-                 }
-                 c.addView(summaryWindow)
- 
--                // Full trade details: hidden until the card is expanded.
-+                // Full contract information is shown only when expanded.
-                 val detailsContainer = LinearLayout(this).apply {
-                     orientation = LinearLayout.VERTICAL
-                     visibility = View.GONE
-@@ -2966,11 +2975,16 @@
-                 c.addView(detailsContainer)
- 
-                 headerView.setOnClickListener {
--                    val expanded = detailsContainer.visibility == View.VISIBLE
--                    detailsContainer.visibility = if (expanded) View.GONE else View.VISIBLE
--                    headerView.text =
--                        "${displayIndexName(symbol)} · RUNNING POSITIONS   ${if (expanded) "＋" else "−"}"
-+                    val isExpanded = detailsContainer.visibility == View.VISIBLE
-+                    detailsContainer.visibility = if (isExpanded) View.GONE else View.VISIBLE
-+                    headerView.text = "${displayIndexName(symbol)} · RUNNING POSITIONS   ${if (isExpanded) "＋" else "−"}"
-                 }
-+
-+                val recoveryTradeView = text(recoveryStatusText(symbol), 12f, blue, true)
-+                tradeRecoveryStatusViews[symbol] = recoveryTradeView
-+                detailsContainer.addView(text("TRADE LIFECYCLE", 12f, gold, true))
-+                detailsContainer.addView(recoveryTradeView)
-+                detailsContainer.addView(space(8))
- 
-                 indexPositions.forEachIndexed { index, p ->
-                     if (index > 0) {
-@@ -2982,15 +2996,9 @@
-                         detailsContainer.addView(space(8))
-                     }
- 
--                    // COMPACT SUMMARY — remains visible while collapsed.
--                    summaryWindow.addView(text(
--                        "${p.role} · ${p.direction}",
--                        12f, if (p.direction == "RISE") green else red, true
--                    ))
--
-                     if (p.status == "OPEN") {
-                         val countdownView = text(
--                            "REMAINING TIME: ${formatContractCountdown(p.expiryEpoch)}",
-+                            "TIME REMAINING: ${formatContractCountdown(p.expiryEpoch)}",
-                             13f, blue, true
-                         )
-                         tradeCountdownViews[p.localId] = countdownView
-@@ -2998,41 +3006,31 @@
-                     }
- 
-                     val profitView = text(
--                        "PROFIT / LOSS: ${formatMoney(p.profit)}",
--                        14f, if (p.profit >= 0.0) green else red, true
-+                        "Profit / Loss: ${formatMoney(p.profit)}", 14f,
-+                        if (p.profit >= 0.0) green else red, true
-                     )
-                     tradeProfitViews[p.localId] = profitView
-                     summaryWindow.addView(profitView)
- 
-                     val trailingView = text(
--                        trailingStopDisplayText(p),
--                        12f, if (p.trailingActivated) green else blue, true
-+                        trailingStopDisplayText(p), 12f,
-+                        if (p.trailingActivated) green else blue, true
-                     )
-                     tradeTrailingViews[p.localId] = trailingView
-                     summaryWindow.addView(trailingView)
- 
--                    // EXPANDED DETAILS.
--                    detailsContainer.addView(space(8))
--                    detailsContainer.addView(text("TRADE LIFECYCLE", 12f, gold, true))
--
--                    val recoveryTradeView = text(
--                        recoveryStatusText(symbol), 12f, blue, true
--                    )
--                    tradeRecoveryStatusViews[symbol] = recoveryTradeView
--                    detailsContainer.addView(recoveryTradeView)
--
--                    detailsContainer.addView(space(6))
-+                    // Expanded details retain the existing trade information and actions.
-+                    detailsContainer.addView(text(
-+                        "${p.role} · ${p.direction}", 14f,
-+                        if (p.direction == "RISE") green else red, true
-+                    ))
-                     detailsContainer.addView(text(
-                         "Contract: ${if (p.contractId > 0L) p.contractId.toString() else "Pending"}",
-                         12f, Color.WHITE
-                     ))
--                    detailsContainer.addView(text(
--                        "Stake: ${formatMoney(p.stake)}", 13f, gold
--                    ))
-+                    detailsContainer.addView(text("Stake: ${formatMoney(p.stake)}", 13f, gold))
-                     detailsContainer.addView(space(5))
--                    detailsContainer.addView(text(
--                        entrySignalAuditText(p), 11.5f, Color.WHITE, true
--                    ))
-+                    detailsContainer.addView(text(entrySignalAuditText(p), 11.5f, Color.WHITE, true))
- 
-                     val statusView = text(
-                         "Status: ${p.status}", 13f,
-@@ -3043,33 +3041,8 @@
- 
-                     if (p.contractId > 0L && p.status == "OPEN") {
-                         detailsContainer.addView(space(6))
--                        detailsContainer.addView(
--                            actionButton("CLOSE THIS ${p.direction} TRADE", primary = false) {
--                                AlertDialog.Builder(this)
--                                    .setTitle("CONFIRM TRADE CLOSURE")
--                                    .setMessage(
--                                        "Are you sure you want to close this ${p.direction} contract on ${displayIndexName(p.symbol)}?"
--                                    )
--                                    .setNegativeButton("CANCEL", null)
--                                    .setPositiveButton("CONFIRM CLOSE") { _, _ ->
--                                        closeRunningPosition(p)
--                                    }
--                                    .show()
--                            }
--                        )
--                    }
--                }
--                
--
--                    val trailingView = text(trailingStopDisplayText(p), 12f,
--                        if (p.trailingActivated) green else blue, true)
--                    tradeTrailingViews[p.localId] = trailingView
--                    c.addView(trailingView)
--
--                    if (p.contractId > 0L && p.status == "OPEN") {
--                        c.addView(space(6))
--                        c.addView(actionButton("CLOSE THIS ${p.direction} TRADE", primary = false) {
--                            AlertDialog.Builder(this)
-+                        detailsContainer.addView(actionButton("CLOSE THIS ${p.direction} TRADE", primary = false) {
-+                            AlertDialog.Builder(this@MainActivity)
-                                 .setTitle("CONFIRM TRADE CLOSURE")
-                                 .setMessage("Are you sure you want to close this ${p.direction} contract on ${displayIndexName(p.symbol)}?")
-                                 .setNegativeButton("CANCEL", null)
-@@ -3088,27 +3061,8 @@
-         content.addView(divider())
-         content.addView(space(14))
-         content.addView(text("TRADE HISTORY", 17f, Color.WHITE, true))
--content.addView(text("Completed original and second-execution contracts.", 12f, whiteText))
--content.addView(space(8))
--
--content.addView(actionButton("CLEAR TRADING HISTORY", primary = false) {
--    AlertDialog.Builder(this)
--        .setTitle("CLEAR TRADING HISTORY")
--        .setMessage("Are you sure you want to delete all completed trades? Running trades will not be affected.")
--        .setNegativeButton("CANCEL", null)
--        .setPositiveButton("CLEAR") { _, _ ->
--            val completedIds = positions.values
--                .filter { it.status == "CLOSED" }
--                .map { it.localId }
--
--            completedIds.forEach { positions.remove(it) }
--
--            savePositions()
--            render()
--        }
--        .show()
--})
--content.addView(space(8))
-+        content.addView(text("Completed original and second-execution contracts.", 12f, whiteText))
-+        content.addView(space(8))
-         if (closedPositions.isEmpty()) {
-             content.addView(text("No completed trades yet.", 12f, muted))
-         } else {
-@@ -3126,7 +3080,10 @@
-                 content.addView(space(8))
-             }
-         }
--        tradeStatusView = text(if (accountConnected) "EXECUTION CONNECTED" else "CONNECT A DERIV ACCOUNT TO ENABLE EXECUTION", 12f, if (accountConnected) green else amber, true)
-+        tradeStatusView = text(
-+            if (accountConnected) "EXECUTION CONNECTED" else "CONNECT A DERIV ACCOUNT TO ENABLE EXECUTION",
-+            12f, if (accountConnected) green else amber, true
-+        )
-         content.addView(tradeStatusView)
-     }
+        val form = FormBody.Builder().add("action", action)
+        values.forEach { (key, value) -> form.add(key, value) }
+        val request = Request.Builder().url(platformAuthUrl)
+            .header("Authorization", "Bearer $platformAuthToken")
+            .post(form.build()).build()
+        httpClient.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                runOnUiThread { toast("Unable to contact the account server. Check your connection.") }
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val raw = response.body?.string().orEmpty()
+                val result = try { JSONObject(raw) } catch (_: Exception) { JSONObject() }
+                response.close()
+                runOnUiThread {
+                    if (!result.optBoolean("ok")) {
+                        val message = result.optString("message", "The account request could not be completed.")
+                        toast(message)
+                        if (response.code == 401) signOutPlatform()
+                    } else onResult(result)
+                }
+            }
+        })
+    }
 
- 
+    private fun accountSubPage(title: String, subtitle: String): LinearLayout {
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(pageColor) }
+        val heading = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(16), dp(18), dp(12)) }
+        heading.addView(text(title, 21f, gold, true))
+        heading.addView(text(subtitle, 13f, Color.WHITE))
+        val scroll = ScrollView(this).apply { isFillViewport = true }
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(12), dp(18), dp(20)) }
+        scroll.addView(body)
+        root.addView(heading)
+        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(actionButton("BACK TO ACCOUNTS", false) { selectedTab = "Accounts"; render() },
+            LinearLayout.LayoutParams(-1, dp(52)).apply { setMargins(dp(18), dp(8), dp(18), dp(12)) })
+        setContentView(root)
+        return body
+    }
+
+    private fun addProfileField(target: LinearLayout, label: String, value: String) {
+        val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(9), 0, dp(9)) }
+        row.addView(text(label.uppercase(Locale.US), 11f, green, true))
+        row.addView(text(value.ifBlank { "Not provided" }, 15f, ink))
+        target.addView(row)
+        target.addView(divider())
+    }
+
+    private fun openUserProfile() {
+        if (!platformAuthenticated) {
+            showPlatformAuthScreen(false, "Sign in to view your user profile.")
+            return
+        }
+        platformRequest("profile") { result ->
+            platformUser = result.optJSONObject("user") ?: platformUser
+            platformUserName = platformUser.optString("full_name", platformUserName)
+            platformUserRole = platformUser.optString("role", platformUserRole).lowercase(Locale.US)
+            if (platformUserRole == "investor") showInvestorDerivScreen() else showUserProfile(platformUser)
+        }
+    }
+
+    private fun showUserProfile(user: JSONObject) {
+        val body = accountSubPage("USER PROFILE", "Your personal Volatilities Indicator account.")
+        val panel = card()
+        panel.addView(text(user.optString("full_name", platformUserName), 18f, green, true))
+        panel.addView(space(8))
+        addProfileField(panel, "Account role", user.optString("role", "user").uppercase(Locale.US))
+        addProfileField(panel, "Account status", user.optString("status", "unknown").uppercase(Locale.US))
+        addProfileField(panel, "Email address", user.optString("email"))
+        addProfileField(panel, "Contact number", user.optString("phone"))
+        addProfileField(panel, "Registration date", user.optString("created_at"))
+        addProfileField(panel, "Subscription", "R500 · ${if (user.optString("subscription_status") == "approved" && user.optString("subscription_expiry_date") < java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US).format(java.util.Date())) "EXPIRED" else user.optString("subscription_status", "pending").uppercase(Locale.US)}")
+        addProfileField(panel, "Subscription inception", user.optString("subscription_inception_date", "Not approved"))
+        addProfileField(panel, "Subscription expiry", user.optString("subscription_expiry_date", "Not approved"))
+        addProfileField(panel, "Proof of payment", if (user.optString("payment_proof_name").isNotBlank()) "Uploaded: ${user.optString("payment_proof_name")}" else "Not uploaded")
+        body.addView(panel)
+        body.addView(space(12))
+        body.addView(actionButton("UPLOAD SUBSCRIPTION PROOF OF PAYMENT", true) { openPaymentProofPicker("subscription") })
+        body.addView(space(8))
+        body.addView(actionButton("UPLOAD INVESTMENT PROOF OF PAYMENT", false) { openPaymentProofPicker("investment") })
+        body.addView(space(8))
+        body.addView(actionButton("VIEW INVESTMENT PLANS", true) { loadInvestmentPlans(false) })
+        body.addView(space(8))
+        body.addView(actionButton("MY INVESTMENT PROFILE", false) { loadMyInvestments() })
+        body.addView(space(8))
+        body.addView(actionButton("SIGN OUT", false) { signOutPlatform() })
+    }
+
+    private fun showInvestorProfile() {
+        if (!platformAuthenticated) {
+            showPlatformAuthScreen(false, "Sign in to view your investor profile.")
+            return
+        }
         platformRequest("profile") { result ->
             val user = result.optJSONObject("user") ?: platformUser
             platformUser = user
@@ -3882,7 +3898,7 @@ indexStatusViews[symbol]?.apply {
         )
         if (autoTradingEnabled && accountConnected) {
             indexes.forEach { symbol ->
-                candlesByIndex[symbol]?.let { evaluateRecoverySignals(symbol, it) }
+                m15CandlesByIndex[symbol]?.let { evaluateRecoverySignals(symbol, it) }
                 latestPrices[symbol]?.let { evaluateOriginalEntries(symbol, it) }
             }
         }
