@@ -1873,18 +1873,19 @@ indexStatusViews[symbol]?.apply {
         entryLastCandleClosePrice: Double = 0.0,
         entryLastCandleCloseEpoch: Long = 0L
     ): Boolean {
-        if (platformAuthenticated && platformUserRole == "investor") {
+                if (platformAuthenticated && platformUserRole == "investor") {
             val today = java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US).format(java.util.Date())
             val subscriptionActive = platformUser.optString("subscription_status") == "approved" &&
                 platformUser.optString("subscription_expiry_date") >= today
+            val selectedPlan = platformUser.optString("investor_plan")
             val planActive = platformUser.optString("investor_plan_status") == "approved" &&
-                platformUser.optString("investor_plan_expiry_date") >= today
+                (selectedPlan == "U" || platformUser.optString("investor_plan_expiry_date") >= today)
             if (!subscriptionActive || !planActive) {
-                addNotification("Account", "Investor execution blocked", "An active approved subscription and an approved, unexpired Investor plan are required before trading.")
+                addNotification("Account", "Investor execution blocked", "An active approved subscription and an approved Investor plan are required before trading.")
                 runOnUiThread { toast("Trading requires an approved active subscription and Investor plan.") }
                 return false
             }
-        }
+                }
         val roundedStake = roundStake(stake)
         if (!accountConnected || !roundedStake.isFinite() || roundedStake <= 0.0) return false
         val localId = UUID.randomUUID().toString()
@@ -3322,10 +3323,15 @@ content.addView(space(8))
             addProfileField(panel, "Subscription", "R500 · ${user.optString("subscription_status", "pending").uppercase(Locale.US)}")
             addProfileField(panel, "Subscription inception", user.optString("subscription_inception_date", "Not approved"))
             addProfileField(panel, "Subscription expiry", user.optString("subscription_expiry_date", "Not approved"))
-            addProfileField(panel, "Selected trading plan", when(user.optString("investor_plan")) { "A" -> "Plan A · 50% target · 15 days"; "B" -> "Plan B · 100% target · 30 days"; else -> "Not selected" })
+                        addProfileField(panel, "Selected trading plan", when(user.optString("investor_plan")) {
+                "A" -> "Plan A · 50% target · 15 days"
+                "B" -> "Plan B · 100% target · 30 days"
+                "U" -> "UNLIMITED INVESTOR · No plan expiry or capital-growth ceiling"
+                else -> "Not selected"
+            })
             addProfileField(panel, "Plan approval", user.optString("investor_plan_status", "not_selected").replace('_',' ').uppercase(Locale.US))
             val planStartDate = user.optString("investor_plan_start_date").takeUnless { it.isBlank() || it == "null" } ?: "Not approved"
-            val planExpiryDate = user.optString("investor_plan_expiry_date").takeUnless { it.isBlank() || it == "null" } ?: "Not approved"
+                        val planExpiryDate = if (user.optString("investor_plan") == "U" && user.optString("investor_plan_status") == "approved") "NO EXPIRY" else user.optString("investor_plan_expiry_date").takeUnless { it.isBlank() || it == "null" } ?: "Not approved"
             addProfileField(panel, "Investor plan start date", planStartDate)
             addProfileField(panel, "Investor plan expiry date", planExpiryDate)
             body.addView(panel)
@@ -3340,22 +3346,34 @@ content.addView(space(8))
         }
     }
 
-    private fun showInvestorPlanSelection() {
+        private fun showInvestorPlanSelection() {
         val current = platformUser.optString("investor_plan")
-        val options = arrayOf("Plan A — 50% in 15 days", "Plan B — 100% in 30 days")
-        val selected = if (current == "B") 1 else 0
+        val options = arrayOf(
+            "Plan A — 50% in 15 days",
+            "Plan B — 100% in 30 days",
+            "UNLIMITED INVESTOR — No plan expiry or capital-growth ceiling"
+        )
+        val selected = when (current) {
+            "B" -> 1
+            "U" -> 2
+            else -> 0
+        }
         AlertDialog.Builder(this).setTitle("Choose Investor Trading Plan")
             .setSingleChoiceItems(options, selected, null)
             .setNegativeButton("CANCEL", null)
             .setPositiveButton("SUBMIT SELECTION") { dialog, _ ->
                 val index = (dialog as AlertDialog).listView.checkedItemPosition
-                val plan = if (index == 1) "B" else "A"
+                val plan = when (index) {
+                    1 -> "B"
+                    2 -> "U"
+                    else -> "A"
+                }
                 platformRequest("investor_select_plan", mapOf("plan" to plan)) {
-                    toast(it.optString("message", "Plan selection submitted."))
+                    toast(it.optString("message", "Investor plan selection submitted."))
                     showInvestorProfile()
                 }
             }.show()
-    }
+        }
 
     private var selectedProofType: String = "subscription"
 
