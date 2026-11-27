@@ -1404,15 +1404,31 @@ indexStatusViews[symbol]?.apply {
             .setTitle("ALL NOTIFICATIONS ($unread UNREAD)")
             .setView(panel)
             .setNeutralButton("MARK ALL READ") { _, _ ->
-                appNotifications.forEach {
-                    it.read = true
-                    cancelAndroidNotification(it)
-                }
-                saveNotifications()
-                updateNotificationBadge()
+    appNotifications.forEach {
+        it.read = true
+        cancelAndroidNotification(it)
+    }
+    saveNotifications()
+    updateNotificationBadge()
+}
+.setPositiveButton("CLEAR ALL") { _, _ ->
+    AlertDialog.Builder(this)
+        .setTitle("CLEAR ALL NOTIFICATIONS")
+        .setMessage("Are you sure you want to delete all saved notifications?")
+        .setNegativeButton("CANCEL", null)
+        .setPositiveButton("CLEAR") { _, _ ->
+            appNotifications.toList().forEach {
+                cancelAndroidNotification(it)
             }
-            .setNegativeButton("CLOSE", null)
-            .show()
+
+            appNotifications.clear()
+            saveNotifications()
+            updateNotificationBadge()
+        }
+        .show()
+}
+.setNegativeButton("CLOSE", null)
+.show()
     }
 
     private fun cancelAndroidNotification(item: AppNotification) {
@@ -3010,8 +3026,27 @@ indexStatusViews[symbol]?.apply {
         content.addView(divider())
         content.addView(space(14))
         content.addView(text("TRADE HISTORY", 17f, Color.WHITE, true))
-        content.addView(text("Completed original and second-execution contracts.", 12f, whiteText))
-        content.addView(space(8))
+content.addView(text("Completed original and second-execution contracts.", 12f, whiteText))
+content.addView(space(8))
+
+content.addView(actionButton("CLEAR TRADING HISTORY", primary = false) {
+    AlertDialog.Builder(this)
+        .setTitle("CLEAR TRADING HISTORY")
+        .setMessage("Are you sure you want to delete all completed trades? Running trades will not be affected.")
+        .setNegativeButton("CANCEL", null)
+        .setPositiveButton("CLEAR") { _, _ ->
+            val completedIds = positions.values
+                .filter { it.status == "CLOSED" }
+                .map { it.localId }
+
+            completedIds.forEach { positions.remove(it) }
+
+            savePositions()
+            render()
+        }
+        .show()
+})
+content.addView(space(8))
         if (closedPositions.isEmpty()) {
             content.addView(text("No completed trades yet.", 12f, muted))
         } else {
