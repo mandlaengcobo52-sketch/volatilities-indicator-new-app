@@ -3037,99 +3037,229 @@ indexStatusViews[symbol]?.apply {
             showPlatformAuthScreen(false, "Please sign in to continue.")
             return
         }
-        val form = FormBody.Builder().add("action", action)
-        values.forEach { (key, value) -> form.add(key, value) }
-        val request = Request.Builder().url(platformAuthUrl)
-            .header("Authorization", "Bearer $platformAuthToken")
-            .post(form.build()).build()
-        httpClient.newCall(request).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
-                runOnUiThread { toast("Unable to contact the account server. Check your connection.") }
-            }
-            override fun onResponse(call: Call, response: Response) {
-                val raw = response.body?.string().orEmpty()
-                val result = try { JSONObject(raw) } catch (_: Exception) { JSONObject() }
-                response.close()
-                runOnUiThread {
-                    if (!result.optBoolean("ok")) {
-                        val message = result.optString("message", "The account request could not be completed.")
-                        toast(message)
-                        if (response.code == 401) signOutPlatform()
-                    } else onResult(result)
-                }
-            }
-        })
-    }
+--- a/MainActivity.kt
++++ b/MainActivity.kt
+@@ -2931,6 +2931,7 @@
+         pageHeading("RUNNING TRADES", "Original pair and linked second execution.")
+         content.addView(autoTradingButton())
+         content.addView(space(10))
++
+         val summary = card()
+         summary.addView(text("DAILY STARTING CAPITAL", 12f, gold, true))
+         summary.addView(text(String.format(Locale.US, "%.2f %s", dailyCapital, accountCurrency), 18f, blue, true))
+@@ -2939,7 +2940,20 @@
+         content.addView(summary)
+         content.addView(space(16))
+ 
+-        
++        val activePositions = positions.values.filter { it.status != "CLOSED" }
++        val closedPositions = positions.values.filter { it.status == "CLOSED" }.sortedByDescending { it.closedAt }
++
++        content.addView(text("RUNNING TRADES", 17f, gold, true))
++        content.addView(space(8))
++        if (activePositions.isEmpty()) {
++            val empty = card()
++            empty.addView(text("NO RUNNING TRADES", 15f, ink, true))
++            empty.addView(text("No trade is currently open.", 13f, muted))
++            content.addView(empty)
++        } else {
++            // One independently collapsible card per index.
++            activePositions.groupBy { it.symbol }.forEach { (symbol, indexPositions) ->
++                val c = card(indexNameColor(symbol))
+                 val headerView = text(
+                     "${displayIndexName(symbol)} · RUNNING POSITIONS   ＋",
+                     14f, indexNameColor(symbol), true
+@@ -2947,18 +2961,13 @@
+                 c.addView(headerView)
+                 c.addView(space(8))
+ 
+-                // Compact summary window: always visible when the card is collapsed.
++                // Only these contract values remain visible while collapsed.
+                 val summaryWindow = LinearLayout(this).apply {
+                     orientation = LinearLayout.VERTICAL
+-                    setPadding(dp(10), dp(10), dp(10), dp(10))
+-                    background = rounded(
+-                        if (darkInterface) Color.rgb(8, 28, 32) else Color.rgb(240, 247, 250),
+-                        indexNameColor(symbol), 10
+-                    )
+                 }
+                 c.addView(summaryWindow)
+ 
+-                // Full trade details: hidden until the card is expanded.
++                // Full contract information is shown only when expanded.
+                 val detailsContainer = LinearLayout(this).apply {
+                     orientation = LinearLayout.VERTICAL
+                     visibility = View.GONE
+@@ -2966,11 +2975,16 @@
+                 c.addView(detailsContainer)
+ 
+                 headerView.setOnClickListener {
+-                    val expanded = detailsContainer.visibility == View.VISIBLE
+-                    detailsContainer.visibility = if (expanded) View.GONE else View.VISIBLE
+-                    headerView.text =
+-                        "${displayIndexName(symbol)} · RUNNING POSITIONS   ${if (expanded) "＋" else "−"}"
++                    val isExpanded = detailsContainer.visibility == View.VISIBLE
++                    detailsContainer.visibility = if (isExpanded) View.GONE else View.VISIBLE
++                    headerView.text = "${displayIndexName(symbol)} · RUNNING POSITIONS   ${if (isExpanded) "＋" else "−"}"
+                 }
++
++                val recoveryTradeView = text(recoveryStatusText(symbol), 12f, blue, true)
++                tradeRecoveryStatusViews[symbol] = recoveryTradeView
++                detailsContainer.addView(text("TRADE LIFECYCLE", 12f, gold, true))
++                detailsContainer.addView(recoveryTradeView)
++                detailsContainer.addView(space(8))
+ 
+                 indexPositions.forEachIndexed { index, p ->
+                     if (index > 0) {
+@@ -2982,15 +2996,9 @@
+                         detailsContainer.addView(space(8))
+                     }
+ 
+-                    // COMPACT SUMMARY — remains visible while collapsed.
+-                    summaryWindow.addView(text(
+-                        "${p.role} · ${p.direction}",
+-                        12f, if (p.direction == "RISE") green else red, true
+-                    ))
+-
+                     if (p.status == "OPEN") {
+                         val countdownView = text(
+-                            "REMAINING TIME: ${formatContractCountdown(p.expiryEpoch)}",
++                            "TIME REMAINING: ${formatContractCountdown(p.expiryEpoch)}",
+                             13f, blue, true
+                         )
+                         tradeCountdownViews[p.localId] = countdownView
+@@ -2998,41 +3006,31 @@
+                     }
+ 
+                     val profitView = text(
+-                        "PROFIT / LOSS: ${formatMoney(p.profit)}",
+-                        14f, if (p.profit >= 0.0) green else red, true
++                        "Profit / Loss: ${formatMoney(p.profit)}", 14f,
++                        if (p.profit >= 0.0) green else red, true
+                     )
+                     tradeProfitViews[p.localId] = profitView
+                     summaryWindow.addView(profitView)
+ 
+                     val trailingView = text(
+-                        trailingStopDisplayText(p),
+-                        12f, if (p.trailingActivated) green else blue, true
++                        trailingStopDisplayText(p), 12f,
++                        if (p.trailingActivated) green else blue, true
+                     )
+                     tradeTrailingViews[p.localId] = trailingView
+                     summaryWindow.addView(trailingView)
+ 
+-                    // EXPANDED DETAILS.
+-                    detailsContainer.addView(space(8))
+-                    detailsContainer.addView(text("TRADE LIFECYCLE", 12f, gold, true))
+-
+-                    val recoveryTradeView = text(
+-                        recoveryStatusText(symbol), 12f, blue, true
+-                    )
+-                    tradeRecoveryStatusViews[symbol] = recoveryTradeView
+-                    detailsContainer.addView(recoveryTradeView)
+-
+-                    detailsContainer.addView(space(6))
++                    // Expanded details retain the existing trade information and actions.
++                    detailsContainer.addView(text(
++                        "${p.role} · ${p.direction}", 14f,
++                        if (p.direction == "RISE") green else red, true
++                    ))
+                     detailsContainer.addView(text(
+                         "Contract: ${if (p.contractId > 0L) p.contractId.toString() else "Pending"}",
+                         12f, Color.WHITE
+                     ))
+-                    detailsContainer.addView(text(
+-                        "Stake: ${formatMoney(p.stake)}", 13f, gold
+-                    ))
++                    detailsContainer.addView(text("Stake: ${formatMoney(p.stake)}", 13f, gold))
+                     detailsContainer.addView(space(5))
+-                    detailsContainer.addView(text(
+-                        entrySignalAuditText(p), 11.5f, Color.WHITE, true
+-                    ))
++                    detailsContainer.addView(text(entrySignalAuditText(p), 11.5f, Color.WHITE, true))
+ 
+                     val statusView = text(
+                         "Status: ${p.status}", 13f,
+@@ -3043,33 +3041,8 @@
+ 
+                     if (p.contractId > 0L && p.status == "OPEN") {
+                         detailsContainer.addView(space(6))
+-                        detailsContainer.addView(
+-                            actionButton("CLOSE THIS ${p.direction} TRADE", primary = false) {
+-                                AlertDialog.Builder(this)
+-                                    .setTitle("CONFIRM TRADE CLOSURE")
+-                                    .setMessage(
+-                                        "Are you sure you want to close this ${p.direction} contract on ${displayIndexName(p.symbol)}?"
+-                                    )
+-                                    .setNegativeButton("CANCEL", null)
+-                                    .setPositiveButton("CONFIRM CLOSE") { _, _ ->
+-                                        closeRunningPosition(p)
+-                                    }
+-                                    .show()
+-                            }
+-                        )
+-                    }
+-                }
+-                
+-
+-                    val trailingView = text(trailingStopDisplayText(p), 12f,
+-                        if (p.trailingActivated) green else blue, true)
+-                    tradeTrailingViews[p.localId] = trailingView
+-                    c.addView(trailingView)
+-
+-                    if (p.contractId > 0L && p.status == "OPEN") {
+-                        c.addView(space(6))
+-                        c.addView(actionButton("CLOSE THIS ${p.direction} TRADE", primary = false) {
+-                            AlertDialog.Builder(this)
++                        detailsContainer.addView(actionButton("CLOSE THIS ${p.direction} TRADE", primary = false) {
++                            AlertDialog.Builder(this@MainActivity)
+                                 .setTitle("CONFIRM TRADE CLOSURE")
+                                 .setMessage("Are you sure you want to close this ${p.direction} contract on ${displayIndexName(p.symbol)}?")
+                                 .setNegativeButton("CANCEL", null)
+@@ -3088,27 +3061,8 @@
+         content.addView(divider())
+         content.addView(space(14))
+         content.addView(text("TRADE HISTORY", 17f, Color.WHITE, true))
+-content.addView(text("Completed original and second-execution contracts.", 12f, whiteText))
+-content.addView(space(8))
+-
+-content.addView(actionButton("CLEAR TRADING HISTORY", primary = false) {
+-    AlertDialog.Builder(this)
+-        .setTitle("CLEAR TRADING HISTORY")
+-        .setMessage("Are you sure you want to delete all completed trades? Running trades will not be affected.")
+-        .setNegativeButton("CANCEL", null)
+-        .setPositiveButton("CLEAR") { _, _ ->
+-            val completedIds = positions.values
+-                .filter { it.status == "CLOSED" }
+-                .map { it.localId }
+-
+-            completedIds.forEach { positions.remove(it) }
+-
+-            savePositions()
+-            render()
+-        }
+-        .show()
+-})
+-content.addView(space(8))
++        content.addView(text("Completed original and second-execution contracts.", 12f, whiteText))
++        content.addView(space(8))
+         if (closedPositions.isEmpty()) {
+             content.addView(text("No completed trades yet.", 12f, muted))
+         } else {
+@@ -3126,7 +3080,10 @@
+                 content.addView(space(8))
+             }
+         }
+-        tradeStatusView = text(if (accountConnected) "EXECUTION CONNECTED" else "CONNECT A DERIV ACCOUNT TO ENABLE EXECUTION", 12f, if (accountConnected) green else amber, true)
++        tradeStatusView = text(
++            if (accountConnected) "EXECUTION CONNECTED" else "CONNECT A DERIV ACCOUNT TO ENABLE EXECUTION",
++            12f, if (accountConnected) green else amber, true
++        )
+         content.addView(tradeStatusView)
+     }
 
-    private fun accountSubPage(title: String, subtitle: String): LinearLayout {
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(pageColor) }
-        val heading = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(16), dp(18), dp(12)) }
-        heading.addView(text(title, 21f, gold, true))
-        heading.addView(text(subtitle, 13f, Color.WHITE))
-        val scroll = ScrollView(this).apply { isFillViewport = true }
-        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(12), dp(18), dp(20)) }
-        scroll.addView(body)
-        root.addView(heading)
-        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
-        root.addView(actionButton("BACK TO ACCOUNTS", false) { selectedTab = "Accounts"; render() },
-            LinearLayout.LayoutParams(-1, dp(52)).apply { setMargins(dp(18), dp(8), dp(18), dp(12)) })
-        setContentView(root)
-        return body
-    }
-
-    private fun addProfileField(target: LinearLayout, label: String, value: String) {
-        val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(9), 0, dp(9)) }
-        row.addView(text(label.uppercase(Locale.US), 11f, green, true))
-        row.addView(text(value.ifBlank { "Not provided" }, 15f, ink))
-        target.addView(row)
-        target.addView(divider())
-    }
-
-    private fun openUserProfile() {
-        if (!platformAuthenticated) {
-            showPlatformAuthScreen(false, "Sign in to view your user profile.")
-            return
-        }
-        platformRequest("profile") { result ->
-            platformUser = result.optJSONObject("user") ?: platformUser
-            platformUserName = platformUser.optString("full_name", platformUserName)
-            platformUserRole = platformUser.optString("role", platformUserRole).lowercase(Locale.US)
-            if (platformUserRole == "investor") showInvestorDerivScreen() else showUserProfile(platformUser)
-        }
-    }
-
-    private fun showUserProfile(user: JSONObject) {
-        val body = accountSubPage("USER PROFILE", "Your personal Volatilities Indicator account.")
-        val panel = card()
-        panel.addView(text(user.optString("full_name", platformUserName), 18f, green, true))
-        panel.addView(space(8))
-        addProfileField(panel, "Account role", user.optString("role", "user").uppercase(Locale.US))
-        addProfileField(panel, "Account status", user.optString("status", "unknown").uppercase(Locale.US))
-        addProfileField(panel, "Email address", user.optString("email"))
-        addProfileField(panel, "Contact number", user.optString("phone"))
-        addProfileField(panel, "Registration date", user.optString("created_at"))
-        addProfileField(panel, "Subscription", "R500 · ${if (user.optString("subscription_status") == "approved" && user.optString("subscription_expiry_date") < java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US).format(java.util.Date())) "EXPIRED" else user.optString("subscription_status", "pending").uppercase(Locale.US)}")
-        addProfileField(panel, "Subscription inception", user.optString("subscription_inception_date", "Not approved"))
-        addProfileField(panel, "Subscription expiry", user.optString("subscription_expiry_date", "Not approved"))
-        addProfileField(panel, "Proof of payment", if (user.optString("payment_proof_name").isNotBlank()) "Uploaded: ${user.optString("payment_proof_name")}" else "Not uploaded")
-        body.addView(panel)
-        body.addView(space(12))
-        body.addView(actionButton("UPLOAD SUBSCRIPTION PROOF OF PAYMENT", true) { openPaymentProofPicker("subscription") })
-        body.addView(space(8))
-        body.addView(actionButton("UPLOAD INVESTMENT PROOF OF PAYMENT", false) { openPaymentProofPicker("investment") })
-        body.addView(space(8))
-        body.addView(actionButton("VIEW INVESTMENT PLANS", true) { loadInvestmentPlans(false) })
-        body.addView(space(8))
-        body.addView(actionButton("MY INVESTMENT PROFILE", false) { loadMyInvestments() })
-        body.addView(space(8))
-        body.addView(actionButton("SIGN OUT", false) { signOutPlatform() })
-    }
-
-    private fun showInvestorProfile() {
-        if (!platformAuthenticated) {
-            showPlatformAuthScreen(false, "Sign in to view your investor profile.")
-            return
-        }
+ 
         platformRequest("profile") { result ->
             val user = result.optJSONObject("user") ?: platformUser
             platformUser = user
