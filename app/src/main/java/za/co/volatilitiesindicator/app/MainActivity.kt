@@ -97,31 +97,40 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val recoveryChochPrice = mutableMapOf<String, Double>()
     private val recoverySignalClosePrice = mutableMapOf<String, Double>()
 
-    // Persistent strategy state: confirmed H1 Order Block touch/penetration -> closed M15 CHOCH.
+    // Eight-stage strategy state is isolated and persisted independently for each index.
     private data class OrderBlockState(
         val direction: String, val low: Double, val high: Double, val identifiedEpoch: Long,
+        var marketStructure: String = "",
         var touched: Boolean = false, var touchedEpoch: Long = 0L,
-        var zoneCloseConfirmed: Boolean = false, var zoneCloseEpoch: Long = 0L,
-        var consumed: Boolean = false
+        var m15SwingPrice: Double = 0.0, var m15SwingEpoch: Long = 0L,
+        var chochEpoch: Long = 0L, var chochPrice: Double = 0.0,
+        var entryObLow: Double = 0.0, var entryObHigh: Double = 0.0,
+        var entryObEpoch: Long = 0L, var fvgLow: Double = 0.0, var fvgHigh: Double = 0.0,
+        var fvgEpoch: Long = 0L, var entryPrice: Double = 0.0,
+        var consumed: Boolean = false, var invalidated: Boolean = false
     )
     private val orderBlocks = mutableMapOf<String, OrderBlockState>()
+    private val h1MarketStructure = mutableMapOf<String, String>()
     private val obStatus = mutableMapOf<String, String>()
-    private val obRejectionDirection = mutableMapOf<String, String>()
-    private val obRejectionEpoch = mutableMapOf<String, Long>()
-    private val obRejectionClose = mutableMapOf<String, Double>()
     private val freshChochDirection = mutableMapOf<String, String>()
     private val freshChochEpoch = mutableMapOf<String, Long>()
     private val freshChochPrice = mutableMapOf<String, Double>()
+
     private fun saveOrderBlockState(symbol: String) {
         val ob = orderBlocks[symbol]
         val e = tradePrefs.edit()
         if (ob == null) e.remove("ob_state_$symbol") else {
-            val json = JSONObject().put("direction", ob.direction).put("low", ob.low)
-                .put("high", ob.high).put("identifiedEpoch", ob.identifiedEpoch)
+            val json = JSONObject()
+                .put("direction", ob.direction).put("low", ob.low).put("high", ob.high)
+                .put("identifiedEpoch", ob.identifiedEpoch).put("marketStructure", ob.marketStructure)
                 .put("touched", ob.touched).put("touchedEpoch", ob.touchedEpoch)
-                .put("zoneCloseConfirmed", ob.zoneCloseConfirmed)
-                .put("zoneCloseEpoch", ob.zoneCloseEpoch)
-                .put("consumed", ob.consumed)
+                .put("m15SwingPrice", ob.m15SwingPrice).put("m15SwingEpoch", ob.m15SwingEpoch)
+                .put("chochEpoch", ob.chochEpoch).put("chochPrice", ob.chochPrice)
+                .put("entryObLow", ob.entryObLow).put("entryObHigh", ob.entryObHigh)
+                .put("entryObEpoch", ob.entryObEpoch).put("fvgLow", ob.fvgLow)
+                .put("fvgHigh", ob.fvgHigh).put("fvgEpoch", ob.fvgEpoch)
+                .put("entryPrice", ob.entryPrice).put("consumed", ob.consumed)
+                .put("invalidated", ob.invalidated)
             e.putString("ob_state_$symbol", json.toString())
         }
         e.putString("ob_status_$symbol", obStatus[symbol] ?: "")
@@ -132,20 +141,33 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     }
 
     private fun loadOrderBlockStates() {
-        orderBlocks.clear(); obStatus.clear()
-        obRejectionDirection.clear(); obRejectionEpoch.clear(); obRejectionClose.clear()
+        orderBlocks.clear(); h1MarketStructure.clear(); obStatus.clear()
         freshChochDirection.clear(); freshChochEpoch.clear(); freshChochPrice.clear()
         indexes.forEach { symbol ->
+            tradePrefs.getString("h1_structure_$symbol", null)?.takeIf { it.isNotBlank() }?.let {
+                h1MarketStructure[symbol] = it
+            }
             val raw = tradePrefs.getString("ob_state_$symbol", null)
             if (!raw.isNullOrBlank()) try {
                 val j = JSONObject(raw)
+                val savedStructure = j.optString("marketStructure")
+                if (savedStructure.isBlank()) {
+                    tradePrefs.edit().remove("ob_state_$symbol").apply()
+                    return@forEach
+                }
                 orderBlocks[symbol] = OrderBlockState(
-                    j.getString("direction"), j.getDouble("low"), j.getDouble("high"),
-                    j.getLong("identifiedEpoch"), j.optBoolean("touched", false),
-                    j.optLong("touchedEpoch", 0L),
-                    j.optBoolean("zoneCloseConfirmed", false),
-                    j.optLong("zoneCloseEpoch", 0L),
-                    j.optBoolean("consumed", false)
+                    direction = j.getString("direction"), low = j.getDouble("low"),
+                    high = j.getDouble("high"), identifiedEpoch = j.getLong("identifiedEpoch"),
+                    marketStructure = savedStructure,
+                    touched = j.optBoolean("touched", false), touchedEpoch = j.optLong("touchedEpoch"),
+                    m15SwingPrice = j.optDouble("m15SwingPrice"),
+                    m15SwingEpoch = j.optLong("m15SwingEpoch"),
+                    chochEpoch = j.optLong("chochEpoch"), chochPrice = j.optDouble("chochPrice"),
+                    entryObLow = j.optDouble("entryObLow"), entryObHigh = j.optDouble("entryObHigh"),
+                    entryObEpoch = j.optLong("entryObEpoch"), fvgLow = j.optDouble("fvgLow"),
+                    fvgHigh = j.optDouble("fvgHigh"), fvgEpoch = j.optLong("fvgEpoch"),
+                    entryPrice = j.optDouble("entryPrice"), consumed = j.optBoolean("consumed"),
+                    invalidated = j.optBoolean("invalidated")
                 )
             } catch (_: Exception) { tradePrefs.edit().remove("ob_state_$symbol").apply() }
             tradePrefs.getString("ob_status_$symbol", null)?.takeIf { it.isNotBlank() }?.let { obStatus[symbol] = it }
@@ -154,7 +176,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             tradePrefs.getString("choch_price_$symbol", null)?.toDoubleOrNull()?.let { freshChochPrice[symbol] = it }
         }
     }
-
 
     private data class AppNotification(
         val id: Long,
@@ -973,7 +994,7 @@ indexStatusViews[symbol]?.apply {
         val ordered = candles.sortedBy { it.epoch }
         m15CandlesByIndex[symbol] = ordered
 
-        // A closed M15 CHOCH qualifies after H1 OB touch/penetration; no H1 rejection gate.
+        // Evaluate the eight-stage H1/M15 sequence using completed M15 candles.
         evaluateFreshM15Choch(symbol, ordered)
         latestPrices[symbol]?.let { evaluateOriginalEntries(symbol, it) }
 
@@ -1504,18 +1525,18 @@ indexStatusViews[symbol]?.apply {
     private fun masterDecisionText(symbol: String): String {
         runningDirectionText(symbol)?.let { return "$it. Contract is active on Deriv." }
         val ob = orderBlocks[symbol]
-        if (ob != null && !ob.consumed) {
-            if (!ob.touched) return "${if (ob.direction == "RISE") "BULLISH" else "BEARISH"} H1 ORDER BLOCK IDENTIFIED · WAITING FOR TOUCH"
-            if (!ob.zoneCloseConfirmed) return "H1 ORDER BLOCK TOUCHED · WAITING FOR REQUIRED CLOSE BEYOND ZONE"
-            val choch = freshChochDirection[symbol]
-            val chochEpoch = freshChochEpoch[symbol] ?: 0L
-            if (choch == ob.direction && chochEpoch > ob.zoneCloseEpoch)
-                return "H1 ORDER BLOCK + M15 CHOCH CONFIRMED · EXECUTION"
-            return "H1 ORDER BLOCK CLOSE CONFIRMED · WAITING FOR M15 CHOCH"
+        if (ob == null || ob.invalidated) {
+            val structure = h1MarketStructure[symbol]
+            return if (structure.isNullOrBlank()) "WAITING FOR H1 MARKET STRUCTURE"
+            else "H1 $structure CONFIRMED · WAITING FOR H1 ORDER BLOCK + FVG"
         }
-        if (!marketFeedConnected || latestPrices[symbol] == null) return "Waiting for live market price data."
-        if (!accountConnected) return "No active H1 Order Block. Monitoring; waiting for Deriv account connection."
-        return "WAITING FOR H1 ORDER BLOCK IDENTIFICATION"
+        return when {
+            ob.consumed -> "ENTRY EXECUTED · WAITING FOR A FRESH H1 SETUP"
+            ob.entryPrice > 0.0 -> "ALL 8 STAGES CONFIRMED · WAITING FOR PRICE ${formatPrice(ob.entryPrice)}"
+            ob.chochEpoch > 0L -> "M15 CHOCH CONFIRMED · BUILDING ENTRY ORDER BLOCK / FVG"
+            ob.touched -> "H1 ORDER BLOCK TOUCHED · WAITING FOR M15 STRUCTURE"
+            else -> "H1 ${ob.marketStructure} · WAITING FOR ORDER BLOCK TOUCH"
+        }
     }
 
     private fun reconcileRestoredOriginalPairs(symbolHint: String? = null) {
@@ -1597,26 +1618,32 @@ indexStatusViews[symbol]?.apply {
     }
 
     private fun recoveryStatusText(symbol: String): String {
-        val running = positions.values.filter {
-            it.symbol == symbol &&
-                it.status !in setOf("CLOSED", "ERROR", "BUY FAILED", "PROPOSAL FAILED") &&
-                !it.status.startsWith("ERROR")
-        }
-        if (running.any { it.contractId > 0L || it.status == "OPEN" || it.status == "CLOSING" })
-            return "TRADE RUNNING · Waiting for this trade to close."
-        if (running.isNotEmpty()) return "TRADE SUBMITTED · Waiting for Deriv confirmation."
-
         val ob = orderBlocks[symbol]
-        if (ob == null) return "WAITING FOR H1 ORDER BLOCK IDENTIFICATION"
-        if (ob.consumed) return "ORDER BLOCK SIGNAL CONSUMED · WAITING FOR A NEW H1 ORDER BLOCK"
-        if (!ob.touched) return "WAITING FOR H1 ORDER BLOCK TOUCH"
-        if (!ob.zoneCloseConfirmed) return "ORDER BLOCK TOUCHED · WAITING FOR CLOSE BEYOND ZONE"
-
-        val choch = freshChochDirection[symbol]
-        val chochEpoch = freshChochEpoch[symbol] ?: 0L
-        return if (choch == ob.direction && chochEpoch > ob.zoneCloseEpoch)
-            "ORDER BLOCK CLOSE + M15 CHOCH CONFIRMED · EXECUTION"
-        else "ORDER BLOCK CLOSE CONFIRMED · WAITING FOR M15 CHOCH"
+        if (ob == null || ob.invalidated) {
+            val structure = h1MarketStructure[symbol]
+            val stageOne = if (structure.isNullOrBlank()) "[ ]" else "[✓] $structure"
+            return "1. H1 MARKET STRUCTURE  $stageOne\\n" +
+                "2. H1 ORDER BLOCK + FVG  [ ]\\n3. H1 ORDER BLOCK TOUCH  [ ]\\n" +
+                "4. M15 STRUCTURAL SWING  [ ]\\n5. M15 CHoCH  [ ]\\n" +
+                "6. M15 ENTRY ORDER BLOCK  [ ]\\n7. FVG CONFIRMATION  [ ]\\n8. LIMIT ENTRY  [ ]"
+        }
+        fun tick(ok: Boolean) = if (ok) "[✓]" else "[ ]"
+        val s1 = ob.marketStructure.isNotBlank()
+        val s2 = ob.low.isFinite() && ob.high.isFinite() && ob.high > ob.low
+        val s3 = ob.touched
+        val s4 = ob.m15SwingEpoch > 0L
+        val s5 = ob.chochEpoch > 0L
+        val s6 = ob.entryObEpoch > 0L && ob.entryObHigh > ob.entryObLow
+        val s7 = ob.fvgEpoch > 0L && ob.fvgHigh > ob.fvgLow
+        val s8 = ob.entryPrice > 0.0
+        return "1. H1 MARKET STRUCTURE  ${tick(s1)} ${ob.marketStructure}\\n" +
+            "2. H1 ORDER BLOCK + FVG  ${tick(s2)} ${formatPrice(ob.low)} – ${formatPrice(ob.high)} · ${formatAuditDateTime(ob.identifiedEpoch)}\\n" +
+            "3. H1 ORDER BLOCK TOUCH  ${tick(s3)} ${if (s3) formatAuditDateTime(ob.touchedEpoch) else "WAITING"}\\n" +
+            "4. M15 STRUCTURAL SWING  ${tick(s4)} ${if (s4) formatPrice(ob.m15SwingPrice) else "WAITING"}\\n" +
+            "5. M15 CHoCH  ${tick(s5)} ${if (s5) formatAuditDateTime(ob.chochEpoch) else "WAITING"}\\n" +
+            "6. M15 ENTRY ORDER BLOCK  ${tick(s6)} ${if (s6) "${formatPrice(ob.entryObLow)} – ${formatPrice(ob.entryObHigh)}" else "WAITING"}\\n" +
+            "7. FVG CONFIRMATION  ${tick(s7)} ${if (s7) "${formatPrice(ob.fvgLow)} – ${formatPrice(ob.fvgHigh)}" else "WAITING"}\\n" +
+            "8. LIMIT ENTRY  ${tick(s8)} ${if (s8) formatPrice(ob.entryPrice) else "WAITING FOR ENTRY LEVEL"}"
     }
 
     private fun updateMasterDecisionViews(symbol: String) {
@@ -1641,21 +1668,15 @@ indexStatusViews[symbol]?.apply {
         tradeRecoveryStatusViews[symbol]?.text = status
         val ob = orderBlocks[symbol]
         mssStatusViews[symbol]?.apply {
-            text = if (ob == null) "WAITING FOR H1 ORDER BLOCK" else
-                "${if (ob.direction == "RISE") "BULLISH" else "BEARISH"} OB · ${formatPrice(ob.low)} – ${formatPrice(ob.high)}\nIDENTIFIED: ${formatAuditDateTime(ob.identifiedEpoch)}"
+            text = if (ob == null) "WAITING FOR H1 MARKET STRUCTURE" else
+                "${if (ob.direction == "RISE") "BULLISH" else "BEARISH"} H1 OB · ${formatPrice(ob.low)} – ${formatPrice(ob.high)}\\nIDENTIFIED: ${formatAuditDateTime(ob.identifiedEpoch)}"
             setTextColor(if (ob == null) amber else green)
         }
         chochStatusViews[symbol]?.apply {
-            text = freshChochDirection[symbol]?.let {
-                "CONFIRMED · $it\nCONFIRMED: ${formatAuditDateTime(freshChochEpoch[symbol] ?: 0L)}"
-            } ?:
-                when {
-                    ob == null || ob.consumed -> "WAITING FOR H1 ORDER BLOCK"
-                    !ob.touched -> "WAITING FOR H1 OB TOUCH"
-                    !ob.zoneCloseConfirmed -> "WAITING FOR REQUIRED CLOSE BEYOND OB"
-                    else -> "WAITING FOR M15 CHOCH"
-                }
-            setTextColor(if (freshChochDirection[symbol].isNullOrBlank()) amber else green)
+            text = if ((ob?.chochEpoch ?: 0L) > 0L)
+                "CONFIRMED · ${ob?.direction}\\nCONFIRMED: ${formatAuditDateTime(ob?.chochEpoch ?: 0L)}"
+            else "WAITING FOR M15 CHoCH"
+            setTextColor(if ((ob?.chochEpoch ?: 0L) > 0L) green else amber)
         }
     }
 
@@ -1731,20 +1752,22 @@ indexStatusViews[symbol]?.apply {
     private fun evaluateOriginalEntries(symbol: String, quote: Double) {
         if (!autoTradingEnabled || !accountConnected || dailyCapital <= 0.0 || !quote.isFinite()) return
         val ob = orderBlocks[symbol] ?: return
-        val direction = freshChochDirection[symbol] ?: return
-        val chochEpoch = freshChochEpoch[symbol] ?: return
-        if (ob.consumed || !ob.touched || !ob.zoneCloseConfirmed ||
-            direction != ob.direction || ob.touchedEpoch <= ob.identifiedEpoch ||
-            ob.zoneCloseEpoch < ob.touchedEpoch || chochEpoch <= ob.zoneCloseEpoch) return
+        if (ob.consumed || ob.invalidated || ob.entryPrice <= 0.0 ||
+            ob.chochEpoch <= 0L || ob.entryObEpoch <= 0L || ob.fvgEpoch <= 0L) return
+
+        // Stage 8 is price-triggered: wait for the quote to reach the proximal
+        // M15 OB edge, then submit the supported Deriv market proposal.
+        val entryReached = if (ob.direction == "RISE") quote <= ob.entryPrice else quote >= ob.entryPrice
+        if (!entryReached) {
+            obStatus[symbol] = "ALL 8 STAGES CONFIRMED · WAITING FOR ENTRY PRICE"
+            return
+        }
 
         val today = utcDayKey(System.currentTimeMillis() / 1000L)
-        val tradeKey = "$today|$symbol|OB_M15_CHOCH"
+        val tradeKey = "$today|$symbol|H1_M15_LIMIT_TRIGGER"
         if (tradeKey in originalTriggered) return
-        val indexAlreadyActive = positions.values.any {
-            it.symbol == symbol && it.status != "CLOSED" && !it.status.startsWith("ERROR") &&
-                it.status !in setOf("BUY FAILED", "PROPOSAL FAILED")
-        }
-        if (indexAlreadyActive) return
+        if (positions.values.any { it.symbol == symbol && it.status != "CLOSED" &&
+                !it.status.startsWith("ERROR") && it.status !in setOf("BUY FAILED", "PROPOSAL FAILED") }) return
 
         val stake = roundStake(dailyCapital * 0.20)
         if (stake <= 0.0 || availableBalance + 0.000001 < stake) {
@@ -1754,29 +1777,32 @@ indexStatusViews[symbol]?.apply {
             )
             return
         }
-        val originalId = "OB-CHOCH-${today}-${symbol}-${UUID.randomUUID()}"
+
+        val originalId = "H1-M15-LIMIT-${today}-${symbol}-${UUID.randomUUID()}"
         val submitted = openPosition(
-            symbol, direction, "ORIGINAL", stake, originalId,
-            entryMssDirection = "H1_OB", entryMssCloseEpoch = ob.identifiedEpoch + 3600L,
-            entryChochDirection = direction, entryChochCloseEpoch = chochEpoch + 900L,
-            entryMssPrice = if (direction == "RISE") ob.high else ob.low,
-            entryChochPrice = freshChochPrice[symbol] ?: quote,
+            symbol, ob.direction, "ORIGINAL", stake, originalId,
+            entryMssDirection = ob.marketStructure,
+            entryMssCloseEpoch = ob.identifiedEpoch,
+            entryChochDirection = ob.direction,
+            entryChochCloseEpoch = ob.chochEpoch,
+            entryMssPrice = ob.entryPrice,
+            entryChochPrice = ob.chochPrice,
             entryLastCandleClosePrice = quote,
-            entryLastCandleCloseEpoch = chochEpoch + 900L,
-            engineType = "H1_OB_M15_CHOCH"
+            entryLastCandleCloseEpoch = System.currentTimeMillis() / 1000L,
+            engineType = "H1_M15_PRICE_TRIGGERED_ENTRY"
         )
         if (!submitted) {
-            addNotification("Trade", "${displayIndexName(symbol)} trade not submitted",
-                "The $direction Order Block / M15 CHOCH proposal could not be sent. The signal remains available for retry.")
+            addNotification("Trade", "${displayIndexName(symbol)} entry not submitted",
+                "The eight-stage setup remains valid. Deriv did not accept the market proposal at the triggered entry level.")
             return
         }
         ob.consumed = true
-        obStatus[symbol] = "ORDER BLOCK SIGNAL CONSUMED"
+        obStatus[symbol] = "PRICE-TRIGGERED ENTRY SUBMITTED"
         saveOrderBlockState(symbol)
         originalTriggered.add(tradeKey)
         tradePrefs.edit().putStringSet("triggered_$today", originalTriggered.toSet()).commit()
-        addNotification("Trade", "${displayIndexName(symbol)} $direction trade submitted",
-            "Price touched/penetrated the active H1 Order Block, the required candle closed beyond the zone, then a later closed M15 CHOCH confirmed $direction. Deriv proposal submitted.")
+        addNotification("Trade", "${displayIndexName(symbol)} ${ob.direction} entry submitted",
+            "All eight strategy stages confirmed. Price reached the M15 OB proximal edge ${formatPrice(ob.entryPrice)}; the existing Deriv market proposal was submitted.")
     }
 
     // Round Deriv stake values to the account's two-decimal currency precision.
@@ -2198,110 +2224,165 @@ indexStatusViews[symbol]?.apply {
         if (candles.size < 8) return
         val closed = candles.sortedBy { it.epoch }.dropLast(1)
         if (closed.size < 7) return
-
-        // Keep the current Order Block active until a genuinely newer H1
-        // Order Block is confirmed. A repeated evaluation of the same H1
-        // candle must never reset its touch/close/CHOCH progress.
-        val existing = orderBlocks[symbol]
-        val last = closed.last()
         val (highs, lows) = confirmedSwings(closed.dropLast(1))
-        val previousHigh = highs.lastOrNull()
-        val previousLow = lows.lastOrNull()
-        var created: OrderBlockState? = null
+        val active = orderBlocks[symbol]
+        if (active != null && !active.invalidated && !active.consumed) {
+            val latestClosed = closed.last()
+            val broken = if (active.direction == "RISE")
+                latestClosed.close < active.low else latestClosed.close > active.high
+            if (latestClosed.epoch > active.identifiedEpoch && broken) {
+                active.invalidated = true
+                obStatus[symbol] = "H1 ORDER BLOCK INVALIDATED · WAITING FOR NEW STRUCTURE"
+                saveOrderBlockState(symbol)
+            }
+        }
+        if (highs.size < 2 || lows.size < 2) return
 
-        if (previousHigh != null && last.close > previousHigh.second) {
-            val origin = closed.dropLast(1).asReversed()
-                .firstOrNull { it.epoch < last.epoch && it.close < it.open }
-            if (origin != null) created = OrderBlockState("RISE", origin.low, origin.high, last.epoch)
-        } else if (previousLow != null && last.close < previousLow.second) {
-            val origin = closed.dropLast(1).asReversed()
-                .firstOrNull { it.epoch < last.epoch && it.close > it.open }
-            if (origin != null) created = OrderBlockState("FALL", origin.low, origin.high, last.epoch)
+        val h1Direction = when {
+            highs.last().second > highs[highs.lastIndex - 1].second &&
+                lows.last().second > lows[lows.lastIndex - 1].second -> "RISE"
+            highs.last().second < highs[highs.lastIndex - 1].second &&
+                lows.last().second < lows[lows.lastIndex - 1].second -> "FALL"
+            else -> ""
+        }
+        if (h1Direction.isBlank()) return
+        val structureLabel = if (h1Direction == "RISE") "BULLISH HH + HL" else "BEARISH LH + LL"
+        if (h1MarketStructure[symbol] != structureLabel) {
+            h1MarketStructure[symbol] = structureLabel
+            tradePrefs.edit().putString("h1_structure_$symbol", structureLabel).apply()
         }
 
-        if (created != null &&
-            (existing == null || created.identifiedEpoch > existing.identifiedEpoch)) {
-            orderBlocks[symbol] = created
-            obStatus[symbol] = if (created.direction == "RISE")
-                "BULLISH H1 ORDER BLOCK IDENTIFIED" else "BEARISH H1 ORDER BLOCK IDENTIFIED"
-            freshChochDirection.remove(symbol)
-            freshChochEpoch.remove(symbol)
-            freshChochPrice.remove(symbol)
-            saveOrderBlockState(symbol)
-        }
+        val last = closed.last()
+        val brokeStructure = if (h1Direction == "RISE")
+            last.close > highs.last().second else last.close < lows.last().second
+        if (!brokeStructure) return
+
+        // The displacement must create a three-candle FVG. The opposing candle
+        // immediately preceding the displacement is the H1 order-block origin.
+        val fvg = if (closed.size >= 3) {
+            val a = closed[closed.lastIndex - 2]
+            val c = closed.last()
+            if (h1Direction == "RISE" && c.low > a.high) a.high to c.low
+            else if (h1Direction == "FALL" && c.high < a.low) c.high to a.low
+            else null
+        } else null
+        if (fvg == null) return
+
+        val origin = closed.dropLast(1).asReversed().firstOrNull {
+            if (h1Direction == "RISE") it.close < it.open else it.close > it.open
+        } ?: return
+        val existing = orderBlocks[symbol]
+        if (existing != null && !existing.invalidated && !existing.consumed &&
+            existing.identifiedEpoch >= last.epoch) return
+
+        val created = OrderBlockState(
+            direction = h1Direction, low = origin.low, high = origin.high,
+            identifiedEpoch = last.epoch,
+            marketStructure = structureLabel
+        )
+        orderBlocks[symbol] = created
+        obStatus[symbol] = "H1 MARKET STRUCTURE + ORDER BLOCK + FVG CONFIRMED"
+        freshChochDirection.remove(symbol); freshChochEpoch.remove(symbol); freshChochPrice.remove(symbol)
+        saveOrderBlockState(symbol)
         runOnUiThread { updateRecoveryStatusView(symbol); updateMasterDecisionViews(symbol) }
     }
 
     private fun evaluateFreshM15Choch(symbol: String, candles: List<DerivApiClient.Candle>) {
         val ob = orderBlocks[symbol] ?: return
-        if (ob.consumed || candles.size < 7) return
+        if (ob.consumed || ob.invalidated || candles.size < 7) return
         val closed = candles.sortedBy { it.epoch }.dropLast(1)
         if (closed.size < 6) return
-
-        // Replay the available CLOSED M15 candles in chronological order.
-        // Required sequence:
-        // H1 OB identified -> price touches/penetrates zone ->
-        // uptrend/Rise OB closes BELOW zone, or downtrend/Fall OB closes ABOVE zone ->
-        // subsequent M15 CHOCH in the OB direction -> execution.
         var changed = false
 
-        for (i in closed.indices) {
-            val candle = closed[i]
-            if (candle.epoch <= ob.identifiedEpoch) continue
-
-            if (!ob.touched && candle.high >= ob.low && candle.low <= ob.high) {
+        // Stage 3: price must first interact with the H1 order-block zone.
+        for (c in closed) {
+            if (c.epoch <= ob.identifiedEpoch) continue
+            if (!ob.touched && c.high >= ob.low && c.low <= ob.high) {
                 ob.touched = true
-                ob.touchedEpoch = candle.epoch
-                obStatus[symbol] = "H1 ORDER BLOCK TOUCHED · WAITING FOR CLOSE BEYOND ZONE"
+                ob.touchedEpoch = c.epoch
                 changed = true
             }
+        }
+        if (!ob.touched) {
+            if (changed) saveOrderBlockState(symbol)
+            return
+        }
 
-            if (ob.touched && !ob.zoneCloseConfirmed && candle.epoch >= ob.touchedEpoch) {
-                val closedBeyondZone = when (ob.direction) {
-                    "RISE" -> candle.close < ob.low
-                    "FALL" -> candle.close > ob.high
-                    else -> false
+        val afterTouch = closed.filter { it.epoch > ob.touchedEpoch }
+        if (afterTouch.size < 5) {
+            if (changed) saveOrderBlockState(symbol)
+            return
+        }
+
+        // Stage 4: relevant M15 structural swing after the H1 zone interaction.
+        val (m15Highs, m15Lows) = confirmedSwings(afterTouch)
+        val structuralSwing = if (ob.direction == "RISE") {
+            // Bullish setup: the latest confirmed lower high (LH).
+            m15Highs.zipWithNext().lastOrNull { (a, b) -> b.second < a.second }?.second
+        } else {
+            // Bearish setup: the latest confirmed higher low (HL).
+            m15Lows.zipWithNext().lastOrNull { (a, b) -> b.second > a.second }?.second
+        }
+        if (structuralSwing != null && ob.m15SwingEpoch == 0L) {
+            ob.m15SwingPrice = structuralSwing.second
+            ob.m15SwingEpoch = afterTouch[structuralSwing.first].epoch
+            changed = true
+        }
+
+        // Stage 5: CHoCH requires a candle BODY close beyond the relevant swing.
+        val swingPrice = ob.m15SwingPrice
+        val chochCandle = if (swingPrice > 0.0) afterTouch.lastOrNull {
+            it.epoch > ob.m15SwingEpoch &&
+                if (ob.direction == "RISE") it.close > swingPrice else it.close < swingPrice
+        } else null
+        if (chochCandle != null && ob.chochEpoch == 0L) {
+            ob.chochEpoch = chochCandle.epoch
+            ob.chochPrice = swingPrice
+            freshChochDirection[symbol] = ob.direction
+            freshChochEpoch[symbol] = chochCandle.epoch
+            freshChochPrice[symbol] = swingPrice
+            changed = true
+
+            // Stage 6: origin candle of the impulse which produced the CHoCH.
+            val impulseStart = afterTouch.indexOfLast { it.epoch == chochCandle.epoch }
+            val origin = if (impulseStart > 0) {
+                afterTouch.subList(0, impulseStart).asReversed().firstOrNull {
+                    if (ob.direction == "RISE") it.close < it.open else it.close > it.open
                 }
-                if (closedBeyondZone) {
-                    ob.zoneCloseConfirmed = true
-                    ob.zoneCloseEpoch = candle.epoch
-                    freshChochDirection.remove(symbol)
-                    freshChochEpoch.remove(symbol)
-                    freshChochPrice.remove(symbol)
-                    obStatus[symbol] = "ORDER BLOCK CLOSE CONFIRMED · WAITING FOR M15 CHOCH"
-                    changed = true
+            } else null
+            if (origin != null) {
+                ob.entryObLow = origin.low
+                ob.entryObHigh = origin.high
+                ob.entryObEpoch = origin.epoch
+
+                // Stage 7: an FVG must be present in the CHoCH impulse after
+                // the entry OB origin. Bullish: later low > earlier high.
+                val originIndex = afterTouch.indexOfFirst { it.epoch == origin.epoch }
+                val impulse = afterTouch.drop(originIndex + 1).filter { it.epoch <= chochCandle.epoch }
+                var fvgPair: Pair<Double, Double>? = null
+                if (impulse.size >= 3) {
+                    for (w in impulse.windowed(3, 1, partialWindows = false)) {
+                        val first = w.first()
+                        val third = w.last()
+                        fvgPair = if (ob.direction == "RISE" && third.low > first.high)
+                            first.high to third.low
+                        else if (ob.direction == "FALL" && third.high < first.low)
+                            third.high to first.low
+                        else null
+                        if (fvgPair != null) break
+                    }
                 }
-            }
-
-            // CHOCH must occur AFTER the qualifying close candle.
-            if (ob.zoneCloseConfirmed && candle.epoch > ob.zoneCloseEpoch &&
-                candle.epoch > (freshChochEpoch[symbol] ?: 0L)) {
-                val priorCandles = closed.take(i)
-                val (highs, lows) = confirmedSwings(priorCandles)
-                val swingHigh = highs.lastOrNull()?.second
-                val swingLow = lows.lastOrNull()?.second
-
-                val direction = when {
-                    ob.direction == "RISE" && swingHigh != null && candle.close > swingHigh -> "RISE"
-                    ob.direction == "FALL" && swingLow != null && candle.close < swingLow -> "FALL"
-                    else -> ""
-                }
-
-                if (direction.isNotBlank()) {
-                    freshChochDirection[symbol] = direction
-                    freshChochEpoch[symbol] = candle.epoch
-                    freshChochPrice[symbol] = if (direction == "RISE") swingHigh!! else swingLow!!
-                    obStatus[symbol] = "ORDER BLOCK + M15 CHOCH CONFIRMED · EXECUTION"
-                    changed = true
-                    break
+                if (fvgPair != null) {
+                    ob.fvgLow = fvgPair.first
+                    ob.fvgHigh = fvgPair.second
+                    ob.fvgEpoch = chochCandle.epoch
+                    // Stage 8: proximal edge of the M15 entry OB. Price monitoring
+                    // triggers the existing Deriv market proposal at this level.
+                    ob.entryPrice = if (ob.direction == "RISE") ob.entryObHigh else ob.entryObLow
                 }
             }
         }
-
         if (changed) saveOrderBlockState(symbol)
-
-        // Retry execution on each evaluation while the same active OB + CHOCH
-        // remains valid and there is no open trade on this index.
         evaluateOriginalEntries(symbol, latestPrices[symbol] ?: closed.last().close)
         runOnUiThread { updateRecoveryStatusView(symbol); updateMasterDecisionViews(symbol) }
     }
@@ -2808,7 +2889,7 @@ indexStatusViews[symbol]?.apply {
             indexCard.addView(space(8))
             indexCard.addView(divider())
             indexCard.addView(space(8))
-            indexCard.addView(text("TRADE LIFECYCLE", 11f, whiteText, true))
+            indexCard.addView(text("8-STAGE STRATEGY CHECKLIST", 11f, whiteText, true))
             val recoveryView = text(recoveryStatusText(symbol), 11f, muted)
             recoveryStatusViews[symbol] = recoveryView
             indexCard.addView(recoveryView)
@@ -2820,7 +2901,7 @@ indexStatusViews[symbol]?.apply {
     private fun showTrade() {
         countdownHandler.removeCallbacks(countdownTask)
         countdownHandler.post(countdownTask)
-        pageHeading("RUNNING TRADES", "Reversal and Continuation executions.")
+        pageHeading("RUNNING TRADES", "Eight-stage H1/M15 strategy executions.")
         content.addView(autoTradingButton())
         content.addView(space(10))
         val summary = card()
