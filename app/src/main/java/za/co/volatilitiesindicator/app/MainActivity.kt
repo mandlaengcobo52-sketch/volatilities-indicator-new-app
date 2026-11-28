@@ -121,7 +121,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 .put("touched", ob.touched).put("touchedEpoch", ob.touchedEpoch)
                 .put("consumed", ob.consumed)
                 .put("reversalConfirmed", ob.reversalConfirmed)
-                .put("reversalTimeframe", "H1")
+                .put("reversalTimeframe", "M15")
                 .put("reversalEpoch", ob.reversalEpoch)
                 .put("reversalClose", ob.reversalClose)
             e.putString("ob_state_$symbol", json.toString())
@@ -141,18 +141,18 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             val raw = tradePrefs.getString("ob_state_$symbol", null)
             if (!raw.isNullOrBlank()) try {
                 val j = JSONObject(raw)
-                val reversalWasConfirmedOnH1 = j.optString("reversalTimeframe") == "H1"
+                val reversalWasConfirmedOnM15 = j.optString("reversalTimeframe") == "M15"
                 orderBlocks[symbol] = OrderBlockState(
                     j.getString("direction"), j.getDouble("low"), j.getDouble("high"),
                     j.getLong("identifiedEpoch"), j.optBoolean("touched", false),
                     j.optLong("touchedEpoch", 0L), j.optBoolean("consumed", false),
-                    reversalWasConfirmedOnH1 && j.optBoolean("reversalConfirmed", false),
-                    if (reversalWasConfirmedOnH1) j.optLong("reversalEpoch", 0L) else 0L,
-                    if (reversalWasConfirmedOnH1) j.optDouble("reversalClose", 0.0) else 0.0
+                    reversalWasConfirmedOnM15 && j.optBoolean("reversalConfirmed", false),
+                    if (reversalWasConfirmedOnM15) j.optLong("reversalEpoch", 0L) else 0L,
+                    if (reversalWasConfirmedOnM15) j.optDouble("reversalClose", 0.0) else 0.0
                 )
                 // Migrate the prior M15-reversal state: retain the OB and touch,
                 // but re-confirm the required reversal from a closed H1 candle.
-                if (!reversalWasConfirmedOnH1) saveOrderBlockState(symbol)
+                if (j.optBoolean("reversalConfirmed", false) && !reversalWasConfirmedOnM15) saveOrderBlockState(symbol)
             } catch (_: Exception) { tradePrefs.edit().remove("ob_state_$symbol").apply() }
             tradePrefs.getString("ob_status_$symbol", null)?.takeIf { it.isNotBlank() }?.let { obStatus[symbol] = it }
             tradePrefs.getString("choch_direction_$symbol", null)?.takeIf { it.isNotBlank() }?.let { freshChochDirection[symbol] = it }
@@ -1597,17 +1597,17 @@ indexStatusViews[symbol]?.apply {
         if (running.any { it.contractId > 0L || it.status == "OPEN" || it.status == "CLOSING" }) return "TRADE RUNNING · Waiting for this trade to close."
         if (running.isNotEmpty()) return "TRADE SUBMITTED · Waiting for Deriv confirmation."
         val ob = orderBlocks[symbol]
-        if (ob == null) return "WAITING FOR CONFIRMED H1 ORDER BLOCK"
+        if (ob == null) return "WAITING FOR H1 ORDER BLOCK IDENTIFICATION"
         if (ob.consumed) return "ORDER BLOCK SIGNAL CONSUMED · WAITING FOR A NEW H1 ORDER BLOCK"
-        if (!ob.touched) return obStatus[symbol] ?: "WAITING FOR PRICE TO TOUCH H1 ORDER BLOCK"
-        if (!ob.reversalConfirmed) return "ORDER BLOCK TOUCHED · WAITING FOR M15 REVERSAL CLOSE BEYOND ZONE"
+        if (!ob.touched) return "WAITING FOR H1 ORDER BLOCK TOUCH"
+        if (!ob.reversalConfirmed) return "ORDER BLOCK TOUCHED · WAITING FOR REVERSAL CLOSE"
         val choch = freshChochDirection[symbol]
         val chochEpoch = freshChochEpoch[symbol] ?: 0L
         return if (choch == ob.direction && chochEpoch > ob.reversalEpoch &&
             utcDayKey(ob.touchedEpoch) == utcDayKey(ob.reversalEpoch) &&
             utcDayKey(ob.reversalEpoch) == utcDayKey(chochEpoch))
             "QUALIFIED · OB TOUCH + REVERSAL CLOSE + M15 CHOCH $choch"
-        else "OB REVERSAL CONFIRMED · WAITING FOR SUBSEQUENT M15 CHOCH"
+        else "OB REVERSAL CONFIRMED · WAITING FOR M15 CHOCH"
     }
 
     private fun updateMasterDecisionViews(symbol: String) {
@@ -1639,9 +1639,9 @@ indexStatusViews[symbol]?.apply {
         chochStatusViews[symbol]?.apply {
             text = freshChochDirection[symbol]?.let { "CONFIRMED · $it" } ?:
                 when {
-                    ob?.reversalConfirmed == true -> "WAITING FOR SUBSEQUENT M15 CHOCH"
-                    ob?.touched == true -> "WAITING FOR M15 REVERSAL CLOSE"
-                    else -> "WAITING FOR H1 OB TOUCH"
+                    ob?.reversalConfirmed == true -> "WAITING FOR M15 CHOCH"
+                    ob?.touched == true -> "WAITING FOR REVERSAL CLOSE"
+                    else -> "WAITING FOR OB TOUCH"
                 }
             setTextColor(if (freshChochDirection[symbol].isNullOrBlank()) amber else green)
         }
@@ -2188,106 +2188,109 @@ indexStatusViews[symbol]?.apply {
         if (candles.size < 8) return
         val closed = candles.sortedBy { it.epoch }.dropLast(1)
         if (closed.size < 7) return
-        val last = closed.last()
-        var ob = orderBlocks[symbol]
-        if (ob == null || ob.consumed) {
-            val (highs, lows) = confirmedSwings(closed.dropLast(1))
-            val previousHigh = highs.lastOrNull()
-            val previousLow = lows.lastOrNull()
-            if (previousHigh != null && last.close > previousHigh.second) {
-                val origin = closed.dropLast(1).asReversed().firstOrNull { it.epoch < last.epoch && it.close < it.open }
-                if (origin != null) {
-                    ob = OrderBlockState("RISE", origin.low, origin.high, last.epoch)
-                    orderBlocks[symbol] = ob
-                    obStatus[symbol] = "BULLISH H1 ORDER BLOCK IDENTIFIED"
-                    freshChochDirection.remove(symbol); freshChochEpoch.remove(symbol); freshChochPrice.remove(symbol)
-                    saveOrderBlockState(symbol)
-                }
-            } else if (previousLow != null && last.close < previousLow.second) {
-                val origin = closed.dropLast(1).asReversed().firstOrNull { it.epoch < last.epoch && it.close > it.open }
-                if (origin != null) {
-                    ob = OrderBlockState("FALL", origin.low, origin.high, last.epoch)
-                    orderBlocks[symbol] = ob
-                    obStatus[symbol] = "BEARISH H1 ORDER BLOCK IDENTIFIED"
-                    freshChochDirection.remove(symbol); freshChochEpoch.remove(symbol); freshChochPrice.remove(symbol)
-                    saveOrderBlockState(symbol)
-                }
-            }
+
+        // An identified, unconsumed Order Block remains the active setup.
+        // Never replace it or show "waiting for a new OB" while it is active.
+        val existing = orderBlocks[symbol]
+        if (existing != null && !existing.consumed) {
+            runOnUiThread { updateRecoveryStatusView(symbol); updateMasterDecisionViews(symbol) }
+            return
         }
-        ob = orderBlocks[symbol] ?: return
-        if (last.epoch > ob.identifiedEpoch && !ob.consumed &&
-            !ob.touched && last.high >= ob.low && last.low <= ob.high) {
-            ob.touched = true
-            ob.touchedEpoch = last.epoch
-            obStatus[symbol] = "H1 ORDER BLOCK TOUCHED / PENETRATED · WAITING FOR M15 CHOCH"
+
+        val last = closed.last()
+        val (highs, lows) = confirmedSwings(closed.dropLast(1))
+        val previousHigh = highs.lastOrNull()
+        val previousLow = lows.lastOrNull()
+        var created: OrderBlockState? = null
+
+        if (previousHigh != null && last.close > previousHigh.second) {
+            val origin = closed.dropLast(1).asReversed()
+                .firstOrNull { it.epoch < last.epoch && it.close < it.open }
+            if (origin != null) created = OrderBlockState("RISE", origin.low, origin.high, last.epoch)
+        } else if (previousLow != null && last.close < previousLow.second) {
+            val origin = closed.dropLast(1).asReversed()
+                .firstOrNull { it.epoch < last.epoch && it.close > it.open }
+            if (origin != null) created = OrderBlockState("FALL", origin.low, origin.high, last.epoch)
+        }
+
+        if (created != null) {
+            orderBlocks[symbol] = created
+            obStatus[symbol] = if (created.direction == "RISE")
+                "BULLISH H1 ORDER BLOCK IDENTIFIED" else "BEARISH H1 ORDER BLOCK IDENTIFIED"
+            freshChochDirection.remove(symbol)
+            freshChochEpoch.remove(symbol)
+            freshChochPrice.remove(symbol)
             saveOrderBlockState(symbol)
-            addNotification("Home", "${displayIndexName(symbol)} Order Block touched",
-                "Price entered the confirmed H1 Order Block. Checking the confirmed M15 CHOCH for today.")
-            evaluateOriginalEntries(symbol, latestPrices[symbol] ?: last.close)
         }
         runOnUiThread { updateRecoveryStatusView(symbol); updateMasterDecisionViews(symbol) }
     }
 
     private fun evaluateFreshM15Choch(symbol: String, candles: List<DerivApiClient.Candle>) {
         val ob = orderBlocks[symbol] ?: return
-        if (ob.consumed || candles.size < 7) return
+        if (ob.consumed || candles.size < 8) return
         val closed = candles.sortedBy { it.epoch }.dropLast(1)
-        if (closed.size < 6) return
-        val last = closed.last()
+        if (closed.size < 7) return
 
-        // 1. Price must touch or penetrate the active H1 Order Block.
-        if (!ob.touched && last.epoch > ob.identifiedEpoch &&
-            last.high >= ob.low && last.low <= ob.high) {
-            ob.touched = true
-            ob.touchedEpoch = last.epoch
-            obStatus[symbol] = "ORDER BLOCK TOUCHED · WAITING FOR M15 REVERSAL CLOSE"
-            saveOrderBlockState(symbol)
-            addNotification("Home", "${displayIndexName(symbol)} Order Block touched",
-                "Price entered the H1 Order Block. Waiting for a closed M15 reversal candle beyond the far edge of the zone.")
+        // Replay closed M15 candles chronologically so a valid setup is not missed
+        // merely because it formed between polling updates.
+        var changed = false
+        for (i in 0 until closed.size) {
+            val candle = closed[i]
+            if (candle.epoch <= ob.identifiedEpoch) continue
+
+            // First event: price enters or penetrates the active H1 OB zone.
+            if (!ob.touched && candle.high >= ob.low && candle.low <= ob.high) {
+                ob.touched = true
+                ob.touchedEpoch = candle.epoch
+                obStatus[symbol] = "ORDER BLOCK TOUCHED · WAITING FOR REVERSAL CLOSE"
+                changed = true
+            }
+
+            // Second event: after touching the zone, a CLOSED M15 candle must
+            // close beyond the far edge in the OB direction.
+            if (ob.touched && !ob.reversalConfirmed && candle.epoch >= ob.touchedEpoch) {
+                val reversal = when (ob.direction) {
+                    "RISE" -> candle.close > ob.high
+                    "FALL" -> candle.close < ob.low
+                    else -> false
+                }
+                if (reversal) {
+                    ob.reversalConfirmed = true
+                    ob.reversalEpoch = candle.epoch
+                    ob.reversalClose = candle.close
+                    obStatus[symbol] = "OB REVERSAL CONFIRMED · WAITING FOR M15 CHOCH"
+                    changed = true
+                }
+            }
+
+            // Third event: CHOCH must be a later closed M15 candle in the same direction.
+            if (ob.reversalConfirmed && candle.epoch > ob.reversalEpoch &&
+                candle.epoch > (freshChochEpoch[symbol] ?: 0L)) {
+                val priorCandles = closed.take(i)
+                val (highs, lows) = confirmedSwings(priorCandles)
+                val swingHigh = highs.lastOrNull()?.second
+                val swingLow = lows.lastOrNull()?.second
+                val direction = when {
+                    ob.direction == "RISE" && swingHigh != null && candle.close > swingHigh -> "RISE"
+                    ob.direction == "FALL" && swingLow != null && candle.close < swingLow -> "FALL"
+                    else -> ""
+                }
+                if (direction.isNotBlank()) {
+                    freshChochDirection[symbol] = direction
+                    freshChochEpoch[symbol] = candle.epoch
+                    freshChochPrice[symbol] = if (direction == "RISE") swingHigh!! else swingLow!!
+                    obStatus[symbol] = "OB REVERSAL + M15 CHOCH CONFIRMED · EXECUTION READY"
+                    changed = true
+                    break
+                }
+            }
         }
 
-        // 2. Require the reversal candle to close beyond the far boundary.
-        if (ob.touched && !ob.reversalConfirmed && last.epoch >= ob.touchedEpoch) {
-            val reversal = when (ob.direction) {
-                "RISE" -> last.close > ob.high
-                "FALL" -> last.close < ob.low
-                else -> false
-            }
-            if (reversal) {
-                ob.reversalConfirmed = true
-                ob.reversalEpoch = last.epoch
-                ob.reversalClose = last.close
-                obStatus[symbol] = "OB REVERSAL CONFIRMED · WAITING FOR SUBSEQUENT M15 CHOCH"
-                saveOrderBlockState(symbol)
-                addNotification("Home", "${displayIndexName(symbol)} Order Block reversal confirmed",
-                    "M15 candle closed ${if (ob.direction == "RISE") "above the bullish Order Block" else "below the bearish Order Block"}. Waiting for a subsequent M15 CHOCH in the same direction.")
-            }
-        }
+        if (changed) saveOrderBlockState(symbol)
 
-        // 3. CHOCH must be a later closed M15 candle, aligned with the OB.
-        if (ob.reversalConfirmed && last.epoch > ob.reversalEpoch &&
-            last.epoch > (freshChochEpoch[symbol] ?: 0L)) {
-            val (highs, lows) = confirmedSwings(closed.dropLast(1))
-            val swingHigh = highs.lastOrNull()?.second
-            val swingLow = lows.lastOrNull()?.second
-            val direction = when {
-                ob.direction == "RISE" && swingHigh != null && last.close > swingHigh -> "RISE"
-                ob.direction == "FALL" && swingLow != null && last.close < swingLow -> "FALL"
-                else -> ""
-            }
-            if (direction.isNotBlank()) {
-                freshChochDirection[symbol] = direction
-                freshChochEpoch[symbol] = last.epoch
-                freshChochPrice[symbol] = if (direction == "RISE") swingHigh!! else swingLow!!
-                obStatus[symbol] = "OB REVERSAL + M15 CHOCH CONFIRMED · READY TO EXECUTE"
-                saveOrderBlockState(symbol)
-                addNotification("Home", "${displayIndexName(symbol)} M15 CHOCH confirmed",
-                    "Order Block touch, reversal close and subsequent M15 CHOCH are confirmed. Execution is being submitted.")
-            }
-        }
-
-        // Retry execution on each M15 update until Deriv accepts the proposal.
-        evaluateOriginalEntries(symbol, latestPrices[symbol] ?: last.close)
+        // A historical but still-valid same-day CHOCH is executable; it does not
+        // have to be the newest candle. Retry while the signal remains valid.
+        evaluateOriginalEntries(symbol, latestPrices[symbol] ?: closed.last().close)
         runOnUiThread { updateRecoveryStatusView(symbol); updateMasterDecisionViews(symbol) }
     }
 
