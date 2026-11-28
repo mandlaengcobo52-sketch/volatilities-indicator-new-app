@@ -1449,31 +1449,71 @@ indexStatusViews[symbol]?.apply {
 
     private fun masterDecisionText(symbol: String): String {
         runningDirectionText(symbol)?.let { return "$it. Contract is active on Deriv." }
-        if (!marketFeedConnected || latestPrices[symbol] == null) return "Waiting for live market price data."
+        if (!marketFeedConnected || latestPrices[symbol] == null) {
+            return "Waiting for live market price data."
+        }
         if (!accountConnected) return "M15 engines are monitored. Waiting for Deriv account connection."
+
         val mss = recoveryMss[symbol]
         val choch = recoveryChoch[symbol]
+        val mssEpoch = recoveryMssEpoch[symbol] ?: 0L
+        val chochEpoch = recoveryChochEpoch[symbol] ?: 0L
+        val touched = reversalTouched[symbol]
         val reversal = reversalQualifiedDirection[symbol]
+        val reversalEpoch = reversalEventEpoch[symbol] ?: 0L
         val continuation = continuationDirection[symbol]
-        val retest = continuationRetestEpoch[symbol]
-        return when {
-            reversal != null && mss == reversal && choch == reversal -> "REVERSAL $reversal · M15 MSS + CHOCH confirmed. Ready for execution."
-            reversal != null -> "REVERSAL $reversal · Waiting for matching M15 MSS + CHOCH."
-            continuation != null && retest == null -> "CONTINUATION $continuation · Breakout confirmed; waiting for PDH/PDL retest."
-            continuation != null && mss == continuation && choch == continuation -> "CONTINUATION $continuation · Retest and M15 MSS + CHOCH confirmed. Ready for execution."
-            continuation != null -> "CONTINUATION $continuation · Retest confirmed; waiting for matching M15 MSS + CHOCH."
-            mss.isNullOrBlank() || choch.isNullOrBlank() -> "Waiting for PDH/PDL Reversal or Continuation, then M15 MSS + CHOCH."
-            mss != choch -> "M15 MSS and CHOCH disagree. Waiting for matching direction."
-            else -> "M15 MSS + CHOCH confirmed ${mss!!.lowercase(Locale.US)}. Waiting for a qualified engine setup."
+        val retestEpoch = continuationRetestEpoch[symbol] ?: 0L
+        val eventEpoch = when {
+            reversal != null -> reversalEpoch
+            continuation != null && retestEpoch > 0L -> retestEpoch
+            else -> 0L
         }
+
+        // A structure signal is valid for an engine only when its completed
+        // M15 candle closes after that engine's reversal/retest event.
+        val mssAfterEvent = eventEpoch > 0L && mssEpoch + 900L >= eventEpoch
+        val chochAfterEvent = eventEpoch > 0L && chochEpoch + 900L >= eventEpoch
+        val mssReady = mssAfterEvent && mss == (reversal ?: continuation)
+        val chochReady = chochAfterEvent && choch == (reversal ?: continuation)
+
+        if (touched == "PDH") {
+            return "REVERSAL BEARISH · PDH touched. Waiting for a completed M15 close below PDH."
+        }
+        if (touched == "PDL") {
+            return "REVERSAL BULLISH · PDL touched. Waiting for a completed M15 close above PDL."
+        }
+        if (reversal != null) {
+            return when {
+                !mssReady && !chochReady -> "REVERSAL ${reversal} · Reversal candle confirmed. Waiting for M15 MSS and CHOCH."
+                !mssReady -> "REVERSAL ${reversal} · Waiting for a fresh matching M15 MSS."
+                !chochReady -> "REVERSAL ${reversal} · MSS confirmed. Waiting for a fresh matching M15 CHOCH."
+                else -> "REVERSAL ${reversal} · M15 MSS + CHOCH confirmed. Ready for execution."
+            }
+        }
+        if (continuation != null && retestEpoch == 0L) {
+            val level = continuationLevel[symbol] ?: 0.0
+            return "CONTINUATION ${continuation} · Breakout confirmed. WAITING FOR RETEST of ${formatPrice(level)}."
+        }
+        if (continuation != null && retestEpoch > 0L) {
+            return when {
+                !mssReady && !chochReady -> "CONTINUATION ${continuation} · Retest confirmed. Waiting for M15 MSS and CHOCH."
+                !mssReady -> "CONTINUATION ${continuation} · Retest confirmed. Waiting for a fresh matching M15 MSS."
+                !chochReady -> "CONTINUATION ${continuation} · MSS confirmed after retest. Waiting for matching M15 CHOCH."
+                else -> "CONTINUATION ${continuation} · Retest and M15 MSS + CHOCH confirmed. Ready for execution."
+            }
+        }
+
+        val levels = dailyLevels[symbol]
+        val price = latestPrices[symbol] ?: 0.0
+        if (levels != null && price > levels.first) {
+            return "PRICE ABOVE PDH · Waiting for a completed M15 close above PDH for bullish continuation, or a close back below PDH for bearish reversal."
+        }
+        if (levels != null && price < levels.second) {
+            return "PRICE BELOW PDL · Waiting for a completed M15 close below PDL for bearish continuation, or a close back above PDL for bullish reversal."
+        }
+        return "WAITING FOR PDH/PDL EVENT · No confirmed breakout or reversal yet."
     }
 
-    /**
-     * Deriv portfolio restoration initially labels contracts EXISTING because
-     * the app may not have their local pair metadata. A matching CALL+PUT pair
-     * on the same index, with the same seven-day expiry and near-identical
-     * purchase time, is reconciled into one recovery cycle.
-     */
     private fun reconcileRestoredOriginalPairs(symbolHint: String? = null) {
         val now = System.currentTimeMillis() / 1000L
         // If a restored pair was identified before historical candles arrived,
@@ -1773,9 +1813,9 @@ indexStatusViews[symbol]?.apply {
         val continuationDir = continuationDirection[symbol]
         val retestEpoch = continuationRetestEpoch[symbol] ?: 0L
         val reversalReady = reversalDirection == mss && reversalEpoch > 0L &&
-            mssEpoch + 900L >= reversalEpoch && chochEpoch + 900L >= reversalEpoch
+            mssEpoch >= reversalEpoch && chochEpoch >= reversalEpoch
         val continuationReady = continuationDir == mss && retestEpoch > 0L &&
-            mssEpoch + 900L >= retestEpoch && chochEpoch + 900L >= retestEpoch
+            mssEpoch >= retestEpoch && chochEpoch >= retestEpoch
         val engineType = when {
             reversalReady -> "REVERSAL"
             continuationReady -> "CONTINUATION"
