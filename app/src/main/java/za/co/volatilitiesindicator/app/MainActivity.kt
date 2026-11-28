@@ -195,16 +195,6 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val dailyLevels = mutableMapOf<String, Pair<Double, Double>>() // previous completed-day high, low (H1 source)
     private val m15CandlesByIndex = mutableMapOf<String, List<DerivApiClient.Candle>>()
     private val originalSweepStatus = mutableMapOf<String, String>()
-    // Independent PDH/PDL qualification state for the two entry engines.
-    private val reversalTouched = mutableMapOf<String, String>() // PDH or PDL
-    private val reversalQualifiedDirection = mutableMapOf<String, String>()
-    private val reversalEventEpoch = mutableMapOf<String, Long>()
-    private val reversalEventPrice = mutableMapOf<String, Double>()
-    private val reversalReferenceLevel = mutableMapOf<String, Double>()
-    private val continuationDirection = mutableMapOf<String, String>()
-    private val continuationLevel = mutableMapOf<String, Double>()
-    private val continuationBreakEpoch = mutableMapOf<String, Long>()
-    private val continuationRetestEpoch = mutableMapOf<String, Long>()
     private val candlesByIndex = mutableMapOf<String, List<DerivApiClient.Candle>>()
     private val originalTriggered = mutableSetOf<String>()
     // Signal identity is independent for each index and engine and survives rollover/restart.
@@ -923,9 +913,9 @@ indexStatusViews[symbol]?.apply {
         val ordered = candles.sortedBy { it.epoch }
         m15CandlesByIndex[symbol] = ordered
 
-        // Evaluate completed M15 candles before checking either entry engine.
-        updatePreviousDayLevelBreakQualification(symbol, ordered)
-        // MSS and CHOCH are now calculated exclusively from M15 candles.
+        // The entry engine uses completed M15 MSS and CHOCH only.
+        // Previous-day high/low remain display reference levels and are not
+        // prerequisites for qualification or execution.
         evaluateRecoverySignals(symbol, ordered)
         latestPrices[symbol]?.let { evaluateOriginalEntries(symbol, it) }
 
@@ -1455,68 +1445,19 @@ indexStatusViews[symbol]?.apply {
         if (!marketFeedConnected || latestPrices[symbol] == null) {
             return "Waiting for live market price data."
         }
-        if (!accountConnected) return "M15 engines are monitored. Waiting for Deriv account connection."
+        if (!accountConnected) return "M15 MSS + CHOCH monitored. Waiting for Deriv account connection."
 
         val mss = recoveryMss[symbol]
         val choch = recoveryChoch[symbol]
-        val mssEpoch = recoveryMssEpoch[symbol] ?: 0L
-        val chochEpoch = recoveryChochEpoch[symbol] ?: 0L
-        val touched = reversalTouched[symbol]
-        val reversal = reversalQualifiedDirection[symbol]
-        val reversalEpoch = reversalEventEpoch[symbol] ?: 0L
-        val continuation = continuationDirection[symbol]
-        val retestEpoch = continuationRetestEpoch[symbol] ?: 0L
-        val eventEpoch = when {
-            reversal != null -> reversalEpoch
-            continuation != null && retestEpoch > 0L -> retestEpoch
-            else -> 0L
+        return when {
+            !mss.isNullOrBlank() && mss == choch ->
+                "M15 MSS + CHOCH QUALIFIED · $mss. Waiting for trade execution."
+            !mss.isNullOrBlank() && !choch.isNullOrBlank() ->
+                "M15 SIGNALS DISAGREE · MSS $mss / CHOCH $choch. Waiting for matching direction."
+            !mss.isNullOrBlank() -> "M15 MSS QUALIFIED · $mss. Waiting for matching CHOCH."
+            !choch.isNullOrBlank() -> "M15 CHOCH QUALIFIED · $choch. Waiting for matching MSS."
+            else -> "WAITING FOR COMPLETED M15 MSS AND CHOCH IN THE SAME DIRECTION."
         }
-
-        // Signal epochs are candle OPEN times, while engine event epochs are
-        // candle CLOSE times. Require the MSS/CHOCH candle to CLOSE strictly
-        // after the reversal/retest candle has closed. The event candle itself
-        // must never double as post-event structure confirmation.
-        val mssAfterEvent = eventEpoch > 0L && mssEpoch + 900L > eventEpoch
-        val chochAfterEvent = eventEpoch > 0L && chochEpoch + 900L > eventEpoch
-        val mssReady = mssAfterEvent && mss == (reversal ?: continuation)
-        val chochReady = chochAfterEvent && choch == (reversal ?: continuation)
-
-        if (touched == "PDH") {
-            return "REVERSAL BEARISH · PDH touched. Waiting for a completed M15 close below PDH."
-        }
-        if (touched == "PDL") {
-            return "REVERSAL BULLISH · PDL touched. Waiting for a completed M15 close above PDL."
-        }
-        if (reversal != null) {
-            return when {
-                !mssReady && !chochReady -> "REVERSAL ${reversal} · Reversal candle confirmed. Waiting for M15 MSS and CHOCH."
-                !mssReady -> "REVERSAL ${reversal} · Waiting for a fresh matching M15 MSS."
-                !chochReady -> "REVERSAL ${reversal} · MSS confirmed. Waiting for a fresh matching M15 CHOCH."
-                else -> "REVERSAL ${reversal} · M15 MSS + CHOCH confirmed. Ready for execution."
-            }
-        }
-        if (continuation != null && retestEpoch == 0L) {
-            val level = continuationLevel[symbol] ?: 0.0
-            return "CONTINUATION ${continuation} · Breakout confirmed. WAITING FOR RETEST of ${formatPrice(level)}."
-        }
-        if (continuation != null && retestEpoch > 0L) {
-            return when {
-                !mssReady && !chochReady -> "CONTINUATION ${continuation} · Retest confirmed. Waiting for M15 MSS and CHOCH."
-                !mssReady -> "CONTINUATION ${continuation} · Retest confirmed. Waiting for a fresh matching M15 MSS."
-                !chochReady -> "CONTINUATION ${continuation} · MSS confirmed after retest. Waiting for matching M15 CHOCH."
-                else -> "CONTINUATION ${continuation} · Retest and M15 MSS + CHOCH confirmed. Ready for execution."
-            }
-        }
-
-        val levels = dailyLevels[symbol]
-        val price = latestPrices[symbol] ?: 0.0
-        if (levels != null && price > levels.first) {
-            return "PRICE ABOVE PDH · Waiting for a completed M15 close above PDH for bullish continuation, or a close back below PDH for bearish reversal."
-        }
-        if (levels != null && price < levels.second) {
-            return "PRICE BELOW PDL · Waiting for a completed M15 close below PDL for bearish continuation, or a close back above PDL for bullish reversal."
-        }
-        return "WAITING FOR PDH/PDL EVENT · No confirmed breakout or reversal yet."
     }
 
     private fun reconcileRestoredOriginalPairs(symbolHint: String? = null) {
@@ -1598,36 +1539,22 @@ indexStatusViews[symbol]?.apply {
     }
 
     private fun recoveryStatusText(symbol: String): String {
-        val running = positions.values.filter { it.symbol == symbol && it.role == "ORIGINAL" &&
-            it.status !in setOf("CLOSED", "ERROR", "BUY FAILED", "PROPOSAL FAILED") }
-        val openPair = running.groupBy { it.originalId }.values.firstOrNull { pair ->
-            pair.size == 2 && pair.any { it.status == "OPEN" || it.status == "CLOSING" }
+        val running = positions.values.filter { it.symbol == symbol &&
+            it.status !in setOf("CLOSED", "ERROR", "BUY FAILED", "PROPOSAL FAILED") &&
+            !it.status.startsWith("ERROR") }
+        if (running.any { it.contractId > 0L || it.status == "OPEN" || it.status == "CLOSING" }) {
+            return "TRADE RUNNING · Waiting for this trade to close."
         }
-        if (openPair != null) return "ORIGINAL RISE + FALL PAIR RUNNING · Waiting for the original contracts to close."
-        if (positions.values.any { it.symbol == symbol && it.status == "OPEN" && it.role == "EXISTING" }) {
-            return "Existing Deriv contract detected. Its original contract terms remain unchanged."
-        }
+        if (running.isNotEmpty()) return "TRADE SUBMITTED · Waiting for Deriv confirmation."
+
         val mss = recoveryMss[symbol]
         val choch = recoveryChoch[symbol]
-        val mssEpoch = recoveryMssEpoch[symbol] ?: 0L
-        val chochEpoch = recoveryChochEpoch[symbol] ?: 0L
-        val rev = reversalQualifiedDirection[symbol]
-        val cont = continuationDirection[symbol]
-        val retest = continuationRetestEpoch[symbol] ?: 0L
-        val event = when { rev != null -> reversalEventEpoch[symbol] ?: 0L; cont != null && retest > 0L -> retest; else -> 0L }
-        val signalsReady = event > 0L && mss == choch && mss != null &&
-            mssEpoch + 900L > event && chochEpoch + 900L > event
         return when {
-            rev != null && signalsReady -> "QUALIFIED — REVERSAL · $rev"
-            rev != null && mss == rev -> "REVERSAL $rev · WAITING FOR CHOCH"
-            rev != null -> "REVERSAL $rev · WAITING FOR MSS"
-            cont != null && retest == 0L -> "CONTINUATION $cont · WAITING FOR RETEST"
-            cont != null && signalsReady -> "QUALIFIED — CONTINUATION · $cont"
-            cont != null && mss == cont -> "CONTINUATION $cont · WAITING FOR CHOCH"
-            cont != null -> "CONTINUATION $cont · WAITING FOR MSS"
-            reversalTouched[symbol] == "PDH" -> "REVERSAL · PDH TOUCHED · WAITING FOR CLOSE BELOW PDH"
-            reversalTouched[symbol] == "PDL" -> "REVERSAL · PDL TOUCHED · WAITING FOR CLOSE ABOVE PDL"
-            else -> "WAITING FOR BREAKOUT OR REVERSAL AT PDH/PDL"
+            !mss.isNullOrBlank() && mss == choch -> "QUALIFIED · M15 MSS + CHOCH $mss"
+            !mss.isNullOrBlank() && !choch.isNullOrBlank() -> "WAITING · MSS $mss AND CHOCH $choch DO NOT MATCH"
+            !mss.isNullOrBlank() -> "WAITING · MSS $mss CONFIRMED; WAITING FOR MATCHING CHOCH"
+            !choch.isNullOrBlank() -> "WAITING · CHOCH $choch CONFIRMED; WAITING FOR MATCHING MSS"
+            else -> "WAITING FOR COMPLETED M15 MSS + CHOCH IN THE SAME DIRECTION"
         }
     }
 
@@ -1714,89 +1641,6 @@ indexStatusViews[symbol]?.apply {
         }
     }
 
-    /** Evaluate PDH/PDL reversal and continuation independently, using completed M15 candles only. */
-    private fun updatePreviousDayLevelBreakQualification(
-        symbol: String,
-        candles: List<DerivApiClient.Candle>
-    ) {
-        val levels = dailyLevels[symbol] ?: return
-        val completed = candles.sortedBy { it.epoch }.dropLast(1).lastOrNull() ?: return
-        val high = levels.first
-        val low = levels.second
-        if (!high.isFinite() || !low.isFinite() || high <= low) return
-        val closeEpoch = completed.epoch + 900L
-
-        // REVERSAL: a touch/penetration is remembered; only a later completed
-        // M15 close back across that same level qualifies the reversal event.
-        val touched = reversalTouched[symbol]
-        if (touched == null) {
-            when {
-                completed.high >= high && completed.close < high -> {
-                    reversalQualifiedDirection[symbol] = "FALL"
-                    reversalEventEpoch[symbol] = closeEpoch
-                    reversalEventPrice[symbol] = completed.close
-                    reversalReferenceLevel[symbol] = low
-                    reversalReferenceLevel[symbol] = high
-                }
-                completed.low <= low && completed.close > low -> {
-                    reversalQualifiedDirection[symbol] = "RISE"
-                    reversalEventEpoch[symbol] = closeEpoch
-                    reversalEventPrice[symbol] = completed.close
-                }
-                completed.high >= high -> reversalTouched[symbol] = "PDH"
-                completed.low <= low -> reversalTouched[symbol] = "PDL"
-            }
-        } else if (touched == "PDH" && completed.close < high) {
-            reversalQualifiedDirection[symbol] = "FALL"
-            reversalEventEpoch[symbol] = closeEpoch
-            reversalEventPrice[symbol] = completed.close
-            reversalReferenceLevel[symbol] = high
-            reversalTouched.remove(symbol)
-        } else if (touched == "PDL" && completed.close > low) {
-            reversalQualifiedDirection[symbol] = "RISE"
-            reversalEventEpoch[symbol] = closeEpoch
-            reversalEventPrice[symbol] = completed.close
-            reversalReferenceLevel[symbol] = low
-            reversalTouched.remove(symbol)
-        }
-
-        // CONTINUATION: close beyond PDH/PDL, then a later candle must
-        // interact with the broken level. No extension-distance filter applies.
-        val activeDirection = continuationDirection[symbol]
-        if (activeDirection == null) {
-            when {
-                completed.close > high -> {
-                    continuationDirection[symbol] = "RISE"
-                    continuationLevel[symbol] = high
-                    continuationBreakEpoch[symbol] = closeEpoch
-                    continuationRetestEpoch.remove(symbol)
-                }
-                completed.close < low -> {
-                    continuationDirection[symbol] = "FALL"
-                    continuationLevel[symbol] = low
-                    continuationBreakEpoch[symbol] = closeEpoch
-                    continuationRetestEpoch.remove(symbol)
-                }
-            }
-        } else if (continuationRetestEpoch[symbol] == null && closeEpoch > (continuationBreakEpoch[symbol] ?: Long.MAX_VALUE)) {
-            val level = continuationLevel[symbol] ?: Double.NaN
-            val retested = level.isFinite() && completed.low <= level && completed.high >= level
-            val held = if (activeDirection == "RISE") completed.close >= level else completed.close <= level
-            val invalidated = if (activeDirection == "RISE") completed.close < level else completed.close > level
-            if (retested && held) {
-                continuationRetestEpoch[symbol] = closeEpoch
-            } else if (invalidated) {
-                continuationDirection.remove(symbol)
-                continuationLevel.remove(symbol)
-                continuationBreakEpoch.remove(symbol)
-                continuationRetestEpoch.remove(symbol)
-            }
-        }
-
-        // Expire stale setups on a new daily reference-level set naturally via
-        // the level refresh path; keep both engines independent per index.
-    }
-
     // Original paired contracts retain their shared lifecycle identifier.
     private fun tradeGroupId(position: Position): String =
         position.originalId.ifBlank { position.localId }
@@ -1813,20 +1657,6 @@ indexStatusViews[symbol]?.apply {
             .toSet()
     }
 
-    // H1 ATR(14), calculated from the completed H1 candles supplied by the
-    // historical-candle stream. Used only to validate a setup carried over rollover.
-    private fun completedH1Atr(symbol: String): Double? {
-        val candles = candlesByIndex[symbol]?.sortedBy { it.epoch }?.dropLast(1) ?: return null
-        if (candles.size < 15) return null
-        val recent = candles.takeLast(14)
-        val ranges = recent.mapIndexed { i, candle ->
-            val previousClose = candles[candles.size - 14 + i - 1].close
-            maxOf(candle.high - candle.low, kotlin.math.abs(candle.high - previousClose), kotlin.math.abs(candle.low - previousClose))
-        }
-        val atr = ranges.average()
-        return atr.takeIf { it.isFinite() && it > 0.0 }
-    }
-    
 private fun evaluateOriginalEntries(symbol: String, quote: Double) {
     if (!autoTradingEnabled || !accountConnected ||
         dailyCapital <= 0.0 || !quote.isFinite()
@@ -1839,7 +1669,10 @@ private fun evaluateOriginalEntries(symbol: String, quote: Double) {
     // Only qualification rule: MSS and CHOCH must agree.
     val mss = recoveryMss[symbol]
     val choch = recoveryChoch[symbol]
-    if (mss.isNullOrBlank() || mss != choch) return
+    val mssEpoch = recoveryMssEpoch[symbol] ?: 0L
+    val chochEpoch = recoveryChochEpoch[symbol] ?: 0L
+    // Both signals must be confirmed by completed M15 candles and agree.
+    if (mss.isNullOrBlank() || mss != choch || mssEpoch <= 0L || chochEpoch <= 0L) return
 
     // Preserve one original running trade per index.
     val indexAlreadyActive = positions.values.any {
@@ -1862,8 +1695,6 @@ private fun evaluateOriginalEntries(symbol: String, quote: Double) {
     }
 
     val originalId = "ORIGINAL-${today}-${symbol}-${UUID.randomUUID()}"
-    val mssEpoch = recoveryMssEpoch[symbol] ?: 0L
-    val chochEpoch = recoveryChochEpoch[symbol] ?: 0L
 
     val mssCloseEpoch = if (mssEpoch > 0L) mssEpoch + 900L else 0L
     val chochCloseEpoch = if (chochEpoch > 0L) chochEpoch + 900L else 0L
@@ -1903,22 +1734,6 @@ private fun evaluateOriginalEntries(symbol: String, quote: Double) {
     )
 }
 
-
-    private fun isSetupCarriedBeyondAtr(symbol: String, eventEpoch: Long, reference: Double, quote: Double): Boolean {
-        val eventDate = java.text.SimpleDateFormat("yyyyMMdd", Locale.US).apply {
-            timeZone = TimeZone.getTimeZone("Africa/Johannesburg")
-        }.format(java.util.Date(eventEpoch * 1000L))
-        val todayDate = java.text.SimpleDateFormat("yyyyMMdd", Locale.US).apply {
-            timeZone = TimeZone.getTimeZone("Africa/Johannesburg")
-        }.format(java.util.Date())
-        if (eventDate == todayDate) return false
-        val atr = completedH1Atr(symbol) ?: return true
-        return kotlin.math.abs(quote - reference) > atr
-    }
-
-    
-    private fun roundStake(value: Double): Double =
-        BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP).toDouble()
 
     private fun openPosition(
         symbol: String, direction: String, role: String, stake: Double,
@@ -2402,15 +2217,6 @@ private fun evaluateOriginalEntries(symbol: String, quote: Double) {
         executionMode = normalized
 
         positions.clear()
-        reversalTouched.clear()
-        reversalQualifiedDirection.clear()
-        reversalEventEpoch.clear()
-        reversalEventPrice.clear()
-        reversalReferenceLevel.clear()
-        continuationDirection.clear()
-        continuationLevel.clear()
-        continuationBreakEpoch.clear()
-        continuationRetestEpoch.clear()
         recoveryMss.clear()
         recoveryChoch.clear()
         recoveryMssEpoch.clear()
