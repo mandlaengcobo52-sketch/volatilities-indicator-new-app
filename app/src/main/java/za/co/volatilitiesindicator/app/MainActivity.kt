@@ -85,6 +85,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     // a newer quote for the same index.
     private val latestTickEpochs = mutableMapOf<String, Long>()
     private val priceViews = mutableMapOf<String, TextView>()
+    private val h1ChartAuditViews = mutableMapOf<String, TextView>()
     private val indexStatusViews = mutableMapOf<String, TextView>()
     private val marketStatusViews = mutableMapOf<String, TextView>()
     private val masterDecisionViews = mutableMapOf<String, TextView>()
@@ -103,6 +104,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     // Eight-stage strategy state is isolated and persisted independently for each index.
     private data class OrderBlockState(
         val direction: String, val low: Double, val high: Double, val identifiedEpoch: Long,
+        val originEpoch: Long = identifiedEpoch,
         var marketStructure: String = "",
         var touched: Boolean = false, var touchedEpoch: Long = 0L,
         var m15SwingPrice: Double = 0.0, var m15SwingEpoch: Long = 0L,
@@ -136,7 +138,8 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         if (ob == null) e.remove("ob_state_$symbol") else {
             val json = JSONObject()
                 .put("direction", ob.direction).put("low", ob.low).put("high", ob.high)
-                .put("identifiedEpoch", ob.identifiedEpoch).put("marketStructure", ob.marketStructure)
+                .put("identifiedEpoch", ob.identifiedEpoch).put("originEpoch", ob.originEpoch)
+                .put("marketStructure", ob.marketStructure)
                 .put("touched", ob.touched).put("touchedEpoch", ob.touchedEpoch)
                 .put("m15SwingPrice", ob.m15SwingPrice).put("m15SwingEpoch", ob.m15SwingEpoch)
                 .put("chochEpoch", ob.chochEpoch).put("chochPrice", ob.chochPrice)
@@ -187,6 +190,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 orderBlocks[symbol] = OrderBlockState(
                     direction = j.getString("direction"), low = j.getDouble("low"),
                     high = j.getDouble("high"), identifiedEpoch = j.getLong("identifiedEpoch"),
+                    originEpoch = j.optLong("originEpoch", j.optLong("identifiedEpoch")),
                     marketStructure = savedStructure,
                     touched = j.optBoolean("touched", false), touchedEpoch = j.optLong("touchedEpoch"),
                     m15SwingPrice = j.optDouble("m15SwingPrice"),
@@ -983,7 +987,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         runOnUiThread {
             // This was missing: the TextView was only populated during render(),
             // so the stored live quote did not refresh on incoming ticks.
-            priceViews[symbol]?.text = formatPrice(quote)
+            priceViews[symbol]?.text = formatPrice(symbol, quote)
 
             feedPillView?.apply {
                 text = "LIVE"
@@ -1023,6 +1027,7 @@ indexStatusViews[symbol]?.apply {
     background = rounded(green, green, 20)
 }
                 updateMasterDecisionViews(symbol)
+                h1ChartAuditViews[symbol]?.text = h1ChartAuditText(symbol)
                 updateRecoveryStatusView(symbol)
             }
             if (selectedTab == "Home") runOnUiThread { updateMasterDecisionViews(symbol); updateRecoveryStatusView(symbol) }
@@ -1051,6 +1056,7 @@ indexStatusViews[symbol]?.apply {
                 setTextColor(red)
             }
             marketStatusViews[symbol]?.text = message
+            masterDecisionViews[symbol]?.text = "MARKET DATA ERROR · $message"
             // Market-data errors remain visible on the index card; do not send notifications.
             updateConnectionLabels("Market data error: $symbol")
         }
@@ -1548,7 +1554,7 @@ indexStatusViews[symbol]?.apply {
 
     private fun referenceLevelsText(symbol: String): String {
         val levels = dailyLevels[symbol] ?: return "REFERENCE HIGH: --\nREFERENCE LOW: --"
-        return "PREVIOUS DAY HIGH: ${formatPrice(levels.first)}\nPREVIOUS DAY LOW: ${formatPrice(levels.second)}"
+        return "PREVIOUS DAY HIGH: ${formatPrice(symbol, levels.first)}\nPREVIOUS DAY LOW: ${formatPrice(symbol, levels.second)}"
     }
 
     private fun runningDirectionText(symbol: String): String? {
@@ -1572,7 +1578,7 @@ indexStatusViews[symbol]?.apply {
         }
         return when {
             ob.consumed -> "ENTRY EXECUTED · WAITING FOR A FRESH H1 SETUP"
-            ob.entryPrice > 0.0 -> "ALL 8 STAGES CONFIRMED · WAITING FOR PRICE ${formatPrice(ob.entryPrice)}"
+            ob.entryPrice > 0.0 -> "ALL 8 STAGES CONFIRMED · WAITING FOR PRICE ${formatPrice(symbol, ob.entryPrice)}"
             ob.chochEpoch > 0L -> "M15 CHOCH CONFIRMED · BUILDING ENTRY ORDER BLOCK / FVG"
             ob.touched -> "H1 ORDER BLOCK TOUCHED · WAITING FOR M15 STRUCTURE"
             else -> "H1 ${ob.marketStructure} · WAITING FOR ORDER BLOCK TOUCH"
@@ -1676,23 +1682,23 @@ indexStatusViews[symbol]?.apply {
         val rows = listOf(
             Triple("1. H1 MARKET STRUCTURE", s1,
                 if (s1)
-                    "$structure · SWING HIGH ${h1SwingHighPrice[symbol]?.let { formatPrice(it) } ?: "--"} (${eventTime(h1SwingHighEpoch[symbol] ?: 0L)}) · SWING LOW ${h1SwingLowPrice[symbol]?.let { formatPrice(it) } ?: "--"} (${eventTime(h1SwingLowEpoch[symbol] ?: 0L)}) · CONFIRMED ${eventTime(h1StructureEpoch[symbol] ?: 0L)}"
+                    "$structure · SWING HIGH ${h1SwingHighPrice[symbol]?.let { formatPrice(symbol, it) } ?: "--"} (${eventTime(h1SwingHighEpoch[symbol] ?: 0L)}) · SWING LOW ${h1SwingLowPrice[symbol]?.let { formatPrice(symbol, it) } ?: "--"} (${eventTime(h1SwingLowEpoch[symbol] ?: 0L)}) · CONFIRMED ${eventTime(h1StructureEpoch[symbol] ?: 0L)}"
                 else "WAITING"),
             Triple("2. H1 ORDER BLOCK + FVG", s2,
-                if (s2) "OB ${formatPrice(ob!!.low)}–${formatPrice(ob.high)} · FVG ${formatPrice(ob.h1FvgLow)}–${formatPrice(ob.h1FvgHigh)} · ${eventTime(ob.identifiedEpoch)}"
+                if (s2) "OB ZONE ${formatPrice(symbol, ob!!.low)}–${formatPrice(symbol, ob.high)} · OB CANDLE ${eventTime(ob.originEpoch)} · H1 BREAK ${eventTime(ob.identifiedEpoch)} · FVG ${formatPrice(symbol, ob.h1FvgLow)}–${formatPrice(symbol, ob.h1FvgHigh)} @ ${eventTime(ob.h1FvgEpoch)}"
                 else "WAITING FOR H1 ORDER BLOCK + FVG"),
             Triple("3. H1 ORDER BLOCK TOUCH", s3,
-                if (s3) "CANDLE HIGH ${formatPrice(ob!!.touchedCandleHigh)} / LOW ${formatPrice(ob.touchedCandleLow)} · ${eventTime(ob.touchedEpoch)}" else "WAITING"),
+                if (s3) "CANDLE HIGH ${formatPrice(symbol, ob!!.touchedCandleHigh)} / LOW ${formatPrice(symbol, ob.touchedCandleLow)} · ${eventTime(ob.touchedEpoch)}" else "WAITING"),
             Triple("4. M15 STRUCTURAL SWING", s4,
-                if (s4) "LEVEL ${formatPrice(ob!!.m15SwingPrice)} · ${eventTime(ob.m15SwingEpoch)}" else "WAITING"),
+                if (s4) "LEVEL ${formatPrice(symbol, ob!!.m15SwingPrice)} · ${eventTime(ob.m15SwingEpoch)}" else "WAITING"),
             Triple("5. M15 CHoCH", s5,
-                if (s5) "BROKEN LEVEL ${formatPrice(ob!!.chochPrice)} · CLOSE ${formatPrice(ob.chochClosePrice)} · ${eventTime(ob.chochEpoch)}" else "WAITING"),
+                if (s5) "BROKEN LEVEL ${formatPrice(symbol, ob!!.chochPrice)} · CLOSE ${formatPrice(symbol, ob.chochClosePrice)} · ${eventTime(ob.chochEpoch)}" else "WAITING"),
             Triple("6. M15 ENTRY ORDER BLOCK", s6,
-                if (s6) "ZONE ${formatPrice(ob!!.entryObLow)}–${formatPrice(ob.entryObHigh)} · ${eventTime(ob.entryObEpoch)}" else "WAITING"),
+                if (s6) "ZONE ${formatPrice(symbol, ob!!.entryObLow)}–${formatPrice(symbol, ob.entryObHigh)} · ${eventTime(ob.entryObEpoch)}" else "WAITING"),
             Triple("7. FVG CONFIRMATION", s7,
-                if (s7) "GAP ${formatPrice(ob!!.fvgLow)}–${formatPrice(ob.fvgHigh)} · ${eventTime(ob.fvgEpoch)}" else "WAITING"),
+                if (s7) "GAP ${formatPrice(symbol, ob!!.fvgLow)}–${formatPrice(symbol, ob.fvgHigh)} · ${eventTime(ob.fvgEpoch)}" else "WAITING"),
             Triple("8. LIMIT ENTRY", s8,
-                if (s8) "ENTRY ${formatPrice(ob!!.entryPrice)} · QUALIFIED ${eventTime(ob.entryEpoch)}" else "WAITING FOR ENTRY LEVEL")
+                if (s8) "ENTRY ${formatPrice(symbol, ob!!.entryPrice)} · QUALIFIED ${eventTime(ob.entryEpoch)}" else "WAITING FOR ENTRY LEVEL")
         )
         val result = SpannableStringBuilder()
         rows.forEachIndexed { index, row ->
@@ -1714,14 +1720,15 @@ indexStatusViews[symbol]?.apply {
 
     private fun updateMasterDecisionViews(symbol: String) {
         val levels = dailyLevels[symbol]
-        highLevelViews[symbol]?.text = "PREVIOUS DAY HIGH: ${levels?.first?.let { formatPrice(it) } ?: "--"}"
-        lowLevelViews[symbol]?.text = "PREVIOUS DAY LOW: ${levels?.second?.let { formatPrice(it) } ?: "--"}"
+        highLevelViews[symbol]?.text = "PREVIOUS DAY HIGH: ${levels?.first?.let { formatPrice(symbol, it) } ?: "--"}"
+        lowLevelViews[symbol]?.text = "PREVIOUS DAY LOW: ${levels?.second?.let { formatPrice(symbol, it) } ?: "--"}"
         val running = runningDirectionText(symbol)
         masterDecisionViews[symbol]?.apply {
-            text = running ?: "WAITING"
-            setTextColor(if (running != null) green else amber)
+            val decision = masterDecisionText(symbol)
+            text = decision
+            setTextColor(if (running != null || !decision.startsWith("WAITING")) green else amber)
         }
-        marketStatusViews[symbol]?.text = masterDecisionText(symbol)
+        h1ChartAuditViews[symbol]?.text = h1ChartAuditText(symbol)
     }
 
     private fun signalQualificationText(signal: String?): String {
@@ -1735,7 +1742,7 @@ indexStatusViews[symbol]?.apply {
         val ob = orderBlocks[symbol]
         mssStatusViews[symbol]?.apply {
             text = if (ob == null) "WAITING FOR H1 MARKET STRUCTURE" else
-                "${if (ob.direction == "RISE") "BULLISH" else "BEARISH"} H1 OB · ${formatPrice(ob.low)} – ${formatPrice(ob.high)}\\nIDENTIFIED: ${formatAuditDateTime(ob.identifiedEpoch)}"
+                "${if (ob.direction == "RISE") "BULLISH" else "BEARISH"} H1 OB · ${formatPrice(symbol, ob.low)} – ${formatPrice(symbol, ob.high)}\\nIDENTIFIED: ${formatAuditDateTime(ob.identifiedEpoch)}"
             setTextColor(if (ob == null) amber else green)
         }
         chochStatusViews[symbol]?.apply {
@@ -1759,9 +1766,9 @@ indexStatusViews[symbol]?.apply {
             return "ENTRY SIGNAL AUDIT\nH1 ORDER BLOCK: DATE NOT RECORDED\nM15 CHOCH: DATE NOT RECORDED\nLAST CANDLE CLOSE: DATE NOT RECORDED\nEXECUTION: ${formatAuditDateTime(position.executionEpoch)}"
         }
         return "ENTRY SIGNAL AUDIT\n" +
-            "M15 CHOCH (${position.entryChochDirection}): ${formatAuditDateTime(position.entryChochCloseEpoch)} · LEVEL ${formatPrice(position.entryChochPrice)}\n" +
-            "H1 ORDER BLOCK: ${formatAuditDateTime(position.entryMssCloseEpoch)} · LEVEL ${formatPrice(position.entryMssPrice)}\n" +
-            "LAST CANDLE CLOSE: ${formatAuditDateTime(position.entryLastCandleCloseEpoch)} · PRICE ${formatPrice(position.entryLastCandleClosePrice)}\n" +
+            "M15 CHOCH (${position.entryChochDirection}): ${formatAuditDateTime(position.entryChochCloseEpoch)} · LEVEL ${formatPrice(position.symbol, position.entryChochPrice)}\n" +
+            "H1 ORDER BLOCK ORIGIN: ${formatAuditDateTime(position.entryMssCloseEpoch)} · LOWER BOUNDARY ${formatPrice(position.symbol, position.entryMssPrice)}\n" +
+            "LAST CANDLE CLOSE: ${formatAuditDateTime(position.entryLastCandleCloseEpoch)} · PRICE ${formatPrice(position.symbol, position.entryLastCandleClosePrice)}\n" +
             "EXECUTION: ${formatAuditDateTime(position.executionEpoch)}"
     }
 
@@ -1793,7 +1800,7 @@ indexStatusViews[symbol]?.apply {
                 addNotification(
                     "Home",
                     "${displayIndexName(symbol)} reference levels updated",
-                    "Previous completed-day high: ${formatPrice(high)}; low: ${formatPrice(low)}."
+                    "Previous completed-day high: ${formatPrice(symbol, high)}; low: ${formatPrice(symbol, low)}."
                 )
             }
         }
@@ -1848,10 +1855,10 @@ indexStatusViews[symbol]?.apply {
         val submitted = openPosition(
             symbol, ob.direction, "ORIGINAL", stake, originalId,
             entryMssDirection = ob.marketStructure,
-            entryMssCloseEpoch = ob.identifiedEpoch,
+            entryMssCloseEpoch = ob.originEpoch,
             entryChochDirection = ob.direction,
             entryChochCloseEpoch = ob.chochEpoch,
-            entryMssPrice = ob.entryPrice,
+            entryMssPrice = ob.low,
             entryChochPrice = ob.chochPrice,
             entryLastCandleClosePrice = quote,
             entryLastCandleCloseEpoch = System.currentTimeMillis() / 1000L,
@@ -1868,7 +1875,7 @@ indexStatusViews[symbol]?.apply {
         originalTriggered.add(tradeKey)
         tradePrefs.edit().putStringSet("triggered_$today", originalTriggered.toSet()).commit()
         addNotification("Trade", "${displayIndexName(symbol)} ${ob.direction} entry submitted",
-            "All eight strategy stages confirmed. Price reached the M15 OB proximal edge ${formatPrice(ob.entryPrice)}; the existing Deriv market proposal was submitted.")
+            "All eight strategy stages confirmed. Price reached the M15 OB proximal edge ${formatPrice(symbol, ob.entryPrice)}; the existing Deriv market proposal was submitted.")
     }
 
     // Round Deriv stake values to the account's two-decimal currency precision.
@@ -2335,9 +2342,17 @@ indexStatusViews[symbol]?.apply {
             .apply()
 
         val last = closed.last()
+        val previous = closed.getOrNull(closed.lastIndex - 1) ?: return
+        val brokenLevel = if (h1Direction == "RISE") highs.last().second else lows.last().second
         val brokeStructure = if (h1Direction == "RISE")
-            last.close > highs.last().second else last.close < lows.last().second
+            previous.close <= brokenLevel && last.close > brokenLevel
+        else previous.close >= brokenLevel && last.close < brokenLevel
         if (!brokeStructure) return
+
+        // Repeated H1 refreshes must not overwrite a valid OB. A replacement is
+        // allowed only after a genuinely new, candle-close-confirmed structure break.
+        val existing = orderBlocks[symbol]
+        if (existing != null && last.epoch <= existing.identifiedEpoch) return
 
         // The displacement must create a three-candle FVG. The opposing candle
         // immediately preceding the displacement is the H1 order-block origin.
@@ -2353,13 +2368,10 @@ indexStatusViews[symbol]?.apply {
         val origin = closed.dropLast(1).asReversed().firstOrNull {
             if (h1Direction == "RISE") it.close < it.open else it.close > it.open
         } ?: return
-        val existing = orderBlocks[symbol]
-        if (existing != null && !existing.invalidated && !existing.consumed &&
-            existing.identifiedEpoch >= last.epoch) return
-
         val created = OrderBlockState(
             direction = h1Direction, low = origin.low, high = origin.high,
             identifiedEpoch = last.epoch,
+            originEpoch = origin.epoch,
             marketStructure = structureLabel,
             marketStructureEpoch = maxOf(highConfirmEpoch, lowConfirmEpoch),
             swingHighPrice = latestHigh.second, swingHighEpoch = closed[latestHigh.first].epoch,
@@ -2796,6 +2808,7 @@ indexStatusViews[symbol]?.apply {
             if (renderedTab.isNotBlank()) scrollPositions[renderedTab] = oldScroll.scrollY
         }
         priceViews.clear()
+        h1ChartAuditViews.clear()
         indexStatusViews.clear()
         marketStatusViews.clear()
         masterDecisionViews.clear()
@@ -2939,30 +2952,29 @@ indexStatusViews[symbol]?.apply {
             val priceRow = horizontal()
             priceRow.addView(text("LIVE PRICE", 11f, whiteText),
                 LinearLayout.LayoutParams(0, -2, 1f))
-            val priceView = text(latestPrices[symbol]?.let { formatPrice(it) } ?: "--", 17f, blue, true)
+            val priceView = text(latestPrices[symbol]?.let { formatPrice(symbol, it) } ?: "--", 17f, blue, true)
             priceViews[symbol] = priceView
             priceRow.addView(priceView)
             indexCard.addView(priceRow)
+            val chartAudit = text(h1ChartAuditText(symbol), 10f, whiteText)
+            h1ChartAuditViews[symbol] = chartAudit
+            indexCard.addView(chartAudit)
             indexCard.addView(space(8))
             indexCard.addView(divider())
             indexCard.addView(space(8))
             indexCard.addView(text("MASTER DECISION", 11f, Color.WHITE, true))
-            val decisionView = text(runningDirectionText(symbol) ?: "WAITING", 12f,
-                if (runningDirectionText(symbol) != null) green else amber, true)
+            val decisionText = masterDecisionText(symbol)
+            val decisionView = text(decisionText, 12f,
+                if (runningDirectionText(symbol) != null || !decisionText.startsWith("WAITING")) green else amber, true)
             masterDecisionViews[symbol] = decisionView
             indexCard.addView(decisionView)
             val currentLevels = dailyLevels[symbol]
-            val highView = text("PREVIOUS DAY HIGH: ${currentLevels?.first?.let { formatPrice(it) } ?: "--"}", 12f, green, true)
-            val lowView = text("PREVIOUS DAY LOW: ${currentLevels?.second?.let { formatPrice(it) } ?: "--"}", 12f, red, true)
+            val highView = text("PREVIOUS DAY HIGH: ${currentLevels?.first?.let { formatPrice(symbol, it) } ?: "--"}", 12f, green, true)
+            val lowView = text("PREVIOUS DAY LOW: ${currentLevels?.second?.let { formatPrice(symbol, it) } ?: "--"}", 12f, red, true)
             highLevelViews[symbol] = highView
             lowLevelViews[symbol] = lowView
             indexCard.addView(highView)
             indexCard.addView(lowView)
-            indexCard.addView(space(6))
-            val feedDetail = text(masterDecisionText(symbol), 11f, Color.WHITE)
-            marketStatusViews[symbol] = feedDetail
-            indexCard.addView(text("WAITING FOR", 10f, Color.WHITE, true))
-            indexCard.addView(feedDetail)
             indexCard.addView(space(8))
             indexCard.addView(divider())
             indexCard.addView(space(8))
@@ -4217,8 +4229,30 @@ content.addView(space(8))
         }
     }
 
+    private fun priceDecimals(symbol: String): Int = when (symbol) {
+        "R_10", "R_25" -> 3
+        "R_50" -> 4
+        "R_75", "R_100" -> 2
+        else -> 2
+    }
+
+    private fun formatPrice(symbol: String, value: Double): String =
+        String.format(Locale.US, "%,.${priceDecimals(symbol)}f", value)
+
     private fun formatPrice(value: Double): String =
         String.format(Locale.US, "%,.2f", value)
+
+    private fun h1ChartAuditText(symbol: String): String {
+        val candle = candlesByIndex[symbol]?.lastOrNull()
+            ?: return "H1 CHART DATA: WAITING FOR DERIV CANDLES"
+        val live = latestPrices[symbol]
+        val delta = live?.minus(candle.close)
+        return "H1 CANDLE · OPENED ${formatAuditDateTime(candle.epoch)}\n" +
+            "O ${formatPrice(symbol, candle.open)}  H ${formatPrice(symbol, candle.high)}  " +
+            "L ${formatPrice(symbol, candle.low)}  C ${formatPrice(symbol, candle.close)}\n" +
+            "LIVE vs H1 CLOSE: ${live?.let { formatPrice(symbol, it) } ?: "--"} vs ${formatPrice(symbol, candle.close)}" +
+            (delta?.let { " · Δ ${formatPrice(symbol, it)}" } ?: "")
+    }
 
     private fun dp(value: Int): Int =
         (value * resources.displayMetrics.density).toInt()
