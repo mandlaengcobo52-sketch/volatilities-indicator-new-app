@@ -1642,11 +1642,13 @@ indexStatusViews[symbol]?.apply {
         val ob = orderBlocks[symbol]
         mssStatusViews[symbol]?.apply {
             text = if (ob == null) "WAITING FOR H1 ORDER BLOCK" else
-                "${if (ob.direction == "RISE") "BULLISH" else "BEARISH"} OB · ${formatPrice(ob.low)} – ${formatPrice(ob.high)}"
+                "${if (ob.direction == "RISE") "BULLISH" else "BEARISH"} OB · ${formatPrice(ob.low)} – ${formatPrice(ob.high)}\nIDENTIFIED: ${formatAuditDateTime(ob.identifiedEpoch)}"
             setTextColor(if (ob == null) amber else green)
         }
         chochStatusViews[symbol]?.apply {
-            text = freshChochDirection[symbol]?.let { "CONFIRMED · $it" } ?:
+            text = freshChochDirection[symbol]?.let {
+                "CONFIRMED · $it\nCONFIRMED: ${formatAuditDateTime(freshChochEpoch[symbol] ?: 0L)}"
+            } ?:
                 when {
                     ob == null || ob.consumed -> "WAITING FOR H1 ORDER BLOCK"
                     !ob.touched -> "WAITING FOR H1 OB TOUCH"
@@ -2791,14 +2793,16 @@ indexStatusViews[symbol]?.apply {
             indexCard.addView(text("H1 ORDER BLOCK", 10f, whiteText, true))
             val activeOb = orderBlocks[symbol]
             val obDisplay = activeOb?.let {
-                "${if (it.direction == "RISE") "BULLISH" else "BEARISH"} OB · ${formatPrice(it.low)} – ${formatPrice(it.high)}"
+                "${if (it.direction == "RISE") "BULLISH" else "BEARISH"} OB · ${formatPrice(it.low)} – ${formatPrice(it.high)}\nIDENTIFIED: ${formatAuditDateTime(it.identifiedEpoch)}"
             } ?: "WAITING FOR H1 ORDER BLOCK"
             val mssView = text(obDisplay, 11f, if (activeOb == null) amber else green, true)
             mssStatusViews[symbol] = mssView
             indexCard.addView(mssView)
             indexCard.addView(space(5))
             indexCard.addView(text("M15 CHOCH", 10f, whiteText, true))
-            val chochView = text(freshChochDirection[symbol]?.let { "CONFIRMED · $it" } ?: "WAITING FOR M15 CHOCH", 11f, amber, true)
+            val chochView = text(freshChochDirection[symbol]?.let {
+                "CONFIRMED · $it\nCONFIRMED: ${formatAuditDateTime(freshChochEpoch[symbol] ?: 0L)}"
+            } ?: "WAITING FOR M15 CHOCH", 11f, amber, true)
             chochStatusViews[symbol] = chochView
             indexCard.addView(chochView)
             indexCard.addView(space(8))
