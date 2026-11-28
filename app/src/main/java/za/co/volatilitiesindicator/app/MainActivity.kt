@@ -1006,7 +1006,10 @@ indexStatusViews[symbol]?.apply {
                 position.status = "BUYING"
                 val buyReq = nextRequestId()
                 pendingRequests[buyReq] = localId
-                val buy = JSONObject().put("buy", proposalId).put("price", roundStake(position.stake)).put("req_id", buyReq)
+                val buy = JSONObject()
+                buy.put("buy", proposalId)
+                buy.put("price", roundStake(position.stake))
+                buy.put("req_id", buyReq)
                 derivService?.client?.send(buy)
             }
             "buy" -> {
@@ -1735,6 +1738,11 @@ private fun evaluateOriginalEntries(symbol: String, quote: Double) {
 }
 
 
+    // Round Deriv stake values to the account's two-decimal currency precision.
+    private fun roundStake(value: Double): Double =
+        BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP).toDouble()
+
+
     private fun openPosition(
         symbol: String, direction: String, role: String, stake: Double,
         originalId: String = "",
@@ -1801,15 +1809,15 @@ private fun evaluateOriginalEntries(symbol: String, quote: Double) {
         pendingRequests[req] = localId
         val contractType = if (direction == "RISE") "CALL" else "PUT"
         val proposal = JSONObject()
-            .put("proposal", 1)
-            .put("amount", roundStake(roundedStake))
-            .put("basis", "stake")
-            .put("contract_type", contractType)
-            .put("currency", accountCurrency)
-            .put("duration", 5)
-            .put("duration_unit", "d")
-            .put("underlying_symbol", symbol)
-            .put("req_id", req)
+        proposal.put("proposal", 1)
+        proposal.put("amount", roundStake(roundedStake))
+        proposal.put("basis", "stake")
+        proposal.put("contract_type", contractType)
+        proposal.put("currency", accountCurrency)
+        proposal.put("duration", 5)
+        proposal.put("duration_unit", "d")
+        proposal.put("underlying_symbol", symbol)
+        proposal.put("req_id", req)
         val client = derivService?.client
         if (client == null) {
             pendingRequests.remove(req)
