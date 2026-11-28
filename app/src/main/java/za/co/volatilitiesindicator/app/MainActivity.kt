@@ -1503,9 +1503,19 @@ indexStatusViews[symbol]?.apply {
 
     private fun masterDecisionText(symbol: String): String {
         runningDirectionText(symbol)?.let { return "$it. Contract is active on Deriv." }
+        val ob = orderBlocks[symbol]
+        if (ob != null && !ob.consumed) {
+            if (!ob.touched) return "${if (ob.direction == "RISE") "BULLISH" else "BEARISH"} H1 ORDER BLOCK IDENTIFIED · WAITING FOR TOUCH"
+            if (!ob.zoneCloseConfirmed) return "H1 ORDER BLOCK TOUCHED · WAITING FOR REQUIRED CLOSE BEYOND ZONE"
+            val choch = freshChochDirection[symbol]
+            val chochEpoch = freshChochEpoch[symbol] ?: 0L
+            if (choch == ob.direction && chochEpoch > ob.zoneCloseEpoch)
+                return "H1 ORDER BLOCK + M15 CHOCH CONFIRMED · EXECUTION"
+            return "H1 ORDER BLOCK CLOSE CONFIRMED · WAITING FOR M15 CHOCH"
+        }
         if (!marketFeedConnected || latestPrices[symbol] == null) return "Waiting for live market price data."
-        if (!accountConnected) return "H1 Order Block and M15 CHOCH monitored. Waiting for Deriv account connection."
-        return obStatus[symbol] ?: "WAITING FOR CONFIRMED H1 ORDER BLOCK."
+        if (!accountConnected) return "No active H1 Order Block. Monitoring; waiting for Deriv account connection."
+        return "WAITING FOR H1 ORDER BLOCK IDENTIFICATION"
     }
 
     private fun reconcileRestoredOriginalPairs(symbolHint: String? = null) {
@@ -1640,7 +1650,7 @@ indexStatusViews[symbol]?.apply {
                 when {
                     ob == null || ob.consumed -> "WAITING FOR H1 ORDER BLOCK"
                     !ob.touched -> "WAITING FOR H1 OB TOUCH"
-                    !ob.zoneCloseConfirmed -> "WAITING FOR CLOSE BEYOND OB"
+                    !ob.zoneCloseConfirmed -> "WAITING FOR REQUIRED CLOSE BEYOND OB"
                     else -> "WAITING FOR M15 CHOCH"
                 }
             setTextColor(if (freshChochDirection[symbol].isNullOrBlank()) amber else green)
@@ -2187,14 +2197,10 @@ indexStatusViews[symbol]?.apply {
         val closed = candles.sortedBy { it.epoch }.dropLast(1)
         if (closed.size < 7) return
 
-        // An identified, unconsumed Order Block remains the active setup.
-        // Never replace it or show "waiting for a new OB" while it is active.
+        // Keep the current Order Block active until a genuinely newer H1
+        // Order Block is confirmed. A repeated evaluation of the same H1
+        // candle must never reset its touch/close/CHOCH progress.
         val existing = orderBlocks[symbol]
-        if (existing != null && !existing.consumed) {
-            runOnUiThread { updateRecoveryStatusView(symbol); updateMasterDecisionViews(symbol) }
-            return
-        }
-
         val last = closed.last()
         val (highs, lows) = confirmedSwings(closed.dropLast(1))
         val previousHigh = highs.lastOrNull()
@@ -2211,7 +2217,8 @@ indexStatusViews[symbol]?.apply {
             if (origin != null) created = OrderBlockState("FALL", origin.low, origin.high, last.epoch)
         }
 
-        if (created != null) {
+        if (created != null &&
+            (existing == null || created.identifiedEpoch > existing.identifiedEpoch)) {
             orderBlocks[symbol] = created
             obStatus[symbol] = if (created.direction == "RISE")
                 "BULLISH H1 ORDER BLOCK IDENTIFIED" else "BEARISH H1 ORDER BLOCK IDENTIFIED"
