@@ -2594,7 +2594,7 @@ indexStatusViews[symbol]?.apply {
         // A deep-link Intent remains the Activity's launch Intent after rotation.
         // Clear its callback data immediately so onCreate() cannot process the
         // same one-time OAuth code again after the Activity is recreated.
-        setIntent(Intent(callbackIntent).apply { data = null })
+        setIntent(Intent(callbackIntent).apply { setData(null) })
 
         val error = data.getQueryParameter("error")
         if (!error.isNullOrBlank()) {
