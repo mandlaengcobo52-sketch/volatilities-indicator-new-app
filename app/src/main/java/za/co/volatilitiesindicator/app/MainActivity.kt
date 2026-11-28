@@ -1617,7 +1617,7 @@ indexStatusViews[symbol]?.apply {
                 val partner = unmatched.removeAt(partnerIndex)
                 val pairOpened = listOf(first.openedAtEpoch, partner.openedAtEpoch)
                     .filter { it > 0L }.minOrNull()
-                    ?: (first.expiryEpoch - 5L * 24L * 60L * 60L).coerceAtLeast(0L)
+                    ?: (first.expiryEpoch - 3L * 24L * 60L * 60L).coerceAtLeast(0L)
                 val pairId = "RESTORED|$symbol|${first.expiryEpoch}|$pairOpened"
                 val historicalDirection = originalSignalAt(symbol, pairOpened)
                 listOf(first, partner).forEach { leg ->
@@ -1842,7 +1842,7 @@ indexStatusViews[symbol]?.apply {
         if (positions.values.any { it.symbol == symbol && it.status != "CLOSED" &&
                 !it.status.startsWith("ERROR") && it.status !in setOf("BUY FAILED", "PROPOSAL FAILED") }) return
 
-        val stake = roundStake(dailyCapital * 0.20)
+        val stake = roundStake(dailyCapital * 0.50)
         if (stake <= 0.0 || availableBalance + 0.000001 < stake) {
             if (insufficientFundsNotified.add(tradeKey)) addNotification(
                 "Trade", "${displayIndexName(symbol)} trade not executed",
@@ -1954,7 +1954,7 @@ indexStatusViews[symbol]?.apply {
         proposal.put("basis", "stake")
         proposal.put("contract_type", contractType)
         proposal.put("currency", accountCurrency)
-        proposal.put("duration", 5)
+        proposal.put("duration", 3)
         proposal.put("duration_unit", "d")
         proposal.put("underlying_symbol", symbol)
         proposal.put("req_id", req)
@@ -2997,7 +2997,7 @@ indexStatusViews[symbol]?.apply {
         summary.addView(text("DAILY STARTING CAPITAL", 12f, gold, true))
         summary.addView(text(String.format(Locale.US, "%.2f %s", dailyCapital, accountCurrency), 18f, blue, true))
         summary.addView(text("ACCOUNT MODE: $executionMode", 12f, if (executionMode == "REAL") blue else red, true))
-        summary.addView(text("ORIGINAL TRADE STAKE: 20% OF FIXED DAILY STARTING CAPITAL", 12f, gold))
+        summary.addView(text("ORIGINAL TRADE STAKE: 50% OF FIXED DAILY STARTING CAPITAL", 12f, gold))
         content.addView(summary)
         content.addView(space(16))
 
