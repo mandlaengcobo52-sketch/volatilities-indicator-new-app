@@ -97,11 +97,10 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val recoveryChochPrice = mutableMapOf<String, Double>()
     private val recoverySignalClosePrice = mutableMapOf<String, Double>()
 
-    // Single strategy state: confirmed H1 Order Block -> H1 rejection -> fresh M15 CHOCH.
+    // Persistent strategy state: confirmed H1 Order Block touch/penetration -> closed M15 CHOCH.
     private data class OrderBlockState(
         val direction: String, val low: Double, val high: Double, val identifiedEpoch: Long,
-        var touched: Boolean = false, var rejectionEpoch: Long = 0L,
-        var rejectionClose: Double = 0.0, var consumed: Boolean = false
+        var touched: Boolean = false, var touchedEpoch: Long = 0L, var consumed: Boolean = false
     )
     private val orderBlocks = mutableMapOf<String, OrderBlockState>()
     private val obStatus = mutableMapOf<String, String>()
@@ -111,6 +110,44 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val freshChochDirection = mutableMapOf<String, String>()
     private val freshChochEpoch = mutableMapOf<String, Long>()
     private val freshChochPrice = mutableMapOf<String, Double>()
+    private fun saveOrderBlockState(symbol: String) {
+        val ob = orderBlocks[symbol]
+        val e = tradePrefs.edit()
+        if (ob == null) e.remove("ob_state_$symbol") else {
+            val json = JSONObject().put("direction", ob.direction).put("low", ob.low)
+                .put("high", ob.high).put("identifiedEpoch", ob.identifiedEpoch)
+                .put("touched", ob.touched).put("touchedEpoch", ob.touchedEpoch)
+                .put("consumed", ob.consumed)
+            e.putString("ob_state_$symbol", json.toString())
+        }
+        e.putString("ob_status_$symbol", obStatus[symbol] ?: "")
+            .putString("choch_direction_$symbol", freshChochDirection[symbol] ?: "")
+            .putLong("choch_epoch_$symbol", freshChochEpoch[symbol] ?: 0L)
+            .putString("choch_price_$symbol", freshChochPrice[symbol]?.toString() ?: "")
+            .commit()
+    }
+
+    private fun loadOrderBlockStates() {
+        orderBlocks.clear(); obStatus.clear()
+        obRejectionDirection.clear(); obRejectionEpoch.clear(); obRejectionClose.clear()
+        freshChochDirection.clear(); freshChochEpoch.clear(); freshChochPrice.clear()
+        indexes.forEach { symbol ->
+            val raw = tradePrefs.getString("ob_state_$symbol", null)
+            if (!raw.isNullOrBlank()) try {
+                val j = JSONObject(raw)
+                orderBlocks[symbol] = OrderBlockState(
+                    j.getString("direction"), j.getDouble("low"), j.getDouble("high"),
+                    j.getLong("identifiedEpoch"), j.optBoolean("touched", false),
+                    j.optLong("touchedEpoch", 0L), j.optBoolean("consumed", false)
+                )
+            } catch (_: Exception) { tradePrefs.edit().remove("ob_state_$symbol").apply() }
+            tradePrefs.getString("ob_status_$symbol", null)?.takeIf { it.isNotBlank() }?.let { obStatus[symbol] = it }
+            tradePrefs.getString("choch_direction_$symbol", null)?.takeIf { it.isNotBlank() }?.let { freshChochDirection[symbol] = it }
+            tradePrefs.getLong("choch_epoch_$symbol", 0L).takeIf { it > 0L }?.let { freshChochEpoch[symbol] = it }
+            tradePrefs.getString("choch_price_$symbol", null)?.toDoubleOrNull()?.let { freshChochPrice[symbol] = it }
+        }
+    }
+
 
     private data class AppNotification(
         val id: Long,
@@ -929,7 +966,7 @@ indexStatusViews[symbol]?.apply {
         val ordered = candles.sortedBy { it.epoch }
         m15CandlesByIndex[symbol] = ordered
 
-        // A fresh M15 CHOCH is considered only after a confirmed H1 OB rejection.
+        // A closed M15 CHOCH qualifies after H1 OB touch/penetration; no H1 rejection gate.
         evaluateFreshM15Choch(symbol, ordered)
         latestPrices[symbol]?.let { evaluateOriginalEntries(symbol, it) }
 
@@ -1549,9 +1586,11 @@ indexStatusViews[symbol]?.apply {
         val ob = orderBlocks[symbol]
         if (ob == null) return "WAITING FOR CONFIRMED H1 ORDER BLOCK"
         if (ob.consumed) return "ORDER BLOCK SIGNAL CONSUMED · WAITING FOR A NEW H1 ORDER BLOCK"
-        if (ob.rejectionEpoch <= 0L) return obStatus[symbol] ?: "WAITING FOR H1 ORDER BLOCK TOUCH AND REJECTION"
+        if (!ob.touched) return obStatus[symbol] ?: "WAITING FOR PRICE TO TOUCH H1 ORDER BLOCK"
         val choch = freshChochDirection[symbol]
-        return if (choch == ob.direction && (freshChochEpoch[symbol] ?: 0L) > ob.rejectionEpoch) "QUALIFIED · H1 OB REJECTION + FRESH M15 CHOCH $choch" else "H1 OB REJECTION CONFIRMED · WAITING FOR FRESH M15 CHOCH"
+        return if (choch == ob.direction && (freshChochEpoch[symbol] ?: 0L) >= ob.touchedEpoch)
+            "QUALIFIED · H1 OB TOUCH + M15 CHOCH $choch"
+        else "H1 ORDER BLOCK TOUCHED · WAITING FOR CLOSED M15 CHOCH"
     }
 
     private fun updateMasterDecisionViews(symbol: String) {
@@ -1582,7 +1621,7 @@ indexStatusViews[symbol]?.apply {
         }
         chochStatusViews[symbol]?.apply {
             text = freshChochDirection[symbol]?.let { "CONFIRMED · $it" } ?:
-                if ((obRejectionEpoch[symbol] ?: 0L) > 0L) "WAITING FOR FRESH M15 CHOCH" else "WAITING FOR H1 OB REJECTION"
+                if (ob?.touched == true) "WAITING FOR CLOSED M15 CHOCH" else "WAITING FOR H1 OB TOUCH"
             setTextColor(if (freshChochDirection[symbol].isNullOrBlank()) amber else green)
         }
     }
@@ -1656,57 +1695,55 @@ indexStatusViews[symbol]?.apply {
             .toSet()
     }
 
-private fun evaluateOriginalEntries(symbol: String, quote: Double) {
-    if (!autoTradingEnabled || !accountConnected || dailyCapital <= 0.0 || !quote.isFinite()) return
-    val ob = orderBlocks[symbol] ?: return
-    val rejectionDirection = obRejectionDirection[symbol] ?: return
-    val rejectionEpoch = obRejectionEpoch[symbol] ?: return
-    val chochDirection = freshChochDirection[symbol] ?: return
-    val chochEpoch = freshChochEpoch[symbol] ?: return
-    if (ob.consumed || !ob.touched || ob.rejectionEpoch != rejectionEpoch ||
-        rejectionDirection != chochDirection || chochEpoch <= rejectionEpoch) return
+    private fun evaluateOriginalEntries(symbol: String, quote: Double) {
+        if (!autoTradingEnabled || !accountConnected || dailyCapital <= 0.0 || !quote.isFinite()) return
+        val ob = orderBlocks[symbol] ?: return
+        val direction = freshChochDirection[symbol] ?: return
+        val chochEpoch = freshChochEpoch[symbol] ?: return
+        if (ob.consumed || !ob.touched || direction != ob.direction ||
+            ob.touchedEpoch <= 0L || chochEpoch < ob.touchedEpoch) return
 
-    val today = utcDayKey(System.currentTimeMillis() / 1000L)
-    val tradeKey = "$today|$symbol|OB_M15_CHOCH"
-    if (tradeKey in originalTriggered) return
-    val indexAlreadyActive = positions.values.any {
-        it.symbol == symbol && it.status != "CLOSED" && !it.status.startsWith("ERROR") &&
-            it.status !in setOf("BUY FAILED", "PROPOSAL FAILED")
-    }
-    if (indexAlreadyActive) return
+        val today = utcDayKey(System.currentTimeMillis() / 1000L)
+        val tradeKey = "$today|$symbol|OB_M15_CHOCH"
+        if (tradeKey in originalTriggered) return
+        val indexAlreadyActive = positions.values.any {
+            it.symbol == symbol && it.status != "CLOSED" && !it.status.startsWith("ERROR") &&
+                it.status !in setOf("BUY FAILED", "PROPOSAL FAILED")
+        }
+        if (indexAlreadyActive) return
 
-    // Preserve the existing stake calculation and all Deriv order mechanics.
-    val stake = roundStake(dailyCapital * 0.20)
-    if (stake <= 0.0 || availableBalance + 0.000001 < stake) {
-        if (insufficientFundsNotified.add(tradeKey)) addNotification(
-            "Trade", "${displayIndexName(symbol)} trade not executed",
-            "Available balance ${formatMoney(availableBalance)} is below the single-trade stake ${formatMoney(stake)}."
+        val stake = roundStake(dailyCapital * 0.20)
+        if (stake <= 0.0 || availableBalance + 0.000001 < stake) {
+            if (insufficientFundsNotified.add(tradeKey)) addNotification(
+                "Trade", "${displayIndexName(symbol)} trade not executed",
+                "Available balance ${formatMoney(availableBalance)} is below the single-trade stake ${formatMoney(stake)}."
+            )
+            return
+        }
+        val originalId = "OB-CHOCH-${today}-${symbol}-${UUID.randomUUID()}"
+        val submitted = openPosition(
+            symbol, direction, "ORIGINAL", stake, originalId,
+            entryMssDirection = "H1_OB", entryMssCloseEpoch = ob.identifiedEpoch + 3600L,
+            entryChochDirection = direction, entryChochCloseEpoch = chochEpoch + 900L,
+            entryMssPrice = if (direction == "RISE") ob.high else ob.low,
+            entryChochPrice = freshChochPrice[symbol] ?: quote,
+            entryLastCandleClosePrice = quote,
+            entryLastCandleCloseEpoch = chochEpoch + 900L,
+            engineType = "H1_OB_M15_CHOCH"
         )
-        return
+        if (!submitted) {
+            addNotification("Trade", "${displayIndexName(symbol)} trade not submitted",
+                "The $direction Order Block / M15 CHOCH proposal could not be sent. The signal remains available for retry.")
+            return
+        }
+        ob.consumed = true
+        obStatus[symbol] = "ORDER BLOCK SIGNAL CONSUMED"
+        saveOrderBlockState(symbol)
+        originalTriggered.add(tradeKey)
+        tradePrefs.edit().putStringSet("triggered_$today", originalTriggered.toSet()).commit()
+        addNotification("Trade", "${displayIndexName(symbol)} $direction trade submitted",
+            "H1 Order Block touched/penetrated and a closed M15 CHOCH confirmed $direction. Deriv proposal submitted.")
     }
-    val direction = chochDirection
-    val originalId = "OB-CHOCH-${today}-${symbol}-${UUID.randomUUID()}"
-    val submitted = openPosition(
-        symbol, direction, "ORIGINAL", stake, originalId,
-        entryMssDirection = "H1_OB", entryMssCloseEpoch = rejectionEpoch + 3600L,
-        entryChochDirection = direction, entryChochCloseEpoch = chochEpoch + 900L,
-        entryMssPrice = if (direction == "RISE") ob.high else ob.low,
-        entryChochPrice = freshChochPrice[symbol] ?: quote,
-        entryLastCandleClosePrice = obRejectionClose[symbol] ?: quote,
-        entryLastCandleCloseEpoch = rejectionEpoch + 3600L,
-        engineType = "H1_OB_M15_CHOCH"
-    )
-    if (!submitted) {
-        addNotification("Trade", "${displayIndexName(symbol)} trade not submitted",
-            "The $direction Order Block / M15 CHOCH proposal could not be sent. The signal remains available for retry.")
-        return
-    }
-    ob.consumed = true
-    originalTriggered.add(tradeKey)
-    tradePrefs.edit().putStringSet("triggered_$today", originalTriggered.toSet()).commit()
-    addNotification("Trade", "${displayIndexName(symbol)} $direction trade submitted",
-        "Confirmed H1 Order Block rejection followed by a fresh closed M15 CHOCH. One contract proposal was sent to Deriv.")
-}
 
     // Round Deriv stake values to the account's two-decimal currency precision.
     private fun roundStake(value: Double): Double =
@@ -2138,67 +2175,68 @@ private fun evaluateOriginalEntries(symbol: String, quote: Double) {
                 if (origin != null) {
                     ob = OrderBlockState("RISE", origin.low, origin.high, last.epoch)
                     orderBlocks[symbol] = ob
-                    obStatus[symbol] = "BULLISH OB IDENTIFIED"
+                    obStatus[symbol] = "BULLISH H1 ORDER BLOCK IDENTIFIED"
+                    freshChochDirection.remove(symbol); freshChochEpoch.remove(symbol); freshChochPrice.remove(symbol)
+                    saveOrderBlockState(symbol)
                 }
             } else if (previousLow != null && last.close < previousLow.second) {
                 val origin = closed.dropLast(1).asReversed().firstOrNull { it.epoch < last.epoch && it.close > it.open }
                 if (origin != null) {
                     ob = OrderBlockState("FALL", origin.low, origin.high, last.epoch)
                     orderBlocks[symbol] = ob
-                    obStatus[symbol] = "BEARISH OB IDENTIFIED"
+                    obStatus[symbol] = "BEARISH H1 ORDER BLOCK IDENTIFIED"
+                    freshChochDirection.remove(symbol); freshChochEpoch.remove(symbol); freshChochPrice.remove(symbol)
+                    saveOrderBlockState(symbol)
                 }
             }
         }
         ob = orderBlocks[symbol] ?: return
-        if (last.epoch <= ob.identifiedEpoch || ob.consumed || ob.rejectionEpoch > 0L) return
-        val touched = last.high >= ob.low && last.low <= ob.high
-        if (touched) ob.touched = true
-        if (ob.touched) {
-            val rejected = when (ob.direction) {
-                "FALL" -> last.close < ob.low
-                "RISE" -> last.close > ob.high
-                else -> false
-            }
-            if (rejected) {
-                ob.rejectionEpoch = last.epoch
-                ob.rejectionClose = last.close
-                obRejectionDirection[symbol] = ob.direction
-                obRejectionEpoch[symbol] = last.epoch
-                obRejectionClose[symbol] = last.close
-                freshChochDirection.remove(symbol)
-                freshChochEpoch.remove(symbol)
-                obStatus[symbol] = "H1 OB REJECTION CONFIRMED · WAITING FOR M15 CHOCH"
-                addNotification("Home", "${displayIndexName(symbol)} H1 Order Block rejected", "H1 rejection confirmed. Waiting for a fresh M15 CHOCH in the same direction.")
-            } else {
-                obStatus[symbol] = "ORDER BLOCK TOUCHED · WAITING FOR H1 REJECTION"
-            }
+        if (last.epoch > ob.identifiedEpoch && !ob.consumed &&
+            !ob.touched && last.high >= ob.low && last.low <= ob.high) {
+            ob.touched = true
+            ob.touchedEpoch = last.epoch
+            obStatus[symbol] = "H1 ORDER BLOCK TOUCHED / PENETRATED · WAITING FOR M15 CHOCH"
+            saveOrderBlockState(symbol)
+            addNotification("Home", "${displayIndexName(symbol)} Order Block touched",
+                "Price entered the confirmed H1 Order Block. Waiting for a closed M15 CHOCH in the same direction.")
         }
         runOnUiThread { updateRecoveryStatusView(symbol); updateMasterDecisionViews(symbol) }
     }
 
     private fun evaluateFreshM15Choch(symbol: String, candles: List<DerivApiClient.Candle>) {
         val ob = orderBlocks[symbol] ?: return
-        val rejectionEpoch = obRejectionEpoch[symbol] ?: return
-        if (ob.consumed || ob.rejectionEpoch <= 0L || candles.size < 7) return
+        if (ob.consumed || candles.size < 7) return
         val closed = candles.sortedBy { it.epoch }.dropLast(1)
         if (closed.size < 6) return
         val last = closed.last()
-        if (last.epoch <= rejectionEpoch || last.epoch <= (freshChochEpoch[symbol] ?: 0L)) return
+        if (last.epoch <= ob.identifiedEpoch || last.epoch <= (freshChochEpoch[symbol] ?: 0L)) return
+
+        // M15 overlap records touch/penetration; no H1 rejection or leave-and-retest gate.
+        if (!ob.touched && last.high >= ob.low && last.low <= ob.high) {
+            ob.touched = true
+            ob.touchedEpoch = last.epoch
+            obStatus[symbol] = "ORDER BLOCK TOUCHED / PENETRATED · CHECKING M15 CHOCH"
+            saveOrderBlockState(symbol)
+        }
+        if (!ob.touched || last.epoch < ob.touchedEpoch) return
+
         val (highs, lows) = confirmedSwings(closed.dropLast(1))
-        val swingHigh = highs.lastOrNull()?.second ?: return
-        val swingLow = lows.lastOrNull()?.second ?: return
+        val swingHigh = highs.lastOrNull()?.second
+        val swingLow = lows.lastOrNull()?.second
         val direction = when {
-            ob.direction == "RISE" && last.close > swingHigh -> "RISE"
-            ob.direction == "FALL" && last.close < swingLow -> "FALL"
+            ob.direction == "RISE" && swingHigh != null && last.close > swingHigh -> "RISE"
+            ob.direction == "FALL" && swingLow != null && last.close < swingLow -> "FALL"
             else -> ""
         }
         if (direction.isNotBlank()) {
             freshChochDirection[symbol] = direction
             freshChochEpoch[symbol] = last.epoch
-            freshChochPrice[symbol] = if (direction == "RISE") swingHigh else swingLow
+            freshChochPrice[symbol] = if (direction == "RISE") swingHigh!! else swingLow!!
             obStatus[symbol] = "M15 CHOCH CONFIRMED · $direction · READY TO EXECUTE"
-            addNotification("Home", "${displayIndexName(symbol)} fresh M15 CHOCH confirmed", "A completed M15 candle confirmed $direction after H1 Order Block rejection.")
-            latestPrices[symbol]?.let { evaluateOriginalEntries(symbol, it) }
+            saveOrderBlockState(symbol)
+            addNotification("Home", "${displayIndexName(symbol)} fresh M15 CHOCH confirmed",
+                "A closed M15 candle confirmed $direction after price touched/penetrated the H1 Order Block.")
+            evaluateOriginalEntries(symbol, latestPrices[symbol] ?: last.close)
         }
         runOnUiThread { updateRecoveryStatusView(symbol); updateMasterDecisionViews(symbol) }
     }
@@ -2242,6 +2280,7 @@ private fun evaluateOriginalEntries(symbol: String, quote: Double) {
                 tradePrefs.getStringSet("triggered_$tradingDayKey", emptySet()) ?: emptySet()
             )
         }
+        loadOrderBlockStates()
     }
 
     private fun savePositions() {
