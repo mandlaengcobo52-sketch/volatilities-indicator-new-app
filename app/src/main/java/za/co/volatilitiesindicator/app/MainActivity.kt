@@ -1469,10 +1469,12 @@ indexStatusViews[symbol]?.apply {
             else -> 0L
         }
 
-        // A structure signal is valid for an engine only when its completed
-        // M15 candle closes after that engine's reversal/retest event.
-        val mssAfterEvent = eventEpoch > 0L && mssEpoch + 900L >= eventEpoch
-        val chochAfterEvent = eventEpoch > 0L && chochEpoch + 900L >= eventEpoch
+        // Signal epochs are candle OPEN times, while engine event epochs are
+        // candle CLOSE times. Require the MSS/CHOCH candle to CLOSE strictly
+        // after the reversal/retest candle has closed. The event candle itself
+        // must never double as post-event structure confirmation.
+        val mssAfterEvent = eventEpoch > 0L && mssEpoch + 900L > eventEpoch
+        val chochAfterEvent = eventEpoch > 0L && chochEpoch + 900L > eventEpoch
         val mssReady = mssAfterEvent && mss == (reversal ?: continuation)
         val chochReady = chochAfterEvent && choch == (reversal ?: continuation)
 
@@ -1812,10 +1814,13 @@ indexStatusViews[symbol]?.apply {
         val reversalEpoch = reversalEventEpoch[symbol] ?: 0L
         val continuationDir = continuationDirection[symbol]
         val retestEpoch = continuationRetestEpoch[symbol] ?: 0L
+        // MSS/CHOCH epochs store the M15 candle OPEN; reversal/retest epochs
+        // store the qualifying candle CLOSE. Confirmation must therefore be
+        // from a later candle, not the same candle that formed the event.
         val reversalReady = reversalDirection == mss && reversalEpoch > 0L &&
-            mssEpoch >= reversalEpoch && chochEpoch >= reversalEpoch
+            mssEpoch + 900L > reversalEpoch && chochEpoch + 900L > reversalEpoch
         val continuationReady = continuationDir == mss && retestEpoch > 0L &&
-            mssEpoch >= retestEpoch && chochEpoch >= retestEpoch
+            mssEpoch + 900L > retestEpoch && chochEpoch + 900L > retestEpoch
         val engineType = when {
             reversalReady -> "REVERSAL"
             continuationReady -> "CONTINUATION"
