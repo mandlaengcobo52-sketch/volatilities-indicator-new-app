@@ -73,7 +73,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val scrollPositions = mutableMapOf<String, Int>()
     private val settingsPrefs by lazy { getSharedPreferences("vi_settings", MODE_PRIVATE) }
     // Auto trading defaults ON to preserve the existing automatic execution behaviour.
-    // OFF pauses new original/recovery entries but does not affect open contracts.
+    // OFF pauses new original entries but does not affect open contracts.
     private var autoTradingEnabled = true
 
     private val indexes = listOf("R_10", "R_25", "R_50", "R_75", "R_100")
@@ -200,12 +200,15 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     private val reversalQualifiedDirection = mutableMapOf<String, String>()
     private val reversalEventEpoch = mutableMapOf<String, Long>()
     private val reversalEventPrice = mutableMapOf<String, Double>()
+    private val reversalReferenceLevel = mutableMapOf<String, Double>()
     private val continuationDirection = mutableMapOf<String, String>()
     private val continuationLevel = mutableMapOf<String, Double>()
     private val continuationBreakEpoch = mutableMapOf<String, Long>()
     private val continuationRetestEpoch = mutableMapOf<String, Long>()
     private val candlesByIndex = mutableMapOf<String, List<DerivApiClient.Candle>>()
     private val originalTriggered = mutableSetOf<String>()
+    // Signal identity is independent for each index and engine and survives rollover/restart.
+    private val consumedEngineSignals = mutableSetOf<String>()
     private val recoveryMss = mutableMapOf<String, String>()
     private val recoveryChoch = mutableMapOf<String, String>()
     // Candle epochs are retained so a pre-existing qualification cannot trigger
@@ -1604,13 +1607,27 @@ indexStatusViews[symbol]?.apply {
         if (positions.values.any { it.symbol == symbol && it.status == "OPEN" && it.role == "EXISTING" }) {
             return "Existing Deriv contract detected. Its original contract terms remain unchanged."
         }
+        val mss = recoveryMss[symbol]
+        val choch = recoveryChoch[symbol]
+        val mssEpoch = recoveryMssEpoch[symbol] ?: 0L
+        val chochEpoch = recoveryChochEpoch[symbol] ?: 0L
         val rev = reversalQualifiedDirection[symbol]
         val cont = continuationDirection[symbol]
+        val retest = continuationRetestEpoch[symbol] ?: 0L
+        val event = when { rev != null -> reversalEventEpoch[symbol] ?: 0L; cont != null && retest > 0L -> retest; else -> 0L }
+        val signalsReady = event > 0L && mss == choch && mss != null &&
+            mssEpoch + 900L > event && chochEpoch + 900L > event
         return when {
-            rev != null -> "REVERSAL SETUP · $rev · Waiting for matching M15 MSS + CHOCH."
-            cont != null && continuationRetestEpoch[symbol] == null -> "CONTINUATION $cont · Waiting for retest of the broken PDH/PDL level."
-            cont != null -> "CONTINUATION SETUP · $cont · Retest confirmed; waiting for matching M15 MSS + CHOCH."
-            else -> "Waiting for a PDH/PDL Reversal or Continuation setup."
+            rev != null && signalsReady -> "QUALIFIED — REVERSAL · $rev"
+            rev != null && mss == rev -> "REVERSAL $rev · WAITING FOR CHOCH"
+            rev != null -> "REVERSAL $rev · WAITING FOR MSS"
+            cont != null && retest == 0L -> "CONTINUATION $cont · WAITING FOR RETEST"
+            cont != null && signalsReady -> "QUALIFIED — CONTINUATION · $cont"
+            cont != null && mss == cont -> "CONTINUATION $cont · WAITING FOR CHOCH"
+            cont != null -> "CONTINUATION $cont · WAITING FOR MSS"
+            reversalTouched[symbol] == "PDH" -> "REVERSAL · PDH TOUCHED · WAITING FOR CLOSE BELOW PDH"
+            reversalTouched[symbol] == "PDL" -> "REVERSAL · PDL TOUCHED · WAITING FOR CLOSE ABOVE PDL"
+            else -> "WAITING FOR BREAKOUT OR REVERSAL AT PDH/PDL"
         }
     }
 
@@ -1685,15 +1702,9 @@ indexStatusViews[symbol]?.apply {
             val previous = dailyLevels[symbol]
             dailyLevels[symbol] = high to low
             if (previous == null || previous.first != high || previous.second != low) {
-                // A new daily PDH/PDL pair starts fresh independent engine setups.
-                reversalTouched.remove(symbol)
-                reversalQualifiedDirection.remove(symbol)
-                reversalEventEpoch.remove(symbol)
-                reversalEventPrice.remove(symbol)
-                continuationDirection.remove(symbol)
-                continuationLevel.remove(symbol)
-                continuationBreakEpoch.remove(symbol)
-                continuationRetestEpoch.remove(symbol)
+                // Keep an in-progress setup across the 00:00 South African rollover.
+                // Its captured reference price remains in the setup maps; only a
+                // genuinely new level event can replace it.
                 addNotification(
                     "Home",
                     "${displayIndexName(symbol)} reference levels updated",
@@ -1724,6 +1735,8 @@ indexStatusViews[symbol]?.apply {
                     reversalQualifiedDirection[symbol] = "FALL"
                     reversalEventEpoch[symbol] = closeEpoch
                     reversalEventPrice[symbol] = completed.close
+                    reversalReferenceLevel[symbol] = low
+                    reversalReferenceLevel[symbol] = high
                 }
                 completed.low <= low && completed.close > low -> {
                     reversalQualifiedDirection[symbol] = "RISE"
@@ -1737,11 +1750,13 @@ indexStatusViews[symbol]?.apply {
             reversalQualifiedDirection[symbol] = "FALL"
             reversalEventEpoch[symbol] = closeEpoch
             reversalEventPrice[symbol] = completed.close
+            reversalReferenceLevel[symbol] = high
             reversalTouched.remove(symbol)
         } else if (touched == "PDL" && completed.close > low) {
             reversalQualifiedDirection[symbol] = "RISE"
             reversalEventEpoch[symbol] = closeEpoch
             reversalEventPrice[symbol] = completed.close
+            reversalReferenceLevel[symbol] = low
             reversalTouched.remove(symbol)
         }
 
@@ -1798,6 +1813,32 @@ indexStatusViews[symbol]?.apply {
             .toSet()
     }
 
+    // H1 ATR(14), calculated from the completed H1 candles supplied by the
+    // historical-candle stream. Used only to validate a setup carried over rollover.
+    private fun completedH1Atr(symbol: String): Double? {
+        val candles = candlesByIndex[symbol]?.sortedBy { it.epoch }?.dropLast(1) ?: return null
+        if (candles.size < 15) return null
+        val recent = candles.takeLast(14)
+        val ranges = recent.mapIndexed { i, candle ->
+            val previousClose = candles[candles.size - 14 + i - 1].close
+            maxOf(candle.high - candle.low, kotlin.math.abs(candle.high - previousClose), kotlin.math.abs(candle.low - previousClose))
+        }
+        val atr = ranges.average()
+        return atr.takeIf { it.isFinite() && it > 0.0 }
+    }
+
+    private fun isSetupCarriedBeyondAtr(symbol: String, eventEpoch: Long, reference: Double, quote: Double): Boolean {
+        val eventDate = java.text.SimpleDateFormat("yyyyMMdd", Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("Africa/Johannesburg")
+        }.format(java.util.Date(eventEpoch * 1000L))
+        val todayDate = java.text.SimpleDateFormat("yyyyMMdd", Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("Africa/Johannesburg")
+        }.format(java.util.Date())
+        if (eventDate == todayDate) return false
+        val atr = completedH1Atr(symbol) ?: return true
+        return kotlin.math.abs(quote - reference) > atr
+    }
+
     private fun evaluateOriginalEntries(symbol: String, quote: Double) {
         if (!autoTradingEnabled || !accountConnected || dailyCapital <= 0.0 || !quote.isFinite()) return
         val today = utcDayKey(System.currentTimeMillis() / 1000L)
@@ -1829,6 +1870,11 @@ indexStatusViews[symbol]?.apply {
         val eventEpoch = if (engineType == "REVERSAL") reversalEpoch else retestEpoch
         val eventPrice = if (engineType == "REVERSAL") reversalEventPrice[symbol] ?: 0.0
             else continuationLevel[symbol] ?: 0.0
+        val referenceLevel = if (engineType == "REVERSAL") reversalReferenceLevel[symbol] ?: 0.0
+            else continuationLevel[symbol] ?: 0.0
+        if (referenceLevel > 0.0 && isSetupCarriedBeyondAtr(symbol, eventEpoch, referenceLevel, quote)) return
+        val signalId = "$symbol|$engineType|$mss|$mssEpoch|$chochEpoch"
+        if (signalId in consumedEngineSignals) return
 
         val indexAlreadyActive = positions.values.any {
             it.symbol == symbol && it.status != "CLOSED" &&
@@ -1867,7 +1913,9 @@ indexStatusViews[symbol]?.apply {
         }
 
         originalTriggered.add(tradeKey)
-        tradePrefs.edit().putStringSet("triggered_$today", originalTriggered.toSet()).apply()
+        consumedEngineSignals.add(signalId)
+        tradePrefs.edit().putStringSet("triggered_$today", originalTriggered.toSet())
+            .putStringSet("consumed_engine_signals", consumedEngineSignals.toSet()).commit()
         addNotification("Trade", "${displayIndexName(symbol)} $engineType ${mss} trade submitted",
             "$engineType engine qualified ${mss}. One contract proposal was sent to Deriv. Stake: ${formatMoney(stake)} (20% of fixed daily starting capital). Waiting for Deriv acceptance.")
     }
@@ -2274,68 +2322,71 @@ indexStatusViews[symbol]?.apply {
     }
 
     private fun evaluateRecoverySignals(symbol: String, candles: List<DerivApiClient.Candle>) {
-        if (candles.size < 5) return
+        if (candles.size < 7) return
         val closed = candles.sortedBy { it.epoch }.dropLast(1)
-        if (closed.size < 4) return
+        if (closed.size < 6) return
         val last = closed.last()
+        val lastProcessed = tradePrefs.getLong("last_structural_candle_$symbol", 0L)
+        if (last.epoch <= lastProcessed) return
+
+        // Confirm pivots only when a candle on both sides exists. The two
+        // structural events are deliberately distinct: CHOCH is the first
+        // break against the established swing sequence; MSS is a later break
+        // in the newly established direction.
         val prior = closed.dropLast(1)
-        val swingHighs = mutableListOf<Double>()
-        val swingLows = mutableListOf<Double>()
+        val pivotsHigh = mutableListOf<Pair<Int, Double>>()
+        val pivotsLow = mutableListOf<Pair<Int, Double>>()
         for (i in 1 until prior.lastIndex) {
-            if (prior[i].high > prior[i - 1].high && prior[i].high > prior[i + 1].high) swingHighs.add(prior[i].high)
-            if (prior[i].low < prior[i - 1].low && prior[i].low < prior[i + 1].low) swingLows.add(prior[i].low)
+            if (prior[i].high > prior[i - 1].high && prior[i].high > prior[i + 1].high) pivotsHigh.add(i to prior[i].high)
+            if (prior[i].low < prior[i - 1].low && prior[i].low < prior[i + 1].low) pivotsLow.add(i to prior[i].low)
         }
-        val lastHigh = swingHighs.lastOrNull()
-        val lastLow = swingLows.lastOrNull()
-        if (lastHigh == null || lastLow == null) return
+        val swingHigh = pivotsHigh.lastOrNull()?.second
+        val swingLow = pivotsLow.lastOrNull()?.second
+        if (swingHigh == null || swingLow == null) {
+            tradePrefs.edit().putLong("last_structural_candle_$symbol", last.epoch).apply()
+            return
+        }
+        val risingStructure = pivotsHigh.size >= 2 && pivotsLow.size >= 2 &&
+            pivotsHigh.last().second > pivotsHigh[pivotsHigh.lastIndex - 1].second &&
+            pivotsLow.last().second > pivotsLow[pivotsLow.lastIndex - 1].second
+        val fallingStructure = pivotsHigh.size >= 2 && pivotsLow.size >= 2 &&
+            pivotsHigh.last().second < pivotsHigh[pivotsHigh.lastIndex - 1].second &&
+            pivotsLow.last().second < pivotsLow[pivotsLow.lastIndex - 1].second
 
-        val mssDirection = when {
-            last.close > lastHigh -> "RISE"
-            last.close < lastLow -> "FALL"
-            else -> ""
-        }
-        if (mssDirection.isNotBlank()) {
-            recoveryMssPrice[symbol] = if (mssDirection == "RISE") lastHigh else lastLow
-            recoverySignalClosePrice[symbol] = last.close
-            recoveryMssEpoch[symbol] = last.epoch
-            tradePrefs.edit().putLong("signal_mss_m15_epoch_$symbol", last.epoch).apply()
-            if (recoveryMss[symbol] != mssDirection) {
-                recoveryMss[symbol] = mssDirection
-                tradePrefs.edit().putString("signal_mss_m15_$symbol", mssDirection).apply()
-                addNotification("Home", "${displayIndexName(symbol)} MSS qualified", "MSS qualified in the ${mssDirection.lowercase(Locale.US)} direction on a completed candle.")
-            }
-        }
-
-        // CHOCH is derived from the same completed M15 structure break.
+        val breakUp = last.close > swingHigh
+        val breakDown = last.close < swingLow
         val chochDirection = when {
-            last.close > lastHigh && last.close > last.open -> "RISE"
-            last.close < lastLow && last.close < last.open -> "FALL"
+            breakUp && fallingStructure -> "RISE"
+            breakDown && risingStructure -> "FALL"
             else -> ""
         }
-        if (chochDirection.isNotBlank()) {
-            recoveryChochPrice[symbol] = if (chochDirection == "RISE") lastHigh else lastLow
-            recoverySignalClosePrice[symbol] = last.close
-            recoveryChochEpoch[symbol] = last.epoch
-            tradePrefs.edit().putLong("signal_choch_m15_epoch_$symbol", last.epoch).apply()
-            if (recoveryChoch[symbol] != chochDirection) {
-                recoveryChoch[symbol] = chochDirection
-                tradePrefs.edit().putString("signal_choch_m15_$symbol", chochDirection).apply()
-                addNotification("Home", "${displayIndexName(symbol)} CHOCH qualified", "CHOCH qualified in the ${chochDirection.lowercase(Locale.US)} direction on a completed candle.")
-            }
+        val mssDirection = when {
+            breakUp && !fallingStructure -> "RISE"
+            breakDown && !risingStructure -> "FALL"
+            else -> ""
         }
 
+        if (chochDirection.isNotBlank()) {
+            recoveryChoch[symbol] = chochDirection
+            recoveryChochPrice[symbol] = if (chochDirection == "RISE") swingHigh else swingLow
+            recoveryChochEpoch[symbol] = last.epoch
+            tradePrefs.edit().putString("signal_choch_m15_$symbol", chochDirection)
+                .putLong("signal_choch_m15_epoch_$symbol", last.epoch).apply()
+            addNotification("Home", "${displayIndexName(symbol)} CHOCH qualified", "A completed M15 candle changed the prior swing direction to ${chochDirection.lowercase(Locale.US)}.")
+        } else if (mssDirection.isNotBlank()) {
+            recoveryMss[symbol] = mssDirection
+            recoveryMssPrice[symbol] = if (mssDirection == "RISE") swingHigh else swingLow
+            recoveryMssEpoch[symbol] = last.epoch
+            tradePrefs.edit().putString("signal_mss_m15_$symbol", mssDirection)
+                .putLong("signal_mss_m15_epoch_$symbol", last.epoch).apply()
+            addNotification("Home", "${displayIndexName(symbol)} MSS qualified", "A completed M15 candle confirmed a market structure break in the ${mssDirection.lowercase(Locale.US)} direction.")
+        }
+        tradePrefs.edit().putLong("last_structural_candle_$symbol", last.epoch).apply()
         runOnUiThread {
             updateRecoveryStatusView(symbol)
-            mssStatusViews[symbol]?.apply {
-                text = signalQualificationText(recoveryMss[symbol])
-                setTextColor(if (recoveryMss[symbol].isNullOrBlank()) amber else green)
-            }
-            chochStatusViews[symbol]?.apply {
-                text = signalQualificationText(recoveryChoch[symbol])
-                setTextColor(if (recoveryChoch[symbol].isNullOrBlank()) amber else green)
-            }
+            mssStatusViews[symbol]?.apply { text = signalQualificationText(recoveryMss[symbol]); setTextColor(if (recoveryMss[symbol].isNullOrBlank()) amber else green) }
+            chochStatusViews[symbol]?.apply { text = signalQualificationText(recoveryChoch[symbol]); setTextColor(if (recoveryChoch[symbol].isNullOrBlank()) amber else green) }
         }
-
     }
 
     /**
@@ -2357,6 +2408,7 @@ indexStatusViews[symbol]?.apply {
         reversalQualifiedDirection.clear()
         reversalEventEpoch.clear()
         reversalEventPrice.clear()
+        reversalReferenceLevel.clear()
         continuationDirection.clear()
         continuationLevel.clear()
         continuationBreakEpoch.clear()
@@ -2366,6 +2418,8 @@ indexStatusViews[symbol]?.apply {
         recoveryMssEpoch.clear()
         recoveryChochEpoch.clear()
         originalTriggered.clear()
+        consumedEngineSignals.clear()
+        consumedEngineSignals.addAll(tradePrefs.getStringSet("consumed_engine_signals", emptySet()) ?: emptySet())
 
         tradingDayKey = tradePrefs.getString("day_key", "").orEmpty()
         dailyCapital = tradePrefs.getFloat("daily_capital", 0f).toDouble()
@@ -2413,10 +2467,13 @@ indexStatusViews[symbol]?.apply {
                 .put("trailingCloseFloorPrice", p.trailingCloseFloorPrice))
         }
         // commit() makes completed trade records durable before activity teardown/update.
-        tradePrefs.edit().putString("positions", array.toString()).commit()
+        tradePrefs.edit().putString("positions", array.toString())
+            .putStringSet("consumed_engine_signals", consumedEngineSignals.toSet()).commit()
     }
 
     private fun loadPositions() {
+        consumedEngineSignals.clear()
+        consumedEngineSignals.addAll(tradePrefs.getStringSet("consumed_engine_signals", emptySet()) ?: emptySet())
         val raw = tradePrefs.getString("positions", "") ?: return
         try {
             val array = JSONArray(raw)
@@ -2964,7 +3021,7 @@ indexStatusViews[symbol]?.apply {
         content.addView(divider())
         content.addView(space(14))
         content.addView(text("TRADE HISTORY", 17f, Color.WHITE, true))
-content.addView(text("Completed original and second-execution contracts.", 12f, whiteText))
+content.addView(text("Completed original contracts.", 12f, whiteText))
 content.addView(space(8))
 
 content.addView(actionButton("CLEAR TRADING HISTORY", primary = false) {
@@ -3848,7 +3905,7 @@ content.addView(space(8))
         addNotification(
             "Settings",
             "Auto trading ${if (autoTradingEnabled) "enabled" else "disabled"}",
-            if (autoTradingEnabled) "Automatic original and eligible recovery entries are enabled. Existing contracts remain managed by Deriv."
+            if (autoTradingEnabled) "Automatic original entries are enabled. Existing contracts remain managed by Deriv."
             else "New automatic entries are paused. Existing contracts remain open until manually closed or they expire."
         )
         if (autoTradingEnabled && accountConnected) {
