@@ -35,6 +35,9 @@ import android.os.Handler
 import android.os.Looper
 import android.graphics.Color
 import android.graphics.Typeface
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.View
@@ -1617,33 +1620,44 @@ indexStatusViews[symbol]?.apply {
         return mss.takeIf { it == choch }
     }
 
-    private fun recoveryStatusText(symbol: String): String {
+    private fun recoveryStatusText(symbol: String): CharSequence {
         val ob = orderBlocks[symbol]
-        if (ob == null || ob.invalidated) {
-            val structure = h1MarketStructure[symbol]
-            val stageOne = if (structure.isNullOrBlank()) "[ ]" else "[✓] $structure"
-            return "1. H1 MARKET STRUCTURE  $stageOne\\n" +
-                "2. H1 ORDER BLOCK + FVG  [ ]\\n3. H1 ORDER BLOCK TOUCH  [ ]\\n" +
-                "4. M15 STRUCTURAL SWING  [ ]\\n5. M15 CHoCH  [ ]\\n" +
-                "6. M15 ENTRY ORDER BLOCK  [ ]\\n7. FVG CONFIRMATION  [ ]\\n8. LIMIT ENTRY  [ ]"
+        val structure = ob?.marketStructure?.takeIf { it.isNotBlank() }
+            ?: h1MarketStructure[symbol].orEmpty()
+        val s1 = structure.isNotBlank()
+        val s2 = ob != null && !ob.invalidated && ob.low.isFinite() && ob.high.isFinite() && ob.high > ob.low
+        val s3 = ob?.touched == true
+        val s4 = (ob?.m15SwingEpoch ?: 0L) > 0L
+        val s5 = (ob?.chochEpoch ?: 0L) > 0L
+        val s6 = (ob?.entryObEpoch ?: 0L) > 0L && (ob?.entryObHigh ?: 0.0) > (ob?.entryObLow ?: 0.0)
+        val s7 = (ob?.fvgEpoch ?: 0L) > 0L && (ob?.fvgHigh ?: 0.0) > (ob?.fvgLow ?: 0.0)
+        val s8 = (ob?.entryPrice ?: 0.0) > 0.0
+        val rows = listOf(
+            Triple("1. H1 MARKET STRUCTURE", s1, structure),
+            Triple("2. H1 ORDER BLOCK + FVG", s2, if (s2) "${formatPrice(ob!!.low)} – ${formatPrice(ob.high)} · ${formatAuditDateTime(ob.identifiedEpoch)}" else "WAITING FOR H1 ORDER BLOCK + FVG"),
+            Triple("3. H1 ORDER BLOCK TOUCH", s3, if (s3) formatAuditDateTime(ob!!.touchedEpoch) else "WAITING"),
+            Triple("4. M15 STRUCTURAL SWING", s4, if (s4) formatPrice(ob!!.m15SwingPrice) else "WAITING"),
+            Triple("5. M15 CHoCH", s5, if (s5) formatAuditDateTime(ob!!.chochEpoch) else "WAITING"),
+            Triple("6. M15 ENTRY ORDER BLOCK", s6, if (s6) "${formatPrice(ob!!.entryObLow)} – ${formatPrice(ob.entryObHigh)}" else "WAITING"),
+            Triple("7. FVG CONFIRMATION", s7, if (s7) "${formatPrice(ob!!.fvgLow)} – ${formatPrice(ob.fvgHigh)}" else "WAITING"),
+            Triple("8. LIMIT ENTRY", s8, if (s8) formatPrice(ob!!.entryPrice) else "WAITING FOR ENTRY LEVEL")
+        )
+        val result = SpannableStringBuilder()
+        rows.forEachIndexed { index, row ->
+            if (index > 0) result.append("\n")
+            val ruleStart = result.length
+            result.append(row.first).append("  ")
+            result.setSpan(ForegroundColorSpan(amber), ruleStart, result.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            val tickStart = result.length
+            result.append(if (row.second) "[✓]" else "[ ]")
+            result.setSpan(ForegroundColorSpan(if (row.second) green else amber), tickStart, result.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            if (row.third.isNotBlank()) {
+                val detailStart = result.length
+                result.append("  ").append(row.third)
+                result.setSpan(ForegroundColorSpan(amber), detailStart, result.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
         }
-        fun tick(ok: Boolean) = if (ok) "[✓]" else "[ ]"
-        val s1 = ob.marketStructure.isNotBlank()
-        val s2 = ob.low.isFinite() && ob.high.isFinite() && ob.high > ob.low
-        val s3 = ob.touched
-        val s4 = ob.m15SwingEpoch > 0L
-        val s5 = ob.chochEpoch > 0L
-        val s6 = ob.entryObEpoch > 0L && ob.entryObHigh > ob.entryObLow
-        val s7 = ob.fvgEpoch > 0L && ob.fvgHigh > ob.fvgLow
-        val s8 = ob.entryPrice > 0.0
-        return "1. H1 MARKET STRUCTURE  ${tick(s1)} ${ob.marketStructure}\\n" +
-            "2. H1 ORDER BLOCK + FVG  ${tick(s2)} ${formatPrice(ob.low)} – ${formatPrice(ob.high)} · ${formatAuditDateTime(ob.identifiedEpoch)}\\n" +
-            "3. H1 ORDER BLOCK TOUCH  ${tick(s3)} ${if (s3) formatAuditDateTime(ob.touchedEpoch) else "WAITING"}\\n" +
-            "4. M15 STRUCTURAL SWING  ${tick(s4)} ${if (s4) formatPrice(ob.m15SwingPrice) else "WAITING"}\\n" +
-            "5. M15 CHoCH  ${tick(s5)} ${if (s5) formatAuditDateTime(ob.chochEpoch) else "WAITING"}\\n" +
-            "6. M15 ENTRY ORDER BLOCK  ${tick(s6)} ${if (s6) "${formatPrice(ob.entryObLow)} – ${formatPrice(ob.entryObHigh)}" else "WAITING"}\\n" +
-            "7. FVG CONFIRMATION  ${tick(s7)} ${if (s7) "${formatPrice(ob.fvgLow)} – ${formatPrice(ob.fvgHigh)}" else "WAITING"}\\n" +
-            "8. LIMIT ENTRY  ${tick(s8)} ${if (s8) formatPrice(ob.entryPrice) else "WAITING FOR ENTRY LEVEL"}"
+        return result
     }
 
     private fun updateMasterDecisionViews(symbol: String) {
@@ -2871,26 +2885,8 @@ indexStatusViews[symbol]?.apply {
             indexCard.addView(space(8))
             indexCard.addView(divider())
             indexCard.addView(space(8))
-            indexCard.addView(text("H1 ORDER BLOCK", 10f, whiteText, true))
-            val activeOb = orderBlocks[symbol]
-            val obDisplay = activeOb?.let {
-                "${if (it.direction == "RISE") "BULLISH" else "BEARISH"} OB · ${formatPrice(it.low)} – ${formatPrice(it.high)}\nIDENTIFIED: ${formatAuditDateTime(it.identifiedEpoch)}"
-            } ?: "WAITING FOR H1 ORDER BLOCK"
-            val mssView = text(obDisplay, 11f, if (activeOb == null) amber else green, true)
-            mssStatusViews[symbol] = mssView
-            indexCard.addView(mssView)
-            indexCard.addView(space(5))
-            indexCard.addView(text("M15 CHOCH", 10f, whiteText, true))
-            val chochView = text(freshChochDirection[symbol]?.let {
-                "CONFIRMED · $it\nCONFIRMED: ${formatAuditDateTime(freshChochEpoch[symbol] ?: 0L)}"
-            } ?: "WAITING FOR M15 CHOCH", 11f, amber, true)
-            chochStatusViews[symbol] = chochView
-            indexCard.addView(chochView)
-            indexCard.addView(space(8))
-            indexCard.addView(divider())
-            indexCard.addView(space(8))
             indexCard.addView(text("8-STAGE STRATEGY CHECKLIST", 11f, whiteText, true))
-            val recoveryView = text(recoveryStatusText(symbol), 11f, muted)
+            val recoveryView = text(recoveryStatusText(symbol), 11f, amber)
             recoveryStatusViews[symbol] = recoveryView
             indexCard.addView(recoveryView)
             content.addView(indexCard)
@@ -2988,7 +2984,7 @@ indexStatusViews[symbol]?.apply {
                     }
                 }
 
-                val recoveryTradeView = text(recoveryStatusText(symbol), 12f, blue, true)
+                val recoveryTradeView = text(recoveryStatusText(symbol), 12f, amber, true)
                 tradeRecoveryStatusViews[symbol] = recoveryTradeView
                 detailsContainer.addView(space(8))
                 detailsContainer.addView(text("TRADE LIFECYCLE", 12f, gold, true))
@@ -4087,7 +4083,7 @@ content.addView(space(8))
     }
     }
 
-    private fun text(value: String, size: Float, color: Int, bold: Boolean = false): TextView {
+    private fun text(value: CharSequence, size: Float, color: Int, bold: Boolean = false): TextView {
         return TextView(this).apply {
             text = value
             textSize = size
