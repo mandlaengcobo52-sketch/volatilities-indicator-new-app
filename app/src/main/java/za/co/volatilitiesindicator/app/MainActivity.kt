@@ -110,10 +110,21 @@ class MainActivity : Activity(), DerivApiClient.Callback {
         var entryObLow: Double = 0.0, var entryObHigh: Double = 0.0,
         var entryObEpoch: Long = 0L, var fvgLow: Double = 0.0, var fvgHigh: Double = 0.0,
         var fvgEpoch: Long = 0L, var entryPrice: Double = 0.0,
+        var marketStructureEpoch: Long = 0L,
+        var swingHighPrice: Double = 0.0, var swingHighEpoch: Long = 0L,
+        var swingLowPrice: Double = 0.0, var swingLowEpoch: Long = 0L,
+        var h1FvgLow: Double = 0.0, var h1FvgHigh: Double = 0.0, var h1FvgEpoch: Long = 0L,
+        var touchedCandleHigh: Double = 0.0, var touchedCandleLow: Double = 0.0,
+        var chochClosePrice: Double = 0.0, var entryEpoch: Long = 0L,
         var consumed: Boolean = false, var invalidated: Boolean = false
     )
     private val orderBlocks = mutableMapOf<String, OrderBlockState>()
     private val h1MarketStructure = mutableMapOf<String, String>()
+    private val h1SwingHighPrice = mutableMapOf<String, Double>()
+    private val h1SwingHighEpoch = mutableMapOf<String, Long>()
+    private val h1SwingLowPrice = mutableMapOf<String, Double>()
+    private val h1SwingLowEpoch = mutableMapOf<String, Long>()
+    private val h1StructureEpoch = mutableMapOf<String, Long>()
     private val obStatus = mutableMapOf<String, String>()
     private val freshChochDirection = mutableMapOf<String, String>()
     private val freshChochEpoch = mutableMapOf<String, Long>()
@@ -132,8 +143,16 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 .put("entryObLow", ob.entryObLow).put("entryObHigh", ob.entryObHigh)
                 .put("entryObEpoch", ob.entryObEpoch).put("fvgLow", ob.fvgLow)
                 .put("fvgHigh", ob.fvgHigh).put("fvgEpoch", ob.fvgEpoch)
-                .put("entryPrice", ob.entryPrice).put("consumed", ob.consumed)
-                .put("invalidated", ob.invalidated)
+                .put("entryPrice", ob.entryPrice)
+                .put("marketStructureEpoch", ob.marketStructureEpoch)
+                .put("swingHighPrice", ob.swingHighPrice).put("swingHighEpoch", ob.swingHighEpoch)
+                .put("swingLowPrice", ob.swingLowPrice).put("swingLowEpoch", ob.swingLowEpoch)
+                .put("h1FvgLow", ob.h1FvgLow).put("h1FvgHigh", ob.h1FvgHigh)
+                .put("h1FvgEpoch", ob.h1FvgEpoch)
+                .put("touchedCandleHigh", ob.touchedCandleHigh)
+                .put("touchedCandleLow", ob.touchedCandleLow)
+                .put("chochClosePrice", ob.chochClosePrice).put("entryEpoch", ob.entryEpoch)
+                .put("consumed", ob.consumed).put("invalidated", ob.invalidated)
             e.putString("ob_state_$symbol", json.toString())
         }
         e.putString("ob_status_$symbol", obStatus[symbol] ?: "")
@@ -145,11 +164,18 @@ class MainActivity : Activity(), DerivApiClient.Callback {
 
     private fun loadOrderBlockStates() {
         orderBlocks.clear(); h1MarketStructure.clear(); obStatus.clear()
+        h1SwingHighPrice.clear(); h1SwingHighEpoch.clear()
+        h1SwingLowPrice.clear(); h1SwingLowEpoch.clear(); h1StructureEpoch.clear()
         freshChochDirection.clear(); freshChochEpoch.clear(); freshChochPrice.clear()
         indexes.forEach { symbol ->
             tradePrefs.getString("h1_structure_$symbol", null)?.takeIf { it.isNotBlank() }?.let {
                 h1MarketStructure[symbol] = it
             }
+            tradePrefs.getString("h1_swing_high_price_$symbol", null)?.toDoubleOrNull()?.let { h1SwingHighPrice[symbol] = it }
+            tradePrefs.getLong("h1_swing_high_epoch_$symbol", 0L).takeIf { it > 0L }?.let { h1SwingHighEpoch[symbol] = it }
+            tradePrefs.getString("h1_swing_low_price_$symbol", null)?.toDoubleOrNull()?.let { h1SwingLowPrice[symbol] = it }
+            tradePrefs.getLong("h1_swing_low_epoch_$symbol", 0L).takeIf { it > 0L }?.let { h1SwingLowEpoch[symbol] = it }
+            tradePrefs.getLong("h1_structure_epoch_$symbol", 0L).takeIf { it > 0L }?.let { h1StructureEpoch[symbol] = it }
             val raw = tradePrefs.getString("ob_state_$symbol", null)
             if (!raw.isNullOrBlank()) try {
                 val j = JSONObject(raw)
@@ -169,8 +195,19 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                     entryObLow = j.optDouble("entryObLow"), entryObHigh = j.optDouble("entryObHigh"),
                     entryObEpoch = j.optLong("entryObEpoch"), fvgLow = j.optDouble("fvgLow"),
                     fvgHigh = j.optDouble("fvgHigh"), fvgEpoch = j.optLong("fvgEpoch"),
-                    entryPrice = j.optDouble("entryPrice"), consumed = j.optBoolean("consumed"),
-                    invalidated = j.optBoolean("invalidated")
+                    entryPrice = j.optDouble("entryPrice"),
+                    marketStructureEpoch = j.optLong("marketStructureEpoch"),
+                    swingHighPrice = j.optDouble("swingHighPrice"),
+                    swingHighEpoch = j.optLong("swingHighEpoch"),
+                    swingLowPrice = j.optDouble("swingLowPrice"),
+                    swingLowEpoch = j.optLong("swingLowEpoch"),
+                    h1FvgLow = j.optDouble("h1FvgLow"), h1FvgHigh = j.optDouble("h1FvgHigh"),
+                    h1FvgEpoch = j.optLong("h1FvgEpoch"),
+                    touchedCandleHigh = j.optDouble("touchedCandleHigh"),
+                    touchedCandleLow = j.optDouble("touchedCandleLow"),
+                    chochClosePrice = j.optDouble("chochClosePrice"),
+                    entryEpoch = j.optLong("entryEpoch"),
+                    consumed = j.optBoolean("consumed"), invalidated = j.optBoolean("invalidated")
                 )
             } catch (_: Exception) { tradePrefs.edit().remove("ob_state_$symbol").apply() }
             tradePrefs.getString("ob_status_$symbol", null)?.takeIf { it.isNotBlank() }?.let { obStatus[symbol] = it }
@@ -1622,8 +1659,8 @@ indexStatusViews[symbol]?.apply {
 
     private fun recoveryStatusText(symbol: String): CharSequence {
         val ob = orderBlocks[symbol]
-        val structure = ob?.marketStructure?.takeIf { it.isNotBlank() }
-            ?: h1MarketStructure[symbol].orEmpty()
+        val structure = h1MarketStructure[symbol]?.takeIf { it.isNotBlank() }
+            ?: ob?.marketStructure?.takeIf { it.isNotBlank() }.orEmpty()
         val s1 = structure.isNotBlank()
         val s2 = ob != null && !ob.invalidated && ob.low.isFinite() && ob.high.isFinite() && ob.high > ob.low
         val s3 = ob?.touched == true
@@ -1632,15 +1669,30 @@ indexStatusViews[symbol]?.apply {
         val s6 = (ob?.entryObEpoch ?: 0L) > 0L && (ob?.entryObHigh ?: 0.0) > (ob?.entryObLow ?: 0.0)
         val s7 = (ob?.fvgEpoch ?: 0L) > 0L && (ob?.fvgHigh ?: 0.0) > (ob?.fvgLow ?: 0.0)
         val s8 = (ob?.entryPrice ?: 0.0) > 0.0
+
+        fun eventTime(epoch: Long): String =
+            if (epoch > 0L) formatAuditDateTime(epoch) else "TIME NOT RECORDED"
+
         val rows = listOf(
-            Triple("1. H1 MARKET STRUCTURE", s1, structure),
-            Triple("2. H1 ORDER BLOCK + FVG", s2, if (s2) "${formatPrice(ob!!.low)} – ${formatPrice(ob.high)} · ${formatAuditDateTime(ob.identifiedEpoch)}" else "WAITING FOR H1 ORDER BLOCK + FVG"),
-            Triple("3. H1 ORDER BLOCK TOUCH", s3, if (s3) formatAuditDateTime(ob!!.touchedEpoch) else "WAITING"),
-            Triple("4. M15 STRUCTURAL SWING", s4, if (s4) formatPrice(ob!!.m15SwingPrice) else "WAITING"),
-            Triple("5. M15 CHoCH", s5, if (s5) formatAuditDateTime(ob!!.chochEpoch) else "WAITING"),
-            Triple("6. M15 ENTRY ORDER BLOCK", s6, if (s6) "${formatPrice(ob!!.entryObLow)} – ${formatPrice(ob.entryObHigh)}" else "WAITING"),
-            Triple("7. FVG CONFIRMATION", s7, if (s7) "${formatPrice(ob!!.fvgLow)} – ${formatPrice(ob.fvgHigh)}" else "WAITING"),
-            Triple("8. LIMIT ENTRY", s8, if (s8) formatPrice(ob!!.entryPrice) else "WAITING FOR ENTRY LEVEL")
+            Triple("1. H1 MARKET STRUCTURE", s1,
+                if (s1)
+                    "$structure · SWING HIGH ${h1SwingHighPrice[symbol]?.let { formatPrice(it) } ?: "--"} (${eventTime(h1SwingHighEpoch[symbol] ?: 0L)}) · SWING LOW ${h1SwingLowPrice[symbol]?.let { formatPrice(it) } ?: "--"} (${eventTime(h1SwingLowEpoch[symbol] ?: 0L)}) · CONFIRMED ${eventTime(h1StructureEpoch[symbol] ?: 0L)}"
+                else "WAITING"),
+            Triple("2. H1 ORDER BLOCK + FVG", s2,
+                if (s2) "OB ${formatPrice(ob!!.low)}–${formatPrice(ob.high)} · FVG ${formatPrice(ob.h1FvgLow)}–${formatPrice(ob.h1FvgHigh)} · ${eventTime(ob.identifiedEpoch)}"
+                else "WAITING FOR H1 ORDER BLOCK + FVG"),
+            Triple("3. H1 ORDER BLOCK TOUCH", s3,
+                if (s3) "CANDLE HIGH ${formatPrice(ob!!.touchedCandleHigh)} / LOW ${formatPrice(ob.touchedCandleLow)} · ${eventTime(ob.touchedEpoch)}" else "WAITING"),
+            Triple("4. M15 STRUCTURAL SWING", s4,
+                if (s4) "LEVEL ${formatPrice(ob!!.m15SwingPrice)} · ${eventTime(ob.m15SwingEpoch)}" else "WAITING"),
+            Triple("5. M15 CHoCH", s5,
+                if (s5) "BROKEN LEVEL ${formatPrice(ob!!.chochPrice)} · CLOSE ${formatPrice(ob.chochClosePrice)} · ${eventTime(ob.chochEpoch)}" else "WAITING"),
+            Triple("6. M15 ENTRY ORDER BLOCK", s6,
+                if (s6) "ZONE ${formatPrice(ob!!.entryObLow)}–${formatPrice(ob.entryObHigh)} · ${eventTime(ob.entryObEpoch)}" else "WAITING"),
+            Triple("7. FVG CONFIRMATION", s7,
+                if (s7) "GAP ${formatPrice(ob!!.fvgLow)}–${formatPrice(ob.fvgHigh)} · ${eventTime(ob.fvgEpoch)}" else "WAITING"),
+            Triple("8. LIMIT ENTRY", s8,
+                if (s8) "ENTRY ${formatPrice(ob!!.entryPrice)} · QUALIFIED ${eventTime(ob.entryEpoch)}" else "WAITING FOR ENTRY LEVEL")
         )
         val result = SpannableStringBuilder()
         rows.forEachIndexed { index, row ->
@@ -2261,10 +2313,26 @@ indexStatusViews[symbol]?.apply {
         }
         if (h1Direction.isBlank()) return
         val structureLabel = if (h1Direction == "RISE") "BULLISH HH + HL" else "BEARISH LH + LL"
+        val latestHigh = highs.last()
+        val latestLow = lows.last()
+        val highConfirmEpoch = closed.getOrNull(latestHigh.first + 1)?.epoch ?: closed[latestHigh.first].epoch
+        val lowConfirmEpoch = closed.getOrNull(latestLow.first + 1)?.epoch ?: closed[latestLow.first].epoch
         if (h1MarketStructure[symbol] != structureLabel) {
             h1MarketStructure[symbol] = structureLabel
             tradePrefs.edit().putString("h1_structure_$symbol", structureLabel).apply()
         }
+        h1SwingHighPrice[symbol] = latestHigh.second
+        h1SwingHighEpoch[symbol] = closed[latestHigh.first].epoch
+        h1SwingLowPrice[symbol] = latestLow.second
+        h1SwingLowEpoch[symbol] = closed[latestLow.first].epoch
+        h1StructureEpoch[symbol] = maxOf(highConfirmEpoch, lowConfirmEpoch)
+        tradePrefs.edit()
+            .putString("h1_swing_high_price_$symbol", latestHigh.second.toString())
+            .putLong("h1_swing_high_epoch_$symbol", closed[latestHigh.first].epoch)
+            .putString("h1_swing_low_price_$symbol", latestLow.second.toString())
+            .putLong("h1_swing_low_epoch_$symbol", closed[latestLow.first].epoch)
+            .putLong("h1_structure_epoch_$symbol", maxOf(highConfirmEpoch, lowConfirmEpoch))
+            .apply()
 
         val last = closed.last()
         val brokeStructure = if (h1Direction == "RISE")
@@ -2292,7 +2360,11 @@ indexStatusViews[symbol]?.apply {
         val created = OrderBlockState(
             direction = h1Direction, low = origin.low, high = origin.high,
             identifiedEpoch = last.epoch,
-            marketStructure = structureLabel
+            marketStructure = structureLabel,
+            marketStructureEpoch = maxOf(highConfirmEpoch, lowConfirmEpoch),
+            swingHighPrice = latestHigh.second, swingHighEpoch = closed[latestHigh.first].epoch,
+            swingLowPrice = latestLow.second, swingLowEpoch = closed[latestLow.first].epoch,
+            h1FvgLow = fvg.first, h1FvgHigh = fvg.second, h1FvgEpoch = last.epoch
         )
         orderBlocks[symbol] = created
         obStatus[symbol] = "H1 MARKET STRUCTURE + ORDER BLOCK + FVG CONFIRMED"
@@ -2314,6 +2386,8 @@ indexStatusViews[symbol]?.apply {
             if (!ob.touched && c.high >= ob.low && c.low <= ob.high) {
                 ob.touched = true
                 ob.touchedEpoch = c.epoch
+                ob.touchedCandleHigh = c.high
+                ob.touchedCandleLow = c.low
                 changed = true
             }
         }
@@ -2352,6 +2426,7 @@ indexStatusViews[symbol]?.apply {
         if (chochCandle != null && ob.chochEpoch == 0L) {
             ob.chochEpoch = chochCandle.epoch
             ob.chochPrice = swingPrice
+            ob.chochClosePrice = chochCandle.close
             freshChochDirection[symbol] = ob.direction
             freshChochEpoch[symbol] = chochCandle.epoch
             freshChochPrice[symbol] = swingPrice
@@ -2393,6 +2468,7 @@ indexStatusViews[symbol]?.apply {
                     // Stage 8: proximal edge of the M15 entry OB. Price monitoring
                     // triggers the existing Deriv market proposal at this level.
                     ob.entryPrice = if (ob.direction == "RISE") ob.entryObHigh else ob.entryObLow
+                    ob.entryEpoch = chochCandle.epoch
                 }
             }
         }
