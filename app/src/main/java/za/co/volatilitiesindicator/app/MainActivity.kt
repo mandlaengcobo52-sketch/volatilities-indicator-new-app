@@ -100,9 +100,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
     // Persistent strategy state: confirmed H1 Order Block touch/penetration -> closed M15 CHOCH.
     private data class OrderBlockState(
         val direction: String, val low: Double, val high: Double, val identifiedEpoch: Long,
-        var touched: Boolean = false, var touchedEpoch: Long = 0L, var consumed: Boolean = false,
-        var reversalConfirmed: Boolean = false, var reversalEpoch: Long = 0L,
-        var reversalClose: Double = 0.0
+        var touched: Boolean = false, var touchedEpoch: Long = 0L,
+        var zoneCloseConfirmed: Boolean = false, var zoneCloseEpoch: Long = 0L,
+        var consumed: Boolean = false
     )
     private val orderBlocks = mutableMapOf<String, OrderBlockState>()
     private val obStatus = mutableMapOf<String, String>()
@@ -119,11 +119,9 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             val json = JSONObject().put("direction", ob.direction).put("low", ob.low)
                 .put("high", ob.high).put("identifiedEpoch", ob.identifiedEpoch)
                 .put("touched", ob.touched).put("touchedEpoch", ob.touchedEpoch)
+                .put("zoneCloseConfirmed", ob.zoneCloseConfirmed)
+                .put("zoneCloseEpoch", ob.zoneCloseEpoch)
                 .put("consumed", ob.consumed)
-                .put("reversalConfirmed", ob.reversalConfirmed)
-                .put("reversalTimeframe", "M15")
-                .put("reversalEpoch", ob.reversalEpoch)
-                .put("reversalClose", ob.reversalClose)
             e.putString("ob_state_$symbol", json.toString())
         }
         e.putString("ob_status_$symbol", obStatus[symbol] ?: "")
@@ -141,18 +139,14 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             val raw = tradePrefs.getString("ob_state_$symbol", null)
             if (!raw.isNullOrBlank()) try {
                 val j = JSONObject(raw)
-                val reversalWasConfirmedOnM15 = j.optString("reversalTimeframe") == "M15"
                 orderBlocks[symbol] = OrderBlockState(
                     j.getString("direction"), j.getDouble("low"), j.getDouble("high"),
                     j.getLong("identifiedEpoch"), j.optBoolean("touched", false),
-                    j.optLong("touchedEpoch", 0L), j.optBoolean("consumed", false),
-                    reversalWasConfirmedOnM15 && j.optBoolean("reversalConfirmed", false),
-                    if (reversalWasConfirmedOnM15) j.optLong("reversalEpoch", 0L) else 0L,
-                    if (reversalWasConfirmedOnM15) j.optDouble("reversalClose", 0.0) else 0.0
+                    j.optLong("touchedEpoch", 0L),
+                    j.optBoolean("zoneCloseConfirmed", false),
+                    j.optLong("zoneCloseEpoch", 0L),
+                    j.optBoolean("consumed", false)
                 )
-                // Migrate the prior M15-reversal state: retain the OB and touch,
-                // but re-confirm the required reversal from a closed H1 candle.
-                if (j.optBoolean("reversalConfirmed", false) && !reversalWasConfirmedOnM15) saveOrderBlockState(symbol)
             } catch (_: Exception) { tradePrefs.edit().remove("ob_state_$symbol").apply() }
             tradePrefs.getString("ob_status_$symbol", null)?.takeIf { it.isNotBlank() }?.let { obStatus[symbol] = it }
             tradePrefs.getString("choch_direction_$symbol", null)?.takeIf { it.isNotBlank() }?.let { freshChochDirection[symbol] = it }
@@ -1593,21 +1587,26 @@ indexStatusViews[symbol]?.apply {
     }
 
     private fun recoveryStatusText(symbol: String): String {
-        val running = positions.values.filter { it.symbol == symbol && it.status !in setOf("CLOSED", "ERROR", "BUY FAILED", "PROPOSAL FAILED") && !it.status.startsWith("ERROR") }
-        if (running.any { it.contractId > 0L || it.status == "OPEN" || it.status == "CLOSING" }) return "TRADE RUNNING · Waiting for this trade to close."
+        val running = positions.values.filter {
+            it.symbol == symbol &&
+                it.status !in setOf("CLOSED", "ERROR", "BUY FAILED", "PROPOSAL FAILED") &&
+                !it.status.startsWith("ERROR")
+        }
+        if (running.any { it.contractId > 0L || it.status == "OPEN" || it.status == "CLOSING" })
+            return "TRADE RUNNING · Waiting for this trade to close."
         if (running.isNotEmpty()) return "TRADE SUBMITTED · Waiting for Deriv confirmation."
+
         val ob = orderBlocks[symbol]
         if (ob == null) return "WAITING FOR H1 ORDER BLOCK IDENTIFICATION"
         if (ob.consumed) return "ORDER BLOCK SIGNAL CONSUMED · WAITING FOR A NEW H1 ORDER BLOCK"
         if (!ob.touched) return "WAITING FOR H1 ORDER BLOCK TOUCH"
-        if (!ob.reversalConfirmed) return "ORDER BLOCK TOUCHED · WAITING FOR REVERSAL CLOSE"
+        if (!ob.zoneCloseConfirmed) return "ORDER BLOCK TOUCHED · WAITING FOR CLOSE BEYOND ZONE"
+
         val choch = freshChochDirection[symbol]
         val chochEpoch = freshChochEpoch[symbol] ?: 0L
-        return if (choch == ob.direction && chochEpoch > ob.reversalEpoch &&
-            utcDayKey(ob.touchedEpoch) == utcDayKey(ob.reversalEpoch) &&
-            utcDayKey(ob.reversalEpoch) == utcDayKey(chochEpoch))
-            "QUALIFIED · OB TOUCH + REVERSAL CLOSE + M15 CHOCH $choch"
-        else "OB REVERSAL CONFIRMED · WAITING FOR M15 CHOCH"
+        return if (choch == ob.direction && chochEpoch > ob.zoneCloseEpoch)
+            "ORDER BLOCK CLOSE + M15 CHOCH CONFIRMED · EXECUTION"
+        else "ORDER BLOCK CLOSE CONFIRMED · WAITING FOR M15 CHOCH"
     }
 
     private fun updateMasterDecisionViews(symbol: String) {
@@ -1639,9 +1638,10 @@ indexStatusViews[symbol]?.apply {
         chochStatusViews[symbol]?.apply {
             text = freshChochDirection[symbol]?.let { "CONFIRMED · $it" } ?:
                 when {
-                    ob?.reversalConfirmed == true -> "WAITING FOR M15 CHOCH"
-                    ob?.touched == true -> "WAITING FOR REVERSAL CLOSE"
-                    else -> "WAITING FOR OB TOUCH"
+                    ob == null || ob.consumed -> "WAITING FOR H1 ORDER BLOCK"
+                    !ob.touched -> "WAITING FOR H1 OB TOUCH"
+                    !ob.zoneCloseConfirmed -> "WAITING FOR CLOSE BEYOND OB"
+                    else -> "WAITING FOR M15 CHOCH"
                 }
             setTextColor(if (freshChochDirection[symbol].isNullOrBlank()) amber else green)
         }
@@ -1721,11 +1721,9 @@ indexStatusViews[symbol]?.apply {
         val ob = orderBlocks[symbol] ?: return
         val direction = freshChochDirection[symbol] ?: return
         val chochEpoch = freshChochEpoch[symbol] ?: return
-        if (ob.consumed || !ob.touched || !ob.reversalConfirmed ||
+        if (ob.consumed || !ob.touched || !ob.zoneCloseConfirmed ||
             direction != ob.direction || ob.touchedEpoch <= ob.identifiedEpoch ||
-            ob.reversalEpoch <= ob.touchedEpoch || chochEpoch <= ob.reversalEpoch ||
-            utcDayKey(ob.touchedEpoch) != utcDayKey(ob.reversalEpoch) ||
-            utcDayKey(ob.reversalEpoch) != utcDayKey(chochEpoch)) return
+            ob.zoneCloseEpoch < ob.touchedEpoch || chochEpoch <= ob.zoneCloseEpoch) return
 
         val today = utcDayKey(System.currentTimeMillis() / 1000L)
         val tradeKey = "$today|$symbol|OB_M15_CHOCH"
@@ -1766,7 +1764,7 @@ indexStatusViews[symbol]?.apply {
         originalTriggered.add(tradeKey)
         tradePrefs.edit().putStringSet("triggered_$today", originalTriggered.toSet()).commit()
         addNotification("Trade", "${displayIndexName(symbol)} $direction trade submitted",
-            "Price touched/penetrated the H1 Order Block, reversed and closed beyond its far boundary, then a later closed M15 CHOCH confirmed $direction. Deriv proposal submitted.")
+            "Price touched/penetrated the active H1 Order Block, the required candle closed beyond the zone, then a later closed M15 CHOCH confirmed $direction. Deriv proposal submitted.")
     }
 
     // Round Deriv stake values to the account's two-decimal currency precision.
@@ -2227,59 +2225,64 @@ indexStatusViews[symbol]?.apply {
 
     private fun evaluateFreshM15Choch(symbol: String, candles: List<DerivApiClient.Candle>) {
         val ob = orderBlocks[symbol] ?: return
-        if (ob.consumed || candles.size < 8) return
+        if (ob.consumed || candles.size < 7) return
         val closed = candles.sortedBy { it.epoch }.dropLast(1)
-        if (closed.size < 7) return
+        if (closed.size < 6) return
 
-        // Replay closed M15 candles chronologically so a valid setup is not missed
-        // merely because it formed between polling updates.
+        // Replay the available CLOSED M15 candles in chronological order.
+        // Required sequence:
+        // H1 OB identified -> price touches/penetrates zone ->
+        // uptrend/Rise OB closes BELOW zone, or downtrend/Fall OB closes ABOVE zone ->
+        // subsequent M15 CHOCH in the OB direction -> execution.
         var changed = false
-        for (i in 0 until closed.size) {
+
+        for (i in closed.indices) {
             val candle = closed[i]
             if (candle.epoch <= ob.identifiedEpoch) continue
 
-            // First event: price enters or penetrates the active H1 OB zone.
             if (!ob.touched && candle.high >= ob.low && candle.low <= ob.high) {
                 ob.touched = true
                 ob.touchedEpoch = candle.epoch
-                obStatus[symbol] = "ORDER BLOCK TOUCHED · WAITING FOR REVERSAL CLOSE"
+                obStatus[symbol] = "H1 ORDER BLOCK TOUCHED · WAITING FOR CLOSE BEYOND ZONE"
                 changed = true
             }
 
-            // Second event: after touching the zone, a CLOSED M15 candle must
-            // close beyond the far edge in the OB direction.
-            if (ob.touched && !ob.reversalConfirmed && candle.epoch >= ob.touchedEpoch) {
-                val reversal = when (ob.direction) {
-                    "RISE" -> candle.close > ob.high
-                    "FALL" -> candle.close < ob.low
+            if (ob.touched && !ob.zoneCloseConfirmed && candle.epoch >= ob.touchedEpoch) {
+                val closedBeyondZone = when (ob.direction) {
+                    "RISE" -> candle.close < ob.low
+                    "FALL" -> candle.close > ob.high
                     else -> false
                 }
-                if (reversal) {
-                    ob.reversalConfirmed = true
-                    ob.reversalEpoch = candle.epoch
-                    ob.reversalClose = candle.close
-                    obStatus[symbol] = "OB REVERSAL CONFIRMED · WAITING FOR M15 CHOCH"
+                if (closedBeyondZone) {
+                    ob.zoneCloseConfirmed = true
+                    ob.zoneCloseEpoch = candle.epoch
+                    freshChochDirection.remove(symbol)
+                    freshChochEpoch.remove(symbol)
+                    freshChochPrice.remove(symbol)
+                    obStatus[symbol] = "ORDER BLOCK CLOSE CONFIRMED · WAITING FOR M15 CHOCH"
                     changed = true
                 }
             }
 
-            // Third event: CHOCH must be a later closed M15 candle in the same direction.
-            if (ob.reversalConfirmed && candle.epoch > ob.reversalEpoch &&
+            // CHOCH must occur AFTER the qualifying close candle.
+            if (ob.zoneCloseConfirmed && candle.epoch > ob.zoneCloseEpoch &&
                 candle.epoch > (freshChochEpoch[symbol] ?: 0L)) {
                 val priorCandles = closed.take(i)
                 val (highs, lows) = confirmedSwings(priorCandles)
                 val swingHigh = highs.lastOrNull()?.second
                 val swingLow = lows.lastOrNull()?.second
+
                 val direction = when {
                     ob.direction == "RISE" && swingHigh != null && candle.close > swingHigh -> "RISE"
                     ob.direction == "FALL" && swingLow != null && candle.close < swingLow -> "FALL"
                     else -> ""
                 }
+
                 if (direction.isNotBlank()) {
                     freshChochDirection[symbol] = direction
                     freshChochEpoch[symbol] = candle.epoch
                     freshChochPrice[symbol] = if (direction == "RISE") swingHigh!! else swingLow!!
-                    obStatus[symbol] = "OB REVERSAL + M15 CHOCH CONFIRMED · EXECUTION READY"
+                    obStatus[symbol] = "ORDER BLOCK + M15 CHOCH CONFIRMED · EXECUTION"
                     changed = true
                     break
                 }
@@ -2288,8 +2291,8 @@ indexStatusViews[symbol]?.apply {
 
         if (changed) saveOrderBlockState(symbol)
 
-        // A historical but still-valid same-day CHOCH is executable; it does not
-        // have to be the newest candle. Retry while the signal remains valid.
+        // Retry execution on each evaluation while the same active OB + CHOCH
+        // remains valid and there is no open trade on this index.
         evaluateOriginalEntries(symbol, latestPrices[symbol] ?: closed.last().close)
         runOnUiThread { updateRecoveryStatusView(symbol); updateMasterDecisionViews(symbol) }
     }
