@@ -121,6 +121,7 @@ class MainActivity : Activity(), DerivApiClient.Callback {
                 .put("touched", ob.touched).put("touchedEpoch", ob.touchedEpoch)
                 .put("consumed", ob.consumed)
                 .put("reversalConfirmed", ob.reversalConfirmed)
+                .put("reversalTimeframe", "H1")
                 .put("reversalEpoch", ob.reversalEpoch)
                 .put("reversalClose", ob.reversalClose)
             e.putString("ob_state_$symbol", json.toString())
@@ -140,13 +141,18 @@ class MainActivity : Activity(), DerivApiClient.Callback {
             val raw = tradePrefs.getString("ob_state_$symbol", null)
             if (!raw.isNullOrBlank()) try {
                 val j = JSONObject(raw)
+                val reversalWasConfirmedOnH1 = j.optString("reversalTimeframe") == "H1"
                 orderBlocks[symbol] = OrderBlockState(
                     j.getString("direction"), j.getDouble("low"), j.getDouble("high"),
                     j.getLong("identifiedEpoch"), j.optBoolean("touched", false),
                     j.optLong("touchedEpoch", 0L), j.optBoolean("consumed", false),
-                    j.optBoolean("reversalConfirmed", false),
-                    j.optLong("reversalEpoch", 0L), j.optDouble("reversalClose", 0.0)
+                    reversalWasConfirmedOnH1 && j.optBoolean("reversalConfirmed", false),
+                    if (reversalWasConfirmedOnH1) j.optLong("reversalEpoch", 0L) else 0L,
+                    if (reversalWasConfirmedOnH1) j.optDouble("reversalClose", 0.0) else 0.0
                 )
+                // Migrate the prior M15-reversal state: retain the OB and touch,
+                // but re-confirm the required reversal from a closed H1 candle.
+                if (!reversalWasConfirmedOnH1) saveOrderBlockState(symbol)
             } catch (_: Exception) { tradePrefs.edit().remove("ob_state_$symbol").apply() }
             tradePrefs.getString("ob_status_$symbol", null)?.takeIf { it.isNotBlank() }?.let { obStatus[symbol] = it }
             tradePrefs.getString("choch_direction_$symbol", null)?.takeIf { it.isNotBlank() }?.let { freshChochDirection[symbol] = it }
